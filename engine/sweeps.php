@@ -1524,9 +1524,20 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     $lines[] = '{ "title": "…", "prose": "…", "memories": { ' . implode(', ', $keys) . ' } }';
     $lines[] = '';
     $lines[] = '- title: six words or fewer, lower case, no full stop. Name the thing, do not summarise it.';
+    // THE STILL-LIFE FAILURE. This list used to end with "Hands, objects,
+    // weather, money, doors" — written to keep interiority out, and a small
+    // model read it as a subject list: it evicted the cast and wrote the room.
+    // Dust motes, condensation, a wobbling ceiling fan, and not one person in
+    // the hour that two people are about to carry memories out of. Next to a
+    // seeded past full of people knocking things over, those hours read as a
+    // different author — the seed pass hands its model a cast and asks what
+    // HAPPENED, so people arrive as the subjects for free. Here they have to be
+    // asked for outright, and the scenery told its place in the same breath.
     $lines[] = '- prose: 2-4 sentences, past tense, third person, concrete.';
+    $lines[] = '  The people named above are IN it, by name, doing things. This is their hour, not the room\'s.';
     $lines[] = '  No dialogue and no quotation marks, say what was DONE, not what was said.';
-    $lines[] = '  No "she felt", no "he realised". Hands, objects, weather, money, doors.';
+    $lines[] = '  No "she felt", no "he realised". Their hands on objects, weather, money, doors.';
+    $lines[] = '  Weather and furniture may set the scene, never carry it: an hour with nobody in it is wrong.';
     $lines[] = '- memories: one line for EACH handle above, keyed exactly as written in the brackets.';
     $lines[] = '  Third person, past tense, naming them. One sentence, under 25 words.';
     $lines[] = '  THE IMPORTANT PART: they do not remember the same thing. Give each of them a different';

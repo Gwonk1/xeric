@@ -296,6 +296,17 @@ ok('sweep: the model was told who was in the room, what shape of thing this was,
     && str_contains($seen[1]['content'] ?? '', 'WHAT KIND OF THING HAPPENED')
     && str_contains($seen[1]['content'] ?? '', 'they do not remember the same thing'));
 
+// THE STILL-LIFE REGRESSION. The prose rules once ended in what a small model
+// took for a subject list — "Hands, objects, weather, money, doors" — and it
+// obliged by writing the room with nobody in it: dust motes, condensation, a
+// wobbling fan, next to a seeded past full of people knocking things over. Two
+// authors in one feed. The prompt now asks for the people outright, and this
+// pins that sentence so a later rewording cannot quietly hand the hours back
+// to the furniture.
+ok('sweep: the model is told the people ARE the hour, so a still-life is off spec',
+    str_contains($seen[1]['content'] ?? '', 'The people named above are IN it')
+    && str_contains($seen[1]['content'] ?? '', 'an hour with nobody in it is wrong'));
+
 // Nobody is ever at a thing they could not have been at.
 $MID = xeric_world_now($T2, ep('2026-07-30 10:00'));       // Thursday mid-morning: two people at work
 ok('sweep: everybody in an event was somewhere they could plausibly have been',
