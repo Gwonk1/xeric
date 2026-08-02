@@ -881,3 +881,147 @@ function xeric_world_who_is_at(array $presence, string $placeKey): array
     }
     return $out;
 }
+
+/**
+ * The next things that change, in order: who arrives or leaves where, and what
+ * opens or closes.
+ *
+ * The cast panel knows where everybody is NOW; nothing knew what happens NEXT,
+ * so a time control could offer "skip an hour" but never "skip to when the bar
+ * opens" — and the bar's opening was sitting in the template the whole time,
+ * twice over, as week[] blocks and hours bags. This reads both.
+ *
+ * TRANSITIONS ARE FOUND, NOT DERIVED. Presence and open-ness already have
+ * exactly one reader each — xeric_world_who_is_where() above and
+ * xeric_sweep_place_open() in sweeps.php — and each carries hard-won tolerance
+ * (wrap-midnight shifts, half-open bounds, the home fallback, free-form hours
+ * bags, "closed since 1998"). A second derivation of either would disagree
+ * with the first inside a month. So the schedule is read only for WHEN it
+ * could change: every from/to edge and every HH:MM an hours bag mentions is a
+ * minute mark, and nothing moves between two marks — presence is a function of
+ * (day, minute) that only steps at a block edge or at midnight, and a place
+ * only flips at a time its own bag names or when the day's band turns over.
+ * Each mark in the window is stood on, and on the minute before it, and the
+ * two real readers are asked both times; a transition is any disagreement.
+ * The list can therefore never contradict the cast map or the sweeps,
+ * whatever tolerance either reader grows next.
+ *
+ * The OUT are not in it — they are absent from the story, and who_is_where
+ * already leaves them off the map, so their edges are not even collected. The
+ * dead are handed in the way who_is_where takes them, and for the same
+ * reason: who has died is state, and this function reads no database.
+ *
+ * Coming off a block onto the home fallback is reported as LEAVING the block,
+ * not arriving home — a home is where the week's silence puts you, and
+ * "arrives home" would dress the absence of an appointment up as one.
+ *
+ * @param array $now  from xeric_world_now() — injected, like every clock here
+ * @param int   $withinHours how far ahead to look; a day covers every
+ *              schedule's whole period short of the week itself
+ * @param string[]|null $dead as xeric_world_who_is_where()
+ * @return array<int,array{in:int,epoch:int,kind:string,key:string,label:string}>
+ *         soonest first. `in` is minutes after $now; `kind` is one of
+ *         arrives|leaves|moves|opens|closes; `key` is the handle or place key;
+ *         `label` is the row said out loud ("the Bluebird Diner opens").
+ */
+function xeric_world_next_change(array $t, array $now, int $withinHours = 24, ?array $dead = null): array
+{
+    // The hours-bag reader lives with the sweeps — the layer above — and is
+    // pulled in at CALL time, not include time: a caller that never asks what
+    // changes next never loads the sweep engine, and the include cycle
+    // resolves the way seed.php already documents require_once cycles do.
+    require_once __DIR__ . '/sweeps.php';
+
+    $nowEpoch = (int)($now['epoch'] ?? 0);
+    if ($nowEpoch <= 0 || $withinHours <= 0) return [];
+    $until = $nowEpoch + $withinHours * 3600;
+
+    // -- the minutes of a day the world could change at ---------------------
+    $marks = [0 => true];                       // midnight: the day, and its band, turn over
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        if (!empty($c['out'])) continue;        // not in the story: none of their edges is next
+        foreach ((array)($c['week'] ?? []) as $w) {
+            foreach (['from', 'to'] as $f) {
+                $m = xeric_world_minutes(isset($w[$f]) ? (string)$w[$f] : null);
+                if ($m !== null) $marks[$m] = true;
+            }
+        }
+    }
+    $timed = [];                                // places that keep hours at all
+    foreach ((array)($t['places'] ?? []) as $p) {
+        $key   = (string)($p['key'] ?? '');
+        $hours = (array)($p['hours'] ?? []);
+        if ($key === '' || $hours === []) continue;      // no hours: always open, never news
+        $timed[$key] = $hours;
+        foreach ($hours as $v) {
+            // Every HH:MM anywhere in the bag, spans included — the bag is
+            // free-form and the reader's band logic decides what counts; this
+            // only has to name every minute the reader COULD step at.
+            if (!is_string($v)) continue;
+            if (preg_match_all('/\b([01]?\d|2[0-3]):([0-5]\d)\b/', $v, $mm, PREG_SET_ORDER)) {
+                foreach ($mm as $m) $marks[((int)$m[1]) * 60 + (int)$m[2]] = true;
+            }
+        }
+    }
+
+    // -- those marks, as real moments inside the window ---------------------
+    try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); }
+    catch (Throwable $e) { $tz = new DateTimeZone('UTC'); }
+    $day = (new DateTimeImmutable('@' . $nowEpoch))->setTimezone($tz);
+
+    $edges = [];
+    $days  = intdiv($withinHours, 24) + 2;      // calendar days that can hold the window, from any hour
+    for ($d = 0; $d < $days; $d++) {
+        $base = $d === 0 ? $day : $day->add(new DateInterval('P' . $d . 'D'));
+        foreach (array_keys($marks) as $m) {
+            $e = $base->setTime(intdiv($m, 60), $m % 60)->getTimestamp();
+            if ($e > $nowEpoch && $e <= $until) $edges[$e] = true;
+        }
+    }
+    $edges = array_keys($edges);
+    sort($edges);
+
+    // -- stand on each edge and the minute before it; ask the real readers --
+    $out = [];
+    foreach ($edges as $epoch) {
+        $was = xeric_world_now($t, $epoch - 60);
+        $is  = xeric_world_now($t, $epoch);
+        $in  = intdiv($epoch - $nowEpoch, 60);
+
+        $before = xeric_world_who_is_where($t, $was, $dead);
+        $after  = xeric_world_who_is_where($t, $is, $dead);
+        foreach ($after as $h => $row) {
+            $a = $before[$h]['where'] ?? null;
+            $b = $row['where'];
+            if ($a === $b) continue;
+            $h    = (string)$h;
+            $name = xeric_world_name($t, $h);
+            $fromBlock = $a !== null && empty($before[$h]['at_home']);
+            $toBlock   = $b !== null && empty($row['at_home']);
+            if ($toBlock && !$fromBlock) {
+                $out[] = ['in' => $in, 'epoch' => $epoch, 'kind' => 'arrives', 'key' => $h,
+                          'label' => $name . ' arrives at ' . xeric_world_place_name($t, (string)$b)];
+            } elseif ($fromBlock && !$toBlock) {
+                $out[] = ['in' => $in, 'epoch' => $epoch, 'kind' => 'leaves', 'key' => $h,
+                          'label' => $name . ' leaves ' . xeric_world_place_name($t, (string)$a)];
+            } elseif ($fromBlock && $toBlock) {
+                $out[] = ['in' => $in, 'epoch' => $epoch, 'kind' => 'moves', 'key' => $h,
+                          'label' => $name . ' leaves ' . xeric_world_place_name($t, (string)$a)
+                                   . ' for ' . xeric_world_place_name($t, (string)$b)];
+            }
+            // Both sides unscheduled and different cannot happen: the home
+            // fallback is constant, so there is no fourth arm to write.
+        }
+
+        $wasM = xeric_world_minutes((string)$was['hhmm']) ?? 0;
+        $isM  = xeric_world_minutes((string)$is['hhmm']) ?? 0;
+        foreach ($timed as $key => $hours) {
+            $a = xeric_sweep_place_open($hours, $wasM, (int)$was['dow']);
+            $b = xeric_sweep_place_open($hours, $isM, (int)$is['dow']);
+            if ($a === $b) continue;
+            $out[] = ['in' => $in, 'epoch' => $epoch, 'kind' => $b ? 'opens' : 'closes', 'key' => $key,
+                      'label' => xeric_world_place_name($t, $key) . ($b ? ' opens' : ' closes')];
+        }
+    }
+    return $out;
+}

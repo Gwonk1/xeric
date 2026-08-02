@@ -394,6 +394,96 @@ ok('first_contact: can never be OUT of the story',
         'OUT'));
 
 // ---------------------------------------------------------------------------
+// 4c. What is scheduled next
+// ---------------------------------------------------------------------------
+// The map above answers NOW; xeric_world_next_change() answers NEXT, standing
+// on the same two readers, so these assertions are the fixture's own timetable
+// read back: Thursday evening the pastor's basement hour is the only thing
+// left in the day, and Friday runs the diner's whole arc from Dot's five
+// o'clock start to Theo's half-past-five booth.
+
+$thu6 = xeric_world_now($T, ep('2026-07-30 18:00'));
+$nx   = xeric_world_next_change($T, $thu6);
+$row  = function (array $rows, string $kind, string $key): ?array {
+    foreach ($rows as $r) if ($r['kind'] === $kind && $r['key'] === $key) return $r;
+    return null;
+};
+
+ok('next: the soonest change is the pastor arriving for his basement hour, sixty minutes out',
+    ($nx[0]['in'] ?? -1) === 60 && $nx[0]['kind'] === 'arrives' && $nx[0]['key'] === 'pastor_dale'
+    && $nx[0]['label'] === 'Pastor Dale Ostrander arrives at First Lutheran'
+    && $nx[0]['epoch'] === $thu6['epoch'] + 3600, json_encode($nx[0] ?? null));
+
+ok('next: rows come soonest first, and every epoch agrees with its own offset',
+    (function () use ($nx, $thu6) {
+        $last = -1;
+        foreach ($nx as $r) {
+            if ($r['in'] < $last || $r['epoch'] !== $thu6['epoch'] + $r['in'] * 60) return false;
+            $last = $r['in'];
+        }
+        return count($nx) >= 12;                 // Friday is a full day in Milldale
+    })(), json_encode(array_map(fn($r) => $r['in'], $nx)));
+
+// The whole point of the walk: "skip to when the bar opens" now has an answer.
+ok('next: the diner opens at half past five, said as a thing a button could offer',
+    ($row($nx, 'opens', 'bluebird')['in'] ?? 0) === 690
+    && $row($nx, 'opens', 'bluebird')['label'] === 'the Bluebird Diner opens');
+
+ok('next: a one-hour counter shift produces both of its ends',
+    ($row($nx, 'arrives', 'ruth')['in'] ?? 0) === 780
+    && ($row($nx, 'leaves', 'ruth')['in'] ?? 0) === 840
+    && $row($nx, 'leaves', 'ruth')['label'] === 'Ruth Amberg leaves the Bluebird Diner');
+
+// A place with no readable hours is always open, and a place closed for good
+// is never open: neither ever CHANGES, so neither is ever news.
+ok('next: the mill (closed since 1998) and the always-open church are never news',
+    (function () use ($nx) {
+        foreach ($nx as $r) {
+            if (in_array($r['key'], ['the_mill', 'first_lutheran'], true)
+                && in_array($r['kind'], ['opens', 'closes'], true)) return false;
+        }
+        return true;
+    })());
+
+ok('next: the window is honoured, two hours ahead holds only the pastor',
+    count(xeric_world_next_change($T, $thu6, 2)) === 1);
+
+ok('next: the dead have no next — handed in like who_is_where takes them',
+    (function () use ($T, $thu6, $row) {
+        $nx = xeric_world_next_change($T, $thu6, 24, ['pastor_dale']);
+        return $row($nx, 'arrives', 'pastor_dale') === null
+            && ($nx[0]['key'] ?? '') === 'dot' && ($nx[0]['in'] ?? 0) === 660;
+    })());
+
+ok('next: an OUT character is absent from the future too, but their workplace still keeps its hours',
+    (function () use ($TO, $T, $thu6, $row) {
+        $nx = xeric_world_next_change($TO, xeric_world_now($TO, $thu6['epoch']));
+        return $row($nx, 'arrives', 'ruth') === null && $row($nx, 'leaves', 'ruth') === null
+            && ($row($nx, 'opens', 'bluebird')['in'] ?? 0) === 690;
+    })());
+
+// The home fallback is where the week's silence puts you, so coming off a
+// shift reads as LEAVING the shift, never as an appointment at home.
+ok('next: going home is the shift ending, not an arrival',
+    (function () use ($TH, $thu6, $row) {
+        $nx = xeric_world_next_change($TH, xeric_world_now($TH, $thu6['epoch']));
+        $off = $row($nx, 'leaves', 'ruth');
+        return ($row($nx, 'arrives', 'ruth')['in'] ?? 0) === 780
+            && ($off['in'] ?? 0) === 840
+            && $off['label'] === 'Ruth Amberg leaves the Bluebird Diner';
+    })());
+
+ok('next: back-to-back blocks hand off as one move, not a leave and an arrive',
+    (function () use ($edge, $row) {
+        $nx = xeric_world_next_change($edge, xeric_world_now($edge, ep('2026-07-29 08:00')), 8);
+        $mv = $row($nx, 'moves', 'ruth');
+        return ($row($nx, 'arrives', 'ruth')['in'] ?? 0) === 60
+            && ($mv['in'] ?? 0) === 240
+            && $mv['label'] === 'Ruth Amberg leaves the Bluebird Diner for Beck Hardware'
+            && ($row($nx, 'leaves', 'ruth')['in'] ?? 0) === 420;
+    })());
+
+// ---------------------------------------------------------------------------
 // 5. State: migrations, seeding, round-trips
 // ---------------------------------------------------------------------------
 
