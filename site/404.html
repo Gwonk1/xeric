@@ -1,0 +1,86 @@
+<title>404 — Xeric</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<style>
+  :root {
+    --bg: #0b0c0a;
+    --fg: #e9e4d8;
+    --fg-dim: #9c988a;
+    --line: #3a2f22;
+    --accent: #c98a4b;
+    --accent-dim: #7a5730;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100%;
+  }
+
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    align-items: center;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  main {
+    max-width: 30rem;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+    text-align: center;
+  }
+
+  .code {
+    margin: 0;
+    font-size: clamp(2.5rem, 12vw, 4rem);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--fg);
+  }
+
+  .horizon {
+    height: 1px;
+    margin: 1.5rem auto;
+    max-width: 14rem;
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--accent-dim) 15%,
+      var(--accent) 50%,
+      var(--accent-dim) 85%,
+      transparent
+    );
+  }
+
+  p {
+    color: var(--fg-dim);
+    margin: 0 0 1.5rem;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px solid var(--accent-dim);
+  }
+
+  a:hover {
+    border-bottom-color: var(--accent);
+  }
+</style>
+
+<main>
+  <p class="code">404</p>
+  <div class="horizon" role="presentation"></div>
+  <p>Nobody lives here.</p>
+  <p><a href="/">Back to Xeric</a></p>
+</main>

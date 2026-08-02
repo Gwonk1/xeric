@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+#
+# xeric — run a xeric on this machine.
+#
+#   ./xeric                    start it, and open a browser
+#   ./xeric --port 9000        somewhere else
+#   ./xeric --data ~/worlds    keep xerics somewhere else
+#   ./xeric --no-open          do not touch the browser
+#
+# THERE IS NO CONFIG FILE. Everything this needs is an environment variable that
+# boot.php already reads, which means a local install has nothing to write, get
+# out of date, or hand-edit — and nothing that can silently disagree with the
+# copy of the app it sits next to. `config.local.php` belongs to deploy.sh and
+# to hosts; a machine somebody owns does not need one.
+#
+# EVERY DECISION IS IN bootstrap.php. Which PHP, which extensions are missing,
+# which port is free, where the data lives, what to tell somebody who cannot
+# start: all of it is there, because xeric.cmd needs exactly the same answers and
+# two copies of a decision is one copy that will be wrong — always on the
+# platform the author does not use. What is left here is the part that genuinely
+# cannot be shared: starting a background process, and trapping an exit.
+#
+# WHAT THIS IS NOT: a package. It assumes php on PATH, and a model somewhere.
+# The Steam-shaped version of this bundles a PHP and puts a window around the
+# browser; everything below is the part that would be inside it either way.
+
+set -euo pipefail
+
+# WITHOUT dirname, which is a program and not a builtin. A launcher whose first
+# act is to shell out has already assumed a PATH — and the whole point of a
+# bundled runtime is that there may not be one worth assuming.
+HERE="${0%/*}"
+[ "$HERE" = "$0" ] && HERE="."
+HERE="$(cd "$HERE" 2>/dev/null && pwd)" || HERE="$PWD"
+OPEN=1
+ARGS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port)    ARGS+=(--port "${2:?--port needs a number}"); shift 2 ;;
+    --data)    ARGS+=(--data "${2:?--data needs a directory}"); shift 2 ;;
+    --no-open) OPEN=0; shift ;;
+    -h|--help) sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "xeric: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+
+# THE BUNDLED PHP FIRST, and this is the one lookup that cannot live in
+# bootstrap.php: bootstrap.php IS php, so something has to find an interpreter
+# before it can be asked anything. runtime/ is filled by tools/fetch-php.php and
+# is gitignored — a repository is not a CDN — so an install that has it needs
+# nothing on PATH, and one that does not falls back to the system's.
+UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+UNAME_M="$(uname -m 2>/dev/null || echo x86_64)"
+case "$UNAME_S" in Darwin) RT_OS=macos ;; *) RT_OS=linux ;; esac
+case "$UNAME_M" in aarch64|arm64) RT_ARCH=aarch64 ;; *) RT_ARCH=x86_64 ;; esac
+
+PHPBIN=""
+for c in "$HERE/runtime/$RT_OS-$RT_ARCH/php" "$HERE/runtime/php"; do
+  [ -x "$c" ] && { PHPBIN="$c"; break; }
+done
+[ -n "$PHPBIN" ] || PHPBIN="$(command -v php8.4 || command -v php8.3 || command -v php || true)"
+[ -n "$PHPBIN" ] || {
+  echo "xeric: no php here and none on your PATH." >&2
+  echo "       Either install PHP 8.1+, or run:  php tools/fetch-php.php" >&2
+  exit 1
+}
+
+# It prints assignments on stdout and anything it wants to SAY on stderr, so a
+# refusal is already on screen by the time this exits.
+BOOT="$("$PHPBIN" "$HERE/bootstrap.php" --sh "${ARGS[@]+"${ARGS[@]}"}")" || exit 1
+eval "$BOOT"
+
+echo "  xerics   $XERIC_WORLDS_DIR"
+echo "  php      $XERIC_PHP"
+echo "  xeric    $XERIC_URL"
+
+if [ "$OPEN" = "1" ]; then
+  # Backgrounded and detached so a browser that blocks does not hold the server
+  # hostage, and errors are dropped because none of them are worth failing over.
+  ( sleep 1
+    if   command -v xdg-open >/dev/null 2>&1; then xdg-open "$XERIC_URL"
+    elif command -v open     >/dev/null 2>&1; then open "$XERIC_URL"
+    fi ) >/dev/null 2>&1 &
+fi
+
+# THE HEARTBEAT. The reason this is not `exec`: the server has to be something
+# the shell can outlive, so the trap below can take the heart down with it. A
+# xeric that kept living after somebody quit the app would be the worst of both
+# designs — a daemon nobody started and nobody can see.
+#
+# One pass per tick, not a long-lived PHP process: crash-safe by construction,
+# and a tick that finds no new hour costs nothing because a sweep is idempotent
+# per window. Sixty seconds because the window is an hour of world time; there is
+# nothing to do more often than that and nothing lost by being a minute late.
+if [ "${XERIC_HEART:-1}" = "1" ]; then
+  ( while :; do
+      "$XERIC_PHP" "$XERIC_WEB/heart.php" >>"$XERIC_DATA_DIR/heart.log" 2>&1 || true
+      sleep "${XERIC_HEART_EVERY:-60}"
+    done ) &
+  HEART=$!
+  # kill 0 takes the whole process group: the loop AND whichever php or sleep it
+  # is inside right now. Killing the subshell alone left a tick running on to
+  # completion, so a xeric could get one more hour after somebody quit.
+  trap 'kill 0 2>/dev/null; exit 0' EXIT INT TERM
+  echo "  heart    every ${XERIC_HEART_EVERY:-60}s  ->  $XERIC_DATA_DIR/heart.log"
+  echo
+fi
+
+"$XERIC_PHP" -S "127.0.0.1:$XERIC_PORT" -t "$XERIC_WEB" "$XERIC_WEB/router.php"

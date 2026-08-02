@@ -1,0 +1,296 @@
+<title>Xeric — a living world that runs on your own machine</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Xeric forges a world around a short interview — a place, and people with schedules, interiors and things they are not saying. It runs on its own clock, on your own machine. You text the people in it. And a story can be laid over it, resolve, and end while the world keeps going.">
+<meta name="color-scheme" content="light">
+<style>
+  :root {
+    --bg: #f7f6f2;
+    --bg-2: #ffffff;
+    --fg: #1a1813;
+    --fg-dim: #6a6558;
+    --line: #ded9cc;
+    --accent: #9a5f19;
+    --accent-dim: #c2a173;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  main {
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: clamp(2.5rem, 8vw, 6rem) 1.5rem clamp(3rem, 8vw, 5rem);
+  }
+
+  .wordmark {
+    margin: 0;
+    font-size: clamp(3rem, 14vw, 6rem);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--fg);
+  }
+
+  .tagline {
+    margin: 0.75rem 0 0;
+    font-size: clamp(1.05rem, 3vw, 1.35rem);
+    color: var(--fg);
+    max-width: 30ch;
+  }
+
+  .horizon {
+    position: relative;
+    height: 1px;
+    margin: clamp(2.5rem, 7vw, 3.5rem) 0;
+    background: linear-gradient(
+      to right,
+      transparent,
+      var(--accent-dim) 15%,
+      var(--accent) 50%,
+      var(--accent-dim) 85%,
+      transparent
+    );
+  }
+
+  .lead {
+    margin: 0 0 clamp(2.5rem, 7vw, 3.5rem);
+    font-size: clamp(1rem, 2.4vw, 1.1rem);
+    max-width: 44ch;
+  }
+
+  .features {
+    display: grid;
+    gap: clamp(1.6rem, 4vw, 2.2rem);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .features li {
+    padding-left: 1.1rem;
+    border-left: 2px solid var(--line);
+  }
+
+  .features h2 {
+    margin: 0 0 0.35rem;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+
+  .features p {
+    margin: 0;
+    color: var(--fg);
+    max-width: 46ch;
+  }
+
+  .story {
+    margin: 0;
+    padding: clamp(1.4rem, 4vw, 2rem) clamp(1.2rem, 4vw, 1.75rem);
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent-dim);
+    border-radius: 0.6rem;
+    box-shadow: 0 1px 2px rgba(26, 24, 19, 0.04), 0 6px 18px rgba(26, 24, 19, 0.05);
+  }
+
+  .story .kicker {
+    margin: 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .story h2 {
+    margin: 0.6rem 0 1rem;
+    font-size: clamp(1.25rem, 4vw, 1.6rem);
+    font-weight: 600;
+    line-height: 1.3;
+    max-width: 24ch;
+  }
+
+  .story p {
+    margin: 0 0 0.9rem;
+    max-width: 46ch;
+  }
+
+  .story p:last-child {
+    margin-bottom: 0;
+    color: var(--accent);
+  }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.1rem;
+    margin: 0 0 clamp(2rem, 6vw, 3rem);
+    padding: 0;
+    list-style: none;
+    font-size: 0.85rem;
+    color: var(--fg-dim);
+  }
+
+  .facts li::before {
+    content: "";
+  }
+
+  .cta {
+    margin: 0 0 0.6rem;
+  }
+
+  .cta a {
+    display: inline-block;
+    padding: 0.7rem 1.2rem;
+    border: 1px solid var(--accent-dim);
+    border-radius: 0.55rem;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+    background: var(--bg-2);
+  }
+
+  .cta a:hover, .cta a:focus {
+    border-color: var(--accent);
+  }
+
+  .ctanote {
+    margin: 0 0 clamp(2rem, 6vw, 3rem);
+    font-size: 0.85rem;
+    color: var(--fg-dim);
+    max-width: 46ch;
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.25rem;
+    font-size: 0.85rem;
+    color: var(--fg-dim);
+  }
+
+  footer .status {
+    color: var(--fg);
+  }
+
+  footer .status::before {
+    content: "● ";
+    color: var(--accent);
+  }
+
+  a {
+    color: inherit;
+  }
+</style>
+
+<main>
+  <h1 class="wordmark">XERIC</h1>
+  <p class="tagline">A living world that runs on your own machine —
+    and doesn't wait for you.</p>
+
+  <div class="horizon" role="presentation"></div>
+
+  <p class="lead">You answer a short interview and a world is forged around
+    you: a place, and people with interiors, schedules, and things they are
+    not saying.</p>
+
+  <ul class="features">
+    <li>
+      <h2>A short interview</h2>
+      <p>Who you are, what you want, how big a place you want to live in.
+        The forge writes the rest — the town, the cast, the friendships and
+        the grudges, the shifts, the secrets. Answer every question, or
+        answer none of them and let it surprise you.</p>
+    </li>
+    <li>
+      <h2>Its own clock</h2>
+      <p>The world runs whether or not you are there. Shifts get covered,
+        nights out happen, two of them talk about you. Come back after a
+        week and a week has gone by.</p>
+    </li>
+    <li>
+      <h2>You text them</h2>
+      <p>No parser, no commands. The people in your world sit in a list of
+        conversations like anyone else in your phone — and they text you
+        first, because something happened, or because it has been three days
+        and one of them noticed.</p>
+    </li>
+    <li>
+      <h2>Walls, not hope</h2>
+      <p>Who knows what is typed and enforced. A secret is held by the
+        people who were actually told it, and nobody accidentally knows
+        something they never heard — not because the model remembered, but
+        because it was never handed the sentence.</p>
+    </li>
+    <li>
+      <h2>Your hardware, or your key</h2>
+      <p>It runs against a local model on your own machine, with no cloud
+        dependency at runtime and nothing to subscribe to. Or bring an API
+        key and point it at something larger. The world is the same world
+        either way.</p>
+    </li>
+    <li>
+      <h2>A file you own</h2>
+      <p>Your world is a JSON file and a database on your disk. Readable,
+        editable, copyable, backed up like anything else you keep.</p>
+    </li>
+  </ul>
+
+  <div class="horizon" role="presentation"></div>
+
+  <section class="story">
+    <p class="kicker">And then a story</p>
+    <h2>A story can be laid over a living world.</h2>
+    <p>A mystery, a debt, a disappearance. It does not replace the world and
+      it does not consume it. It sits on top of the people who are already
+      there and points what they know — and what they are keeping — at one
+      question.</p>
+    <p>It has a real shape. It builds. Then it goes deliberately quiet — the
+      stretch every generated story gets wrong, by either escalating forever
+      or going slack. Then it breaks, and someone who was never lying to
+      you, who believed it and said so every time you asked, turns out to
+      have been wrong.</p>
+    <p>And it resolves. The murder is solved. The thing is found. The name
+      gets said out loud to the right person.</p>
+    <p>Then the story is over and the world keeps going — the same people,
+      the same shifts, the same diner that closes at two, who simply no
+      longer have that question between them. And you can lay another one
+      on.</p>
+  </section>
+
+  <div class="horizon" role="presentation"></div>
+
+  <ul class="facts">
+    <li>runs fully locally</li>
+    <li>no account, no subscription</li>
+    <li>your world is a file you own</li>
+    <li>rating is the world's, and defaults to the mildest</li>
+    <li>anything above that needs an adult affirmation</li>
+  </ul>
+
+  <p class="cta"><a href="/forge/play.php">Walk into one →</a></p>
+  <p class="ctanote">A world that is already running, with six weeks behind it and a story laid over
+    it. Nothing to install and no account. It answers on one machine in one house, so if it is
+    thinking, somebody else asked first.</p>
+
+  <footer>
+    <p class="status">pre-release — 2026</p>
+    <p>The engine works. The repository opens with the first release.</p>
+  </footer>
+</main>

@@ -1,0 +1,420 @@
+{
+  "interview_version": 1,
+  "_notes": {
+    "purpose": "The forge interview as DATA. Questions, presets and the surprise-me table live here so they can be reworded, reordered or translated without touching a line of PHP. forge.php reads this file and never hardcodes a question.",
+    "slice": "FORGE.md lists nine steps; this is the vertical slice, steps 1 (scale), 2 (you), 4 (motivation) and 9 (rating). Step 2 is three fields, so it is three rows sharing step 2 and the group label 'you'. Adding step 3/5/6/7/8 later means adding rows here, not code.",
+    "types": "choice | text | number. A choice step's presets are the offered buttons; allow_free_text says the user may type something that is not on the list, and every step in the slice allows it. allow_surprise says ✨ may fill it. fill_hint is optional and is for the MODEL, not the reader: when ✨ fills a whole set at once, the on-screen question is not always enough to say what the field is (a 12B handed 'What do people call you?' names the xeric, not the person), so fill_hint says what the value has to be.",
+    "answer_keys": "Answer keys are the step keys: scale, name, job, hours, motivation, rating. Two more keys ride along and are never asked in the slice, themes (from the themes vocabulary below) and circle (who is around you, FORGE step 5), because surprise_concepts supply them and the concept/cast passes read them when present.",
+    "surprise_concepts": "The ✨ surprise-me table. THE WHOLE POINT is that a concept is drawn WHOLE: a user holding down surprise-me gets small-town + faith + found family, never small-town + world-stage crime. forge.php picks ONE row and fills every unanswered field from it, it never mixes two rows. Each row therefore has to answer every step, including a placeholder name the user can edit in the review step.",
+    "rating": "The rating answer is the template CEILING, not a promise: effective_rating = min(template ceiling, what the loaded model will do). It can only ever be lowered from here, by the session's own ceiling (see the rating step's `gate`), by the model, or by a per-character floor. Nothing downstream may raise it, and an unanswered or unreadable rating is the weakest one.",
+    "ages": "Every forged character carries an integer `age`, and the cast pass writes a spread of them on purpose: children, teenagers, adults and old people. A town with no children in it is not a town, and in a mystery the kid is usually the one who saw it. Being a minor restricts exactly ONE thing, the desire economy, which forge.php's age floor removes structurally, and nothing else: dialogue, events, secrets, orbits, portraits and presence are all untouched."
+  },
+  "steps": [
+    {
+      "key": "scale",
+      "step": 1,
+      "group": "scale",
+      "question": "How big is your xeric?",
+      "type": "choice",
+      "presets": [
+        {
+          "value": "small_town",
+          "label": "a small town",
+          "hint": "everybody knows what you drive"
+        },
+        {
+          "value": "city",
+          "label": "a city",
+          "hint": "you can disappear for a week and nobody notices"
+        },
+        {
+          "value": "world_stage",
+          "label": "the xeric stage",
+          "hint": "rooms with good acoustics, in four time zones"
+        },
+        {
+          "value": "invented",
+          "label": "somewhere invented",
+          "hint": "the map stops and you keep going"
+        }
+      ],
+      "allow_free_text": true,
+      "allow_surprise": true
+    },
+    {
+      "key": "name",
+      "step": 2,
+      "group": "you",
+      "question": "What do people call you?",
+      "type": "text",
+      "presets": [],
+      "allow_free_text": true,
+      "allow_surprise": true,
+      "fill_hint": "the first name of the ONE PERSON who lives in this xeric, e.g. Sam, Wren, Nico, a human's name, never the name of a place or a story"
+    },
+    {
+      "key": "job",
+      "step": 2,
+      "group": "you",
+      "question": "What do you do all day?",
+      "type": "text",
+      "presets": [
+        {
+          "value": "teach at the school",
+          "label": "teach"
+        },
+        {
+          "value": "tend bar",
+          "label": "tend bar"
+        },
+        {
+          "value": "nurse at the clinic",
+          "label": "nurse"
+        },
+        {
+          "value": "run a shop",
+          "label": "run a shop"
+        },
+        {
+          "value": "work in an office",
+          "label": "office work"
+        },
+        {
+          "value": "retired",
+          "label": "retired"
+        }
+      ],
+      "allow_free_text": true,
+      "allow_surprise": true
+    },
+    {
+      "key": "hours",
+      "step": 2,
+      "group": "you",
+      "question": "When are you there?",
+      "type": "text",
+      "presets": [
+        {
+          "value": "09:00-17:00 weekdays",
+          "label": "nine to five"
+        },
+        {
+          "value": "07:00-15:00 weekdays",
+          "label": "early shift"
+        },
+        {
+          "value": "16:00-00:00 weekdays",
+          "label": "nights"
+        },
+        {
+          "value": "no fixed hours",
+          "label": "no fixed hours"
+        }
+      ],
+      "allow_free_text": true,
+      "allow_surprise": true
+    },
+    {
+      "key": "motivation",
+      "step": 4,
+      "group": "why",
+      "question": "Why are you here? What do you want from this xeric?",
+      "type": "text",
+      "presets": [
+        {
+          "value": "company",
+          "label": "company",
+          "hint": "people who show up, meals, being remembered"
+        },
+        {
+          "value": "romance",
+          "label": "romance",
+          "hint": "attraction, jealousy, private history"
+        },
+        {
+          "value": "ambition",
+          "label": "ambition",
+          "hint": "standings, favors, rivals, the ladder"
+        },
+        {
+          "value": "mystery",
+          "label": "mystery",
+          "hint": "a strange place, rumors, a slow reveal"
+        },
+        {
+          "value": "redemption",
+          "label": "redemption",
+          "hint": "a debt, people who remember, a chance to be different"
+        },
+        {
+          "value": "survival",
+          "label": "survival",
+          "hint": "scarcity, danger, alliances that cost"
+        }
+      ],
+      "allow_free_text": true,
+      "allow_surprise": true,
+      "free_text_hint": "Say it in your own words, anything at all. \"get my daughter to speak to me again\", \"prove the mine is poisoning the river\", \"learn to cook like my mother did\". The presets are only shortcuts.",
+      "presets_are_suggestions": true,
+      "note": "OPEN BY DESIGN (owner 2026-07-30: 'lists are good too, but open is better'). Presets are fast paths with tested system mappings; anything else is resolved by xeric_forge_armed() against XERIC_SYSTEMS, with a keyword fallback."
+    },
+    {
+      "key": "around",
+      "step": 5,
+      "group": "you",
+      "question": "When are you usually around?",
+      "type": "choice",
+      "presets": [
+        {
+          "value": "evenings",
+          "label": "evenings",
+          "hint": "after work, before bed"
+        },
+        {
+          "value": "mornings",
+          "label": "mornings",
+          "hint": "early, coffee in hand"
+        },
+        {
+          "value": "nights",
+          "label": "late nights",
+          "hint": "the small hours are yours"
+        },
+        {
+          "value": "workday",
+          "label": "through the day",
+          "hint": "in and out while you work"
+        },
+        {
+          "value": "scattered",
+          "label": "all over the place",
+          "hint": "whenever there's a gap"
+        }
+      ],
+      "allow_free_text": true,
+      "allow_surprise": true,
+      "free_text_hint": "Or say it plainly, \"up till 2am most nights\", \"6am before the kids wake\".",
+      "fill_hint": "one of: evenings | mornings | nights | workday | scattered",
+      "note": "Feeds user.quiet_hours. The xeric sleeps when YOU do, a night-desk xeric was being forged with quiet hours of 23:00-08:00, so its most alive hours were its deadest (2026-07-30)."
+    },
+    {
+      "key": "pace",
+      "step": 6,
+      "group": "you",
+      "question": "How much should happen while you're gone?",
+      "type": "choice",
+      "presets": [
+        {
+          "value": "eventful",
+          "label": "eventful",
+          "hint": "you'll come back to things you missed"
+        },
+        {
+          "value": "steady",
+          "label": "steady",
+          "hint": "a few things worth hearing about"
+        },
+        {
+          "value": "calm",
+          "label": "calm",
+          "hint": "the xeric keeps its own counsel"
+        }
+      ],
+      "allow_free_text": false,
+      "allow_surprise": true,
+      "default": "steady",
+      "fill_hint": "one of: eventful | steady | calm",
+      "note": "Feeds events.pace. Combined with `around` this normalises PER VISIT, not per hour: someone who checks in weekly needs a much lower hourly rate than someone who checks in hourly to arrive at the same 'a few things happened'."
+    },
+    {
+      "key": "centrality",
+      "step": 7,
+      "group": "you",
+      "question": "In this xeric, are you the main character?",
+      "type": "choice",
+      "presets": [
+        {
+          "value": "main",
+          "label": "the main character",
+          "hint": "the xeric turns around you; things happen to you and because of you"
+        },
+        {
+          "value": "ensemble",
+          "label": "one of the ensemble",
+          "hint": "you matter as much as anyone here, no more, no less"
+        },
+        {
+          "value": "side",
+          "label": "a side character",
+          "hint": "the xeric has its own business; you're in the corner of it, and you hear things"
+        }
+      ],
+      "allow_free_text": false,
+      "allow_surprise": true,
+      "default": "ensemble",
+      "fill_hint": "one of: main | ensemble | side",
+      "note": "Narrative GRAVITY, distinct from motivation. Drives: how often events concern the user, how often anyone reaches out unprompted, and how the bible frames the user's own section (a side character is not 'at the centre' of anything)."
+    },
+    {
+      "key": "rating",
+      "step": 10,
+      "group": "limits",
+      "question": "How far should this xeric go?",
+      "type": "choice",
+      "presets": [
+        {
+          "value": "sfw",
+          "label": "keep it clean"
+        },
+        {
+          "value": "mature",
+          "label": "adult themes",
+          "requires_affirmation": true
+        },
+        {
+          "value": "explicit",
+          "label": "no limits",
+          "requires_affirmation": true
+        }
+      ],
+      "allow_free_text": false,
+      "allow_surprise": true,
+      "default": "sfw",
+      "gate": {
+        "required_above": "sfw",
+        "affirm": "I am 18 or older.",
+        "note": "An AFFIRMATION, never an age. Nothing is asked and nothing is stored about how old anyone is, the session either carries the affirmation or it does not, and a session that does not is handed a ceiling of `sfw` which the forge cannot climb back out of (xeric_forge_rating's $ceiling). The default matters more than the gate: a stranger, a half-finished interview and a zero-answer ✨ xeric all land clean with nobody deciding anything."
+      },
+      "note": "This is the xeric's ceiling for ADULT characters. It is never the ceiling for a minor: a character under 18 is pinned to the weakest rating in every xeric, whatever this says, and is excluded from the desire economy structurally. That is the only thing being restricted, children are otherwise ordinary characters and belong in the cast."
+    }
+  ],
+  "themes": [
+    "ordinary life",
+    "faith",
+    "found family",
+    "money",
+    "ambition",
+    "intrigue",
+    "frontier",
+    "survival",
+    "academia",
+    "crime",
+    "showbiz",
+    "nightlife",
+    "small_town",
+    "neighbors",
+    "the road",
+    "the sea",
+    "sickness and care",
+    "music",
+    "sport",
+    "the strange"
+  ],
+  "surprise_concepts": [
+    {
+      "key": "small_town_faith",
+      "label": "a small town, a church basement, and people who show up",
+      "answers": {
+        "scale": "small_town",
+        "name": "Sam",
+        "job": "run the feed store on Main",
+        "hours": "07:00-17:00 weekdays, half day Saturday",
+        "motivation": "company",
+        "rating": "sfw",
+        "themes": [
+          "faith",
+          "found family",
+          "ordinary life"
+        ],
+        "circle": "found family",
+        "around": "mornings",
+        "pace": "calm",
+        "centrality": "ensemble"
+      }
+    },
+    {
+      "key": "city_ambition",
+      "label": "a city, a firm, and everybody one rung above somebody",
+      "answers": {
+        "scale": "city",
+        "name": "Alex",
+        "job": "second-year associate at a law firm",
+        "hours": "09:00-20:00 weekdays and most Sundays",
+        "motivation": "ambition",
+        "rating": "mature",
+        "themes": [
+          "ambition",
+          "money",
+          "nightlife"
+        ],
+        "circle": "coworkers",
+        "around": "workday",
+        "pace": "eventful",
+        "centrality": "main"
+      }
+    },
+    {
+      "key": "frontier_survival",
+      "label": "the far end of the road, a crew, and a winter coming",
+      "answers": {
+        "scale": "invented",
+        "name": "Wren",
+        "job": "keep the water house running",
+        "hours": "no fixed hours, whenever the pumps say so",
+        "motivation": "survival",
+        "rating": "mature",
+        "themes": [
+          "frontier",
+          "survival",
+          "the road"
+        ],
+        "circle": "crew",
+        "around": "scattered",
+        "pace": "eventful",
+        "centrality": "ensemble"
+      }
+    },
+    {
+      "key": "city_mystery",
+      "label": "a night shift, a building that shouldn't be lit, and a slow answer",
+      "answers": {
+        "scale": "city",
+        "name": "Nico",
+        "job": "night dispatcher at the ambulance service",
+        "hours": "22:00-06:00, four nights on",
+        "motivation": "mystery",
+        "rating": "mature",
+        "themes": [
+          "the strange",
+          "intrigue",
+          "nightlife"
+        ],
+        "circle": "coworkers",
+        "around": "nights",
+        "pace": "steady",
+        "centrality": "side"
+      }
+    },
+    {
+      "key": "small_town_redemption",
+      "label": "a town you left badly, and the people who were here the whole time",
+      "answers": {
+        "scale": "small_town",
+        "name": "Cass",
+        "job": "back at the family garage",
+        "hours": "08:00-18:00 weekdays",
+        "motivation": "redemption",
+        "rating": "mature",
+        "themes": [
+          "ordinary life",
+          "found family",
+          "money"
+        ],
+        "circle": "living family",
+        "around": "evenings",
+        "pace": "steady",
+        "centrality": "main"
+      }
+    }
+  ]
+}

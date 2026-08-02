@@ -1,0 +1,241 @@
+{
+  "story_version": 1,
+
+  "_notes": {
+    "purpose": "The engine's test overlay: a complete, SFW, dime-store murder mystery laid over engine/fixtures/milldale.json. It is here to be implemented against — every handle, place and beat reference in it resolves against that template, and nothing in it edits that template. Nothing here is drawn from anybody's life.",
+    "why_the_victim_is_not_in_the_cast": "Ellis Chandler is declared inside this overlay and nowhere else. A victim who was a cast member would have to be removed from milldale.json when the story is injected and put back when it closes, and a story that edits the world it sits on is not an overlay. He has a name, an age and a one-line — enough for six people to talk about him — and no dossier, because he does not speak.",
+    "reuse_of_existing_secrets": "Three of the five pieces are already in milldale.json, word for word: Theo's chair in the stairwell, Dot's comped lunches, Harlan's father's till key. That is the point of the design. A mystery is a wall structure, and this world already had the walls; the overlay only decides when they come down and in what order.",
+    "the_child_is_load_bearing": "Theo is twelve and he holds the piece that kills the story's second red herring — a folding chair set facing a door is not an accident. He is a witness nobody believes, which is the oldest working part in the genre, and the age floor touches him in exactly one way: his material is sfw in every world, which it would be anyway. Nothing here excludes him from a beat, an hour, an event or a conversation.",
+    "the_gated_motive": "Harlan's money trouble is rating_min 'mature' in milldale.json, so it never renders in this sfw world. This overlay therefore does NOT state it. Dot's piece is the observable fact she owns — she has been comping his lunch and writing it down as waste — and the inference is the player's. An overlay states what a holder can observe; it never restates another character's rating-gated interior at a lower rating.",
+    "milldale_arms_nothing": "milldale.json carries no `forge.armed` block, so xeric_sweep_kinds_for() gives it the `ordinary` floor and nothing else. The snake's kind_thumb below therefore has nothing to push on in THIS world: it modulates sweep_chance, the beats fire as scheduled events, and every kind_thumb entry is inert. That is correct and it is the invariant — a story may re-weight what a world already permits and may never arm a system. A world forged with `motivation: mystery` (rumors, slow_reveal, unreliable_witnesses) is where the thumb bites.",
+    "the_light_in_the_mill": "milldale.json says `rumor_pays_out: false`. This story happens AT the mill and explains nothing about the light in the office windows. `resolution.never` says so as typed data so the validator can assert it."
+  },
+
+  "key": "mill_stairwell",
+  "for_world": "Milldale",
+  "title": "What Happened on the Fourth-Floor Landing",
+  "logline": "Ellis Chandler came home to sell the mill and went down the stairwell instead.",
+  "kind": "mystery",
+  "rating_min": "sfw",
+  "source": "authored",
+
+  "truth": "Harlan Beck let himself through the mill gate with his father's till key to talk Ellis Chandler out of selling the block out from under the store. They argued on the fourth-floor landing, Harlan put a hand out, and a seventy-four-year-old man went down a flight of iron stairs. He did not go there to hurt anybody and he has not slept since.",
+
+  "cast": {
+    "victim": {
+      "name": "Ellis Chandler",
+      "age": 74,
+      "one_line": "The last Chandler, back from Columbus for the first time in nine years, with a folder under his arm.",
+      "found": "at the bottom of the fourth-floor stairwell at the Chandler Mill, on a Tuesday, by a man walking a dog on the tracks"
+    },
+    "culprit": "harlan",
+    "protect": [
+      {
+        "character": "pastor_dale",
+        "role": "unaware",
+        "must_not_know": "who was on the landing at the mill",
+        "wall": "story.mill_stairwell.dale_unaware"
+      }
+    ]
+  },
+
+  "walls": [
+    {
+      "key": "story.mill_stairwell.dale_unaware",
+      "hidden": ["story.mill_stairwell", "secrets.harlan"],
+      "shown_as": "a man came home, went somewhere he should not have been, and fell — which is what everyone else thinks too",
+      "explain": "Dale must not learn who was on the landing before he has said where he was himself; his own answer is what clears the man he is currently wrong about."
+    }
+  ],
+
+  "beats": [
+    {
+      "key": "the_word_gets_around",
+      "at": 0.0,
+      "holder": null,
+      "as_event": {
+        "title": "They found Ellis Chandler at the mill",
+        "wants_kind": "mishap",
+        "place": "the_mill",
+        "prose": "The ambulance came down Water Street without its siren, because it did not need to hurry. By eleven the diner had it, and by noon it had the folder under his arm too, which nobody had actually seen."
+      },
+      "opens_when": { "min_dwell_hours": 0 },
+      "spill_detect": "auto",
+      "rating_min": "sfw"
+    },
+
+    {
+      "key": "the_chair",
+      "at": 0.15,
+      "holder": "theo",
+      "piece": "He got through the gate at the mill in June and there was a folding chair set up in the fourth-floor stairwell, facing the door.",
+      "opens_when": {
+        "after": ["the_word_gets_around"],
+        "min_dwell_hours": 12,
+        "asks_about": ["mill", "chair", "stairwell", "ellis", "chandler"],
+        "trust_gate": 3
+      },
+      "while_locked": "You do not bring this up. You have told it to two adults and neither of them believed you, and one of them said you were remembering it wrong.",
+      "when_open": "If he asks you about the mill you tell him the whole thing, fast, and you watch his face to see whether this one lands.",
+      "spilled_as": "He told Walt about the folding chair in the stairwell and Walt did not laugh and did not say we'll see.",
+      "spill_detect": "quote",
+      "kills_herring": ["it_was_only_kids"],
+      "rating_min": "sfw"
+    },
+
+    {
+      "key": "the_locked_gate",
+      "at": 0.3,
+      "holder": "ruth",
+      "piece": "Ellis Chandler came down to the church basement the week before and asked her who held the keys to the mill now, and she told him Harlan's father's ring was still in the store.",
+      "opens_when": {
+        "after": ["the_chair"],
+        "min_dwell_hours": 18,
+        "asks_about": ["ellis", "chandler", "keys", "mill", "church"],
+        "trust_gate": 5
+      },
+      "while_locked": "You do not repeat what a man asked you in your own kitchen, and you have decided it does not signify.",
+      "when_open": "You will say it plainly, once, and you will not enjoy saying it.",
+      "spilled_as": "She told Walt what Ellis Chandler asked her in the basement, and then she washed a pan that was already clean.",
+      "spill_detect": "quote",
+      "rating_min": "sfw"
+    },
+
+    {
+      "key": "the_ledger_of_lunches",
+      "at": 0.45,
+      "holder": "dot",
+      "piece": "She has been comping Harlan's lunch since March and writing it down as waste.",
+      "opens_when": {
+        "after": ["the_locked_gate"],
+        "min_dwell_hours": 18,
+        "asks_about": ["harlan", "store", "lunch", "money"],
+        "trust_gate": 4
+      },
+      "while_locked": "You will not say this to anybody. It is his business and saying it out loud would be the same as taking it off him.",
+      "when_open": "You say it flat, the way you say the specials, and then you tell him what you will do to him if it goes any further.",
+      "spilled_as": "She told Walt about the lunches. She wiped the counter for a while afterward and did not say anything else about it.",
+      "spill_detect": "quote",
+      "rating_min": "sfw"
+    },
+
+    {
+      "key": "the_hospital_run",
+      "at": 0.78,
+      "holder": "pastor_dale",
+      "piece": "He was at the county hospital in Chillicothe that night with somebody who has not told their own family yet, which is why he has let the whole town think whatever it likes about where his car was.",
+      "opens_when": {
+        "after": ["the_ledger_of_lunches"],
+        "min_dwell_hours": 24,
+        "asks_about": ["car", "mill", "night", "where", "hospital"],
+        "trust_gate": 7
+      },
+      "while_locked": "You know exactly what people think and you would rather be thought a liar than be the reason somebody's diagnosis got around this town before they were ready.",
+      "when_open": "You say where you were. You do not say who with, and you will not be moved on that, and you make a bad joke about it afterward.",
+      "spilled_as": "He told Walt where he actually was that night. He took the cap off and put it back on twice while he said it.",
+      "spill_detect": "quote",
+      "kills_herring": ["the_reds_cap_at_the_mill"],
+      "rating_min": "sfw"
+    },
+
+    {
+      "key": "the_till_key",
+      "at": 0.92,
+      "holder": "harlan",
+      "piece": "His father cut a key for the mill gate padlock forty years ago and it is still on his ring, and he was up on that landing arguing about the block the night Ellis Chandler went down the stairs.",
+      "opens_when": {
+        "after": ["the_hospital_run"],
+        "min_dwell_hours": 24,
+        "asks_about": ["key", "ring", "mill", "gate", "landing", "ellis"],
+        "trust_gate": 9
+      },
+      "while_locked": "You do not talk about the mill. You change the subject to weather or to stock, and you are not smooth about it, and you know you are not.",
+      "when_open": "You tell him. All of it, in about eight words at a time, with long gaps, and you do not ask him what he is going to do with it.",
+      "spilled_as": "He told Walt about the key and about the landing. Then he counted the drawer twice and got a different number both times.",
+      "spill_detect": "quote",
+      "rating_min": "sfw"
+    }
+  ],
+
+  "red_herrings": [
+    {
+      "key": "the_reds_cap_at_the_mill",
+      "believer": "dot",
+      "belief": "Pastor Dale's car was down by the mill the night Ellis Chandler died. She saw the Reds cap through the windshield at eleven o'clock going the wrong way up Water Street, and there is one of those caps in this town.",
+      "because": "She was closing up and she looked out and she saw it. She is not guessing and she does not guess.",
+      "sincerity": "certain",
+      "is_false": true,
+      "actually": "It was Dale's car and it was Dale driving, forty minutes the other way, to the county hospital. He has let people think what they like rather than say who he was sitting with.",
+      "points_at": "pastor_dale",
+      "known_false_to": ["pastor_dale"],
+      "collapses_on": "the_hospital_run",
+      "rating_min": "sfw"
+    },
+
+    {
+      "key": "it_was_only_kids",
+      "believer": "ruth",
+      "belief": "Kids have been getting into the mill all summer, and a seventy-four-year-old man went in after them in the dark and missed a step. There is nothing here to solve and the talking is doing damage.",
+      "because": "She has been picking up beer cans off the church lot since May and she knows whose they are and she is not going to say.",
+      "sincerity": "certain",
+      "is_false": true,
+      "actually": "It was not kids that night. Ellis Chandler let himself in with a key of his own, and somebody was already up there, and somebody had been up there often enough to bring a chair.",
+      "points_at": null,
+      "known_false_to": ["harlan"],
+      "collapses_on": "the_chair",
+      "rating_min": "sfw"
+    }
+  ],
+
+  "snake": {
+    "curve": [
+      [0.0, 0.0],
+      [0.08, 0.55],
+      [0.35, 0.8],
+      [0.5, 0.5],
+      [0.72, 0.5],
+      [0.92, 1.0],
+      [1.0, 0.15]
+    ],
+    "false_calm": [0.5, 0.72],
+    "pace_swing": 0.6,
+    "kind_thumb": {
+      "opening":    { "routine": 2.0, "visit": 2.0, "recognition": 1.5 },
+      "rising":     { "rumor": 2.0, "confidence": 1.8, "glimpse": 1.8, "friction": 1.5 },
+      "taper":      { },
+      "false_calm": { "ease": 2.0, "shared_meal": 2.0, "routine": 1.8, "rumor": 0.5, "confidence": 0.5, "glimpse": 0.5 },
+      "crescendo":  { "confidence": 2.5, "mishap": 2.0, "friction": 2.0, "chase": 2.0 },
+      "closing":    { "recognition": 2.0, "ease": 1.5 }
+    }
+  },
+
+  "resolution": {
+    "kind": "accusation",
+    "answer": "harlan",
+    "requires_beats": ["the_chair", "the_ledger_of_lunches", "the_till_key"],
+    "accept": { "to": ["harlan", "pastor_dale", "dot", "ruth"], "in": "conversation" },
+    "on_wrong": {
+      "closes": false,
+      "costs": "the one he named goes short with him for a day and says why, once",
+      "arc": "story:mill_stairwell:wrong"
+    },
+    "never": ["mystery.rumor"]
+  },
+
+  "on_close": {
+    "event": {
+      "title": "It came out at the hardware store on a Tuesday",
+      "place": "beck_hardware",
+      "prose": "He said it standing up, with the drawer open, and then he sat down in the chair that is understood to be for sitting in and talking, which is not a chair he has ever sat in."
+    },
+    "memories": {
+      "harlan": "He told Walt about the landing at the mill, in the store, on a Tuesday, and afterward the store was very quiet and he opened at seven the next morning anyway.",
+      "dot": "She found out she had been wrong about the Reds cap for three weeks and she has not apologised to the pastor yet, and she is going to.",
+      "ruth": "She found out it was not kids at the mill after all, and she has been thinking about what she told Ellis Chandler in her own kitchen.",
+      "pastor_dale": "The whole town stopped wondering where his car was that night, and he never did say who he was sitting with.",
+      "theo": "Somebody finally believed him about the chair in the stairwell, and he has told the story eleven times since and it has not changed once.",
+      "janelle": "She heard about it from her father on the phone, in three sentences, in the voice he uses when he does not want her to drive down."
+    },
+    "world_keeps": "Beck Hardware opens at seven. Dot pours. Ruth counts dishes. Theo does his homework in the last booth, and the mill gate is still chained, and the light is still in the office windows some nights, and nobody in this town has an open question with anybody else."
+  }
+}

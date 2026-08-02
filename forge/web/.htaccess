@@ -1,0 +1,73 @@
+# THE SHELF IS THE FRONT DOOR, not the forge. forge.php is a twenty-question
+# interview; landing on it is right when somebody chose to build a world and
+# wrong every other time, and "every other time" is almost every time once a
+# person has one. router.php says the same thing to `php -S`, which does not
+# read this file.
+DirectoryIndex play.php forge.php
+Options -Indexes
+
+# NOT ONE OF THESE DENIALS IS CONDITIONAL ON ANYTHING. They were RewriteRules
+# inside an <IfModule>, which makes a protection advice: a host that has never
+# loaded mod_rewrite, or an AllowOverride that stops short of FileInfo, skips the
+# whole block in silence — no error, no log line, just a docroot handing out its
+# own source. The expression parser and mod_authz_core are part of the server
+# itself, so these hold whatever else is or is not installed. <If> needs
+# AllowOverride All where a RewriteRule needed FileInfo, and that is the trade
+# worth making: too little AllowOverride now refuses every request in this
+# directory with a 500 instead of quietly serving the files below.
+#
+# Every pattern is anchored (^|/) rather than ^ so it still holds when the app is
+# deployed under a subdirectory, and closed (/|$) rather than $ so trailing
+# PATH_INFO cannot walk past it. Both directions of a wrong guess here deny more
+# than intended, never less.
+
+# The engine and the forge library are deployed under lib/ so the docroot holds
+# one self-contained tree (see boot.php). They are includes, not pages: nothing
+# under lib/ is ever a URL — a .json fixture there is no more a URL than a .php
+# file is, so this covers the whole tree rather than a list of extensions.
+<If "%{REQUEST_URI} =~ m#(^|/)lib/#">
+  Require all denied
+</If>
+
+# worker.php is the build itself, started by build.php over a pipe with the
+# user's API key on its stdin. tick-worker.php is the same shape for the play
+# view's time control. reroll-worker.php is the review step's re-run of one forge
+# pass, and addchar-worker.php writes one new person into a running world. All
+# four are CLI programs that happen to live here.
+<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|heart|router)\.php(/|$)#">
+  Require all denied
+</If>
+
+# The libraries: page chrome, the engine's front door, and the demo layer
+# (identity, the caps, the model queue). Includes, never URLs — they define
+# functions and print nothing, so fetching one is always a mistake.
+#
+# config.local.php is here for a different reason: it is the one file in this
+# directory whose CONTENTS matter. It emits nothing when executed, so it is
+# harmless while PHP handles .php — and it holds local_base, data_dir and the
+# php path the moment PHP stops.
+<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|review-lib|why-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
+  Require all denied
+</If>
+
+# The test suite is not deployed at all (deploy.sh), but a docroot that ever
+# acquires one must not serve it.
+<If "%{REQUEST_URI} =~ m#(^|/)tests/#">
+  Require all denied
+</If>
+
+# progress.php is the live stream — the build's and the time control's both.
+# Nothing between here and the browser may sit on it waiting for more bytes, and
+# nothing may cache it.
+<IfModule mod_headers.c>
+  <Files ~ "^(build|progress)\.php$">
+    Header always set X-Accel-Buffering "no"
+    Header always set Cache-Control "no-cache, no-store, no-transform"
+  </Files>
+</IfModule>
+<IfModule mod_deflate.c>
+  <Files ~ "^(build|progress)\.php$">
+    SetEnv no-gzip 1
+    SetEnv dont-vary 1
+  </Files>
+</IfModule>

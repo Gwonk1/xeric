@@ -1,0 +1,34 @@
+# lived worlds are private — never commit a running world's state
+data/
+
+# Forged worlds belong to whoever forged them: a world directory holds a real
+# person's name, location and occupation, and owner.json holds a session token.
+# No carve-out, not even for a world named like the demo — the fixture the
+# engine tests against is engine/fixtures/milldale.json and it is tracked there.
+/worlds/*
+*.db
+*.db.gz
+*.sqlite
+uploads/
+
+# secrets
+.env
+*.token
+*token*
+
+# local machine config
+engine.json
+user.json
+# describes ONE host (model port, data dir, php binary) — written by deploy.sh
+forge/web/config.local.php
+
+# noise
+*.log
+*.bak
+*.bak.*
+.DS_Store
+node_modules/
+
+# A bundled PHP is 30MB and changes every month for security. tools/fetch-php.php
+# puts one here; a repository is not a CDN.
+runtime/

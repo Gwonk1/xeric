@@ -1,0 +1,739 @@
+<?php
+/**
+ * Xeric — world templates: load, validate, resolve, and the world clock.
+ *
+ * Everything here is world-agnostic. It knows the SHAPE of a world-template,
+ * never the contents of one; `milldale` appears nowhere below.
+ *
+ * Two disciplines this file exists to enforce:
+ *
+ *  1. VALIDATION IS A PROSE BUG-CATCHER. Every check here corresponds to a way
+ *     a template can be wrong that would otherwise surface as confident garbage
+ *     in a model's mouth — a character in an orbit nobody declared falls outside
+ *     every wall audience (a leak), a wall aimed at a role nobody holds silently
+ *     protects nobody (a leak), a boon paying into a missing economy renders a
+ *     prize for a ledger that does not exist. So the failures are loud, they name
+ *     the offending path, and they happen at load time rather than at 2am in a
+ *     sweep.
+ *
+ *  2. THE CLOCK IS INJECTABLE, ALWAYS. `time()` is called in exactly one place
+ *     in this file — the default argument of xeric_world_now() — and nowhere
+ *     else in the engine may a function reach for the wall clock on its own.
+ *     The demo advances the world artificially ("skip to evening"); a stray
+ *     time() deep in a renderer would make half the world live in the present
+ *     and the other half in the visitor's fast-forward.
+ *
+ * Zero dependencies. PHP 8.2+.
+ */
+
+require_once __DIR__ . '/walls.php';
+
+// ---------------------------------------------------------------------------
+// Load + validate
+// ---------------------------------------------------------------------------
+
+/** The only three legal rating strings, weakest first. */
+function xeric_ratings(): array
+{
+    return ['sfw', 'mature', 'explicit'];
+}
+
+// ---------------------------------------------------------------------------
+// Age
+// ---------------------------------------------------------------------------
+
+/**
+ * The age below which the engine treats a character as a child.
+ *
+ * One number in one place. Every gate asks xeric_is_minor() rather than
+ * comparing an age itself, so there is nowhere for a second threshold to drift
+ * into existence.
+ */
+const XERIC_ADULT_AGE = 18;
+
+/**
+ * Is this character a minor?
+ *
+ * DERIVED, never declared. A template carries an age; it does not carry a flag,
+ * because a flag is a field a model can write and therefore a field a model can
+ * clear. The integer `age` is the only input, and no argument, override or
+ * author opt-in exists to answer this differently.
+ *
+ * Missing, null, "17", 17.5 — anything that is not an integer — is a minor.
+ * That is the fail-closed direction: guessing "child" about an adult costs one
+ * character who cannot be flirted with, and guessing the other way costs the
+ * thing this entire layer exists to prevent. xeric_world_validate() requires an
+ * integer age so that a loaded world never leans on this default.
+ *
+ * What being a minor gates is ONE axis: sex. It has no bearing on whether a
+ * character exists, appears in a place, speaks, keeps a secret, witnesses
+ * something, drives an event or has a portrait. A town with no children is not
+ * a town, and in a mystery the child is usually the one who saw it.
+ */
+function xeric_is_minor(array $character): bool
+{
+    $age = $character['age'] ?? null;
+    if (!is_int($age)) return true;
+    return $age < XERIC_ADULT_AGE;
+}
+
+/**
+ * The rating a given character may be rendered at.
+ *
+ * An adult renders at the world's rating. A minor renders at the weakest rating
+ * there is — whatever the world asked for, whatever a node asked for, with no
+ * path to raise it. Callers hold this string and gate against it, which is what
+ * makes the content unreachable rather than merely discouraged: see
+ * xeric_rating_allows() in walls.php, where every gate in the engine lands.
+ */
+function xeric_effective_rating(string $worldRating, array $character): string
+{
+    if (xeric_is_minor($character)) return xeric_ratings()[0];
+    return $worldRating;
+}
+
+/**
+ * Read, decode and validate a world template.
+ *
+ * @throws RuntimeException on unreadable file, bad JSON, or any validation failure.
+ */
+function xeric_world_load(string $path): array
+{
+    $t = xeric_template_load($path);           // walls.php: read + json_decode
+    xeric_world_validate($t, basename($path));
+    return $t;
+}
+
+/**
+ * Validate an already-decoded template.
+ *
+ * @param string $label what to call this template in error messages — a filename
+ *                      when there is one, so a stack of worlds is tellable apart.
+ * @throws RuntimeException naming the offending path, e.g.
+ *         "xeric: milldale.json: cast.characters[2].orbit 'firm' is not a declared orbit"
+ */
+function xeric_world_validate(array $t, string $label = 'template'): void
+{
+    $bad = function (string $path, string $problem) use ($label): void {
+        throw new RuntimeException("xeric: $label: $path $problem");
+    };
+
+    // -- required top-level keys ------------------------------------------
+    // setting / economies / boons / mystery / world_mood / events / proactive
+    // / media are all optional: a world can be a cast in a room. These four are
+    // not, because every renderer and every wall reads them.
+    foreach (['meta', 'user', 'places', 'cast'] as $req) {
+        if (!array_key_exists($req, $t)) $bad($req, 'is a required top-level key and is missing');
+        if (!is_array($t[$req]))         $bad($req, 'must be an object');
+    }
+    if (trim((string)($t['meta']['name'] ?? '')) === '') $bad('meta.name', 'is required and must be a non-empty string');
+    if (!xeric_world_is_list($t['places']))              $bad('places', 'must be a list');
+
+    // -- the user's timezone: the clock is built from it ------------------
+    $tz = trim((string)($t['user']['timezone'] ?? ''));
+    if ($tz === '') $bad('user.timezone', 'is required, the world clock has nowhere to stand without it');
+    try { new DateTimeZone($tz); }
+    catch (Throwable $e) { $bad('user.timezone', "'$tz' is not a timezone PHP knows"); }
+
+    // A DRAFT MAY BE EMPTY. A xeric that has not been launched is on the anvil:
+    // somebody is building it by hand, and the state they start in is nobody and
+    // nowhere. Requiring a cast there means "start blank" has to invent a person
+    // to satisfy a rule about xerics that are being PLAYED.
+    //
+    // The rule itself does not move. review.php validates as strict before it
+    // will launch anything, so a xeric with nobody in it can be edited all day
+    // and can never be entered — which is the honest place for the check,
+    // because that is the moment the renderers and the walls start reading.
+    $draft = !empty($t['forge']['review_pending']);
+
+    $cast = (array)$t['cast'];
+    if (!isset($cast['characters']) || !xeric_world_is_list($cast['characters'])
+        || ($cast['characters'] === [] && !$draft)) {
+        $bad('cast.characters', $draft ? 'must be a list' : 'must be a non-empty list');
+    }
+    if (!isset($cast['orbits']) || !xeric_world_is_list($cast['orbits'])
+        || ($cast['orbits'] === [] && !$draft)) {
+        $bad('cast.orbits', 'must be a non-empty list, every character declares one');
+    }
+
+    // -- collect declarations first, then check references ----------------
+    $places = [];
+    foreach ($t['places'] as $i => $p) {
+        $k = (string)($p['key'] ?? '');
+        if ($k === '')                 $bad("places[$i].key", 'is required and must be a non-empty string');
+        if (isset($places[$k]))        $bad("places[$i].key", "'$k' is declared twice");
+        $places[$k] = true;
+    }
+
+    $orbits = [];
+    foreach ($cast['orbits'] as $i => $o) {
+        $k = (string)($o['key'] ?? '');
+        if ($k === '')                 $bad("cast.orbits[$i].key", 'is required and must be a non-empty string');
+        if (isset($orbits[$k]))        $bad("cast.orbits[$i].key", "'$k' is declared twice");
+        $orbits[$k] = true;
+    }
+
+    $chars  = [];
+    $minors = [];
+    foreach ($cast['characters'] as $i => $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '')                 $bad("cast.characters[$i].handle", 'is required and must be a non-empty string');
+        if (isset($chars[$h]))         $bad("cast.characters[$i].handle", "'$h' is declared twice");
+        $chars[$h] = true;
+
+        // Age is a shape rule, checked here with the handle because everything
+        // downstream reads it: xeric_is_minor() takes age and nothing else, and
+        // answers "minor" for anything it cannot read. A template that simply
+        // forgot the field would therefore load as an all-child cast and lose
+        // its adult layer without saying a word — so it does not load.
+        if (!is_int($c['age'] ?? null)) {
+            $bad("cast.characters[$i].age", "is required and must be an integer, '$h' has " . json_encode($c['age'] ?? null));
+        }
+        if (xeric_is_minor($c)) $minors[$h] = true;
+    }
+
+    $fixtures = [];
+    foreach ((array)($cast['fixtures'] ?? []) as $i => $f) {
+        $k = (string)($f['key'] ?? '');
+        if ($k === '')                 $bad("cast.fixtures[$i].key", 'is required and must be a non-empty string');
+        if (isset($fixtures[$k]))      $bad("cast.fixtures[$i].key", "'$k' is declared twice");
+        $fixtures[$k] = true;
+    }
+
+    $circles = [];
+    foreach ((array)($cast['circles'] ?? []) as $i => $c) {
+        $k = (string)($c['key'] ?? '');
+        if ($k === '')                 $bad("cast.circles[$i].key", 'is required and must be a non-empty string');
+        $circles[$k] = true;
+    }
+
+    $roles = [];
+    foreach ((array)($cast['special_roles'] ?? []) as $i => $sr) {
+        $r = (string)($sr['role'] ?? '');
+        if ($r === '')                 $bad("cast.special_roles[$i].role", 'is required and must be a non-empty string');
+        $roles[$r] = true;
+    }
+
+    $wallKeys = [];
+    foreach ((array)($t['knowledge_walls'] ?? []) as $i => $w) {
+        $k = (string)($w['key'] ?? '');
+        if ($k === '')                 $bad("knowledge_walls[$i].key", 'is required and must be a non-empty string');
+        if (isset($wallKeys[$k]))      $bad("knowledge_walls[$i].key", "'$k' is declared twice");
+        $wallKeys[$k] = true;
+    }
+
+    // Who asks for a wall BY NAME, so the audience check below can tell a wall
+    // handed out by a special role from a wall nobody will ever be handed.
+    $wallRefs = [];
+    foreach ((array)($cast['special_roles'] ?? []) as $sr) {
+        foreach ((array)($sr['walls'] ?? []) as $named) $wallRefs[(string)$named] = true;
+    }
+
+    $economies = [];
+    foreach ((array)($t['economies'] ?? []) as $i => $e) {
+        $k = (string)($e['key'] ?? '');
+        if ($k === '')                 $bad("economies[$i].key", 'is required and must be a non-empty string');
+        if (isset($economies[$k]))     $bad("economies[$i].key", "'$k' is declared twice");
+        $economies[$k] = true;
+    }
+
+    $people = $chars + $fixtures;   // anyone a name can point at
+
+    // -- ratings ----------------------------------------------------------
+    $legal = xeric_ratings();
+    $mr = (string)($t['meta']['rating'] ?? 'sfw');
+    if (!in_array($mr, $legal, true)) {
+        $bad('meta.rating', "'$mr' is not one of " . implode('|', $legal));
+    }
+    // Every rating_min in the tree, wherever an author hung one. An unknown
+    // string sorts as sfw in xeric_rating_rank(), so a typo would silently
+    // UNGATE a node meant to be gated — the exact opposite of what was asked for.
+    foreach (xeric_world_find_ratings($t, '') as [$path, $value]) {
+        if (!in_array($value, $legal, true)) {
+            $bad($path, "'$value' is not one of " . implode('|', $legal));
+        }
+    }
+
+    // -- places -----------------------------------------------------------
+    foreach ($t['places'] as $i => $p) {
+        foreach ((array)($p['residents'] ?? []) as $j => $r) {
+            $r = (string)$r;
+            if (!isset($people[$r])) $bad("places[$i].residents[$j]", "'$r' names neither a character nor a fixture");
+        }
+    }
+
+    // -- user -------------------------------------------------------------
+    $wkey = $t['user']['occupation']['workplace_key'] ?? null;
+    if ($wkey !== null && (string)$wkey !== '' && !isset($places[(string)$wkey])) {
+        $bad('user.occupation.workplace_key', "'$wkey' is not a declared place");
+    }
+
+    // Quiet hours fail OPEN when they are malformed: the sweeps parse
+    // "HH:MM-HH:MM" and read anything else as "there are none", so "11pm-7am",
+    // or the en-dash a paste leaves behind, switches the world's nights back on
+    // without saying so. Empty is how a world says it never sleeps.
+    $quiet = trim((string)($t['user']['quiet_hours'] ?? ''));
+    if ($quiet !== '') {
+        $ends = explode('-', $quiet);
+        if (count($ends) !== 2 || !xeric_world_is_hhmm(trim($ends[0])) || !xeric_world_is_hhmm(trim($ends[1]))) {
+            $bad('user.quiet_hours', "'$quiet' is not an HH:MM-HH:MM range (leave it empty for none)");
+        }
+    }
+
+    // -- circles ----------------------------------------------------------
+    foreach ((array)($cast['circles'] ?? []) as $i => $c) {
+        foreach ((array)($c['members_from_orbits'] ?? []) as $j => $o) {
+            $o = (string)$o;
+            if (!isset($orbits[$o])) $bad("cast.circles[$i].members_from_orbits[$j]", "'$o' is not a declared orbit");
+        }
+        foreach ((array)($c['members'] ?? []) as $j => $m) {
+            $m = (string)$m;
+            if (!isset($people[$m])) $bad("cast.circles[$i].members[$j]", "'$m' names neither a character nor a fixture");
+        }
+        $hp = (string)($c['hangout_place'] ?? '');
+        if ($hp !== '' && !isset($places[$hp])) $bad("cast.circles[$i].hangout_place", "'$hp' is not a declared place");
+    }
+
+    // -- characters -------------------------------------------------------
+    foreach ($cast['characters'] as $i => $c) {
+        $h     = (string)($c['handle'] ?? '');
+        $orbit = (string)($c['orbit'] ?? '');
+        // Required, not optional: a character with no orbit matches no audience
+        // selector, so every orbit-scoped wall silently misses them. Deny by
+        // default means refusing to load rather than quietly leaking.
+        if ($orbit === '')          $bad("cast.characters[$i].orbit", 'is required, a character outside every orbit falls outside every wall');
+        if (!isset($orbits[$orbit])) $bad("cast.characters[$i].orbit", "'$orbit' is not a declared orbit");
+
+        // A minor is out of the desire economy STRUCTURALLY, at load, rather
+        // than by asking every renderer to remember. These three fields are the
+        // whole of it — the romance surfaces (flirt_style renders in the bible
+        // and in the character's own prompt, attraction_seeds is the desire
+        // ledger) and rating gates inside their dossier, which
+        // xeric_effective_rating() makes unreachable anyway: content that can
+        // never render is content nobody should be writing about a child.
+        // Nothing else on the character is touched. Their schedule, secrets,
+        // walls, events, portrait and place in the cast are ordinary.
+        if (isset($minors[$h])) {
+            if (trim((string)($c['flirt_style'] ?? '')) !== '') {
+                $bad("cast.characters[$i].flirt_style", "is set on '$h', who is a minor, minors are not in the desire economy");
+            }
+            if ((array)($c['relationships']['attraction_seeds'] ?? []) !== []) {
+                $bad("cast.characters[$i].relationships.attraction_seeds", "is set on '$h', who is a minor, minors are not in the desire economy");
+            }
+            foreach (xeric_world_find_ratings($c, "cast.characters[$i]") as [$rp, $rv]) {
+                if (xeric_rating_rank($rv) > 0) {
+                    $bad($rp, "gates content above sfw on '$h', who is a minor, a minor never renders above sfw, so the node is unreachable");
+                }
+            }
+        }
+
+        foreach ((array)($c['week'] ?? []) as $j => $w) {
+            $p = "cast.characters[$i].week[$j]";
+            $where = (string)($w['where'] ?? '');
+            if ($where !== '' && !isset($places[$where])) $bad("$p.where", "'$where' is not a declared place");
+            foreach ((array)($w['days'] ?? []) as $k => $d) {
+                if (!is_int($d) || $d < 0 || $d > 6) $bad("$p.days[$k]", 'must be an integer 0-6 (0 = Sunday)');
+            }
+            foreach (['from', 'to'] as $f) {
+                if (!isset($w[$f])) continue;
+                if (!xeric_world_is_hhmm((string)$w[$f])) $bad("$p.$f", "'{$w[$f]}' is not an HH:MM time");
+            }
+        }
+
+        $rel = (array)($c['relationships'] ?? []);
+        foreach (['roommates', 'friend_pairs'] as $rk) {
+            foreach ((array)($rel[$rk] ?? []) as $j => $r) {
+                $r = (string)$r;
+                if (!isset($people[$r])) $bad("cast.characters[$i].relationships.$rk\[$j]", "'$r' names neither a character nor a fixture");
+            }
+        }
+        foreach ((array)($rel['attraction_seeds'] ?? []) as $who => $n) {
+            $who = (string)$who;
+            if (!isset($people[$who])) $bad("cast.characters[$i].relationships.attraction_seeds.$who", 'names neither a character nor a fixture');
+            // The seed points OUT, so the character it aims at is the one being
+            // put in the economy — checking only the seed's owner would leave
+            // the aimed-at half of the pair unguarded.
+            if (isset($minors[$who])) {
+                $bad("cast.characters[$i].relationships.attraction_seeds.$who", "aims at '$who', who is a minor, minors are not in the desire economy");
+            }
+        }
+    }
+
+    // -- fixtures ---------------------------------------------------------
+    foreach ((array)($cast['fixtures'] ?? []) as $i => $f) {
+        $pl = (string)($f['place'] ?? '');
+        if ($pl !== '' && !isset($places[$pl])) $bad("cast.fixtures[$i].place", "'$pl' is not a declared place");
+        $same = (string)($f['same_as'] ?? '');
+        // The two-Harlans case: a fixture may be the scenery form of a speaking
+        // character. A same_as pointing at nothing means the renderer dedupes
+        // nothing and the person appears twice under two names.
+        if ($same !== '' && !isset($chars[$same])) $bad("cast.fixtures[$i].same_as", "'$same' is not a declared character");
+        $fo = (string)($f['orbit'] ?? '');
+        if ($fo !== '' && !isset($orbits[$fo])) $bad("cast.fixtures[$i].orbit", "'$fo' is not a declared orbit");
+        foreach ((array)($f['days'] ?? []) as $j => $d) {
+            if (!is_int($d) || $d < 0 || $d > 6) $bad("cast.fixtures[$i].days[$j]", 'must be an integer 0-6 (0 = Sunday)');
+        }
+    }
+
+    // -- special roles ----------------------------------------------------
+    foreach ((array)($cast['special_roles'] ?? []) as $i => $sr) {
+        $ch = (string)($sr['character'] ?? '');
+        if ($ch === '')            $bad("cast.special_roles[$i].character", 'is required');
+        if (!isset($chars[$ch]))   $bad("cast.special_roles[$i].character", "'$ch' is not a declared character");
+        foreach ((array)($sr['walls'] ?? []) as $j => $wk2) {
+            $wk2 = (string)$wk2;
+            if (!isset($wallKeys[$wk2])) $bad("cast.special_roles[$i].walls[$j]", "'$wk2' is not a declared knowledge wall");
+        }
+    }
+
+    // -- knowledge walls --------------------------------------------------
+    foreach ((array)($t['knowledge_walls'] ?? []) as $i => $w) {
+        $wk = (string)($w['key'] ?? '');
+        if (!isset($w['audience'])) {
+            // A wall handed out by name only is the explicit case and fine. A
+            // wall that nobody is handed and that matches nobody is a wall in an
+            // open field: it loads, it renders nothing, and the thing it was
+            // written to keep back is in every reader's prompt.
+            if (!isset($wallRefs[$wk])) {
+                $bad("knowledge_walls[$i]", "'$wk' has no audience and no special role names it, so it protects nobody");
+            }
+            continue;
+        }
+        if (!is_array($w['audience'])) $bad("knowledge_walls[$i].audience", 'must be an object');
+        if ($w['audience'] === [])     $bad("knowledge_walls[$i].audience", 'is empty and therefore matches nobody');
+        foreach ($w['audience'] as $field => $want) {
+            $p    = "knowledge_walls[$i].audience.$field";
+            $want = (string)$want;
+            switch ($field) {
+                case 'role':   if (!isset($roles[$want]))  $bad($p, "'$want' is not a role declared in cast.special_roles"); break;
+                case 'orbit':  if (!isset($orbits[$want])) $bad($p, "'$want' is not a declared orbit"); break;
+                case 'circle': if (!isset($circles[$want])) $bad($p, "'$want' is not a declared circle"); break;
+                case 'handle': if (!isset($people[$want])) $bad($p, "'$want' names neither a character nor a fixture"); break;
+                default:
+                    // xeric_audience_match() returns false for unknown selectors,
+                    // so this wall would protect nobody, quietly, forever.
+                    $bad($p, 'is not a selector the engine understands (role|orbit|circle|handle)');
+            }
+        }
+    }
+
+    // -- economies + their board audiences --------------------------------
+    foreach ((array)($t['economies'] ?? []) as $i => $e) {
+        foreach ((array)($e['board']['visible_to'] ?? []) as $j => $sel) {
+            $p = "economies[$i].board.visible_to[$j]";
+            xeric_world_check_selector((string)$sel, $p, $roles, $orbits, $circles, $people, $bad);
+        }
+    }
+
+    // -- boons ------------------------------------------------------------
+    foreach ((array)($t['boons'] ?? []) as $i => $b) {
+        if ((string)($b['key'] ?? '') === '') $bad("boons[$i].key", 'is required and must be a non-empty string');
+        $eco = (string)($b['payout']['economy'] ?? '');
+        if ($eco !== '' && !isset($economies[$eco])) $bad("boons[$i].payout.economy", "'$eco' is not a declared economy");
+    }
+
+    // -- mystery ----------------------------------------------------------
+    $m = (array)($t['mystery'] ?? []);
+    if (!empty($m['enabled'])) {
+        $pk = (string)($m['place_key'] ?? '');
+        if ($pk !== '' && !isset($places[$pk])) $bad('mystery.place_key', "'$pk' is not a declared place");
+    }
+}
+
+/** Selector strings ("orbit:x", "cast_minus:a,b", bare handle) used by boards. */
+function xeric_world_check_selector(string $sel, string $path, array $roles, array $orbits, array $circles, array $people, callable $bad): void
+{
+    $sel = trim($sel);
+    if ($sel === 'all' || $sel === '*') return;
+
+    $kind = $sel;
+    $arg  = '';
+    if (str_contains($sel, ':')) [$kind, $arg] = explode(':', $sel, 2);
+
+    switch ($kind) {
+        case 'orbit':  if (!isset($orbits[$arg]))  $bad($path, "'$arg' is not a declared orbit"); return;
+        case 'role':   if (!isset($roles[$arg]))   $bad($path, "'$arg' is not a role declared in cast.special_roles"); return;
+        case 'circle': if (!isset($circles[$arg])) $bad($path, "'$arg' is not a declared circle"); return;
+        case 'handle': if (!isset($people[$arg]))  $bad($path, "'$arg' names neither a character nor a fixture"); return;
+        case 'cast_minus':
+            foreach (explode(',', $arg) as $ex) {
+                $ex = trim($ex);
+                if ($ex === '') continue;
+                if (!isset($roles[$ex]) && !isset($orbits[$ex]) && !isset($people[$ex])) {
+                    $bad($path, "exempts '$ex', which is not a role, an orbit, or anybody");
+                }
+            }
+            return;
+        default:
+            if (!isset($people[$sel])) $bad($path, "'$sel' names neither a character nor a fixture");
+    }
+}
+
+/** Every rating_min in the tree, as [dotted.path, value] pairs. */
+function xeric_world_find_ratings($node, string $path): array
+{
+    $out = [];
+    if (!is_array($node)) return $out;
+    foreach ($node as $k => $v) {
+        $child = $path === '' ? (string)$k : $path . (is_int($k) ? "[$k]" : ".$k");
+        if ($k === 'rating_min') { $out[] = [$child, (string)$v]; continue; }
+        if (is_array($v)) $out = array_merge($out, xeric_world_find_ratings($v, $child));
+    }
+    return $out;
+}
+
+function xeric_world_is_list($v): bool
+{
+    return is_array($v) && ($v === [] || array_is_list($v));
+}
+
+function xeric_world_is_hhmm(string $s): bool
+{
+    return (bool)preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9]$/', $s);
+}
+
+/**
+ * effective_rating = min(template ceiling, what the loaded model will do).
+ * A wholesome template stays wholesome on any model; an explicit template
+ * degrades to the model's pools rather than asking for what it cannot give.
+ */
+function xeric_world_rating(array $t, ?string $modelRating = null): string
+{
+    $template = (string)($t['meta']['rating'] ?? 'sfw');
+    if ($modelRating === null) return $template;
+    return xeric_rating_rank($modelRating) < xeric_rating_rank($template) ? $modelRating : $template;
+}
+
+/**
+ * Pin a template's meta.rating to what the session actually affirmed.
+ *
+ * DOWN ONLY. An unaffirmed session reads every world at the weakest rating no
+ * matter what its meta.rating says; an affirmed one reads what the template
+ * already declared. Affirming is not a way to raise a world's ceiling — there
+ * is no argument to this function that raises anything.
+ *
+ * Clamp once, at the boundary where a template enters a session, and everything
+ * downstream inherits it: xeric_world_rating() floors against it, every
+ * rating_min in the tree gates against it, and a world acquired at explicit
+ * cannot so much as render its gated nodes for a session that never said yes.
+ *
+ * The affirmation itself is read by the web layer and passed in. Nothing here
+ * touches session state: a rating that depended on ambient state would be a
+ * rating nobody could test.
+ */
+function xeric_world_clamp_rating(array $t, bool $adultAffirmed): array
+{
+    $meta = (array)($t['meta'] ?? []);
+    $meta['rating'] = xeric_rating_clamp((string)($meta['rating'] ?? xeric_ratings()[0]), $adultAffirmed);
+    $t['meta'] = $meta;
+    return $t;
+}
+
+// ---------------------------------------------------------------------------
+// Resolvers
+// ---------------------------------------------------------------------------
+
+function xeric_world_character(array $t, string $handle): ?array
+{
+    foreach ($t['cast']['characters'] ?? [] as $c) {
+        if ((string)($c['handle'] ?? '') === $handle) return $c;
+    }
+    return null;
+}
+
+function xeric_world_place(array $t, string $key): ?array
+{
+    foreach ($t['places'] ?? [] as $p) {
+        if ((string)($p['key'] ?? '') === $key) return $p;
+    }
+    return null;
+}
+
+function xeric_world_fixture(array $t, string $key): ?array
+{
+    foreach ($t['cast']['fixtures'] ?? [] as $f) {
+        if ((string)($f['key'] ?? '') === $key) return $f;
+    }
+    return null;
+}
+
+/** The cast in template order, optionally narrowed to one orbit. */
+function xeric_world_cast(array $t, ?string $orbit = null): array
+{
+    $out = [];
+    foreach ($t['cast']['characters'] ?? [] as $c) {
+        if ($orbit !== null && (string)($c['orbit'] ?? '') !== $orbit) continue;
+        $out[] = $c;
+    }
+    return $out;
+}
+
+/** Display name for a character, a fixture, or a handle that is neither. */
+function xeric_world_name(array $t, string $handle): string
+{
+    $c = xeric_world_character($t, $handle);
+    if ($c) return (string)($c['display_name'] ?? $handle);
+    $f = xeric_world_fixture($t, $handle);
+    if ($f) {
+        $same = (string)($f['same_as'] ?? '');
+        if ($same !== '') return xeric_world_name($t, $same);
+        return (string)($f['name'] ?? $handle);
+    }
+    return $handle;
+}
+
+function xeric_world_place_name(array $t, ?string $key): string
+{
+    if ($key === null || $key === '') return '';
+    $p = xeric_world_place($t, $key);
+    return $p ? (string)($p['name'] ?? $key) : $key;
+}
+
+// ---------------------------------------------------------------------------
+// The world clock
+// ---------------------------------------------------------------------------
+
+/**
+ * The world clock, in the template's timezone.
+ *
+ * @param int|null $epoch inject one. The default is the ONLY read of the wall
+ *                        clock in the engine — the demo's time control passes a
+ *                        shifted epoch and everything downstream agrees with it,
+ *                        which only works because nothing downstream calls time().
+ * @return array{epoch:int,iso:string,dow:int,hhmm:string,phase:string,tz:string}
+ *         dow is 0 = Sunday (PHP 'w'), matching week[].days everywhere else.
+ */
+function xeric_world_now(array $t, ?int $epoch = null): array
+{
+    $epoch = $epoch ?? time();
+    $tzName = (string)($t['user']['timezone'] ?? 'UTC');
+    try { $tz = new DateTimeZone($tzName); }
+    catch (Throwable $e) { $tz = new DateTimeZone('UTC'); $tzName = 'UTC'; }
+
+    $dt = (new DateTimeImmutable('@' . $epoch))->setTimezone($tz);
+    $hh = (int)$dt->format('G');
+    $mm = (int)$dt->format('i');
+
+    return [
+        'epoch' => $epoch,
+        'iso'   => $dt->format('c'),
+        'dow'   => (int)$dt->format('w'),
+        'hhmm'  => $dt->format('H:i'),
+        'phase' => xeric_world_phase($hh * 60 + $mm),
+        'tz'    => $tzName,
+    ];
+}
+
+/**
+ * Minutes past local midnight → phase.
+ *
+ * Boundaries are engine canon, not per-template: sweeps, ping windows and prose
+ * all key off these four words, so a template that moved them would move the
+ * meaning of every phase-gated rule at once. Quiet hours are the per-world knob.
+ */
+function xeric_world_phase(int $minutes): string
+{
+    if ($minutes < 5 * 60)  return 'night';
+    if ($minutes < 12 * 60) return 'morning';
+    if ($minutes < 17 * 60) return 'afternoon';
+    if ($minutes < 22 * 60) return 'evening';
+    return 'night';
+}
+
+function xeric_world_day_name(int $dow): string
+{
+    $names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return $names[$dow] ?? '';
+}
+
+/** "HH:MM" → minutes past midnight, or null when it isn't a time. */
+function xeric_world_minutes(?string $hhmm): ?int
+{
+    if ($hhmm === null || !xeric_world_is_hhmm($hhmm)) return null;
+    [$h, $m] = explode(':', $hhmm);
+    return ((int)$h) * 60 + (int)$m;
+}
+
+/**
+ * Where everybody is, right now.
+ *
+ * The spine of presence (who is in the room) and of event generation (who could
+ * plausibly have been at the thing that happened). Characters only: fixtures are
+ * scenery with a day list and no hours, and a fixture that is really a cast
+ * member (same_as) would otherwise stand in two places at once.
+ *
+ * @param string[]|null $dead handles who are no longer in any room. Passed rather
+ *                       than read, because this function is pure and a world is
+ *                       a template — who has DIED is state, and it lives in the
+ *                       database (death.php). This is the ONE place the dead
+ *                       leave the world: presence feeds the prompt's room line,
+ *                       the play screen's cast, the travel map and every sweep's
+ *                       participant list, so a dead person dropped here is a
+ *                       dead person dropped everywhere at once. Null is a world
+ *                       that has lost nobody, which is almost all of them.
+ * @return array<string,array{handle:string,where:?string,doing:?string}>
+ *         keyed by handle AND carrying the handle, so callers can foreach or
+ *         look up without converting. The dead are absent entirely rather than
+ *         present with a null room: `where === null` already means off shift,
+ *         and a caller cannot be asked to tell "at home" from "in the ground".
+ */
+function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): array
+{
+    $dow  = (int)($now['dow'] ?? 0);
+    $mins = xeric_world_minutes((string)($now['hhmm'] ?? '')) ?? 0;
+    $prev = ($dow + 6) % 7;
+    $gone = $dead === null ? [] : array_flip(array_map('strval', $dead));
+
+    $out = [];
+    foreach ($t['cast']['characters'] ?? [] as $c) {
+        $handle = (string)($c['handle'] ?? '');
+        if ($handle === '' || isset($gone[$handle])) continue;
+
+        $row = ['handle' => $handle, 'where' => null, 'doing' => null];
+        foreach ((array)($c['week'] ?? []) as $w) {
+            if (!xeric_world_week_covers($w, $dow, $prev, $mins)) continue;
+            $where = (string)($w['where'] ?? '');
+            $doing = xeric_text($w['doing'] ?? '');
+            $row['where'] = $where !== '' ? $where : null;
+            $row['doing'] = $doing !== '' ? $doing : null;
+            break;                            // first matching block wins: template order is the tiebreak
+        }
+        $out[$handle] = $row;
+    }
+    return $out;
+}
+
+/**
+ * Does one week[] block cover this moment?
+ *
+ * A block with no `from`/`to` covers its whole day. A block whose `to` is at or
+ * before its `from` wraps past midnight (22:00–02:00 is a real shift in a bar
+ * world), so it also covers the small hours of the day AFTER each listed day.
+ * Bounds are half-open [from, to): a block ending at 17:00 and one starting at
+ * 17:00 hand off cleanly instead of both claiming 17:00.
+ */
+function xeric_world_week_covers(array $w, int $dow, int $prevDow, int $mins): bool
+{
+    $days = array_map('intval', (array)($w['days'] ?? []));
+    $from = xeric_world_minutes(isset($w['from']) ? (string)$w['from'] : null);
+    $to   = xeric_world_minutes(isset($w['to'])   ? (string)$w['to']   : null);
+
+    $today     = in_array($dow, $days, true);
+    $yesterday = in_array($prevDow, $days, true);
+
+    if ($from === null || $to === null) return $today;      // all-day block
+    if ($to > $from) return $today && $mins >= $from && $mins < $to;
+
+    // wraps midnight
+    return ($today && $mins >= $from) || ($yesterday && $mins < $to);
+}
+
+/** Handles of everyone at $placeKey right now, in cast order. */
+function xeric_world_who_is_at(array $presence, string $placeKey): array
+{
+    $out = [];
+    foreach ($presence as $row) {
+        if (($row['where'] ?? null) === $placeKey) $out[] = (string)$row['handle'];
+    }
+    return $out;
+}
