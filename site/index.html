@@ -197,12 +197,67 @@
   a {
     color: inherit;
   }
+
+  /* The dev card: quiet, bordered, in the page's own palette. Reads as a
+     colophon that happens to be alive, never as a dashboard. */
+  .devcard {
+    margin: clamp(1.4rem, 4vw, 2rem) 0 0;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--bg-2);
+    padding: 0.85rem 1rem;
+    font-size: 0.9rem;
+  }
+  .devlinks { display: flex; flex-wrap: wrap; gap: 0.35rem 1.4rem; }
+  .devlinks a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px solid var(--accent-dim);
+  }
+  .devlinks a:hover { border-bottom-color: var(--accent); }
+  .devver {
+    margin: 0.7rem 0 0.25rem;
+    color: var(--fg);
+  }
+  .devver::before { content: "● "; color: var(--accent); }
+  .devcommits {
+    margin: 0; padding: 0; list-style: none;
+    color: var(--fg-dim);
+  }
+  .devcommits li {
+    padding: 0.15rem 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .devcommits a {
+    text-decoration: none; color: var(--fg-dim);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+  }
+  .devcommits a:hover { color: var(--accent); }
+  .devcommits .when { font-size: 0.8rem; }
 </style>
 
 <main>
   <h1 class="wordmark">XERIC</h1>
   <p class="tagline">A living world that runs on your own machine —
     and doesn't wait for you.</p>
+
+  <!-- THE DEV CARD. The links a developer looks for, next to the name they
+       looked up: the paper, the source, the license — and the repository's own
+       pulse, fetched client-side from the public GitHub API. The pulse is
+       decoration on top of working links: rate-limited, offline, or blocked,
+       the card degrades to three <a> tags and loses nothing that matters. -->
+  <aside class="devcard" aria-label="for developers">
+    <div class="devlinks">
+      <a href="paper.html">the whitepaper</a>
+      <a href="https://github.com/Gwonk1/xeric">source on GitHub</a>
+      <a href="https://github.com/Gwonk1/xeric/blob/main/LICENSE">AGPL-3.0</a>
+    </div>
+    <div class="devpulse" id="devpulse" hidden>
+      <p class="devver" id="devver"></p>
+      <ul class="devcommits" id="devcommits"></ul>
+    </div>
+  </aside>
 
   <div class="horizon" role="presentation"></div>
 
@@ -294,4 +349,42 @@
     <p>The engine works. The repository opens with the first release.</p>
     <p>For the how and the why, measured: <a href="paper.html">the whitepaper</a>.</p>
   </footer>
+
+<script>
+// The repository's pulse. Public API, unauthenticated, one request; any
+// failure — rate limit, offline, an API reshape — leaves the card exactly as
+// it rendered from HTML: three working links. Nothing here may break the page.
+(function () {
+  fetch('https://api.github.com/repos/Gwonk1/xeric/commits?per_page=5')
+    .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+    .then(function (commits) {
+      if (!Array.isArray(commits) || !commits.length) return;
+      var ago = function (iso) {
+        var s = (Date.now() - new Date(iso).getTime()) / 1000;
+        if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm ago';
+        if (s < 86400) return Math.round(s / 3600) + 'h ago';
+        return Math.round(s / 86400) + 'd ago';
+      };
+      var head = commits[0];
+      document.getElementById('devver').textContent =
+        'beta · ' + head.sha.slice(0, 7) + ' · updated ' + ago(head.commit.author.date);
+      var ul = document.getElementById('devcommits');
+      commits.forEach(function (c) {
+        var li = document.createElement('li');
+        var a = document.createElement('a');
+        a.href = c.html_url;
+        a.textContent = c.sha.slice(0, 7);
+        var span = document.createElement('span');
+        span.textContent = ' ' + c.commit.message.split('\n')[0] + ' ';
+        var when = document.createElement('span');
+        when.className = 'when';
+        when.textContent = '· ' + ago(c.commit.author.date);
+        li.appendChild(a); li.appendChild(span); li.appendChild(when);
+        ul.appendChild(li);
+      });
+      document.getElementById('devpulse').hidden = false;
+    })
+    .catch(function () { /* the card is already whole without it */ });
+})();
+</script>
 </main>
