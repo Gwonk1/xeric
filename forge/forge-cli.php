@@ -63,6 +63,28 @@ fwrite(STDOUT, "up\n");
 
 // -- answers ----------------------------------------------------------------
 $answers = xeric_cli_answers((string)($args['answers'] ?? ''));
+
+// SURPRISE ME IS SFW, HERE TOO. An unanswered rating is a GAP, and the routes
+// that fill gaps will happily choose for you — the concept table alone asks for
+// `mature` in four of its five rows. The web wizard closes this by pre-selecting
+// the weakest rating beside its ✨ button; there is no screen out here to put a
+// selector on, so the default IS the selector.
+//
+// It is not a ceiling and it does not gate anything: this is a local tool run by
+// whoever owns the machine, and `--rating=mature` (or `--answers=rating=mature`)
+// takes effect immediately with nothing to affirm. What it refuses to do is pick
+// an adult world for somebody who never said one word about it.
+$ratingArg = strtolower(trim((string)($args['rating'] ?? '')));
+if ($ratingArg !== '') {
+    if (!in_array($ratingArg, xeric_ratings(), true)) {
+        fwrite(STDERR, 'forge-cli: --rating must be one of ' . implode(', ', xeric_ratings()) . "\n");
+        exit(2);
+    }
+    $answers['rating'] = $ratingArg;
+}
+if (!isset($answers['rating']) || trim((string)$answers['rating']) === '') {
+    $answers['rating'] = xeric_ratings()[0];
+}
 $opts = [
     'places' => (int)($args['places'] ?? 6),
     'cast'   => (int)($args['cast'] ?? 4),
@@ -198,6 +220,7 @@ function xeric_cli_usage(): string
       --key=SECRET         api key (or set XERIC_API_KEY)
 
       --answers=k=v,k=v    scale, name, job, hours, motivation, rating, themes (a|b|c)
+      --rating=sfw|mature|explicit   how far this xeric may go (default sfw)
       --surprise           ask the model to fill the unanswered steps (✨)
       --places=N           how many places (6 for the slice)
       --cast=N             how many people (4 for the slice)
