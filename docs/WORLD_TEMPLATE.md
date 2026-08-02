@@ -203,6 +203,24 @@ Design principles, learned the hard way:
       "special": null                       // or "mystery" — a label for the
                                             // reader and the forge; `mystery`
                                             // below is what the engine reads
+    },
+
+    // HOMES. A home is a place like any other — kind "home", residents — and
+    // it is where a character IS whenever their week says nothing else: off
+    // shift, asleep, Sunday afternoon. who_is_where resolves them there (the
+    // row carries `at_home: true`), so a world of morning shifts is not a
+    // ghost town at 21:00, and a kitchen-table conversation is a real scene at
+    // a real placement. Shared homes are encouraged — a marriage, roommates, a
+    // kid at a parent's — because a shared roof is a relationship the cast
+    // section never has to state. Two rules the validator enforces: a home
+    // must have at least one resident, and one person lives in at most one
+    // home ("their home" must have a single answer).
+    {
+      "key": "dot_and_walts",
+      "name": "Dot and Walt's place",
+      "kind": "home",
+      "description": "A two-bedroom over the pharmacy, plants in every window.",
+      "residents": ["dot", "walt"]
     }
   ],
 
@@ -235,6 +253,12 @@ Design principles, learned the hard way:
       // an explicit "members": [handles] list adds anyone the orbits miss
     ],
 
+    // first_contact: the person the world opens onto. Optional; when set it
+    // must name a character (never a fixture — fixtures cannot talk), and the
+    // validator refuses a first_contact who is OUT of the story. The forge's
+    // staging picks one motivation-aware; a hand-built world names its own.
+    "first_contact": "ruth",
+
     "characters": [
       {
         "handle": "ruth",
@@ -242,6 +266,13 @@ Design principles, learned the hard way:
         "forge": "custom",                  // hand-made; the forge never rewrites
         "age": 71,
         "orbit": "first_lutheran",
+        // OUT of the STORY — a category, not a schedule state. An out
+        // character exists here but is unstaged: never cast in a sweep, never
+        // speaks first, unplaced on the map, their home not visitable. They
+        // ENTER on a trigger (a date, an event, a story beat, the user asking
+        // after them), and entering is itself an event the world remembers.
+        // Must be a real boolean; omitted means in.
+        "out": false,
         // one_line and surface are the two COMMONS strings a person carries.
         // one_line is the roster line the bible prints for anyone who can see
         // the cast at all; surface is the strictly smaller thing an own_bible

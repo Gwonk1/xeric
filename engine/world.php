@@ -255,10 +255,60 @@ function xeric_world_validate(array $t, string $label = 'template'): void
     }
 
     // -- places -----------------------------------------------------------
+    // HOMES (2026-08-02). A home is a place like any other — `kind: "home"`,
+    // residents — because places[] already carried residents and a second
+    // concept would mean a second resolver. Two rules with teeth:
+    //
+    //   • a home with nobody in it fails: an empty home resolves nobody's
+    //     off-shift hours and exists only to pad the map;
+    //   • one person, one home: a character resident in two homes makes
+    //     "their home" ambiguous, and xeric_world_home_of() would answer by
+    //     template order — a silent tiebreak nobody chose. Shared homes are
+    //     the point (a marriage, roommates, a kid at their parent's); a
+    //     character split ACROSS homes is a contradiction.
+    $homeOf = [];
     foreach ($t['places'] as $i => $p) {
+        $isHome = (string)($p['kind'] ?? '') === 'home';
+        if ($isHome && (array)($p['residents'] ?? []) === []) {
+            $bad("places[$i].residents", 'a home with no residents is a room nobody can be in');
+        }
         foreach ((array)($p['residents'] ?? []) as $j => $r) {
             $r = (string)$r;
             if (!isset($people[$r])) $bad("places[$i].residents[$j]", "'$r' names neither a character nor a fixture");
+            if ($isHome) {
+                if (isset($homeOf[$r])) {
+                    $bad("places[$i].residents[$j]", "'$r' already lives at '" . $homeOf[$r] . "' — one person, one home");
+                }
+                $homeOf[$r] = (string)($p['key'] ?? '');
+            }
+        }
+    }
+
+    // -- who has entered the story ------------------------------------------
+    // OUT IS A CATEGORY (owner, 2026-08-02): out of the STORY, not out at a
+    // place. An out character exists in the template but is unstaged — never
+    // swept, never proactive, unplaced — until something brings them in. The
+    // flag must be a real boolean because everything that reads it fails
+    // closed: a string "false" is truthy, and a typo would quietly bench a
+    // character the forge meant to stage.
+    foreach ($cast['characters'] as $i => $c) {
+        if (array_key_exists('out', $c) && !is_bool($c['out'])) {
+            $bad("cast.characters[$i].out", 'must be true or false — it means out of the STORY');
+        }
+    }
+
+    // -- the opening scene ---------------------------------------------------
+    // first_contact is the person the world opens onto. It must name a real
+    // character (not a fixture: fixtures cannot talk), and it can never be OUT
+    // — a world whose designated first encounter has not entered the story
+    // opens onto nobody, which is the exact failure staging exists to prevent.
+    $fc = trim((string)($cast['first_contact'] ?? ''));
+    if ($fc !== '') {
+        if (!isset($chars[$fc])) $bad('cast.first_contact', "'$fc' is not a declared character");
+        foreach ($cast['characters'] as $c) {
+            if ((string)($c['handle'] ?? '') === $fc && !empty($c['out'])) {
+                $bad('cast.first_contact', "'$fc' is OUT of the story — the opening scene cannot star somebody who has not entered it");
+            }
         }
     }
 
@@ -677,6 +727,23 @@ function xeric_world_minutes(?string $hhmm): ?int
  *         present with a null room: `where === null` already means off shift,
  *         and a caller cannot be asked to tell "at home" from "in the ground".
  */
+/**
+ * Where somebody lives, or null for a character the world gave no home.
+ *
+ * First place with `kind: "home"` naming them a resident. The validator
+ * guarantees at most one, so "first" is not a tiebreak — it is the answer.
+ */
+function xeric_world_home_of(array $t, string $handle): ?string
+{
+    foreach ((array)($t['places'] ?? []) as $p) {
+        if ((string)($p['kind'] ?? '') !== 'home') continue;
+        foreach ((array)($p['residents'] ?? []) as $r) {
+            if ((string)$r === $handle) return (string)($p['key'] ?? '') ?: null;
+        }
+    }
+    return null;
+}
+
 function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): array
 {
     $dow  = (int)($now['dow'] ?? 0);
@@ -688,6 +755,10 @@ function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): ar
     foreach ($t['cast']['characters'] ?? [] as $c) {
         $handle = (string)($c['handle'] ?? '');
         if ($handle === '' || isset($gone[$handle])) continue;
+        // OUT of the story is not a placement. Excluded entirely rather than
+        // returned unplaced, so nothing downstream can accidentally seat an
+        // unentered character in a room — absence from this map IS the state.
+        if (!empty($c['out'])) continue;
 
         $row = ['handle' => $handle, 'where' => null, 'doing' => null];
         foreach ((array)($c['week'] ?? []) as $w) {
@@ -697,6 +768,19 @@ function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): ar
             $row['where'] = $where !== '' ? $where : null;
             $row['doing'] = $doing !== '' ? $doing : null;
             break;                            // first matching block wins: template order is the tiebreak
+        }
+        // OFF-SHIFT IS NOT NOWHERE (owner, 2026-08-02). A week with no block
+        // covering this minute used to resolve to null — a ghost town at 21:00
+        // in a world of morning shifts. Anyone the world gave a home is AT it
+        // when their week says nothing else, asleep or not, and a home is a
+        // real, visitable placement. `at_home` rides along so a renderer can
+        // say "home" instead of pretending a kitchen is a shift.
+        if ($row['where'] === null) {
+            $home = xeric_world_home_of($t, $handle);
+            if ($home !== null) {
+                $row['where']   = $home;
+                $row['at_home'] = true;
+            }
         }
         $out[$handle] = $row;
     }

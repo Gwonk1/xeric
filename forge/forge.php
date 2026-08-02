@@ -3448,6 +3448,193 @@ function xeric_forge_trips_wall(string $text, string $mustNotKnow): bool
     return $shared >= (count($secret) > 1 ? 2 : 1);
 }
 
+// ---------------------------------------------------------------------------
+// Homes — everybody lives somewhere (owner, 2026-08-02)
+// ---------------------------------------------------------------------------
+
+/**
+ * The homes pass: a dwelling for every character, some of them shared.
+ *
+ * WHY THIS EXISTS. who_is_where() resolves off-shift hours to a character's
+ * home — but only if the world gave them one, and until this pass no forged
+ * world ever did. A cast of morning shifts made a ghost town of every evening.
+ *
+ * ONE MODEL CALL for the whole cast, asking for HOUSEHOLDS rather than houses:
+ * who lives with whom is the interesting answer (a marriage, roommates, a kid
+ * at a parent's — a shared roof is a relationship the cast pass never has to
+ * state), and the dwelling's name falls out of it. Everything is validated
+ * against the real cast; anybody the model missed gets a solo place, so the
+ * pass cannot leave a person homeless however badly the call goes. The
+ * deterministic fallback (xeric_forge_default_homes) is the same shape with
+ * nobody sharing.
+ *
+ * Home names are derived from their residents, so they ride whatever naming
+ * register the cast already draws from — no second register plumbing here.
+ */
+function xeric_forge_pass_homes(array $t, array $endpoint, ?callable $onNote = null): array
+{
+    $chars = (array)($t['cast']['characters'] ?? []);
+    if ($chars === []) return [];
+    if ($endpoint === []) return xeric_forge_default_homes($t);
+
+    // IDEMPOTENT BY EXCLUSION: anyone who already has a home — a hand-declared
+    // one, or a rerun of this pass — is simply not on the roster. The validator
+    // holds "one person, one home" with teeth, so this pass must be incapable
+    // of arguing with it.
+    $housed0 = [];
+    foreach ((array)($t['places'] ?? []) as $p) {
+        if ((string)($p['kind'] ?? '') !== 'home') continue;
+        foreach ((array)($p['residents'] ?? []) as $r) $housed0[(string)$r] = true;
+    }
+
+    $byHandle = [];
+    $byName   = [];
+    $roster   = [];
+    foreach ($chars as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || isset($housed0[$h])) continue;
+        $byHandle[$h] = (array)$c;
+        $byName[mb_strtolower(trim((string)($c['display_name'] ?? '')))] = $h;
+        $roster[] = $h . ' · ' . (string)($c['display_name'] ?? $h) . ' · ' . (int)($c['age'] ?? 0)
+            . (xeric_is_minor((array)$c) ? ' (a child — never lives alone)' : '');
+    }
+    if ($byHandle === []) return [];                 // everyone already lives somewhere
+
+    $placeNames = array_map(fn($p) => (string)($p['name'] ?? ''), (array)($t['places'] ?? []));
+
+    $raw = xeric_forge_ask($endpoint, 'homes', [
+        ['role' => 'system', 'content' =>
+            'You decide who lives with whom in a small fictional community, and what their homes are '
+            . 'called. Households of one to three people. A child always lives with an adult. Home names '
+            . 'are plain and local — a surname, a street, a room over a shop — never grand. '
+            . 'Reply with ONE JSON object and nothing else.'],
+        ['role' => 'user', 'content' =>
+            "The world: " . (string)($t['meta']['name'] ?? '') . ' — ' . (string)($t['meta']['description'] ?? '')
+            . "\nWhere and when: " . (string)($t['setting']['locale'] ?? '') . ', ' . (string)($t['setting']['era'] ?? '')
+            . "\nThe people (handle · name · age):\n" . implode("\n", $roster)
+            . "\nExisting place names, do not reuse: " . implode('; ', array_filter($placeNames))
+            . "\n\nReply as {\"households\":[{\"who\":[\"handle\",…],\"name\":\"what locals call the home\","
+            . "\"desc\":\"one concrete sentence about the inside\"}]}. Every person in exactly one household."],
+    ], ['temperature' => 0.8, 'max_tokens' => 1200], $onNote);
+
+    // Validation is the pass. The model proposes; the cast list disposes.
+    $taken = [];
+    foreach ((array)($t['places'] ?? []) as $p) $taken[(string)($p['key'] ?? '')] = true;
+
+    $housed = [];
+    $homes  = [];
+    foreach ((array)($raw['households'] ?? []) as $row) {
+        $who = [];
+        foreach ((array)($row['who'] ?? []) as $w) {
+            $w = trim((string)$w);
+            $h = isset($byHandle[$w]) ? $w : ($byName[mb_strtolower($w)] ?? '');
+            if ($h === '' || isset($housed[$h])) continue;   // unknown, or already housed: dropped
+            $who[] = $h;
+            $housed[$h] = true;
+        }
+        $who = array_slice($who, 0, 3);
+        if ($who === []) continue;
+        $first = explode(' ', (string)($byHandle[$who[0]]['display_name'] ?? $who[0]))[0];
+        $name  = xeric_forge_str($row['name'] ?? '', $first . "'s place", 60);
+        $key   = xeric_forge_key($name, $taken);
+        $taken[$key] = true;
+        $homes[] = [
+            'key' => $key, 'name' => $name, 'kind' => 'home',
+            'description' => xeric_forge_str($row['desc'] ?? '', '', 200),
+            'aliases' => xeric_forge_aliases($name),
+            'residents' => $who,
+        ];
+    }
+
+    // Nobody sleeps outside. Anyone the model forgot gets a solo place — and a
+    // forgotten CHILD gets noted out loud, because a child living alone is a
+    // thing only the person reviewing this world can decide is right.
+    foreach ($byHandle as $h => $c) {
+        if (isset($housed[$h])) continue;
+        $first = explode(' ', (string)($c['display_name'] ?? $h))[0];
+        $name  = $first . "'s place";
+        $key   = xeric_forge_key($name, $taken);
+        $taken[$key] = true;
+        $homes[] = ['key' => $key, 'name' => $name, 'kind' => 'home',
+                    'description' => '', 'aliases' => xeric_forge_aliases($name), 'residents' => [$h]];
+        if ($onNote && xeric_is_minor((array)$c)) {
+            $onNote('homes: ' . (string)($c['display_name'] ?? $h) . ' is a child living alone — worth a look in review');
+        }
+    }
+    return $homes;
+}
+
+/** Every character solo, named after themselves. Launchable, never wrong, never surprising. */
+function xeric_forge_default_homes(array $t): array
+{
+    $taken = [];
+    foreach ((array)($t['places'] ?? []) as $p) $taken[(string)($p['key'] ?? '')] = true;
+    $homes = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        $first = explode(' ', (string)($c['display_name'] ?? $h))[0];
+        $name  = $first . "'s place";
+        $key   = xeric_forge_key($name, $taken);
+        $taken[$key] = true;
+        $homes[] = ['key' => $key, 'name' => $name, 'kind' => 'home',
+                    'description' => '', 'aliases' => xeric_forge_aliases($name), 'residents' => [$h]];
+    }
+    return $homes;
+}
+
+/**
+ * Who the world opens onto. Deterministic — no model call, because the answer
+ * is derivable and a hallucinated opening scene would be validated away anyway.
+ *
+ * The ladder: the person who shares the most working hours with the user at
+ * their own workplace (they were always going to meet first), else the
+ * protagonist (it is their story), else the first of the cast. Whoever it is,
+ * the validator holds the guarantee that matters: first_contact can never be
+ * OUT of the story.
+ */
+function xeric_forge_first_contact(array $t, ?callable $onNote = null): ?string
+{
+    $chars = (array)($t['cast']['characters'] ?? []);
+    if ($chars === []) return null;
+
+    $wkey = (string)($t['user']['occupation']['workplace_key'] ?? '');
+    if ($wkey !== '') {
+        $best = null; $bestMins = 0;
+        foreach ($chars as $c) {
+            if (!empty($c['out'])) continue;
+            $mins = 0;
+            foreach ((array)($c['week'] ?? []) as $w) {
+                if ((string)($w['where'] ?? '') !== $wkey) continue;
+                $from = xeric_world_minutes((string)($w['from'] ?? '')) ?? 0;
+                $to   = xeric_world_minutes((string)($w['to'] ?? ''))   ?? 0;
+                $span = $to > $from ? $to - $from : (1440 - $from) + $to;   // wraps count too
+                $mins += $span * max(1, count((array)($w['days'] ?? [])));
+            }
+            if ($mins > $bestMins) { $bestMins = $mins; $best = (string)$c['handle']; }
+        }
+        if ($best !== null) {
+            if ($onNote) $onNote('first contact: ' . $best . ' — most hours beside you at work');
+            return $best;
+        }
+    }
+
+    $star = (string)($t['cast']['protagonist']['handle'] ?? '');
+    foreach ($chars as $c) {
+        if ($star !== '' && (string)($c['handle'] ?? '') === $star && empty($c['out'])) {
+            if ($onNote) $onNote('first contact: ' . $star . ' — the protagonist');
+            return $star;
+        }
+    }
+    foreach ($chars as $c) {
+        if (empty($c['out']) && (string)($c['handle'] ?? '') !== '') {
+            if ($onNote) $onNote('first contact: ' . (string)$c['handle'] . ' — first of the cast');
+            return (string)$c['handle'];
+        }
+    }
+    return null;
+}
+
 /**
  * The past this world already had.
  *
@@ -5036,6 +5223,38 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
         } catch (Throwable $e) {
             $note('protagonist: did not validate (' . $e->getMessage() . ') — dropped');
             unset($template['cast']['protagonist']);
+        }
+    }
+
+    // HOMES + THE OPENING SCENE (owner, 2026-08-02). Before seed on purpose:
+    // seed history may now put somebody "at the Voss place" and mean a real
+    // room. Homes append to places and are validated in place — a set that
+    // fails (one person in two homes, an empty house) is dropped whole and the
+    // world ships home-less rather than wrong, exactly like the walls layer.
+    $guard();
+    $homes = xeric_forge_attempt('homes', fn() => xeric_forge_pass_homes($template, $endpoint, $note),
+        fn() => xeric_forge_default_homes($template), $note);
+    if ($homes !== []) {
+        $withHomes = $template;
+        $withHomes['places'] = array_merge((array)$template['places'], $homes);
+        try {
+            xeric_world_validate($withHomes, 'forged');
+            $template = $withHomes;
+            $shared = count(array_filter($homes, fn($h) => count((array)$h['residents']) > 1));
+            $note('homes: ' . count($homes) . ' households, ' . $shared . ' shared');
+        } catch (Throwable $e) {
+            $note('homes: did not validate (' . $e->getMessage() . ') — this world ships without them');
+        }
+    }
+
+    $fc = xeric_forge_first_contact($template, $note);
+    if ($fc !== null) {
+        $template['cast']['first_contact'] = $fc;
+        try {
+            xeric_world_validate($template, 'forged');
+        } catch (Throwable $e) {
+            $note('first contact: did not validate (' . $e->getMessage() . ') — dropped');
+            unset($template['cast']['first_contact']);
         }
     }
 

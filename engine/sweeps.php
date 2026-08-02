@@ -1347,6 +1347,9 @@ function xeric_sweep_lethal(array $t, array $chosen, array $dead, array $opts = 
         $h = (string)($c['handle'] ?? '');
         if ($h === '' || $h === $star) continue;
         if (in_array($h, $inRoom, true) || in_array($h, $dead, true)) continue;
+        // Never somebody who has not entered the story: dying offstage before
+        // your first scene is not a death, it is a casting error.
+        if (!empty($c['out'])) continue;
         $pool[] = $h;
     }
     if ($pool === []) return null;

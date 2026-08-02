@@ -330,6 +330,70 @@ ok('presence: bounds are half-open, so back-to-back blocks hand off cleanly',
     && xeric_world_who_is_where($edge, xeric_world_now($T, ep('2026-07-29 11:59')))['ruth']['where'] === 'bluebird');
 
 // ---------------------------------------------------------------------------
+// 4b. Homes, and OUT of the story
+// ---------------------------------------------------------------------------
+// Milldale ships without homes on purpose — the assertions above prove nothing
+// regresses for a home-less world. These clones prove the other half: a home
+// catches every hour the week does not claim, and OUT removes a person from
+// the map entirely rather than leaving them somewhere by default.
+
+$ruthHome = ['key' => 'ruth_and_dots', 'name' => "Ruth and Dot's place",
+             'kind' => 'home', 'description' => 'A two-bedroom over the pharmacy.',
+             'residents' => ['ruth', 'dot']];
+$TH = mutate($T, ['places'], array_merge($T['places'], [$ruthHome]));
+
+ok('homes: a world with a home in it still validates',
+    err(fn() => xeric_world_validate($TH, 'milldale.json')) === '');
+
+$h1 = xeric_world_who_is_where($TH, $thuEve);
+ok('homes: off shift resolves to home, and says so',
+    $h1['ruth']['where'] === 'ruth_and_dots' && !empty($h1['ruth']['at_home'])
+    && $h1['dot']['where'] === 'ruth_and_dots'
+    && $h1['harlan']['where'] === null);                    // no home, unchanged
+
+ok('homes: three in the morning is asleep at home, not nowhere',
+    xeric_world_who_is_where($TH, $thu3am)['ruth']['where'] === 'ruth_and_dots');
+
+$h2 = xeric_world_who_is_where($TH, $wedAm);
+ok('homes: the week always outranks the home',
+    $h2['ruth']['where'] === 'first_lutheran' && empty($h2['ruth']['at_home']));
+
+$TO = mutate($TH, ['cast', 'characters', 0, 'out'], true);
+$o1 = xeric_world_who_is_where($TO, $thuEve);
+ok('out: an unentered character is absent from the map, not unplaced on it',
+    !array_key_exists('ruth', $o1)
+    && xeric_world_who_is_at($o1, 'ruth_and_dots') === ['dot']);
+
+ok('out: the flag must be a real boolean',
+    str_contains(err(fn() => xeric_world_validate(
+        mutate($TH, ['cast', 'characters', 0, 'out'], 'yes'), 'milldale.json')), 'out'));
+
+ok('homes: a home with no residents does not load',
+    str_contains(err(fn() => xeric_world_validate(
+        mutate($TH, ['places'], array_merge($T['places'],
+            [['key' => 'empty_house', 'kind' => 'home', 'residents' => []]])), 'milldale.json')),
+        'residents'));
+
+ok('homes: one person, one home',
+    str_contains(err(fn() => xeric_world_validate(
+        mutate($TH, ['places'], array_merge($TH['places'],
+            [['key' => 'second_house', 'kind' => 'home', 'residents' => ['ruth']]])), 'milldale.json')),
+        'one person, one home'));
+
+ok('first_contact: names a real character or the world does not load',
+    str_contains(err(fn() => xeric_world_validate(
+        mutate($TH, ['cast', 'first_contact'], 'nobody_here'), 'milldale.json')),
+        'first_contact'));
+
+ok('first_contact: a valid one validates clean',
+    err(fn() => xeric_world_validate(mutate($TH, ['cast', 'first_contact'], 'ruth'), 'milldale.json')) === '');
+
+ok('first_contact: can never be OUT of the story',
+    str_contains(err(fn() => xeric_world_validate(
+        mutate($TO, ['cast', 'first_contact'], 'ruth'), 'milldale.json')),
+        'OUT'));
+
+// ---------------------------------------------------------------------------
 // 5. State: migrations, seeding, round-trips
 // ---------------------------------------------------------------------------
 

@@ -280,7 +280,13 @@ ok('nothing fell back on the happy path',
     array_filter($built['notes'], fn($n) => str_contains($n, 'built-in default')) === [],
     implode(' | ', $built['notes']));
 
-ok('six places', count($t['places']) === 6, (string)count($t['places']));
+// Homes ride along since 2026-08-02, so "how many places" is two questions:
+// the places PASS still delivers exactly what was asked for, and the homes
+// pass adds a roof per household on top.
+$tPublic = array_filter($t['places'], fn($p) => ($p['kind'] ?? '') !== 'home');
+ok('six public places', count($tPublic) === 6, (string)count($tPublic));
+ok('and everybody sleeps somewhere the map knows',
+    count($t['places']) > count($tPublic));
 $placeKeys = array_map(fn($p) => (string)$p['key'], $t['places']);
 $wk = (string)$t['user']['occupation']['workplace_key'];
 ok('the workplace from the answers is a real place', in_array($wk, $placeKeys, true), $wk);
@@ -1631,6 +1637,66 @@ $devConsistency = xeric_repass_digest($devDone['template'], $devDone['seed'])[0]
 ok('an enriched line is still on the consistency sheet un-settled — enrichment is not immunity',
     (bool)array_filter($devConsistency, fn($it) => $it['path'] === 'cast.characters.0.one_line'
         && !str_contains($it['label'], 'settled')));
+
+// ---------------------------------------------------------------------------
+// Homes and the opening scene (owner, 2026-08-02)
+// ---------------------------------------------------------------------------
+// Everybody lives somewhere, the world opens onto somebody, and the pass
+// cannot be talked into housing a person twice.
+
+$hAns = ['scale' => 'a small town', 'name' => 'Vera', 'job' => 'run the night desk',
+         'hours' => '22:00-06:00', 'motivation' => 'company', 'around' => 'late nights',
+         'pace' => 'steady', 'centrality' => 'ensemble', 'rating' => 'sfw'];
+$hOut = xeric_forge_build($hAns, [], ['places' => 6, 'cast' => 5, 'seed' => false, 'interview' => $IV]);
+$hT   = $hOut['template'];
+$hHomes = array_values(array_filter((array)$hT['places'], fn($p) => ($p['kind'] ?? '') === 'home'));
+$hCast  = (array)$hT['cast']['characters'];
+
+ok('homes: every forged character has one', count($hHomes) >= 1 && (function () use ($hT, $hCast): bool {
+    foreach ($hCast as $c) if (xeric_world_home_of($hT, (string)$c['handle']) === null) return false;
+    return true;
+})());
+ok('homes: the built world still validates', err(fn() => xeric_world_validate($hT, 'homes')) === '');
+ok('homes: three in the morning is a town asleep at home, not a ghost town',
+    (function () use ($hT, $hCast): bool {
+        $p = xeric_world_who_is_where($hT, ['dow' => 2, 'hhmm' => '03:00']);
+        foreach ($hCast as $c) {
+            $row = $p[(string)$c['handle']] ?? [];
+            if (($row['where'] ?? null) === null) return false;
+        }
+        return true;
+    })());
+ok('first_contact: the world opens onto somebody, chosen without a model',
+    ($hT['cast']['first_contact'] ?? '') !== ''
+    && (bool)array_filter($hOut['notes'], fn($n) => str_contains((string)$n, 'first contact')));
+
+// The model path, adversarially: a stub that shares one household, invents a
+// stranger, and double-books somebody. The pass keeps the share, drops the
+// stranger, strips the duplicate, and houses whoever was forgotten.
+$hStrip = $hT;
+$hStrip['places'] = array_values(array_filter((array)$hT['places'], fn($p) => ($p['kind'] ?? '') !== 'home'));
+$h0 = (string)$hCast[0]['handle']; $h1 = (string)$hCast[1]['handle']; $h2 = (string)$hCast[2]['handle'];
+$hStub = ['base' => 'stub://', 'stub' => fn(string $tag, array $m, array $o) => ['households' => [
+    ['who' => [$h0, $h1], 'name' => 'The rooms over the laundry', 'desc' => 'Two beds, one kettle.'],
+    ['who' => ['ghost_handle'], 'name' => 'Nowhere house', 'desc' => 'x'],
+    ['who' => [$h2, $h0], 'name' => 'Double-booked', 'desc' => 'dup'],
+]]];
+$hM = xeric_forge_pass_homes($hStrip, $hStub);
+$hShared = array_values(array_filter($hM, fn($p) => count((array)$p['residents']) === 2));
+ok('homes: a shared household survives and a shared roof is two residents',
+    count($hShared) === 1 && $hShared[0]['residents'] === [$h0, $h1]);
+ok('homes: an invented stranger houses nobody',
+    !array_filter($hM, fn($p) => in_array('ghost_handle', (array)$p['residents'], true)));
+ok('homes: a double-booked person keeps their first roof only',
+    count(array_filter($hM, fn($p) => in_array($h0, (array)$p['residents'], true))) === 1);
+ok('homes: everyone the model forgot is housed solo, and the set validates',
+    (function () use ($hStrip, $hM, $hCast): bool {
+        $t = $hStrip; $t['places'] = array_merge($t['places'], $hM);
+        foreach ($hCast as $c) if (xeric_world_home_of($t, (string)$c['handle']) === null) return false;
+        return err(fn() => xeric_world_validate($t, 'stub-homes')) === '';
+    })());
+ok('homes: the pass is idempotent — a housed world gets no second roofs',
+    xeric_forge_pass_homes($hT, $hStub) === []);
 
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";
 exit($FAILED === 0 ? 0 : 1);
