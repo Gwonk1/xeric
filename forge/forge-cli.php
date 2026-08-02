@@ -225,7 +225,7 @@ function xeric_cli_usage(): string
       --key=SECRET         api key (or set XERIC_API_KEY)
 
       --answers=k=v,k=v    scale, name, job, hours, motivation, rating, themes (a|b|c)
-      --rating=sfw|mature|explicit   how far this xeric may go (default sfw)
+      --rating=sfw|pg|teen|mature|explicit   TV-G/TV-PG/TV-14/TV-MA/Unrated (default sfw)
       --surprise           ask the model to fill the unanswered steps (✨)
       --places=N           how many places (6 for the slice)
       --cast=N             how many people (default 12; 4 makes a quick test world)

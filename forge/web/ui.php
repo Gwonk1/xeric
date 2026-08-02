@@ -625,6 +625,9 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 .dot.down{background:var(--bad)}
 .note{border-left:2px solid var(--line);padding:.15rem 0 .15rem .8rem;margin:0 0 1rem;color:var(--fg-dim);font-size:.9rem}
 .note.warn{border-color:var(--warn);color:var(--fg)}
+/* the one-time rating confirmation: five buttons, the current one marked */
+.ratebtns{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0}
+.ratebtns .nbtn.on{box-shadow:inset 0 0 0 1px var(--accent)}
 .note.bad{border-color:var(--bad);color:var(--fg)}
 
 /* build */

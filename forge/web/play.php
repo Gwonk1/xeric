@@ -102,6 +102,30 @@ if ($action !== '') {
             + xeric_play_state($w, $sid));
     }
 
+    // -- the one-time rating confirmation (owner, 2026-08-02) -----------------
+    // Worlds forged before every door wrote the rating field carry a rating a
+    // MODEL chose. This is the human decision, once: keep it or change it, and
+    // either way the world records that a person answered. Through the review
+    // save door, so the prev-copy undo and full validation hold like any edit.
+    if ($action === 'rating') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner rates a xeric.'], 403);
+        $in   = xeric_web_input();
+        $want = strtolower(trim((string)($in['rating'] ?? '')));
+        if (!in_array($want, xeric_ratings(), true)) {
+            xeric_web_json(['error' => '"' . mb_substr($want, 0, 20) . '" is not a rating this shelf knows'], 400);
+        }
+        // The session's ceiling holds here exactly as it does in the forge: an
+        // unaffirmed session can CONFIRM the weakest rating, not raise one.
+        $got = xeric_session_rating($want, $sid);
+        $t2  = $w['template'];
+        $t2['meta']['rating'] = $got;
+        $t2['forge']['rating_confirmed'] = true;
+        xeric_review_save((string)$w['slug'], $t2);
+        xeric_web_json(['ok' => true, 'rating' => $got, 'label' => xeric_rating_label($got),
+                        'clamped' => $got !== $want,
+                        'note' => 'Takes effect from the next thing anybody says.']);
+    }
+
     // -- the world's own pulse ------------------------------------------------
     // The shelf's pulse says which xerics move; this one says what moved INSIDE
     // the open one, so the sidebar's rooms, the chips and the clock repaint
@@ -771,6 +795,26 @@ echo '<style>' . xeric_play_css() . '
     <noscript><div class="noscript"><strong>The time control needs JavaScript.</strong>
       Moving a xeric takes a minute of model calls and streams what happens as it happens.</div></noscript>
 
+    <?php if ($w['mine'] && empty($t['forge']['rating_confirmed'])): ?>
+    <!-- THE ONE-TIME RATING CONFIRMATION. This world predates the doors that
+         write the rating field, so its rating may be a model's choice, not a
+         person's. Asked ONCE, here, because the play view is where the owner
+         actually returns — and any press, including "keep", is the answer. -->
+    <div class="note" id="ratebanner">
+      <p>This xeric is rated <strong><?= h(xeric_rating_label((string)($t['meta']['rating'] ?? 'sfw'))) ?></strong>
+        — a choice the forge may have made for you. Confirm it, or set it:</p>
+      <div class="ratebtns">
+        <?php $cur = (string)($t['meta']['rating'] ?? 'sfw'); foreach (xeric_ratings() as $rv): ?>
+        <button type="button" class="nbtn<?= $rv === $cur ? ' on' : '' ?>" data-rate="<?= h($rv) ?>">
+          <?= h(xeric_rating_label($rv)) ?><?= $rv === $cur ? ' · keep' : '' ?>
+        </button>
+        <?php endforeach; ?>
+      </div>
+      <p class="why" id="ratenote">Style follows the rating: a TV-PG xeric is written like one.
+        Takes effect from the next thing anybody says.</p>
+    </div>
+    <?php endif; ?>
+
     <!-- the centrepiece -->
     <div class="timecard">
       <h2>move the xeric</h2>
@@ -870,6 +914,35 @@ echo '<style>' . xeric_play_css() . '
 (function () {
   'use strict';
   var W = <?= json_encode($w['slug']) ?>;
+
+  // -- the one-time rating confirmation --------------------------------------
+  // Any press is the answer; the banner never comes back because the save
+  // writes forge.rating_confirmed through the review door.
+  (function () {
+    var rb = document.getElementById('ratebanner');
+    if (!rb) return;
+    rb.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-rate]');
+      if (!b) return;
+      rb.querySelectorAll('[data-rate]').forEach(function (x) { x.disabled = true; });
+      fetch('play.php?a=rating&w=' + encodeURIComponent(W), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating: b.dataset.rate })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) {
+          document.getElementById('ratenote').textContent = d.error || 'that did not take';
+          rb.querySelectorAll('[data-rate]').forEach(function (x) { x.disabled = false; });
+          return;
+        }
+        document.getElementById('ratenote').textContent =
+          'Rated ' + d.label + (d.clamped ? ' (your session cannot rate higher)' : '') + '. ' + d.note;
+        rb.querySelectorAll('.ratebtns').forEach(function (x) { x.remove(); });
+        setTimeout(function () { rb.remove(); }, 4000);
+      }).catch(function () {
+        rb.querySelectorAll('[data-rate]').forEach(function (x) { x.disabled = false; });
+      });
+    });
+  })();
   var ME = <?= json_encode($userName) ?>;
   var WNAME = <?= json_encode((string)$T['meta']['name']) ?>;
   var MINE = <?= $w['mine'] ? 'true' : 'false' ?>;

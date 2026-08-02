@@ -33,9 +33,69 @@ require_once __DIR__ . '/walls.php';
 // ---------------------------------------------------------------------------
 
 /** The only three legal rating strings, weakest first. */
+/**
+ * The ladder, weakest first — STANDARD BROADCAST TIERS (owner, 2026-08-02).
+ *
+ * Three tiers made "adult themes" carry everything from grief to gore, and the
+ * step past it was a cliff. Five reads the way televisions already taught
+ * everyone to read: TV-G / TV-PG / TV-14 / TV-MA, and one tier above broadcast
+ * for what broadcast never airs.
+ *
+ * THE OLD KEYS DID NOT MOVE. sfw is still rank 0 and mature/explicit kept
+ * their relative order, so every rating_min ever written stays legal and means
+ * what it meant — pg and teen slotted BETWEEN, and no template migrates.
+ * Minors pin to rank 0 exactly as before; the 18+ gate still stands in front
+ * of everything above rank 0, because widening the ladder is not loosening it.
+ */
 function xeric_ratings(): array
 {
-    return ['sfw', 'mature', 'explicit'];
+    return ['sfw', 'pg', 'teen', 'mature', 'explicit'];
+}
+
+/** The name a person sees. Broadcast tiers wear their broadcast names. */
+function xeric_rating_label(?string $rating): string
+{
+    switch (strtolower(trim((string)$rating))) {
+        case 'explicit': return 'Unrated';
+        case 'mature':   return 'TV-MA';
+        case 'teen':     return 'TV-14';
+        case 'pg':       return 'TV-PG';
+        default:         return 'TV-G';
+    }
+}
+
+/**
+ * How a world at this tier is WRITTEN — the sentence every prose-producing
+ * prompt carries, because a rating that only gates content pools changes what
+ * may appear without changing how anything reads. "Vary story and style
+ * accordingly" (owner): a TV-PG world does not merely omit what TV-MA shows,
+ * it narrates like a different program. One source, so the forge, the chat
+ * turn and the sweeps cannot drift apart about what a tier sounds like.
+ */
+function xeric_rating_style(?string $rating): string
+{
+    switch (strtolower(trim((string)$rating))) {
+        case 'explicit':
+            return 'This world is unrated: nothing is off the table, on the page or in the story. '
+                 . 'Write it like prestige fiction, not like a transcript — explicitness serves the '
+                 . 'scene, never the other way round.';
+        case 'mature':
+            return 'Write it TV-MA: adult lives on screen — violence with consequences, sex '
+                 . 'acknowledged and sometimes shown, language as people actually use it. Grim is '
+                 . 'allowed; gratuitous is lazy.';
+        case 'teen':
+            return 'Write it TV-14: real stakes, real menace, real attraction — a knife can be '
+                 . 'shown, the wound is implied; desire is on screen, bodies are not. Strong '
+                 . 'language rarely, and it lands harder for it.';
+        case 'pg':
+            return 'Write it TV-PG: conflict, loss and consequence all happen, but the camera cuts '
+                 . 'away before blood or bedrooms. Menace over violence, longing over desire, and '
+                 . 'nothing a parent would have to explain in the car.';
+        default:
+            return 'Write it TV-G: warm, plain and safe for anyone in the room. Trouble is the '
+                 . 'engine of every story here too — but it is the trouble of casseroles, grudges, '
+                 . 'weather and pride, never of blood or bodies.';
+    }
 }
 
 // ---------------------------------------------------------------------------

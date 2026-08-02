@@ -878,7 +878,7 @@ function xeric_forge_pass_concept(array $answers, array $endpoint, ?callable $on
                 . "The person who will live in this world:\n"
                 . "- scale: $scale\n- name: $who\n- what they do: $job\n- why they are here: $why\n"
                 . ($themes ? '- themes: ' . implode(', ', $themes) . "\n" : '')
-                . "- content rating: $rating\n\n"
+                . "- content rating: " . xeric_rating_label($rating) . '. ' . xeric_rating_style($rating) . "\n\n"
                 . $nameBlock
                 . ($premise !== ''
                     ? "Now write that place up. ONE JSON object, exactly these keys:\n"
@@ -1696,7 +1696,8 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
                     'You write one person for a story world. Specific, ordinary, contradictory — a real person, '
                     . 'not a description of a type. Reply with ONE JSON object and nothing else.'],
                 ['role' => 'user', 'content' =>
-                    "World: $world. Rating: $rating. The person at the centre is $user, who $job, here for $why."
+                    "World: $world. Rating: " . xeric_rating_label($rating) . ' — ' . xeric_rating_style($rating)
+                    . " The person at the centre is $user, who $job, here for $why."
                     . ($circle !== '' ? " The people around them are $circle." : '')
                     . "\n\nPlaces (use these keys exactly):\n$placeBlock\n"
                     . ($sofar ? "\nAlready written — do NOT repeat their job, age or manner:\n" . implode("\n", $sofar) . "\n" : '')
@@ -3038,6 +3039,13 @@ function xeric_forge_assemble(array $answers, array $concept, array $places, arr
             // is only honest if it can say who decided and why.
             'systems_source' => $systems['source'],
             'systems_why'    => $systems['why'] ?? null,
+            // A rating a PERSON chose (owner, 2026-08-02). Every door into the
+            // forge now writes the rating field before building, so a world
+            // assembled here carries a human answer and says so. Worlds forged
+            // before this marker existed get a one-time confirmation in the
+            // play view instead — the gap-era worlds whose rating a model
+            // filled are exactly the ones this flag exists to tell apart.
+            'rating_confirmed' => true,
         ],
     ];
 

@@ -24,7 +24,7 @@
  *  • THE AGE QUESTION IS NOT ASKED, AND THERE IS NOWHERE TO ANSWER IT. This
  *    page has no age field and no way to send one. What it has is a box on the
  *    ONE step where content is chosen, revealed only by reaching for a rating
- *    above the weakest — press "keep it clean", or skip the question the way
+ *    above the weakest — press "TV-G", or skip the question the way
  *    every unattended path skips it, and nothing about age is ever put on
  *    screen. The box is the choice: until it is ticked the gated presets do not
  *    take, and the screen keeps the value it had.

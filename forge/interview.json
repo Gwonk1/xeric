@@ -264,16 +264,31 @@
       "presets": [
         {
           "value": "sfw",
-          "label": "keep it clean"
+          "label": "TV-G",
+          "hint": "warm and safe for anyone in the room"
+        },
+        {
+          "value": "pg",
+          "label": "TV-PG",
+          "hint": "real conflict, camera cuts away",
+          "requires_affirmation": true
+        },
+        {
+          "value": "teen",
+          "label": "TV-14",
+          "hint": "real stakes and menace, wounds implied",
+          "requires_affirmation": true
         },
         {
           "value": "mature",
-          "label": "adult themes",
+          "label": "TV-MA",
+          "hint": "adult lives on screen",
           "requires_affirmation": true
         },
         {
           "value": "explicit",
-          "label": "no limits",
+          "label": "Unrated",
+          "hint": "nothing off the table",
           "requires_affirmation": true
         }
       ],

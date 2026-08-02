@@ -1392,6 +1392,10 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
 
     $lines = ['THE WORLD'];
     $lines[] = $worldName . ($t['meta']['description'] ?? '' ? ', ' . (string)$t['meta']['description'] : '');
+    // The hour is WRITTEN at the room's ceiling, not just gated by it — $eff is
+    // already the lowest ceiling standing in the room (one child clamps it), and
+    // the style sentence is the same one every chat turn carries.
+    $lines[] = xeric_rating_style($eff);
     $loc = trim((string)($t['user']['location'] ?? ''));
     if ($loc !== '') $lines[] = 'It is ' . $loc . '.';
 

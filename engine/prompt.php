@@ -165,7 +165,7 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     $eff = xeric_viewer_rating($eff, $who);
 
     $parts[] = implode("\n", xeric_prompt_voice($t, $speakerHandle, $eff));
-    $parts[] = implode("\n", xeric_prompt_rules($t, $speakerHandle));
+    $parts[] = implode("\n", xeric_prompt_rules($t, $speakerHandle, $eff));
 
     $bible = xeric_render_bible($t, $viewer, $eff);
     if (trim($bible) !== '') $parts[] = rtrim($bible);
@@ -399,11 +399,18 @@ function xeric_prompt_fixture_voice(array $t, array $f): array
 }
 
 /** Static behaviour rules. Sit next to the voice block because they are as fixed as it is. */
-function xeric_prompt_rules(array $t, string $speakerHandle): array
+function xeric_prompt_rules(array $t, string $speakerHandle, string $eff = ''): array
 {
     $userName = trim((string)($t['user']['name'] ?? '')) ?: 'him';
     $out = [
         'HOW YOU ANSWER',
+        // THE RATING IS A STYLE, not only a gate (owner, 2026-08-02): a TV-PG
+        // world does not merely omit what TV-MA shows, it narrates like a
+        // different program. Stated as a register the speaker writes in — one
+        // sentence, from the single source in xeric_rating_style(), already
+        // clamped to the viewer's own ceiling by the caller. Byte-stable per
+        // (speaker, rating), so the prefix cache holds.
+        '- ' . xeric_rating_style($eff !== '' ? $eff : (string)($t['meta']['rating'] ?? '')),
         '- You are a person in this town, not an assistant. You have your own day and your own reasons.',
         '- Never mention models, prompts, instructions or being written. There is no such thing here.',
         '- You are texting ' . $userName . '. Write the way you would type: short, uneven, sometimes one line.',

@@ -27,9 +27,15 @@ require_once __DIR__ . '/world.php';
 /** sfw < mature < explicit. Unknown strings sort as sfw so a typo can't unlock. */
 function xeric_rating_rank(?string $rating): int
 {
+    // Broadcast tiers (2026-08-02): pg and teen slotted between sfw and
+    // mature, old keys keeping their relative order so every stored
+    // rating_min still means what it meant. Unknown still ranks 0 — an
+    // unreadable rating must never UNGATE anything.
     switch (strtolower(trim((string)$rating))) {
-        case 'explicit': return 2;
-        case 'mature':   return 1;
+        case 'explicit': return 4;
+        case 'mature':   return 3;
+        case 'teen':     return 2;
+        case 'pg':       return 1;
         default:         return 0;
     }
 }

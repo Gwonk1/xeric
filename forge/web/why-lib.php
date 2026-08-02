@@ -64,9 +64,11 @@ function xeric_why_system_sections(array $t, PDO $db, string $handle, string $ef
               'note' => 'xeric_prompt_voice(), her own record, read directly. Walls never apply to a person\'s '
                       . 'account of themselves.', 'text' => $voice];
 
-    $rules = implode("\n", xeric_prompt_rules($t, $handle));
+    $rules = implode("\n", xeric_prompt_rules($t, $handle, $eff));
     $out[] = ['name' => 'how she answers',
-              'note' => 'xeric_prompt_rules(), fixed for every character in every world.', 'text' => $rules];
+              'note' => 'xeric_prompt_rules(): the answering rules, plus the rating written as a STYLE at '
+                      . 'this viewer\'s own ceiling — a child\'s rules carry TV-G\'s register whatever the '
+                      . 'world is rated.', 'text' => $rules];
 
     $bible = xeric_render_bible($t, $viewer, $eff);
     if (trim($bible) !== '') {

@@ -1269,7 +1269,7 @@ function xeric_web_answer_cap(string $key): int
  * is no way in that does not pass this line.
  *
  * An unaffirmed session is not REFUSED its answer, it is LOWERED: a stranger who
- * pressed "no limits" still gets a world built, and it is the world the default
+ * pressed "Unrated" still gets a world built, and it is the world the default
  * would have given them anyway.
  *
  * UNAFFIRMED, THE RATING IS PINNED AND NOT MERELY LOWERED — it is written even
