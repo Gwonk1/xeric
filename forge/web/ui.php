@@ -1131,3 +1131,75 @@ function xeric_web_result_html(array $t, array $seed, array $meta = []): string
 <?php
     return (string)ob_get_clean();
 }
+
+/**
+ * The book's own CSS, on top of the play view's chrome.
+ *
+ * The one page in the app that is set in TYPE rather than in panels: a single
+ * serif column, generous leading, headings that read as chapters. Everything
+ * still goes through the palette roles above — the book is the same room, read
+ * by lamplight — and the print block is the point of the whole exercise: on
+ * paper the chrome stays behind and the column becomes the page.
+ */
+function xeric_book_css(): string
+{
+    return <<<'CSS'
+/* the column: a book measure, not an app measure */
+main.book{max-width:39rem;font-family:Georgia,'Iowan Old Style','Times New Roman',serif;
+  line-height:1.8;font-size:1.02rem}
+main.book .top,main.book footer,main.book .note{font-family:ui-sans-serif,system-ui,sans-serif}
+
+/* the title page */
+main.book .btitle{margin:1.6rem 0 .25rem;font-size:1.75rem;font-weight:600;text-align:center;
+  letter-spacing:.01em}
+main.book .bsub{margin:0 0 2.4rem;text-align:center;font-size:.88rem;color:var(--fg-dim);
+  font-family:ui-sans-serif,system-ui,sans-serif}
+
+/* a chapter is a day; its heading is world time and nothing else */
+.bday{margin:0 0 2.6rem}
+.dayh{margin:2.1rem 0 1rem;font-size:1.08rem;font-weight:600;text-align:center;font-style:normal}
+.dayh::after{content:'';display:block;width:3.4rem;height:1px;background:var(--line);
+  margin:.55rem auto 0}
+
+/* an event: its headline, its hour, its prose */
+.bev{margin:0 0 1.35rem}
+.bevt{margin:0 0 .1rem;font-size:1.02rem;font-weight:600}
+.bevw{margin:0 0 .3rem;font-size:.76rem;color:var(--fg-far);
+  font-family:ui-sans-serif,system-ui,sans-serif}
+.bevp{margin:0}
+
+/* a scene line: the fact of a conversation, never its transcript */
+.scene{margin:0 0 1.2rem;font-style:italic;color:var(--fg-dim);font-size:.98rem}
+
+/* a dream: the register only the book has. Set apart and italic, with its own
+   quiet rule — waking prose never wears this border and this never wears a
+   headline, so the two cannot be misread for each other at a glance. */
+.dream{margin:0 0 1.35rem;padding:.25rem 0 .25rem 1rem;border-left:2px solid var(--accent-dim);
+  font-style:italic;color:var(--fg-dim)}
+.dream p{margin:0}
+.dream .dreamw{margin-top:.3rem;font-style:normal;font-size:.76rem;color:var(--fg-far);
+  font-family:ui-sans-serif,system-ui,sans-serif}
+
+/* what is owed: coarse state, exactly as the arc carries it */
+.vows{margin:0 0 1.3rem}
+.vow{margin:0 0 .45rem;padding-left:1rem;border-left:2px solid var(--accent-dim)}
+.vow.missed{border-left-color:var(--bad);color:var(--fg-dim)}
+.vow .voww{font-size:.8rem;color:var(--fg-far);font-family:ui-sans-serif,system-ui,sans-serif}
+
+/* an empty stretch of days says so once, quietly, and offers the way back */
+.bempty{margin:2.2rem 0;text-align:center;color:var(--fg-dim);font-style:italic}
+
+/* the page turns */
+.bpager{display:flex;justify-content:space-between;gap:1rem;margin:2.2rem 0 1rem;
+  font-size:.9rem;font-family:ui-sans-serif,system-ui,sans-serif}
+
+/* on paper, the chrome stays on the desk */
+@media print{
+  main.book .top,main.book .bpager,main.book footer,main.book .note,.meter{display:none!important}
+  main.book{max-width:100%;font-size:11.5pt;line-height:1.7}
+  :root{--bg:#fff;--bg-2:#fff;--fg:#000;--fg-dim:#333;--fg-far:#555;--line:#999;
+    --accent-dim:#888;--bad:#000}
+  .bday{break-inside:avoid-page}
+}
+CSS;
+}

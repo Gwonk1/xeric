@@ -1213,7 +1213,7 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
-              '/power.php', '/addchar.php', '/forge/forge.php', '/forge/play.php'];
+              '/power.php', '/addchar.php', '/book.php', '/forge/forge.php', '/forge/play.php'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
 ok('every include, worker and test path is denied', $served === [], implode(' ', $served));
@@ -1224,7 +1224,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 // list is a hand-written enumeration, and a hand-written enumeration goes stale.
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
-          'notify.php', 'power.php', 'addchar.php'];
+          'notify.php', 'power.php', 'addchar.php', 'book.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);
@@ -2111,6 +2111,171 @@ ok('RIGHT WITHOUT CLOSED SAYS NOTHING — guessing it is not being told you gues
     xeric_play_story_lines($sw, ['resolved' => [['key' => 'mill_stairwell', 'right' => true, 'closed' => false]]]) === []);
 ok('and a wrong name gets no line either',
     xeric_play_story_lines($sw, ['resolved' => [['key' => 'mill_stairwell', 'right' => false, 'closed' => true]]]) === []);
+
+echo "\n# the book\n";
+
+// ---------------------------------------------------------------------------
+// book.php — the world writing its own novel, and the walls holding while it
+// does. What is being defended, in the order it would hurt:
+//   1. it is the OWNER's page — a stranger gets the inspector's refusal and
+//      not one headline out of somebody else's record;
+//   2. the day grouping is WORLD time — a known event lands under the world's
+//      own day heading, in order among that day's material;
+//   3. a conversation becomes a scene line and never a transcript — the book
+//      keeps the fact of it and none of the words;
+//   4. the ledger of promises (engine/constructs.php) reads: an open one on
+//      the current day, a miss on the day it happened, and anything the parse
+//      cannot honestly render is skipped rather than guessed at;
+//   5. an hour filed as a dream is set in its own register — and until an
+//      engine produces one, the register renders EMPTY, which is an absence
+//      and not a fault;
+//   6. a world with nothing lived renders a page, warning-free.
+// ---------------------------------------------------------------------------
+
+$BK = sid();
+xeric_session_use($BK);
+$bkDir = xeric_web_worlds_dir() . '/book-town';
+@mkdir($bkDir, 0775, true);
+@copy($srcWorld . '/world-template.json', $bkDir . '/world-template.json');
+@copy($srcWorld . '/seed.json', $bkDir . '/seed.json');
+xeric_session_claim('book-town', $BK);
+
+$bw    = xeric_play_open('book-town');
+$bT    = $bw['template'];
+$bdb   = $bw['db'];
+$bnow  = xeric_clock_now($bdb, $bT);
+$bh    = (string)$bT['cast']['characters'][0]['handle'];
+$bname = xeric_world_name($bT, $bh);
+
+// A known event at a known world hour: yesterday, quarter past three.
+$btz  = xeric_book_tz($bT);
+$yest = (new DateTimeImmutable('@' . (int)$bnow['epoch']))->setTimezone($btz)->modify('-1 day')->setTime(15, 4);
+xeric_event_add($bdb, 'the kiln finally cracked', $yest->getTimestamp(), null, [$bh],
+    'The old kiln split down its seam, and everybody in the yard heard it go.');
+
+// And a conversation the same evening. The words are canaried: if either ever
+// reaches the page, the book has become the chat log it is not allowed to be.
+$bconv = xeric_conversation_for($bdb, $bh);
+xeric_message_append($bdb, $bconv, 'user', null, 'TRANSCRIPT_CANARY do not print me',
+    $yest->setTime(20, 12)->getTimestamp());
+xeric_message_append($bdb, $bconv, 'character', $bh, 'TRANSCRIPT_CANARY_TOO',
+    $yest->setTime(20, 15)->getTimestamp());
+
+$bk = xeric_book_days($bT, $bdb, $bnow);
+$dayLabel = xeric_book_heading($bT, $yest->getTimestamp());
+$bday = null;
+foreach ($bk['days'] as $d) if ($d['label'] === $dayLabel) { $bday = $d; break; }
+$bkinds = $bday !== null ? array_column($bday['items'], 'kind') : [];
+ok('a known event is filed under the right world-day heading',
+    $bday !== null && in_array('event', $bkinds, true)
+    && array_filter($bday['items'], fn($i) => $i['kind'] === 'event'
+        && (string)$i['event']['title'] === 'the kiln finally cracked') !== [], $dayLabel);
+ok('the evening\'s conversation is on the same page as a scene',
+    $bday !== null && in_array('scene', $bkinds, true)
+    && array_filter($bday['items'], fn($i) => $i['kind'] === 'scene'
+        && $i['scene']['handle'] === $bh && $i['scene']['yours'] === 1 && $i['scene']['theirs'] === 1) !== []);
+ok('and the day reads forward — the afternoon before the evening',
+    $bday !== null && array_search('event', $bkinds, true) < array_search('scene', $bkinds, true));
+ok('no engine produces a dream yet, so the register is honestly empty',
+    !in_array('dream', $bkinds, true)
+    && array_filter($bk['days'], fn($d) => in_array('dream', array_column($d['items'], 'kind'), true)) === []);
+
+// The register itself, driven through the one seam it reads: the trail's kind.
+$dreamAt = $yest->setTime(3, 30)->getTimestamp();
+$did = xeric_event_add($bdb, 'the water kept rising', $dreamAt, null, [$bh],
+    'The stairs went down further than the house did.');
+xeric_world_state_set($bdb, 'why:event:' . $did, '{"kind":"dream"}');
+$bk2 = xeric_book_days($bT, $bdb, $bnow);
+$bday2 = null;
+foreach ($bk2['days'] as $d) if ($d['label'] === $dayLabel) { $bday2 = $d; break; }
+ok('an hour the trail files as a dream is set in the dream register, not among the waking day',
+    $bday2 !== null
+    && array_filter($bday2['items'], fn($i) => $i['kind'] === 'dream' && (int)$i['event']['id'] === $did) !== []
+    && array_filter($bday2['items'], fn($i) => $i['kind'] === 'event' && (int)$i['event']['id'] === $did) === []);
+
+// The ledger, in the shape engine/constructs.php actually writes — plus two
+// rows no honest page could render, which must be skipped and never guessed at.
+xeric_arc_set($bdb, $bh, 'expect.1', json_encode([
+    'what' => 'the market', 'quote' => "I'll be at the market Saturday morning",
+    'when_said' => 'saturday morning', 'due' => (int)$bnow['epoch'] + 2 * 86400,
+    'formed' => (int)$bnow['epoch'] - 3600, 'state' => 'open']));
+xeric_arc_set($bdb, $bh, 'expect.2', json_encode([
+    'what' => 'thursday at the bar', 'quote' => 'I will be there Thursday',
+    'when_said' => 'thursday', 'due' => $yest->setTime(18, 0)->getTimestamp(),
+    'formed' => (int)$bnow['epoch'] - 5 * 86400, 'state' => 'missed',
+    'missed_at' => $yest->setTime(23, 0)->getTimestamp()]));
+xeric_arc_set($bdb, $bh, 'expect.junk', '42');
+xeric_arc_set($bdb, $bh, 'expect.junk2', '{"state":"open"}');
+
+$bx = xeric_book_expectations($bdb);
+ok('the ledger reads what parses and skips what does not', count($bx) === 2,
+    json_encode(array_column($bx, 'key')));
+
+$bk3 = xeric_book_days($bT, $bdb, $bnow);
+$btoday = null; $bday3 = null;
+foreach ($bk3['days'] as $d) {
+    if ($d['date'] === $bk3['pager']['today']) $btoday = $d;
+    if ($d['label'] === $dayLabel) $bday3 = $d;
+}
+ok('an open promise stands on the current day',
+    $btoday !== null && array_filter($btoday['promises'],
+        fn($p) => str_contains($p['quote'], 'market Saturday morning')) !== []);
+ok('and a miss lands on the day the waiting happened',
+    $bday3 !== null && array_filter($bday3['items'],
+        fn($i) => $i['kind'] === 'miss' && $i['expect']['status'] === 'missed'
+            && str_contains($i['expect']['quote'], 'Thursday')) !== []);
+
+// The page itself, as a browser gets it — the owner's whole, the stranger's nothing.
+$bookOwner = $run('book.php', $BK, ['w' => 'book-town']);
+ok('book.php prints the owner the day heading and its headline',
+    str_contains($bookOwner, h($dayLabel)) && str_contains($bookOwner, 'the kiln finally cracked'),
+    mb_substr($bookOwner, 0, 160));
+ok('a conversation is a scene line and not one word of transcript',
+    !str_contains($bookOwner, 'TRANSCRIPT_CANARY')
+    && str_contains($bookOwner, ' spoke,') && str_contains($bookOwner, h($bname)));
+ok('the promise is printed in the reader\'s own second person',
+    str_contains($bookOwner, 'You told ' . h($bname)));
+ok('the dream wears its own register on the page',
+    str_contains($bookOwner, 'class="dream"') && str_contains($bookOwner, 'The stairs went down further'));
+
+$bookStranger = $run('book.php', $B, ['w' => 'book-town']);
+ok('a stranger is refused the book with the inspector\'s own sentence',
+    str_contains($bookStranger, 'not yours to read'), mb_substr($bookStranger, 0, 160));
+ok('and reads not a headline of it',
+    !str_contains($bookStranger, 'the kiln finally cracked')
+    && !str_contains($bookStranger, 'market Saturday morning'));
+
+// Page turns: dates, not offsets, and the future is not offered.
+$br = xeric_book_range($bT, $bdb, $bnow);
+ok('the default page is the last seven lived days, today first',
+    count($br['days']) === 7 && $br['days'][0]['date'] === $br['today'] && $br['later'] === '');
+$brBack = xeric_book_range($bT, $bdb, $bnow, $br['days'][6]['date'], 7);
+ok('turning back a page offers the way forward again',
+    $brBack['from'] === $br['days'][6]['date'] && $brBack['later'] !== '');
+$brFuture = xeric_book_range($bT, $bdb, $bnow, '2999-01-01', 7);
+ok('a page asked for from the future is today — the book prints what was lived',
+    $brFuture['from'] === $br['today']);
+
+// A world with nothing lived at all: no seed, no events, no conversations.
+// Driven with display_errors ON, because the shared runner silences exactly the
+// warnings this assertion exists to catch.
+$blank = xeric_web_worlds_dir() . '/blank-book';
+@mkdir($blank, 0775, true);
+@copy($srcWorld . '/world-template.json', $blank . '/world-template.json');
+xeric_session_claim('blank-book', $BK);
+$loudBoot = '$_GET = ' . var_export(['w' => 'blank-book'], true) . ';'
+    . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($BK, true) . '];'
+    . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
+    . ' require ' . var_export(dirname(__DIR__) . '/book.php', true) . ';';
+$bookBlank = (string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($tmp)
+    . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
+    . ' ' . escapeshellarg($php) . ' -d error_reporting=E_ALL -d display_errors=1 -r '
+    . escapeshellarg($loudBoot) . ' 2>&1');
+ok('a world with nothing lived renders a quiet page, not a warning',
+    str_contains($bookBlank, 'Nothing has been set down')
+    && !str_contains($bookBlank, 'Warning:') && !str_contains($bookBlank, 'Notice:')
+    && !str_contains($bookBlank, 'Deprecated:') && !str_contains($bookBlank, 'Fatal'),
+    mb_substr($bookBlank, 0, 200));
 
 // ---------------------------------------------------------------------------
 

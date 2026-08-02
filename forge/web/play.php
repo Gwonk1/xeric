@@ -1138,7 +1138,9 @@ echo '<style>' . xeric_play_css() . '
         '<span class="xchint">stops the local xeric server itself — close the tab after</span></div>' +
       (MINE
         ? '<div class="xcrow"><a class="nbtn" href="review.php?w=' + encodeURIComponent(W) + '#repass">📖 literary repass</a>' +
-          '<span class="xchint">an editor reads the whole xeric: contradictions, plotline, and the snake’s pacing</span></div>'
+          '<span class="xchint">an editor reads the whole xeric: contradictions, plotline, and the snake’s pacing</span></div>' +
+          '<div class="xcrow"><a class="nbtn" href="book.php?w=' + encodeURIComponent(W) + '">📕 the book</a>' +
+          '<span class="xchint">the xeric’s own story, day by day — events, scenes and dreams, fit to print</span></div>'
         : '') +
       '<div class="xcrow"><button type="button" class="nbtn" id="ccancel">close</button></div>';
     $('#coverlay').classList.add('open');
