@@ -5,20 +5,38 @@ working document, not a promise — dates are absent on purpose.
 
 ---
 
+## The heart — the world running when nobody is looking
+
+`forge/web/heart.php`, looped by `./xeric` every 60 seconds, or by cron, or by
+systemd. **One pass and exit, not a long-lived process:** a thing that does one
+job and dies is crash-safe by construction and testable by running it once.
+
+Before it existed, only the skip button and the CLI could make a world live
+through an hour. The clock ran — world time is real time plus an offset — but
+nothing happened in the time it passed, so a week away left the date moved and
+the week empty. That is not a delay, it is a deletion, and it meant the headline
+claim of the project was being delivered by a button.
+
+It is safe to run every minute because a sweep is idempotent per window: the
+marker is written whether an hour produced an event or was skipped, so a tick
+that finds no new window does no work and costs no tokens. Nothing has to
+remember when it last ran.
+
+Three things it will not do:
+
+1. **Run a world that is stopped.** A paused world is paused for this too.
+2. **Take the model from somebody using it.** A person waiting on a reply
+   outranks a town having a Tuesday, so a tick that finds the queue busy skips
+   and tries again next minute — the window is still unswept and still there.
+3. **Live an unbounded gap in one tick.** A month away is ~240 model calls; a
+   handful per world per tick, and a long gap fills over several minutes.
+
+---
+
 ## Known limitations, stated plainly
 
 These are real, they are deliberate as of today, and they are the first things
 you will notice.
-
-- **A world does not live through the hours you are away.** World time is
-  `real_now + offset`, so the clock never stops — close the tab for a week and
-  it genuinely is a week later, and everyone is standing where their schedule
-  says. But only a skip or a cron actually makes a world *live* an hour, so a
-  week away leaves a week-shaped hole: the date moved and nothing happened in
-  it. Skipping afterwards does not fill it either, because a skip sweeps forward
-  from where the clock stands. **The machinery to fix this is already written**
-  — `xeric_sweep_catchup()` takes an arbitrary range and nothing has ever called
-  it with a backward one — and it is the highest-value open item in the project.
 
 - **Nobody knows you were gone.** The transcript is undated, so last week's
   goodnight abuts today's hello. Characters cannot tell a quiet stretch from a

@@ -29,6 +29,18 @@ There is **no config file**. Every decision — which PHP, which port is free,
 where the data lives — is made in `bootstrap.php` and passed as environment,
 so a local install has nothing to write, hand-edit, or get out of date.
 
+`./xeric` also starts **the heart** — one pass of `forge/web/heart.php` every 60
+seconds, which is what makes your worlds live through the hours you are not
+watching. Set `XERIC_HEART_EVERY` to change the interval. If you would rather
+run it yourself, it is one pass and exit, so a crontab line does the same job:
+
+```cron
+* * * * * cd /path/to/xeric && php forge/web/heart.php >> heart.log 2>&1
+```
+
+It will not run a paused world, will not take the model from somebody who is
+mid-conversation, and will not try to live a month-long gap in a single tick.
+
 The app finds a local model by probing the ports people actually use (11434,
 8080, 1234, 5000, 8000, 4891). If yours is somewhere else, the machines screen
 in the UI takes an address, or set it and skip the probe.
