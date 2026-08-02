@@ -31,6 +31,15 @@ declare(strict_types=1);
 require_once __DIR__ . '/../forge.php';
 require_once __DIR__ . '/../../engine/renderers/bible.php';   // the walls check below renders one
 
+// THE SHELF IS PINNED EMPTY. The naming gates read the worlds directory to
+// keep a new world from reusing an existing one's names, which means an
+// unpinned test run would change its answers every time somebody forges a
+// world into the repo. Pointed at a directory that does not exist, the gates
+// see an empty shelf and every assertion below is about the code, not about
+// whatever happens to be on disk. The cross-world section further down builds
+// its own shelf, on purpose, and pins back afterward.
+xeric_forge_shelf(sys_get_temp_dir() . '/xeric-forge-test-no-shelf-' . getmypid());
+
 $FAILED = 0;
 
 function ok(string $name, bool $cond, string $detail = ''): void
@@ -1331,6 +1340,223 @@ ok('keys are unique and article-free',
 ok('scale reads free text', xeric_forge_scale(['scale' => 'a big city, I think']) === 'city'
     && xeric_forge_scale([]) === 'small_town');
 ok('an illegal rating cannot get through', xeric_forge_rating(['rating' => 'gore']) === 'sfw');
+
+// ---------------------------------------------------------------------------
+// THE NAMING REGISTER
+//
+// Eight worlds were forged before this section existed and Elias Thorne lived
+// in every one of them — a fog town, a Mojave junction, a space station. Two
+// claims are defended here, the same two the vocal-shape fix proved: variety
+// is ASSIGNED (a register, chosen deterministically from the answers), and
+// then GUARANTEED (gates that replace banned and shelf-worn names whatever
+// the model said). A prompt ban alone is a hope; these are the tests for the
+// gate.
+// ---------------------------------------------------------------------------
+
+$regs = xeric_forge_registers();
+ok('registers.json loads and is a real library', count($regs['registers']) >= 8);
+$thin = [];
+foreach ($regs['registers'] as $r) {
+    $k = (string)($r['key'] ?? '?');
+    if (count((array)($r['given'] ?? [])) < 12)      $thin[] = "$k.given";
+    if (count((array)($r['family'] ?? [])) < 8)      $thin[] = "$k.family";
+    if (count((array)($r['toponyms'] ?? [])) < 4)    $thin[] = "$k.toponyms";
+    if (count((array)($r['businesses'] ?? [])) < 4)  $thin[] = "$k.businesses";
+    if (trim((string)($r['church'] ?? '')) === '')   $thin[] = "$k.church";
+}
+ok('every register is stocked for a twelve-person cast', $thin === [], implode(', ', $thin));
+$bankBanned = [];
+foreach ($regs['registers'] as $r) {
+    foreach (['given', 'family'] as $bank) {
+        foreach ((array)($r[$bank] ?? []) as $name) {
+            foreach ((array)($regs['banned'][$bank] ?? []) as $bad) {
+                if (strcasecmp((string)$name, (string)$bad) === 0) $bankBanned[] = (string)$name;
+            }
+        }
+    }
+}
+ok('no register bank contains a banned name — a gate that swaps a ban for a ban loops', $bankBanned === []);
+
+$nm = xeric_forge_naming(ANSWERS);
+ok('the register is deterministic on the answers',
+    $nm['key'] !== '' && $nm['key'] === xeric_forge_naming(ANSWERS)['key'], $nm['key']);
+
+ok('a banned first name is replaced and the clean surname is kept',
+    str_ends_with(xeric_forge_fresh_person_name('Elias Marsh', $nm, 0, []), ' Marsh')
+    && !str_starts_with(xeric_forge_fresh_person_name('Elias Marsh', $nm, 0, []), 'Elias'),
+    xeric_forge_fresh_person_name('Elias Marsh', $nm, 0, []));
+ok('a banned surname is replaced and the clean first name is kept',
+    str_starts_with(xeric_forge_fresh_person_name('Dora Thorne', $nm, 1, []), 'Dora ')
+    && !str_ends_with(xeric_forge_fresh_person_name('Dora Thorne', $nm, 1, []), 'Thorne'),
+    xeric_forge_fresh_person_name('Dora Thorne', $nm, 1, []));
+ok('a clean name is not touched', xeric_forge_fresh_person_name('Wendell Pike', $nm, 0, []) === 'Wendell Pike');
+ok('two renamed characters do not land on the same replacement',
+    xeric_forge_fresh_person_name('Elias Marsh', $nm, 0, [])
+    !== xeric_forge_fresh_person_name('Elias Grant', $nm, 3, []),
+    xeric_forge_fresh_person_name('Elias Marsh', $nm, 0, []));
+ok('a name the brief itself contains is kept whole, banned or not',
+    xeric_forge_fresh_person_name('Elias Sanders', $nm, 0, [], 'my teacher Mr. Sanders, called Elias by nobody')
+        === 'Elias Sanders');
+
+ok('a world may not be Oakhaven, Blackwood, or end in Creek or Hollow',
+    !xeric_forge_world_name_ok('Oakhaven Mills', $nm) && !xeric_forge_world_name_ok('Blackwood Rest', $nm)
+    && !xeric_forge_world_name_ok('Cutter Creek', $nm) && !xeric_forge_world_name_ok('Fenn Hollow', $nm)
+    && !xeric_forge_world_name_ok('The Low Crossing', $nm));
+ok('and an ordinary name passes', xeric_forge_world_name_ok('Ostrander', $nm) && xeric_forge_world_name_ok('Creekside', $nm));
+ok('a banned world name the premise itself contains is the user\'s choice and stands',
+    xeric_forge_fresh_world_name('Blackwood', $nm, 'a town called Blackwood, like my grandmother\'s') === 'Blackwood');
+
+$usedP = [];
+$rusty = xeric_forge_fresh_place_name('The Rusty Anchor', 'bar', $nm, 0, $usedP);
+ok('the Rusty <thing> shape is replaced', stripos($rusty, 'rusty') === false, $rusty);
+$jude = xeric_forge_fresh_place_name("St. Jude's of the Mist", 'church', $nm, 1, $usedP);
+ok('St. Jude finally retires, apostrophe and all', stripos($jude, 'jude') === false, $jude);
+ok('and the parish that replaces him is the register\'s own', $jude === $nm['church'], "$jude vs {$nm['church']}");
+ok('two replaced places in one world are two different places',
+    !in_array($rusty, [$jude], true) && count($usedP) >= 2);
+
+// ---- cross-world memory: the shelf itself is the ban list ------------------
+
+$shelfDir = sys_get_temp_dir() . '/xeric-forge-test-shelf-' . getmypid();
+@mkdir($shelfDir . '/testville', 0775, true);
+@file_put_contents($shelfDir . '/testville/world-template.json', json_encode([
+    'meta' => ['name' => 'Testville'],
+    'cast' => ['characters' => [
+        ['display_name' => 'Wendell Pike'],
+        ['display_name' => 'Verna Blevins'],
+    ]],
+    'places' => [['name' => 'the Anchor'], ['name' => "Verna's"]],
+]));
+xeric_forge_shelf($shelfDir);
+$shelfNm = xeric_forge_naming(ANSWERS);
+ok('the shelf is read: names on it are spoken for',
+    isset($shelfNm['used']['given']['wendell'], $shelfNm['used']['family']['pike'],
+          $shelfNm['used']['worlds']['testville'], $shelfNm['used']['places']['anchor']));
+$moved = xeric_forge_fresh_person_name('Wendell Pike', $shelfNm, 0, []);
+ok('the second world cannot reuse the first world\'s cast',
+    $moved !== 'Wendell Pike' && stripos($moved, 'Wendell') === false && stripos($moved, 'Pike') === false, $moved);
+ok('the second world cannot reuse the first world\'s name',
+    xeric_forge_fresh_world_name('Testville', $shelfNm) !== 'Testville');
+$usedP2 = [];
+ok('or its rooms', xeric_forge_fresh_place_name('the Anchor', 'bar', $shelfNm, 0, $usedP2) !== 'the Anchor');
+
+// The whole build, against a model that answers with everything the shelf and
+// the ban list forbid — which is not a hypothetical, it is a transcript.
+$tired = ['base' => 'stub://', 'stub' => function (string $tag, array $m, array $o): array {
+    static $n = 0;
+    $good = (stub_good()['stub'])($tag, $m, $o);
+    switch ($tag) {
+        case 'concept':
+            $good['name'] = 'Testville';
+            return $good;
+        case 'places':
+            $good['places'][0]['name'] = 'The Rusty Anchor';
+            return $good;
+        case 'cast':
+            $n++;
+            $good['display_name'] = ['Elias Thorne', 'Silas Vane', 'Kaelen Voss', 'Wendell Pike'][($n - 1) % 4];
+            $good['one_line'] = 'The only person in town who can ' . $n . ' things at once.';
+            return $good;
+    }
+    return $good;
+}];
+$tiredBuild = xeric_forge_build(ANSWERS, $tired, ['places' => 6, 'cast' => 4, 'seed' => false]);
+$tt = $tiredBuild['template'];
+ok('a model that names the world after an existing one is overruled',
+    (string)$tt['meta']['name'] !== 'Testville', (string)$tt['meta']['name']);
+$tiredNames = array_map(fn($c) => (string)$c['display_name'], (array)$tt['cast']['characters']);
+$offenders = array_filter($tiredNames, fn($x) =>
+    preg_match('/\b(Elias|Silas|Kaelen|Wendell|Thorne|Vane|Voss|Pike)\b/i', $x) === 1);
+ok('no banned or shelf-worn name survives a whole build', $offenders === [], implode(', ', $tiredNames));
+ok('the renamed cast is still four different people', count(array_unique($tiredNames)) === 4, implode(', ', $tiredNames));
+$tiredPlaces = array_map(fn($p) => (string)$p['name'], (array)$tt['places']);
+ok('no Rusty anything survives either',
+    array_filter($tiredPlaces, fn($x) => stripos($x, 'rusty') !== false) === [], implode(', ', $tiredPlaces));
+$tiredLines = array_map(fn($c) => (string)$c['one_line'], (array)$tt['cast']['characters']);
+ok('the "The only…" roster line is banned even once, and replaced past that',
+    array_filter($tiredLines, fn($x) => stripos($x, 'the only') === 0) === [], implode(' | ', $tiredLines));
+ok('the register that renamed them is on the record',
+    is_array($tt['forge']['naming'] ?? null) && (string)$tt['forge']['naming']['register'] !== '');
+
+@unlink($shelfDir . '/testville/world-template.json');
+@rmdir($shelfDir . '/testville');
+@rmdir($shelfDir);
+xeric_forge_shelf(sys_get_temp_dir() . '/xeric-forge-test-no-shelf-' . getmypid());
+
+// ---------------------------------------------------------------------------
+// TWELVE IS A TOWN: every by-index bank has to cover the new default cast
+// ---------------------------------------------------------------------------
+
+// The hand-written cast, dealt twelve deep with no model: twelve different
+// people, a spread of ages, and nobody wearing anybody else's name.
+$bigDead = xeric_forge_build(ANSWERS, stub_dead(), ['places' => 6, 'cast' => 12, 'seed' => false])['template'];
+$bigNames = array_map(fn($c) => (string)$c['display_name'], (array)$bigDead['cast']['characters']);
+ok('a dead-model cast of twelve is twelve different people',
+    count($bigNames) === 12 && count(array_unique($bigNames)) === 12, implode(', ', $bigNames));
+$bigAges = array_map(fn($c) => (int)$c['age'], (array)$bigDead['cast']['characters']);
+ok('and it is a town, not a staff meeting: children and old people included',
+    min($bigAges) < 18 && max($bigAges) >= 60, implode(',', $bigAges));
+
+// The age bands walk sixteen slots without handing two slots the same band.
+$bandSeen = [];
+$bandDup = [];
+for ($slot = 0; $slot < 16; $slot++) {
+    $orbit = $slot % 2 === 0 ? 'work' : 'outside';
+    $b = xeric_forge_age_band($slot, $orbit);
+    $sig = $orbit . ':' . $b['min'] . '-' . $b['max'];
+    if (isset($bandSeen[$sig])) $bandDup[] = "slot $slot repeats $sig";
+    $bandSeen[$sig] = true;
+    if ($b['example'] < $b['min'] || $b['example'] > $b['max']) $bandDup[] = "slot $slot example outside band";
+}
+ok('sixteen slots, sixteen distinct age bands, every example inside its band', $bandDup === [], implode('; ', $bandDup));
+
+// The dedupe banks are deep enough that sixteen identical interiors come out
+// sixteen different — which is the direct test that no bank is shorter than
+// the cast it serves.
+$clones = [];
+for ($i = 0; $i < 16; $i++) {
+    $clones[] = ['handle' => 'c' . $i,
+        'one_line' => 'Keeps to themselves, mostly.',
+        'voice' => 'A low, gravelly rumble.',
+        'psyche' => ['sore_spot' => 'being ignored', 'self_soothe' => 'walks', 'jealousy' => 'everyone',
+                     'praise_that_lands' => 'thanks'],
+        'drives' => ['pull' => 'to be seen'],
+        'solace' => 'the porch'];
+}
+$uncloned = xeric_forge_dedupe_cast($clones, []);
+$cloneDup = [];
+foreach (['one_line', 'voice'] as $f) {
+    $vals = array_map(fn($c) => (string)$c[$f], $uncloned);
+    if (count(array_unique($vals)) !== 16) $cloneDup[] = $f . '=' . count(array_unique($vals));
+}
+foreach (['sore_spot', 'self_soothe', 'jealousy', 'praise_that_lands'] as $f) {
+    $vals = array_map(fn($c) => (string)$c['psyche'][$f], $uncloned);
+    if (count(array_unique($vals)) !== 16) $cloneDup[] = $f . '=' . count(array_unique($vals));
+}
+foreach (['pull' => fn($c) => (string)$c['drives']['pull'], 'solace' => fn($c) => (string)$c['solace']] as $f => $get) {
+    $vals = array_map($get, $uncloned);
+    if (count(array_unique($vals)) !== 16) $cloneDup[] = $f . '=' . count(array_unique($vals));
+}
+ok('sixteen identical interiors come out sixteen different on every field', $cloneDup === [], implode('; ', $cloneDup));
+
+// The one-liner shape gate: same sentence in different words is a repeat.
+$shaped = xeric_forge_dedupe_cast([
+    ['handle' => 'a', 'one_line' => 'The only navigator who can thread a nebula without swearing.',
+     'voice' => 'v1', 'psyche' => [], 'drives' => []],
+    ['handle' => 'b', 'one_line' => 'The only mechanic who treats an engine better than kin.',
+     'voice' => 'v2', 'psyche' => [], 'drives' => []],
+    ['handle' => 'c', 'one_line' => 'The kid who knows which vent leads anywhere.',
+     'voice' => 'v3', 'psyche' => [], 'drives' => []],
+    ['handle' => 'd', 'one_line' => 'The kid who sees everything from the catwalk.',
+     'voice' => 'v4', 'psyche' => [], 'drives' => []],
+], []);
+ok('"The only…" never survives, even its first appearance',
+    array_filter($shaped, fn($c) => stripos((string)$c['one_line'], 'the only') === 0) === [],
+    implode(' | ', array_map(fn($c) => $c['one_line'], $shaped)));
+ok('the first wearer of an honest shape keeps it; the second is a repeat',
+    (string)$shaped[2]['one_line'] === 'The kid who knows which vent leads anywhere.'
+    && (string)$shaped[3]['one_line'] !== 'The kid who sees everything from the catwalk.',
+    (string)$shaped[3]['one_line']);
 
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";
 exit($FAILED === 0 ? 0 : 1);

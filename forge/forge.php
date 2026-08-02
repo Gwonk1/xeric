@@ -136,6 +136,13 @@ function xeric_forge_answers_fill(array $answers, array $interview, ?array $endp
             foreach ($gaps as $k) {
                 if (isset($filled[$k]) && $filled[$k] !== '' && $filled[$k] !== []) $answers[$k] = $filled[$k];
             }
+            // A name the MODEL chose gets the same freshness gate the cast
+            // does — ✨ handed three different owners "Elias" before this
+            // line. A name the user typed is never here: it was not a gap.
+            if (in_array('name', $gaps, true) && is_string($answers['name'] ?? null)) {
+                $answers['name'] = xeric_forge_fresh_person_name(
+                    (string)$answers['name'], xeric_forge_naming($answers), 0, []);
+            }
             $gaps = xeric_forge_answer_gaps($answers, $interview);
             if ($gaps === []) return $answers;
         } catch (Throwable $e) {
@@ -434,6 +441,383 @@ function xeric_forge_note(?callable $onNote, string $msg): void
 }
 
 // ---------------------------------------------------------------------------
+// The naming register — one palette per world, carried into every pass
+// ---------------------------------------------------------------------------
+//
+// Eight worlds on the shelf, and Elias Thorne lived in every one of them. A
+// fog town in the 1850s, a Mojave truck stop, a near-future port — and the
+// same man, sometimes twice (Silas Vane appeared verbatim in two worlds; a
+// space-opera forged later carried Kaelen Voss VERBATIM out of a 19th-century
+// fog town, plus Vance, Vane and Thorne for good measure). Thorne/Vane/Vance/
+// Voss covered 27 of the shelf's 32 surnames. Six towns had a Rusty-something,
+// five a St. Jude's, three an Ozone-something. The genre changed completely
+// and the names did not, which settles the diagnosis: every pass is a separate
+// model call with no memory of any other world, so each world independently
+// converges on the statistically safest tokens. Context does not fix that.
+// Nothing about "a hyper-capitalist luxury hub" makes 'Kaelen Voss' less
+// probable; only different raw material does.
+//
+// The cure is the one already proven inside a single world by the vocal-shape
+// fix (xeric_forge_dedupe_cast): ASSIGN diversity up front, then GUARANTEE it
+// deterministically, because a prompt ban alone is a hope, not a gate.
+//
+//   1. A REGISTER is chosen per world — a naming culture with hand-written
+//      banks (registers.json): given names, surnames, toponyms, business
+//      names, a church. Chosen deterministically from the world's own answers
+//      (never the date, never rand()), so a reroll of one character lands in
+//      the same register as the world around it. Every pass that invents a
+//      proper noun quotes the register in its prompt.
+//   2. THE GATES run after every model reply and cannot be talked out of it:
+//      the observed repeat offenders (banned lists in registers.json, shapes
+//      in code below) and anything already worn by a world on the shelf are
+//      replaced from the register's banks, walked by position exactly the way
+//      the dedupe banks are. The shelf read is what gives the forge cross-
+//      world memory: the third world in the directory cannot reuse the first
+//      world's cast, because the first world's names are sitting right there.
+//
+// TEMPERATURE WAS EVALUATED AND LEFT ALONE. llm.php takes a per-call
+// temperature and nothing finer; names ride the same JSON calls as the
+// structure, so "hotter names" would mean hotter braces too, and the 12B
+// floor pays for that in repair rounds. A register moves the distribution
+// further than heat ever did — heat samples the same valley more noisily,
+// the register moves the valley.
+//
+// Data-file failure is a seasoning failure, not a build failure: a missing or
+// unreadable registers.json quietly degrades to shelf-only gates (contrast
+// interview.json, which throws — the interview is the product).
+
+/** registers.json, memoized per path. Never throws; see the section comment. */
+function xeric_forge_registers(?string $path = null): array
+{
+    static $memo = [];
+    $path = $path ?? __DIR__ . '/registers.json';
+    if (isset($memo[$path])) return $memo[$path];
+    $raw = @file_get_contents($path);
+    $data = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($data)) $data = [];
+    return $memo[$path] = [
+        'registers' => array_values((array)($data['registers'] ?? [])),
+        'banned'    => (array)($data['banned'] ?? []),
+    ];
+}
+
+/**
+ * Where the shelf is — the worlds directory the cross-world gates read.
+ *
+ * Pass a directory to set it (a build with $opts['worlds_dir'] does, and the
+ * tests pin it so they cannot be haunted by whatever worlds the repo happens
+ * to carry). Pass '' to drop back to the default: the deployment's own
+ * XERIC_WORLDS_DIR when set — the same variable the web layer resolves its
+ * worlds directory from — else the repo's worlds/ beside this file.
+ */
+function xeric_forge_shelf(?string $dir = null): string
+{
+    static $set = null;
+    if ($dir !== null) $set = $dir === '' ? null : rtrim($dir, '/');
+    if ($set !== null) return $set;
+    $env = (string)(getenv('XERIC_WORLDS_DIR') ?: '');
+    return $env !== '' ? rtrim($env, '/') : dirname(__DIR__) . '/worlds';
+}
+
+/** Lowercased, punctuation-free, article-free — the form every name gate compares in. */
+function xeric_forge_name_norm(string $s): string
+{
+    $s = xeric_forge_slug($s, ' ');
+    return (string)preg_replace('/^(the|a|an) /', '', $s);
+}
+
+/** "Pastor Dale Ostrander" → ['Dale', 'Ostrander']. A single word has no surname. */
+function xeric_forge_name_split(string $name): array
+{
+    $parts = preg_split('/\s+/', trim($name)) ?: [];
+    $titles = ['mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'doc', 'rev', 'reverend', 'pastor', 'father',
+               'sister', 'brother', 'coach', 'deputy', 'sheriff', 'judge', 'captain', 'nurse'];
+    while (count($parts) > 1 && in_array(strtolower(rtrim((string)$parts[0], '.')), $titles, true)) {
+        array_shift($parts);
+    }
+    $first = (string)($parts[0] ?? '');
+    $last  = count($parts) > 1 ? (string)end($parts) : '';
+    return [$first, $last];
+}
+
+/**
+ * Every proper noun the shelf has already spent, read once per process.
+ *
+ * This is the forge's only memory of other worlds, and it is exactly as
+ * durable as the worlds themselves: nothing is written anywhere, the names
+ * are simply read back off world-template.json. Capped so a hoarder's shelf
+ * cannot make every build reread hundreds of files.
+ */
+function xeric_forge_shelf_names(?string $dir = null): array
+{
+    static $memo = [];
+    $dir = rtrim($dir ?? xeric_forge_shelf(), '/');
+    if (isset($memo[$dir])) return $memo[$dir];
+    $out = ['given' => [], 'family' => [], 'worlds' => [], 'places' => []];
+    foreach (array_slice(glob($dir . '/*/world-template.json') ?: [], 0, 80) as $f) {
+        $t = json_decode((string)@file_get_contents($f), true);
+        if (!is_array($t)) continue;
+        $w = xeric_forge_name_norm((string)($t['meta']['name'] ?? ''));
+        if ($w !== '') $out['worlds'][$w] = true;
+        foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+            if (!is_array($c)) continue;
+            [$first, $last] = xeric_forge_name_split((string)($c['display_name'] ?? ''));
+            if ($first !== '') $out['given'][xeric_forge_name_norm($first)] = true;
+            if ($last !== '')  $out['family'][xeric_forge_name_norm($last)] = true;
+        }
+        foreach ((array)($t['places'] ?? []) as $p) {
+            if (!is_array($p)) continue;
+            $n = xeric_forge_name_norm((string)($p['name'] ?? ''));
+            if ($n !== '') $out['places'][$n] = true;
+        }
+    }
+    return $memo[$dir] = $out;
+}
+
+/**
+ * The naming context every pass reads: the chosen register, the overflow
+ * banks, the banned lists as sets, and what the shelf already spent.
+ *
+ * DETERMINISTIC ON THE ANSWERS, and only the answers. The same answers pick
+ * the same register, which is what keeps a character reroll in the same
+ * register as the world it happens in — forge.answers ride the template for
+ * exactly this kind of caller. Two worlds forged from identical answers land
+ * in the same register too, and that is fine: the shelf gates make the second
+ * one walk further down the same banks rather than repeat the first.
+ */
+function xeric_forge_naming(array $answers): array
+{
+    $data = xeric_forge_registers();
+    $rows = $data['registers'];
+    $bans = $data['banned'];
+    $used = xeric_forge_shelf_names();
+
+    $n = count($rows);
+    $i = 0;
+    $row = [];
+    if ($n > 0) {
+        $seed = mb_strtolower(implode('|', [
+            (string)($answers['name'] ?? ''), (string)($answers['job'] ?? ''),
+            (string)($answers['motivation'] ?? ''), (string)($answers['scale'] ?? ''),
+            mb_substr((string)($answers['premise'] ?? ''), 0, 200),
+        ]));
+        $i = (crc32($seed) & 0x7fffffff) % $n;
+        $row = (array)$rows[$i];
+    }
+
+    // The other registers' banks, in rotation from the chosen one, so a bank
+    // that runs dry borrows a neighbour's rather than giving up. Twelve
+    // registers deep, nothing here runs dry before a cast of a hundred.
+    $over = ['given' => [], 'family' => [], 'toponyms' => [], 'businesses' => []];
+    for ($k = 1; $k < $n; $k++) {
+        $r2 = (array)$rows[($i + $k) % $n];
+        foreach (array_keys($over) as $bank) {
+            foreach ((array)($r2[$bank] ?? []) as $v) $over[$bank][] = (string)$v;
+        }
+    }
+
+    $set = static function ($list): array {
+        $out = [];
+        foreach ((array)$list as $v) {
+            $k = xeric_forge_name_norm((string)$v);
+            if ($k !== '') $out[$k] = true;
+        }
+        return $out;
+    };
+
+    return [
+        'key'    => (string)($row['key'] ?? ''),
+        'label'  => (string)($row['label'] ?? ''),
+        'sound'  => (string)($row['sound'] ?? ''),
+        'given'  => array_map('strval', (array)($row['given'] ?? [])),
+        'family' => array_map('strval', (array)($row['family'] ?? [])),
+        'toponyms'   => array_map('strval', (array)($row['toponyms'] ?? [])),
+        'businesses' => array_map('strval', (array)($row['businesses'] ?? [])),
+        'church' => (string)($row['church'] ?? ''),
+        'over'   => $over,
+        'banned_given'  => $set($bans['given'] ?? []),
+        'banned_family' => $set($bans['family'] ?? []),
+        // kept as plain lists too, because the prompts say them out loud
+        'ban_given_say'  => array_map('strval', (array)($bans['given'] ?? [])),
+        'ban_family_say' => array_map('strval', (array)($bans['family'] ?? [])),
+        'banned_world'  => array_map(fn($v) => xeric_forge_name_norm((string)$v), (array)($bans['world_words'] ?? [])),
+        'banned_suffix' => array_map(fn($v) => xeric_forge_name_norm((string)$v), (array)($bans['world_suffixes'] ?? [])),
+        'used' => $used,
+    ];
+}
+
+/** A few bank entries for a prompt, rotated by position so calls differ. */
+function xeric_forge_naming_examples(array $naming, string $bank, int $n, int $rot = 0): string
+{
+    $rows = (array)($naming[$bank] ?? []);
+    if ($rows === []) return '';
+    $out = [];
+    for ($k = 0; $k < min($n, count($rows)); $k++) $out[] = (string)$rows[($rot + $k) % count($rows)];
+    return implode(', ', $out);
+}
+
+/** May a world be called this? Bans by word, by suffix, by the Low-<thing> shape, by shelf reuse. */
+function xeric_forge_world_name_ok(string $name, array $naming): bool
+{
+    $n = xeric_forge_name_norm($name);
+    if ($n === '') return false;
+    if (isset($naming['used']['worlds'][$n])) return false;
+    foreach ((array)$naming['banned_world'] as $w) {
+        if ($w !== '' && str_contains($n, $w)) return false;
+    }
+    foreach ((array)$naming['banned_suffix'] as $sfx) {
+        if ($sfx !== '' && ($n === $sfx || str_ends_with($n, ' ' . $sfx))) return false;
+    }
+    if (preg_match('/^low /', $n) === 1) return false;
+    return true;
+}
+
+/**
+ * The world's name, kept or replaced. A name the premise itself contains is
+ * the user's decision and is never touched, banned or not — somebody who
+ * typed "a town called Blackwood, like my grandmother's" has already chosen.
+ */
+function xeric_forge_fresh_world_name(string $name, array $naming, string $premise = ''): string
+{
+    if ($name === '') return $name;
+    if ($premise !== '' && mb_stripos($premise, $name) !== false) return $name;
+    if (xeric_forge_world_name_ok($name, $naming)) return $name;
+    $bank = array_merge((array)$naming['toponyms'], (array)($naming['over']['toponyms'] ?? []));
+    if ($bank === []) return $name;
+    $start = (crc32(xeric_forge_name_norm($name)) & 0x7fffffff) % count($bank);
+    for ($k = 0; $k < count($bank); $k++) {
+        $cand = (string)$bank[($start + $k) % count($bank)];
+        if (xeric_forge_world_name_ok($cand, $naming)) return $cand;
+    }
+    return $name;
+}
+
+/** May a place be called this? The Rusty-<thing> and St.-Jude shapes live here, in code, on purpose. */
+function xeric_forge_place_name_ok(string $name, array $naming): bool
+{
+    $n = xeric_forge_name_norm($name);
+    if ($n === '') return false;
+    if (isset($naming['used']['places'][$n])) return false;
+    if (preg_match('/\brusty\b/', $n) === 1) return false;
+    // "St. Jude's" normalises to "st judes" — the slug DROPS apostrophes
+    // rather than spacing them — so the possessive is matched with the s on.
+    if (preg_match('/\b(st|saint) judes?\b/', $n) === 1) return false;
+    if (preg_match('/^low /', $n) === 1) return false;
+    foreach ((array)$naming['banned_world'] as $w) {
+        if ($w !== '' && str_contains($n, $w)) return false;
+    }
+    return true;
+}
+
+/**
+ * A place's name, kept or replaced. `$used` is this world's own ledger, by
+ * reference, so six replacements in one pass cannot all be the same bakery.
+ * A church takes the register's congregation first; everything else walks the
+ * business bank; and the last resort is BUILT rather than picked — a surname
+ * over the door and the kind under it — because a fallback that can run out
+ * is two failures for the price of one.
+ */
+function xeric_forge_fresh_place_name(string $name, string $kind, array $naming, int $i, array &$used): string
+{
+    $norm = xeric_forge_name_norm($name);
+    if ($name !== '' && xeric_forge_place_name_ok($name, $naming) && !isset($used[$norm])) {
+        $used[$norm] = true;
+        return $name;
+    }
+    // A church gets the register's congregation before anything else — the
+    // walk below starts at $i, and a bakery is a poor stand-in for a parish.
+    if (strtolower($kind) === 'church' && (string)$naming['church'] !== '') {
+        $cn = xeric_forge_name_norm((string)$naming['church']);
+        if (xeric_forge_place_name_ok((string)$naming['church'], $naming) && !isset($used[$cn])) {
+            $used[$cn] = true;
+            return (string)$naming['church'];
+        }
+    }
+    $bank = [];
+    foreach ((array)$naming['businesses'] as $b) $bank[] = (string)$b;
+    foreach ((array)($naming['over']['businesses'] ?? []) as $b) $bank[] = (string)$b;
+    for ($k = 0; $k < count($bank); $k++) {
+        $cand = (string)$bank[($i + $k) % count($bank)];
+        $cn = xeric_forge_name_norm($cand);
+        if (xeric_forge_place_name_ok($cand, $naming) && !isset($used[$cn])) {
+            $used[$cn] = true;
+            return $cand;
+        }
+    }
+    $word = ['diner' => 'Diner', 'cafe' => 'Cafe', 'bar' => 'Tavern', 'club' => 'Club', 'church' => 'Chapel',
+             'school' => 'School', 'clinic' => 'Clinic', 'shop' => 'General', 'market' => 'Market',
+             'office' => 'Office', 'gym' => 'Gym', 'park' => 'Green', 'home' => 'House', 'site' => 'Yard',
+             'station' => 'Depot', 'hall' => 'Hall'][strtolower($kind)] ?? ucfirst($kind !== '' ? $kind : 'Place');
+    foreach (array_merge((array)$naming['family'], (array)($naming['over']['family'] ?? [])) as $f) {
+        $cand = $f . "'s " . $word;
+        $cn = xeric_forge_name_norm($cand);
+        if (xeric_forge_place_name_ok($cand, $naming) && !isset($used[$cn])) {
+            $used[$cn] = true;
+            return $cand;
+        }
+    }
+    $used[$norm] = true;
+    return $name;
+}
+
+/**
+ * A person's name, kept or replaced — the gate behind the cast prompt's ban.
+ *
+ * Each half is judged on its own: a banned or shelf-worn first name costs the
+ * first name, a banned or shelf-worn surname costs the surname, and whatever
+ * was fine stays. Replacements walk the register's banks from this
+ * character's own index, exactly the way the dedupe banks are walked, so two
+ * renamed characters cannot land on the same replacement either.
+ *
+ * A name the brief itself contains is kept whole whatever the shelf thinks:
+ * "my teacher Mr. Sanders" has named a person, and renaming somebody the user
+ * asked for by name would be the premise promise broken a second way.
+ * Surname reuse WITHIN a world is deliberately not gated here — two Blevinses
+ * in one town are a family; the same Blevins in three worlds is a rut.
+ */
+function xeric_forge_fresh_person_name(string $name, array $naming, int $index, array $taken, string $brief = ''): string
+{
+    [$first, $last] = xeric_forge_name_split($name);
+    if ($first === '') return $name;
+    if ($brief !== '') {
+        foreach ([$first, $last] as $part) {
+            if (mb_strlen($part) >= 3 && mb_stripos($brief, $part) !== false) return $name;
+        }
+    }
+    $nf = xeric_forge_name_norm($first);
+    $nl = xeric_forge_name_norm($last);
+    $badFirst = isset($naming['banned_given'][$nf]) || isset($naming['used']['given'][$nf]);
+    $badLast  = $last !== '' && (isset($naming['banned_family'][$nl]) || isset($naming['used']['family'][$nl]));
+    if (!$badFirst && !$badLast) return $name;
+
+    if ($badFirst) {
+        $bank = array_merge((array)$naming['given'], (array)($naming['over']['given'] ?? []));
+        for ($k = 0; $k < count($bank); $k++) {
+            $cand = (string)$bank[($index + $k) % count($bank)];
+            $cn = xeric_forge_name_norm($cand);
+            if (!isset($naming['banned_given'][$cn]) && !isset($naming['used']['given'][$cn])
+                && !isset($taken[xeric_forge_key(trim($cand . ' ' . $last))])) {
+                $first = $cand;
+                break;
+            }
+        }
+    }
+    if ($badLast) {
+        $bank = array_merge((array)$naming['family'], (array)($naming['over']['family'] ?? []));
+        for ($k = 0; $k < count($bank); $k++) {
+            $cand = (string)$bank[($index + $k) % count($bank)];
+            $cn = xeric_forge_name_norm($cand);
+            if (!isset($naming['banned_family'][$cn]) && !isset($naming['used']['family'][$cn])
+                && !isset($taken[xeric_forge_key($first . ' ' . $cand)])) {
+                $last = $cand;
+                break;
+            }
+        }
+    }
+    return trim($first . ($last !== '' ? ' ' . $last : ''));
+}
+
+// ---------------------------------------------------------------------------
 // Pass 1 — concept. The world's voice; everything downstream quotes it.
 // ---------------------------------------------------------------------------
 
@@ -454,10 +838,28 @@ function xeric_forge_pass_concept(array $answers, array $endpoint, ?callable $on
     // invention and becomes a brief.
     $premise = xeric_forge_str($answers['premise'] ?? '', '', 2000);
 
+    // The register rides into the prompt, and the gate waits on the far side
+    // of the reply. Both halves matter: the prompt is what makes the model
+    // WRITE in the register, the gate is what makes a shelf of worlds stay
+    // distinct when it ignores the prompt anyway.
+    $naming = xeric_forge_naming($answers);
+    $nameBlock = '';
+    if ($naming['key'] !== '') {
+        $tops = xeric_forge_naming_examples($naming, 'toponyms', 3);
+        $worn = array_slice(array_keys((array)$naming['used']['worlds']), 0, 8);
+        $nameBlock =
+            ($premise !== '' ? 'If the description above already names the place or its people, those names win. ' : '')
+            . "Otherwise: the people of this place are named out of {$naming['sound']}. "
+            . "Let the place's own name come off the same shelf — the sound of {$tops}, not a copy of them. "
+            . 'Do not call it Oakhaven or Blackwood, nothing ending in Creek or Hollow'
+            . ($worn !== [] ? ', and not ' . implode(', ', array_map('ucwords', $worn)) . ' — those are taken' : '')
+            . ".\n\n";
+    }
+
     xeric_forge_note($onNote, $premise !== '' ? 'concept: reading what you wrote'
                                               : 'concept: inventing the place');
 
-    return xeric_forge_attempt('concept', function () use ($endpoint, $scale, $who, $job, $why, $rating, $themes, $premise, $answers, $onNote) {
+    return xeric_forge_attempt('concept', function () use ($endpoint, $scale, $who, $job, $why, $rating, $themes, $premise, $answers, $naming, $nameBlock, $onNote) {
         $msgs = [
             ['role' => 'system', 'content' =>
                 'You invent settings for a character-driven story world. Concrete, specific, '
@@ -477,6 +879,7 @@ function xeric_forge_pass_concept(array $answers, array $endpoint, ?callable $on
                 . "- scale: $scale\n- name: $who\n- what they do: $job\n- why they are here: $why\n"
                 . ($themes ? '- themes: ' . implode(', ', $themes) . "\n" : '')
                 . "- content rating: $rating\n\n"
+                . $nameBlock
                 . ($premise !== ''
                     ? "Now write that place up. ONE JSON object, exactly these keys:\n"
                     : "Invent the place. ONE JSON object, exactly these keys:\n")
@@ -495,6 +898,14 @@ function xeric_forge_pass_concept(array $answers, array $endpoint, ?callable $on
                 . "}\nNo prose outside the JSON."],
         ];
         $flat = xeric_forge_ask($endpoint, 'concept', $msgs, ['temperature' => 1.0, 'max_tokens' => 900], $onNote);
+        // The gate. A banned or shelf-worn name is swapped for a register
+        // toponym HERE, before anything downstream quotes it into prose.
+        $was = xeric_forge_str($flat['name'] ?? '', '', 60);
+        $fresh = xeric_forge_fresh_world_name($was, $naming, $premise);
+        if ($fresh !== $was) {
+            xeric_forge_note($onNote, "naming: the model called it {$was} — every shelf has one of those; here it is {$fresh}");
+            $flat['name'] = $fresh;
+        }
         return xeric_forge_concept_from($flat, $answers);
     }, fn() => xeric_forge_default_concept($answers), $onNote);
 }
@@ -639,7 +1050,10 @@ function xeric_forge_default_concept(array $answers): array
 
     return [
         'meta' => [
-            'name'        => $d['name'],
+            // The banks feed the fallbacks too: a second offline world on the
+            // same shelf takes a register toponym instead of being Cutter's
+            // Bend again with a -2 on the directory.
+            'name'        => xeric_forge_fresh_world_name($d['name'], xeric_forge_naming($answers)),
             'description' => $d['description'],
             'rating'      => xeric_forge_rating($answers),
             'themes'      => $themes,
@@ -680,7 +1094,16 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
 
     xeric_forge_note($onNote, "places: building $count rooms for $name");
 
-    $places = xeric_forge_attempt('places', function () use ($endpoint, $count, $job, $name, $locale, $texture, $answers, $concept, $onNote) {
+    $naming = xeric_forge_naming($answers);
+    $bizLine = '';
+    if ($naming['key'] !== '') {
+        $bizLine = 'Business names come off the same shelf as the people\'s — '
+            . xeric_forge_naming_examples($naming, 'businesses', 2)
+            . " is the sound, not the copy. Never 'the Rusty <anything>' and never a St. Jude's: "
+            . "every other town already has both.\n";
+    }
+
+    $places = xeric_forge_attempt('places', function () use ($endpoint, $count, $job, $name, $locale, $texture, $answers, $concept, $naming, $bizLine, $onNote) {
         $msgs = [
             ['role' => 'system', 'content' =>
                 'You invent places for a story world. Ordinary, specific, walkable. '
@@ -699,6 +1122,7 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
                 . "}\n"
                 . "kind is one of: diner cafe bar club church school clinic shop market office gym park home site station hall.\n"
                 . "Give one place where people drink at night and one place people go in the daytime.\n"
+                . $bizLine
                 // Asking for the map is asking the model to write down a decision
                 // it is already making: a place list always has a main street and
                 // an edge, and until now that only ever survived as a phrase in a
@@ -714,6 +1138,26 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
                 . "No prose outside the JSON."],
         ];
         $raw = xeric_forge_ask($endpoint, 'places', $msgs, ['temperature' => 0.9, 'max_tokens' => 1500], $onNote);
+
+        // The gate, on the raw names and BEFORE keys are cut from them, so a
+        // renamed room's key, aliases and references all belong to the name
+        // it actually ships with.
+        $fresh = [];
+        $renamed = 0;
+        $gate = function (array $p, int $i) use ($naming, &$fresh, &$renamed): array {
+            $was = (string)($p['name'] ?? '');
+            if ($was === '') return $p;
+            $p['name'] = xeric_forge_fresh_place_name($was, (string)($p['kind'] ?? ''), $naming, $i, $fresh);
+            if ($p['name'] !== $was) $renamed++;
+            return $p;
+        };
+        if (is_array($raw['workplace'] ?? null)) $raw['workplace'] = $gate($raw['workplace'], 0);
+        foreach ((array)($raw['places'] ?? []) as $pi => $p) {
+            if (is_array($p)) $raw['places'][$pi] = $gate($p, $pi + 1);
+        }
+        if ($renamed > 0) {
+            xeric_forge_note($onNote, "naming: {$renamed} place name(s) were worn out or already on another world's street — renamed from the register");
+        }
 
         $out = [];
         $taken = [];
@@ -927,8 +1371,14 @@ function xeric_forge_default_places(array $answers, array $concept, int $count):
 
     $taken = [];
     $out = [xeric_forge_workplace_place($answers, $taken)];
-    foreach ($rows as $r) {
+    // The same freshness gate the model's rooms get: a hand-written room that
+    // is already standing in another world on this shelf takes a register
+    // name instead, so two offline worlds are not the same five doors twice.
+    $naming = xeric_forge_naming($answers);
+    $fresh = [];
+    foreach ($rows as $ri => $r) {
         if (count($out) >= $count) break;
+        $r['name'] = xeric_forge_fresh_place_name((string)$r['name'], (string)($r['kind'] ?? ''), $naming, $ri + 1, $fresh);
         $p = xeric_forge_place_from($r, false, $taken);
         if ($p) $out[] = $p;
     }
@@ -1117,6 +1567,9 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
         'places' => $places, 'place_keys' => $keys,
         'workplace' => $wk, 'public' => $public,
         'index' => $index, 'user' => $user,
+        // The world's naming register, so the fallback archetypes get the
+        // same shelf-freshness gate the model's people do.
+        'naming' => xeric_forge_naming($answers),
         // Which stretch of a life this slot is written to, and the age the
         // slot falls back to. Assigned, not asked for — see xeric_forge_age_band().
         //
@@ -1154,6 +1607,9 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
             // the model's prior for "voice" is overwhelming, and one call cannot
             // see what the others chose. So each character is ASSIGNED a vocal
             // shape by index, and the known default opener is banned outright.
+            // Sixteen shapes, not eight: the default cast is twelve now, and a
+            // bank shorter than the cast hands slots 9-12 the same voices as
+            // 1-4, which is the disease this bank exists to cure.
             $voiceShapes = [
                 'fast and clipped, sentences that end early',
                 'slow and warm, circles back to finish a thought later',
@@ -1163,8 +1619,60 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
                 'soft and hesitant, trails off, apologises mid-sentence',
                 'blunt and fast, interrupts, says the true thing too early',
                 'formal and careful, over-polite even when angry',
+                'measured and unhurried, tells everything in the order it happened',
+                'quick and low, half of it asides out of the corner of the mouth',
+                'rapid-fire questions, rarely waits for the answers',
+                'storyteller cadence, everything is an anecdote with a setup',
+                'clipped and practical, numbers and times where feelings would go',
+                'warm and teasing, nicknames for everybody, serious only in private',
+                'slow and doubtful, tries a sentence twice until it sits right',
+                'cheerful and relentless, will not let a silence live',
             ];
             $voiceBrief = $voiceShapes[$i % count($voiceShapes)];
+            // The roster line collapses the same way the voice did. A space
+            // world came back with three of four one-liners reading "The only
+            // [role] who can [feat]…" — different content, same sentence, and
+            // the content dedupe sails right past a shared SHAPE. So the
+            // one-liner gets the vocal-shape treatment too: an angle assigned
+            // by index, and the observed opener banned outright.
+            $lineShapes = [
+                'a reputation: what the town says behind their back',
+                'a warning: what a newcomer gets told about them first',
+                'a habit anyone can watch: something they are seen doing, and when',
+                'what they are wrong about, and everybody knows it',
+                'who they used to be, and what is left of that',
+                'the debt or favour the town still remembers',
+                'what they run, and how tightly they run it',
+                'the thing they are always about to do and never do',
+                'whose kid, whose ex, whose rival — the tie that places them',
+                'the rule they enforce, or the one they quietly break',
+                'what they know that they should not',
+                'where they reliably are at a given hour',
+                'what they lost and will not discuss',
+                'the small kingdom they defend',
+                'two true facts about them that do not fit together',
+                'the question people are still asking about them',
+            ];
+            $lineBrief = $lineShapes[$i % count($lineShapes)];
+            // The name rule: register in, repeat offenders out. The list said
+            // out loud here is the short one — the full gate, including every
+            // name a world on this shelf already spent, is deterministic
+            // (xeric_forge_fresh_person_name) and runs on the reply.
+            $naming = (array)$ctx['naming'];
+            $nameRule = '';
+            if (($naming['key'] ?? '') !== '') {
+                $worn = array_slice(array_keys((array)$naming['used']['given']), 0, 12);
+                $nameRule = "NAME: first and last, in the register of {$naming['sound']} — "
+                    . 'the shelf next to ' . xeric_forge_naming_examples($naming, 'given', 4, $i * 3)
+                    . '; ' . xeric_forge_naming_examples($naming, 'family', 3, $i * 2)
+                    . '. Invent in that register rather than copying. Never the first names '
+                    . implode(', ', $naming['ban_given_say']) . '; never the surnames '
+                    . implode(', ', $naming['ban_family_say']) . ' — every world ever forged is elbow-deep in them.'
+                    . ($worn !== [] ? ' Also spoken for, by people in neighbouring worlds: '
+                        . implode(', ', array_map('ucwords', $worn)) . '.' : '')
+                    . ($brief !== '' ? ' If the request below names them, that name wins.' : '')
+                    . "\n";
+            }
             $band = $ctx['age_band'];
             // A world whose rating is above sfw still writes children, and the
             // model is told plainly which half of that is which: a minor is an
@@ -1192,7 +1700,7 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
                     . ($circle !== '' ? " The people around them are $circle." : '')
                     . "\n\nPlaces (use these keys exactly):\n$placeBlock\n"
                     . ($sofar ? "\nAlready written — do NOT repeat their job, age or manner:\n" . implode("\n", $sofar) . "\n" : '')
-                    . "\nWrite $where.\n" . $ageRule
+                    . "\nWrite $where.\n" . $ageRule . $nameRule
                     . ($brief !== ''
                         ? "\nThe person who lives in this world asked for them specifically: \"$brief\"\n"
                         . "Honour that. If they named the person, use that name; if they said what the "
@@ -1205,7 +1713,9 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
                     . "usually the first name or the nickname\",\n"
                     . "  \"pronouns\": \"she/her | he/him | they/them | anything else that fits\",\n"
                     . "  \"age\": {$band['example']},\n"
-                    . "  \"one_line\": \"one sentence anyone in town could say about them\",\n"
+                    . "  \"one_line\": \"one sentence anyone in town could say about them. "
+                    . "REQUIRED ANGLE: {$lineBrief}. Say it like gossip, not a citation — never open "
+                    . "with 'The only' and never make them the best at anything\",\n"
                     . "  \"appearance\": \"one sentence, what you see first\",\n"
                     . "  \"voice\": \"how they talk — rhythm and habit, one or two sentences. "
                     . "REQUIRED SHAPE: {$voiceBrief}. Do NOT open with 'A low' and do NOT call it "
@@ -1230,6 +1740,18 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
                     . "}\nNo prose outside the JSON."],
             ];
             $flat = xeric_forge_ask($endpoint, 'cast', $msgs, ['temperature' => 1.05, 'max_tokens' => 900], $onNote);
+            // The gate, before the handle is cut from the name: a banned or
+            // shelf-worn half is replaced from the register, and the handle,
+            // the aliases and every later reference belong to the name that
+            // actually ships. The short name goes with the half it named.
+            $was = xeric_forge_str($flat['display_name'] ?? '', '', 80);
+            $fresh = xeric_forge_fresh_person_name($was, $naming, $i, $taken, $brief);
+            if ($was !== '' && $fresh !== $was) {
+                $onNote && $onNote("naming: {$was} already lives in another world — here it is {$fresh}");
+                $flat['display_name'] = $fresh;
+                $short = xeric_forge_str($flat['short_name'] ?? '', '', 32);
+                if ($short !== '' && mb_stripos($fresh, $short) === false) unset($flat['short_name']);
+            }
             return xeric_forge_character_from($flat, $ctx, $taken);
         }, fn() => xeric_forge_default_character($ctx, $taken), $onNote);
 }
@@ -1283,37 +1805,123 @@ function xeric_forge_dedupe_cast(array $chars, array $places, ?callable $onNote 
         return $s;
     };
     // banks are deliberately concrete and unglamorous — an interior should
-    // sound like a person, not like a tagline
+    // sound like a person, not like a tagline. Sixteen deep, every one of
+    // them, because the default cast is twelve and a bank shorter than the
+    // cast is a queue for the same six interiors.
     $banks = [
+        'one_line'     => ['Shows up early, leaves late, and has never once said which it was on purpose.',
+                           'Knows everybody\'s order and nobody\'s business, and works to keep it that way.',
+                           'Said no to something big once, and the town has never agreed on what.',
+                           'Can be lent anything except a reason to hurry.',
+                           'Remembers who helped and who watched, and prices accordingly.',
+                           'Laughs easy, forgives slow.',
+                           'Has a system for everything and will not explain any of it.',
+                           'Turns up wherever something needs holding, lifting or witnessing.',
+                           'Keeps the peace by knowing exactly where all the trouble is.',
+                           'Never in a hurry, never quite late.',
+                           'Asks the question everybody else was dancing around.',
+                           'Does the thing nobody noticed needed doing, then leaves before the thanks.',
+                           'Argues both sides of everything and votes with neither.',
+                           'Carries half the street\'s spare keys and none of its gossip.',
+                           'Half the stories about them are true, and they will not say which half.',
+                           'Been here long enough to remember what the place was called before.'],
         'voice'        => ['Talks fast, finishes other people\'s sentences, apologises for it later.',
                            'Long pauses, then one flat sentence that settles the matter.',
                            'Over-explains, hears themselves doing it, keeps going anyway.',
                            'Answers questions with questions, not to deflect but because they are genuinely curious.',
                            'Quiet until something matters, then unexpectedly direct.',
-                           'Jokes first, meaning second, and you have to wait for the second part.'],
+                           'Jokes first, meaning second, and you have to wait for the second part.',
+                           'Starts in the middle of the thought and trusts you to catch up.',
+                           'Says numbers and dates where other people say feelings.',
+                           'Repeats your last three words back before answering them.',
+                           'Talks to the room, never quite to you, until it matters.',
+                           'One-word answers that somehow carry whole opinions.',
+                           'Narrates what they are doing while they do it, quieter when watched.',
+                           'Asks after your people first, business second, always in that order.',
+                           'Swallows the end of any sentence that turns out to be about themselves.',
+                           'Corrects themselves mid-word and lands on the plainer term.',
+                           'Leaves pauses so long you answer your own question.'],
         'sore_spot'    => ['Being told they have gotten soft.', 'Anyone bringing up the year they left.',
                            'Being thanked in public.', 'Being asked why they never married.',
-                           'Someone finishing a job they had started.', 'Being called reliable.'],
+                           'Someone finishing a job they had started.', 'Being called reliable.',
+                           'Being handled carefully.', 'The nickname that followed them here.',
+                           'Being asked to say it in front of everyone.',
+                           'Anyone doing their job for them, even well.',
+                           'The one decision everybody still relitigates.',
+                           'Being the example in someone else\'s story.',
+                           'Praise for the wrong thing.', 'Being asked how they are doing twice in a row.',
+                           'The year nobody mentions on purpose.', 'Being told to take it easy.'],
         'self_soothe'  => ['Reorganises a drawer that did not need it.', 'Walks the long way, twice.',
                            'Cleans something already clean.', 'Counts stock out loud.',
-                           'Fixes a thing that is not broken yet.', 'Makes coffee they will not drink.'],
+                           'Fixes a thing that is not broken yet.', 'Makes coffee they will not drink.',
+                           'Sharpens everything in the drawer.',
+                           'Walks the fence line, or the block, whichever is nearer.',
+                           'Deals a hand of solitaire and abandons it halfway.',
+                           'Sweeps a floor that was swept this morning.',
+                           'Reads the same dozen pages of the same book.',
+                           'Waters things — plants, gravel, the porch boards.',
+                           'Writes the letter, then does not send it.',
+                           'Polishes shoes nobody is going to see.',
+                           'Recounts the till twice, slower the second time.',
+                           'Sits in the truck in the driveway for one more song.'],
         'jealousy'     => ['Anyone who left and did well.', 'People who find things easy.',
                            'Whoever gets asked first.', 'Anyone at ease in a room.',
-                           'People who can say no without a reason.', 'Anyone whose family still calls.'],
+                           'People who can say no without a reason.', 'Anyone whose family still calls.',
+                           'People whose apologies get accepted the first time.',
+                           'Anyone with a standing invitation somewhere.',
+                           'People who sleep through the night.',
+                           'Whoever the new people get introduced to first.',
+                           'Anyone whose work gets missed when they skip a day.',
+                           'People who can cry in front of others.',
+                           'The ones who left and get welcomed back anyway.',
+                           'Anyone with a place that is theirs without argument.',
+                           'People whose names get spelled right the first time.',
+                           'Whoever gets asked to tell the story.'],
         'praise'       => ['That they noticed something first.', 'That they were right to wait.',
                            'That the work held up.', 'That they were missed.',
-                           'That they made it look easy.', 'That somebody trusted them with it.'],
+                           'That they made it look easy.', 'That somebody trusted them with it.',
+                           'That the place runs different when they are gone.',
+                           'That somebody kept the thing they made.',
+                           'That they were quoted, accurately, months later.',
+                           'That the young ones copy how they do it.',
+                           'That it was noticed before they had to point it out.',
+                           'That somebody drove out of the way for their opinion.',
+                           'That they were the first call, not the second.',
+                           'That the fix outlived the argument about it.',
+                           'That someone remembered how they take their coffee.',
+                           'That they were told the truth early, like an equal.'],
         'pull'         => ['To be needed without having to ask.', 'To be believed the first time.',
                            'To finish one thing completely.', 'To be somewhere nobody knows the story.',
-                           'To be forgiven without discussing it.', 'To be the one who stayed.'],
+                           'To be forgiven without discussing it.', 'To be the one who stayed.',
+                           'To be asked to stay, not just allowed to.',
+                           'To hand the responsibility over and have it held.',
+                           'To be surprised by their own life once more.',
+                           'To hear the place got better because they were in it.',
+                           'To owe nothing to anybody by winter.',
+                           'To be recognised somewhere they have never been.',
+                           'To do the hard version of the job once, properly, witnessed.',
+                           'To be the calm one in the room when it finally happens.',
+                           'To be chosen over somebody impressive.',
+                           'To leave something behind with their name off it.'],
         'solace'       => ['The back step, ten minutes, no phone.', 'The long road out of town and back.',
                            'The radio on low, lights off.', 'The first hour before anyone is up.',
-                           'A job that takes both hands.', 'The bench nobody else uses.'],
+                           'A job that takes both hands.', 'The bench nobody else uses.',
+                           'The roof, technically for the aerial, actually for the view.',
+                           'The cab of whatever is parked farthest from the door.',
+                           'The river gauge, checked in person for no reason.',
+                           'The last pew, weekday afternoon, lights off.',
+                           'The walk-in cooler, two minutes, sleeves down.',
+                           'The old road nobody plows first.',
+                           'The stockroom radio, volume two.',
+                           'The porch after the streetlight comes on.',
+                           'The far end of the counter with the crossword.',
+                           'The workshop after everyone stops needing things.'],
     ];
     $seen = [];
     $fixes = 0;
     foreach ($chars as $i => $c) {
         $paths = [
+            ['one_line',    fn(&$x) => $x['one_line'] ?? null, fn(&$x, $v) => $x['one_line'] = $v],
             ['voice',       fn(&$x) => $x['voice']  ?? null,  fn(&$x, $v) => $x['voice'] = $v],
             ['sore_spot',   fn(&$x) => $x['psyche']['sore_spot'] ?? null,   fn(&$x, $v) => $x['psyche']['sore_spot'] = $v],
             ['self_soothe', fn(&$x) => $x['psyche']['self_soothe'] ?? null, fn(&$x, $v) => $x['psyche']['self_soothe'] = $v],
@@ -1337,7 +1945,29 @@ function xeric_forge_dedupe_cast(array $chars, array $places, ?callable $onNote 
                 $fixes++;
             }
             $n = $norm($cur);
-            if ($n === '' || !isset($seen[$field][$n])) { $seen[$field][$n] = true; continue; }
+            $dupe = $n !== '' && isset($seen[$field][$n]);
+            // The roster line is gated on SHAPE as well as content. A forged
+            // space world came back with three of four one-liners reading
+            // "The only [role] who can [feat]…" — different words, same
+            // sentence — and a fourth in the sibling "The [noun] who [verb]s"
+            // frame, and the content comparison above waves all four through.
+            // A line's shape is the "<noun> who" frame when it wears one,
+            // else its first three words; the second line to wear a shape is
+            // a repeat, and the superlative opener is banned outright even on
+            // its first appearance, because one of it is already a citation
+            // where gossip should be.
+            if ($field === 'one_line' && $n !== '' && !$dupe) {
+                if (preg_match('/^only /', $n) === 1) {
+                    $dupe = true;
+                } else {
+                    $shape = preg_match('/^(\w+ who) /', $n, $m) === 1
+                        ? $m[1]
+                        : implode(' ', array_slice(explode(' ', $n), 0, 3));
+                    if (isset($seen['one_line@shape'][$shape])) $dupe = true;
+                    else $seen['one_line@shape'][$shape] = true;
+                }
+            }
+            if ($n === '' || !$dupe) { $seen[$field][$n] = true; continue; }
             $bank = $banks[$field] ?? [];
             if ($bank === []) continue;
             // walk the bank from a position derived from index so two characters
@@ -1347,6 +1977,11 @@ function xeric_forge_dedupe_cast(array $chars, array $places, ?callable $onNote 
                 if (!isset($seen[$field][$norm($cand)])) {
                     $set($chars[$i], $cand);
                     $seen[$field][$norm($cand)] = true;
+                    if ($field === 'one_line') {
+                        $cn = $norm($cand);
+                        $seen['one_line@shape'][preg_match('/^(\w+ who) /', $cn, $m) === 1
+                            ? $m[1] : implode(' ', array_slice(explode(' ', $cn), 0, 3))] = true;
+                    }
                     $fixes++;
                     break;
                 }
@@ -1377,11 +2012,22 @@ function xeric_forge_dedupe_cast(array $chars, array $places, ?callable $onNote 
  */
 function xeric_forge_age_band(int $index, string $orbit): array
 {
+    // Eight rows a side, not four: the default cast is twelve, slots
+    // alternate orbits, and the walk below moves one row per two slots — so
+    // four rows a side repeated bands from the ninth character on, and a
+    // sixteen-cast town got two of everybody. Eight a side covers a cast of
+    // sixteen without a repeat, and a second child arrives in the bigger
+    // casts, which is what a town that size would actually have.
     $work = [
         ['brief' => 'late twenties or thirties.', 'min' => 24, 'max' => 39, 'example' => 31],
         ['brief' => 'forties or fifties.', 'min' => 40, 'max' => 59, 'example' => 46],
         ['brief' => 'sixties — near the end of a working life, and not done yet.', 'min' => 60, 'max' => 74, 'example' => 63],
         ['brief' => 'young — a first real job, still living like a student.', 'min' => 18, 'max' => 23, 'example' => 20],
+        ['brief' => 'fifties — mid-career, seen every version of this job.', 'min' => 48, 'max' => 58, 'example' => 53],
+        ['brief' => 'late twenties.', 'min' => 25, 'max' => 32, 'example' => 27],
+        ['brief' => 'a TEENAGER with a part-time shift — after school, weekends, saving for something.',
+         'min' => 14, 'max' => 17, 'example' => 16],
+        ['brief' => 'seventies — should have stopped, will not.', 'min' => 68, 'max' => 80, 'example' => 72],
     ];
     $outside = [
         ['brief' => 'thirties or forties.', 'min' => 28, 'max' => 49, 'example' => 37],
@@ -1389,6 +2035,10 @@ function xeric_forge_age_band(int $index, string $orbit): array
             . 'a parent works here or because there is nowhere else to be.', 'min' => 9, 'max' => 17, 'example' => 14],
         ['brief' => 'old — retired, been here longer than most of the street.', 'min' => 65, 'max' => 86, 'example' => 71],
         ['brief' => 'twenties.', 'min' => 20, 'max' => 29, 'example' => 25],
+        ['brief' => 'a CHILD — primary-school age, around because everybody is around.', 'min' => 8, 'max' => 12, 'example' => 10],
+        ['brief' => 'forties — busier outside work than anyone at work would guess.', 'min' => 38, 'max' => 52, 'example' => 44],
+        ['brief' => 'eighteen or nineteen — one foot out of town already.', 'min' => 18, 'max' => 19, 'example' => 19],
+        ['brief' => 'late fifties.', 'min' => 54, 'max' => 64, 'example' => 58],
     ];
     // Slots alternate orbits (xeric_forge_orbit_for), so the band walks on
     // every SECOND slot: a cast of four is a working adult, a neighbour, an
@@ -1575,6 +2225,95 @@ function xeric_forge_default_character(array $ctx, array $taken): array
          'tells' => ['answers a question with a question', 'holds a cup with both hands', 'leaves before the goodbyes start'],
          'pull' => 'to be somewhere she does not have to perform', 'solace' => 'the water, whatever the weather is doing',
          'doing' => 'here again, same as yesterday'],
+        // Rows seven through sixteen exist because the default cast is twelve:
+        // six archetypes under a twelve-slot walk hands the seventh person the
+        // first person's name, and a fallback world with two Nell Farrows in
+        // it is not a fallback, it is a bug with a face. Sixteen rows cover a
+        // sixteen-cast before anything wraps.
+        ['name' => 'Gus Palmateer', 'age' => 63, 'one' => 'Opens up an hour before anyone needs him to and has opinions about people who do not.',
+         'voice' => 'Slow, gravel-free, everything said once at the volume he decided on in 1988.',
+         'app' => 'The same jacket in every season, zipped to exactly half.',
+         'sore' => 'being told there is an easier way', 'jeal' => 'men his age who took the buyout',
+         'sooth' => 'oiling hinges nobody complained about', 'praise' => 'somebody asking him to look at a thing before they buy it',
+         'tells' => ['taps the barometer on the way past', 'stacks chairs before the room is empty', 'calls everyone under fifty "the kid"'],
+         'pull' => 'to hand the keys to somebody who deserves them', 'solace' => 'the flag pole at closing, folding it right',
+         'doing' => 'the opening routine, unabridged'],
+        ['name' => 'Ivy Renshaw', 'age' => 19, 'one' => 'Has a bus timetable folded in her wallet and has not used it yet.',
+         'voice' => 'Fast when it is safe, one-word when it counts, saves the real sentences for later.',
+         'app' => 'Work shirt over a concert shirt for a band that has never played within four hundred miles.',
+         'sore' => 'being told she will grow out of it', 'jeal' => 'anyone who left at her age and calls it easy',
+         'sooth' => 'headphones in, one earbud only, in case', 'praise' => 'an adult asking her opinion and then using it',
+         'tells' => ['checks the clock over the door', 'draws on her own wrist', 'stands near exits at parties'],
+         'pull' => 'to be missed by this place more than she misses it', 'solace' => 'the roof of the car, hood still warm',
+         'doing' => 'the closing shift, faster than it needs doing'],
+        ['name' => 'Ambrose Dunmore', 'age' => 71, 'one' => 'Retired from the job but not from the corner table, and holds both offices daily.',
+         'voice' => 'Court-room careful, softened by thirty years of nobody objecting.',
+         'app' => 'Shirt buttoned to the collar, no tie, a pen he clicks but rarely uses.',
+         'sore' => 'being summarised', 'jeal' => 'men whose sons call on weekdays',
+         'sooth' => 'rereading minutes of meetings long adjourned', 'praise' => 'being asked for the story behind the story',
+         'tells' => ['folds his napkin before disagreeing', 'quotes the exact date', 'stands when anyone leaves the table'],
+         'pull' => 'to be consulted once more on something that matters', 'solace' => 'the cemetery road, walked slowly, hat on',
+         'doing' => 'presiding, unofficially'],
+        ['name' => 'Faye Herrick', 'age' => 36, 'one' => 'Runs three lives on one calendar and nobody has ever seen her check it.',
+         'voice' => 'Efficient and kind in the same breath, lists that end in a joke.',
+         'app' => 'Everything in pockets, nothing in bags, keys on a carabiner that has a story.',
+         'sore' => 'being called organised like it is a personality', 'jeal' => 'people with one job and a hobby',
+         'sooth' => 'ironing things that do not need it', 'praise' => 'somebody noticing the thing that did NOT go wrong',
+         'tells' => ['answers texts in the order they arrived', 'feeds whoever sits down', 'hums when the plan is working'],
+         'pull' => 'for one whole day to run without her and be fine', 'solace' => 'the laundromat spin cycle, watched like television',
+         'doing' => 'four errands folded into one'],
+        ['name' => 'Sal Antonelli', 'age' => 52, 'one' => 'Knows the price of everything in town and charges most people less than that.',
+         'voice' => 'Loud greetings, quiet deals, and a whisper that means the real conversation started.',
+         'app' => 'Apron strings doubled around front, pencil behind the ear that writes nothing down.',
+         'sore' => 'being asked for a receipt by a friend', 'jeal' => 'businesses with somebody to leave the keys to',
+         'sooth' => 'restacking the window display at night', 'praise' => 'being told the old man would have approved',
+         'tells' => ['rounds down out loud', 'feeds the meter for strangers', 'argues prices he already decided to drop'],
+         'pull' => 'to be owed nothing and known anyway', 'solace' => 'the storeroom ladder, top step, radio on',
+         'doing' => 'the counter, the ledger, the neighborhood'],
+        ['name' => 'Winnie Okafor', 'age' => 24, 'one' => 'Arrived for a six-month posting two years ago and keeps not booking the flight home.',
+         'voice' => 'Precise, warm, translates her own jokes when nobody laughs fast enough.',
+         'app' => 'Dressed for a slightly better town, adjusting one item at a time toward this one.',
+         'sore' => 'being asked when she is really from', 'jeal' => 'people whose whole family fits in one kitchen',
+         'sooth' => 'voice notes to her sister, never under ten minutes', 'praise' => 'being told the place would notice if she left',
+         'tells' => ['photographs ordinary things', 'learns names on the first try', 'keeps her coat on until she decides to stay'],
+         'pull' => 'to stop calling two different places home in the same sentence', 'solace' => 'the international aisle at the market, unhurried',
+         'doing' => 'the job she is visibly overqualified for'],
+        ['name' => 'Lena Crowder', 'age' => 16, 'one' => 'Works the counter Saturdays and knows more about the regulars than their families do.',
+         'voice' => 'Deadpan for adults, rapid for friends, and an announcer voice for reading signs aloud.',
+         'app' => 'Name tag decorated beyond regulation, sleeves pushed up like somebody twice her age.',
+         'sore' => 'being tipped like a charity', 'jeal' => 'kids whose Saturdays are their own',
+         'sooth' => 'reorganising the candy rack by a system only she knows', 'praise' => 'a regular asking for her by name',
+         'tells' => ['counts change twice for the old ones', 'mouths the totals', 'saves the window seat for the same customer'],
+         'pull' => 'to be trusted with the register and the truth at the same time',
+         'solace' => 'the loading dock steps between rushes',
+         'doing' => 'the register, and the intelligence service',
+         'days' => 'weekends', 'from' => '09:00', 'to' => '15:00',
+         'h_days' => 'weekdays', 'h_from' => '16:00', 'h_to' => '18:00',
+         'h_doing' => 'homework at a corner table, allegedly'],
+        ['name' => 'Hobart Yoakum', 'age' => 68, 'one' => 'Fixes what gets brought to him and files what people say while they wait.',
+         'voice' => 'Barely above the workbench, and you lean in, which is how he likes it.',
+         'app' => 'Glasses pushed up on the forehead, a second pair hanging at the collar.',
+         'sore' => 'parts described as "the little whatsit"', 'jeal' => 'nobody, and he would thank you not to check',
+         'sooth' => 'taking apart something already fixed', 'praise' => 'a machine brought back to HIM after somebody else failed',
+         'tells' => ['tests screws with a fingernail', 'talks to the object, not the owner', 'keeps every third broken thing'],
+         'pull' => 'to be the last one who knows how the old ones work', 'solace' => 'the bench light after supper, door cracked',
+         'doing' => 'repairs, and the archive of what people let slip'],
+        ['name' => 'Tessa Bright', 'age' => 30, 'one' => 'Trains harder than anyone in town for a race she has not named yet.',
+         'voice' => 'Breathless and cheerful, sentences timed to a stride nobody else is keeping.',
+         'app' => 'Running shoes at every occasion including the wrong ones.',
+         'sore' => 'being asked what she is running from', 'jeal' => 'people who rest without negotiating with themselves',
+         'sooth' => 'lap counts, out loud, until the number is the only thought', 'praise' => 'somebody keeping pace without being asked',
+         'tells' => ['stretches against whatever is vertical', 'eats like it is logistics', 'waves at every single car'],
+         'pull' => 'to cross one finish line with somebody she loves at the tape', 'solace' => 'the track before the dew burns off',
+         'doing' => 'miles, and the errands along them'],
+        ['name' => 'Curtis Lowe', 'age' => 44, 'one' => 'Coaches whatever season it is and keeps a folding chair in the truck for whatever it is not.',
+         'voice' => 'Practice-field volume dialed down for indoors, mostly successfully.',
+         'app' => 'Whistle worn like jewelry, cap bill curved to regulation.',
+         'sore' => 'parents who coach from the fence', 'jeal' => 'men who played past nineteen',
+         'sooth' => 'chalking lines straighter than the game requires', 'praise' => 'a kid he cut coming back to say it worked out',
+         'tells' => ['claps twice before bad news', 'learns the shy kid\'s name first', 'rakes the infield nobody plays on Mondays'],
+         'pull' => 'to send one of them somewhere he never got to', 'solace' => 'the bleachers after the lights time out',
+         'doing' => 'drills, carpools, and morale'],
     ];
     // Walk from this slot's archetype to the first one nobody in the world is
     // already standing on. Indexing by slot alone is why an offline reroll used
@@ -1590,6 +2329,14 @@ function xeric_forge_default_character(array $ctx, array $taken): array
         $cand = $rows[($ctx['index'] + $step) % $n];
         if (!isset($avoid[xeric_forge_key((string)$cand['name'])])) { $r = $cand; break; }
     }
+    // The same shelf gate the model's people get: the second offline world on
+    // a shelf must not hand back the first one's Nell Farrow. The register
+    // rides in on ctx when the cast pass built it; a caller without one
+    // (repair's stand-in) computes the answerless register, which is still
+    // deterministic and still reads the shelf.
+    $r['name'] = xeric_forge_fresh_person_name((string)$r['name'],
+        is_array($ctx['naming'] ?? null) ? $ctx['naming'] : xeric_forge_naming([]),
+        (int)$ctx['index'], $taken);
 
     $isWork = $ctx['orbit'] !== 'outside';
     $where = $isWork ? $ctx['workplace'] : $ctx['public'];
@@ -2278,6 +3025,11 @@ function xeric_forge_assemble(array $answers, array $concept, array $places, arr
         'forge' => [
             'built_at' => gmdate('c'),
             'answers'  => $answers,
+            // Which naming register this world drew from — the answers
+            // re-derive it (xeric_forge_naming is deterministic on them), so
+            // this is a record for the reader, not a second source of truth.
+            'naming'   => ($nm = xeric_forge_naming($answers))['key'] !== ''
+                            ? ['register' => $nm['key'], 'label' => $nm['label']] : null,
             'armed'    => $systems['armed'],
             'disarmed' => $systems['disarmed'],
             // How the armed set was arrived at, and — when a free-text
@@ -4160,6 +4912,10 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
 
     $guard = is_callable($opts['guard'] ?? null) ? $opts['guard'] : static function (): void {};
     if (isset($opts['timeout'])) $endpoint['timeout'] = (int)$opts['timeout'];
+    // Where the shelf is, for the cross-world naming gates. A caller writing
+    // somewhere unusual says so here; everybody else reads the deployment's
+    // own worlds directory (xeric_forge_shelf's default).
+    if (!empty($opts['worlds_dir'])) xeric_forge_shelf((string)$opts['worlds_dir']);
 
     $iv = $opts['interview'] ?? null;
     $interview = is_array($iv) ? $iv : xeric_forge_interview(is_string($iv) ? $iv : null);
@@ -4200,6 +4956,9 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
     if ($answers['rating'] !== $asked) {
         $note('rating: "' . $asked . '" was clamped to "' . $answers['rating'] . '" by the session');
     }
+
+    $naming = xeric_forge_naming($answers);
+    if ($naming['key'] !== '') $note('names: this world draws from the ' . $naming['label'] . ' register');
 
     $guard();
     $concept = xeric_forge_pass_concept($answers, $endpoint, $note);

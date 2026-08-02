@@ -1,0 +1,137 @@
+{
+  "registers_version": 1,
+  "_notes": {
+    "purpose": "The naming registers as DATA. One register is chosen per world, deterministically, from the world's own answers (xeric_forge_naming), and every pass that invents a proper noun carries it: the concept pass names the place off it, the places pass names the businesses off it, the cast pass names the people off it, and the deterministic gates replace repeat offenders FROM it. Hand-written banks are the whole point — good raw material is what lets a small model punch above its weight, and a model that copies a bank entry verbatim has not failed, it has used the library.",
+    "why": "Eight worlds were forged before this file existed and Elias Thorne lived in every one of them; Thorne/Vane/Vance/Voss covered 27 of 32 surnames, six towns had a Rusty-something and five had a St. Jude's. Each forge pass is a separate model call with no memory of any other world, so every world independently converges on the statistically safest tokens. A register moves the whole distribution somewhere specific; twelve registers make twelve different somewheres.",
+    "shape": "Each register: key, label (for the build log), sound (one line, quoted into prompts), given (first names, mixed gender, a whole lifetime's worth), family (surnames), toponyms (place-name material, usable as world names), businesses (full names over real doors), church (what the congregation actually calls it — St. Jude retired at five worlds). Banks are sized for a twelve-person cast with room left over; when one runs dry the code borrows from the other registers in rotation.",
+    "banned": "The observed repeat offenders, by name. These are banned in prompts AND replaced by the deterministic gates — a prompt ban alone is a hope, not a gate. world_words are banned anywhere in a world's or place's name; world_suffixes only as a world name's last word (Cedar Creek Park is a fine park). The Rusty-<thing> and St.-Jude shapes are matched in code (xeric_forge_place_name_ok), because a regex in a data file fails silently and these two must not."
+  },
+  "banned": {
+    "given": ["Elias", "Silas", "Maren", "Kaelen", "Caleb", "Elara", "Pip", "Pipkin"],
+    "family": ["Thorne", "Vane", "Vance", "Voss", "Blackwood"],
+    "world_words": ["oakhaven", "blackwood", "neon", "ozone"],
+    "world_suffixes": ["creek", "hollow"]
+  },
+  "registers": [
+    {
+      "key": "appalachian_holler",
+      "label": "coal-seam Appalachia",
+      "sound": "coal-seam Appalachia - names off mailboxes and family Bibles up a holler",
+      "given": ["Arlie", "Dovie", "Buell", "Fern", "Garland", "Sudie", "Otho", "Verna", "Mae", "Delphia", "Troy", "Icie", "Burl", "Lona"],
+      "family": ["Blevins", "Sizemore", "Caudill", "Combs", "Muncy", "Stallard", "Slone", "Ratliff", "Hensley", "Gibbs"],
+      "toponyms": ["Slate Lick", "Bearwallow", "Drift", "Cane Patch", "Grapevine Gap", "Coker Knob"],
+      "businesses": ["Blevins Feed & Seed", "The Dime Bank Cafe", "Slone's Garage", "Caudill Hardware", "The Tipple Room", "Muncy's Grocery"],
+      "church": "Mount Carmel Freewill Baptist"
+    },
+    {
+      "key": "gulf_vietnamese",
+      "label": "Gulf-coast Vietnamese-American",
+      "sound": "a Gulf-coast shrimping town, Vietnamese-American two generations deep - boat names and grocery signs in two languages",
+      "given": ["Loan", "Duc", "Trang", "Bao", "Minh", "Tuyet", "Hoang", "Lan", "Kim", "Thao", "Vinh", "Ngoc", "Hanh", "Tam"],
+      "family": ["Nguyen", "Tran", "Pham", "Vo", "Dang", "Bui", "Le", "Huynh", "Truong", "Ho"],
+      "toponyms": ["Point Aux Pins", "Camp Dulac", "Halfmoon Pass", "Grand Marsh", "Shell Bend", "Bayou Chene"],
+      "businesses": ["Saigon Market", "The Blue Boat", "Nguyen Bros. Nets & Ice", "Pho Bien", "Tran's Bait & Fuel", "Kim Son Grocery"],
+      "church": "Our Lady of La Vang"
+    },
+    {
+      "key": "rustbelt_polish",
+      "label": "rust-belt Polish",
+      "sound": "a Polish rust-belt mill ward - three syllables on the mailbox and a nickname at the bar",
+      "given": ["Casimir", "Danuta", "Wanda", "Stanley", "Zofia", "Tadeusz", "Halina", "Bruno", "Jadwiga", "Walt", "Renata", "Marek", "Celina", "Roman"],
+      "family": ["Kowalczyk", "Zielinski", "Sobczak", "Wisniewski", "Majewski", "Nowak", "Grabowski", "Szymanski", "Pawlak", "Kaminski"],
+      "toponyms": ["Pulaski Flats", "Millrace", "Furnace Row", "The Patch", "Coke Hill", "Sobieski Ward"],
+      "businesses": ["Pulaski Lanes", "Basia's Kitchen", "The Third Shift Tap", "Kowalczyk Meats", "Warsaw Bakery", "Zielinski Shoe Repair"],
+      "church": "St. Stanislaus"
+    },
+    {
+      "key": "high_desert_basque",
+      "label": "high-desert Basque",
+      "sound": "Basque sheep country in the high desert - hotel dinners, handball courts, names the county clerk gave up spelling",
+      "given": ["Iker", "Maite", "Xabier", "Nekane", "Jon", "Amaia", "Benat", "Itziar", "Julen", "Edurne", "Andoni", "Miren", "Gorka", "Ane"],
+      "family": ["Echeverria", "Goitia", "Arrieta", "Zubiri", "Ibarra", "Uriarte", "Mendieta", "Larrea", "Bidart", "Aldana"],
+      "toponyms": ["Alkali Wells", "Sheep Bridge", "Windmill Flat", "Grouse Camp", "Dry Cottonwood", "Jara Springs"],
+      "businesses": ["The Woolgrowers Bar", "Hotel Ibarra", "Arrieta Bros. Wool", "The Star Bakery", "Zubiri's Cafe", "The Handball Court"],
+      "church": "San Ignacio"
+    },
+    {
+      "key": "southside_migration",
+      "label": "Great Migration south side",
+      "sound": "a Great Migration south side - church programs, barbershops, record shops, names carried up from Mississippi",
+      "given": ["Odell", "Earlene", "Percy", "Mavis", "Booker", "Vernell", "Cleota", "Roosevelt", "Ollie", "Bernice", "Nathaniel", "Pearl", "Denver", "Lutie"],
+      "family": ["Broadnax", "Ledbetter", "Hairston", "Pettway", "Boykin", "Gadson", "Threatt", "Culbreath", "Marable", "Kinlaw"],
+      "toponyms": ["Drexel Row", "Prospect Yards", "Calloway Corners", "Pullman Rows", "The Four Corners", "Douglass Point"],
+      "businesses": ["The Regal Room", "Ledbetter's Cuts", "Broadnax Records", "Sunrise Beauty & Notions", "Pettway's Shine Parlor", "Mavis's Chicken & Waffles"],
+      "church": "Greater Mount Olive A.M.E."
+    },
+    {
+      "key": "tejano_border",
+      "label": "south-Texas Tejano",
+      "sound": "a south-Texas border ranch town - norteno on the radio, nicknames that replaced the baptismal ones decades ago",
+      "given": ["Lupe", "Ramiro", "Chela", "Beto", "Alma", "Tencha", "Rogelio", "Mari", "Chuy", "Dolores", "Ismael", "Paz", "Nico", "Rosenda"],
+      "family": ["Villarreal", "Salinas", "Garza", "De Leon", "Cantu", "Trevino", "Benavides", "Zamora", "Longoria", "Cavazos"],
+      "toponyms": ["Dos Caminos", "El Tule", "Rancho Quemado", "La Cuchilla", "Piedra Blanca", "Salt Fork"],
+      "businesses": ["La Perla Panaderia", "Cantu's Carniceria", "The Longhorn Ice House", "Garza Tire & Battery", "El Tesoro Cafe", "Benavides Western Wear"],
+      "church": "Our Lady of Guadalupe"
+    },
+    {
+      "key": "portuguese_wharf",
+      "label": "Portuguese fishing wharf",
+      "sound": "a Portuguese fishing port in New England - feast weekends, diesel, saints' names on the sterns",
+      "given": ["Manny", "Fatima", "Duarte", "Graca", "Joao", "Ilda", "Alvaro", "Rosa", "Horacio", "Mafalda", "Aristides", "Bea", "Teodoro", "Zilda"],
+      "family": ["Medeiros", "Furtado", "Cabral", "Amaral", "Rebelo", "Sousa", "Tavares", "Correia", "Pacheco", "Braga"],
+      "toponyms": ["Fayal Row", "The Flake Yards", "Salt Works", "Pico Hill", "Herring Cut", "Stone Fleet Wharf"],
+      "businesses": ["Azores Bakery", "The Dory", "Medeiros Marine Diesel", "Furtado's Fish House", "The Whaleman Diner", "Correia Rope & Chandlery"],
+      "church": "Espirito Santo"
+    },
+    {
+      "key": "iron_range_finn",
+      "label": "Iron Range Finn",
+      "sound": "an Iron Range mining town, Finn and Norwegian - sauna smoke, ore dust, co-op politics",
+      "given": ["Eino", "Solveig", "Arvo", "Signe", "Gunnar", "Ingrid", "Toivo", "Helmi", "Lars", "Aune", "Sulo", "Britta", "Waino", "Kerttu"],
+      "family": ["Koskinen", "Maki", "Haugen", "Ahonen", "Sorensen", "Niemi", "Lahti", "Kettunen", "Hautala", "Bergstrom"],
+      "toponyms": ["Ore Dock", "Sampo Corner", "Winter Road", "Birch Location", "Section Thirty", "Taconite Row"],
+      "businesses": ["Sampo Bakery", "The Blue Ox Tap", "Maki Hardware", "The Co-op Store", "Niemi's Sauna & Baths", "Ore Dock Lunch"],
+      "church": "Bethany Lutheran"
+    },
+    {
+      "key": "cajun_bayou",
+      "label": "bayou Cajun",
+      "sound": "a Cajun bayou landing - pirogues, boudin, French names said the way nobody in France would",
+      "given": ["Alcide", "Odile", "Placide", "Ulysse", "Clothilde", "Emile", "Felicie", "Aristile", "Cecile", "Beau", "Ozeme", "Della", "Telesphore", "Justine"],
+      "family": ["Thibodeaux", "Broussard", "Fontenot", "Guidry", "Arceneaux", "Hebert", "Landry", "Comeaux", "Doucet", "Boudreaux"],
+      "toponyms": ["Petit Large", "Cane Row", "Isle Aux Chats", "The Spillway", "Belle Riviere", "Bosco Landing"],
+      "businesses": ["Broussard's Slip", "The Sac-a-Lait Lounge", "Guidry's Boudin & Cracklin", "Fontenot Feed", "The Fais-Do-Do Hall", "Doucet's Grocery"],
+      "church": "St. Landry"
+    },
+    {
+      "key": "westindian_flatbush",
+      "label": "West Indian Brooklyn",
+      "sound": "a West Indian block in Brooklyn - roti shops, dominoes on a card table, island parishes remembered out loud",
+      "given": ["Winston", "Merle", "Desmond", "Hyacinth", "Errol", "Pearline", "Clive", "Cynthia", "Fitzroy", "Norma", "Egbert", "Dawn", "Aldwyn", "Icilda"],
+      "family": ["Grandison", "Baptiste", "Providence", "Cato", "Small", "Ramkissoon", "Cumberbatch", "Alleyne", "Persaud", "Clarke"],
+      "toponyms": ["The Junction", "Church Lane", "Bedford Rows", "Parkside Corners", "Utica Yard", "The Parade Ground"],
+      "businesses": ["Culpepper's Roti Shop", "Baptiste Bake & Fish", "The Kingston Social Club", "Small's Barbershop", "Providence Variety", "Ramkissoon Jewelers"],
+      "church": "Mount Zion Spiritual Baptist"
+    },
+    {
+      "key": "hill_country_german",
+      "label": "Texas-German hill country",
+      "sound": "Texas-German hill country - dance halls, meat markets, names that survived two wars' worth of anglicizing",
+      "given": ["Otto", "Frieda", "Emil", "Lorine", "Waldo", "Hulda", "Alfred", "Meta", "Hugo", "Selma", "Reinhold", "Ella", "Adolphus", "Wilhelmina"],
+      "family": ["Kneupper", "Dietert", "Biesele", "Wurzbach", "Ahrens", "Steubing", "Marbach", "Krueger", "Voelkel", "Pfeiffer"],
+      "toponyms": ["Schoental", "Cypress Flats", "Bear Spring", "Marbach Corner", "Grape Arbor", "Verein Crossing"],
+      "businesses": ["Vogel's Meat Market", "Dietert Dance Hall", "The Sunday House Cafe", "Kneupper's General", "Wurzbach Bros. Gin", "Ahrens Blacksmith & Welding"],
+      "church": "Zion Lutheran"
+    },
+    {
+      "key": "hiline_prairie",
+      "label": "Hi-Line prairie",
+      "sound": "a Hi-Line prairie railroad town - grain elevators, eight-party lines, names off homestead patents",
+      "given": ["Hettie", "Clyde", "Opal", "Ezra", "Bess", "Arthur", "Leona", "Harmon", "Etta", "Dessie", "Alvin", "Vesta", "Orville", "Zora"],
+      "family": ["Pruett", "Ashby", "Coble", "Tolliver", "Redding", "Ogle", "Sanborn", "Mercer", "Quimby", "Fell"],
+      "toponyms": ["Box Elder", "Ten Mile", "Antelope Bench", "The Breaks", "Ryegrass", "Signal Butte"],
+      "businesses": ["The Elevator Cafe", "Pruett & Sons Implement", "The Stockman Bar", "Sanborn Mercantile", "Ashby Drug", "The Section House"],
+      "church": "First Methodist"
+    }
+  ]
+}
