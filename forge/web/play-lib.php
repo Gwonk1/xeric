@@ -1405,19 +1405,34 @@ function xeric_play_hint(array $t, PDO $db, string $ask, array $endpoint): strin
  * what a player has, which is the only thing they could have written from
  * anyway.
  */
-function xeric_play_suggest(array $t, PDO $db, string $handle, array $endpoint): string
+function xeric_play_suggest(array $t, PDO $db, string $handle, array $endpoint, ?array $sceneLines = null): string
 {
     $c    = xeric_world_character($t, $handle) ?? [];
     $them = trim((string)($c['display_name'] ?? $handle));
     $you  = trim((string)($t['user']['name'] ?? '')) ?: 'you';
     $now  = xeric_clock_now($db, $t);
 
-    $th   = xeric_play_thread($t, $db, $handle, 12);
-    $lines = [];
-    foreach ((array)($th['messages'] ?? []) as $m) {
-        $who = ((string)($m['role'] ?? '')) === 'user' ? $you : $them;
-        $txt = trim((string)($m['text'] ?? ''));
-        if ($txt !== '') $lines[] = $who . ': ' . mb_substr($txt, 0, 300);
+    // Two sources, one ghost. A thread suggestion reads the conversation the
+    // db holds; a SCENE suggestion (the watch surface's walk-in composer)
+    // hands its own transcript in, because a scene has no conversation row
+    // until it closes — and asking the db would suggest a line for a
+    // conversation that is not the one on screen. Null keeps every existing
+    // caller byte-identical.
+    if ($sceneLines !== null) {
+        $lines = [];
+        foreach ($sceneLines as $l) {
+            $who = trim((string)($l['name'] ?? $l['handle'] ?? ''));
+            $txt = trim((string)($l['text'] ?? ''));
+            if ($txt !== '') $lines[] = $who . ': ' . mb_substr($txt, 0, 300);
+        }
+    } else {
+        $th   = xeric_play_thread($t, $db, $handle, 12);
+        $lines = [];
+        foreach ((array)($th['messages'] ?? []) as $m) {
+            $who = ((string)($m['role'] ?? '')) === 'user' ? $you : $them;
+            $txt = trim((string)($m['text'] ?? ''));
+            if ($txt !== '') $lines[] = $who . ': ' . mb_substr($txt, 0, 300);
+        }
     }
     $recent = $lines === [] ? '(nothing yet, this is the first thing said)'
                             : implode("\n", array_slice($lines, -8));

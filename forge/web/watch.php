@@ -220,6 +220,32 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         xeric_web_json(['ok' => true, 'next' => (string)$out['next']]);
     }
 
+    // -- a suggestion for the walk-in composer --------------------------------
+    // The chat composer's ghost, generalized: xeric_play_suggest() takes the
+    // SCENE's own transcript, because a scene has no conversation row until it
+    // closes and the db's thread would be a different conversation than the
+    // one on screen. Addressed to the next speaker — the person your line
+    // will land in front of. Short queue hold, same as play.php's suggest.
+    if ($action === 'hint') {
+        try { $endpoint = xeric_play_endpoint($sid); }
+        catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
+        $hold = xeric_queue_take('say', 6.0, 'hint:' . $slug);
+        if (($hold['ok'] ?? false) !== true) {
+            xeric_web_json(['error' => (string)($hold['error'] ?? 'the model is busy'), 'kind' => 'busy'], 429);
+        }
+        try {
+            $who  = (string)($s['next'] ?? '');
+            $line = xeric_play_suggest($w['template'], $w['db'], $who !== '' ? $who : (string)$s['a'],
+                                       $endpoint, (array)$s['lines']);
+        } catch (Throwable $e) {
+            xeric_queue_release($hold);
+            xeric_web_json(['error' => $e->getMessage(), 'kind' => 'model'], 502);
+        }
+        xeric_queue_release($hold);
+        if (trim($line) === '') xeric_web_json(['error' => 'nothing came back'], 502);
+        xeric_web_json(['ok' => true, 'text' => $line]);
+    }
+
     // -- the affirmative close ------------------------------------------------
     if ($action === 'close') {
         // The two diary calls are model calls, so the close joins the line like
@@ -349,6 +375,13 @@ echo '<style>' . xeric_play_css() . xeric_watch_css() . '</style>';
       <button type="button" class="nbtn" id="wplay">⏸ pause</button>
       <span class="grow"></span>
       <button type="button" class="nbtn" id="wclose">end the scene</button>
+    </div>
+    <!-- The chat composer's ghost, inherited (owner: "said autocomplete").
+         Same contract as play.php's: empty and hidden until asked — an
+         autocomplete that appears on its own is a co-author nobody hired. -->
+    <div class="ghost" id="wghost" hidden>
+      <span class="gtext" id="wgtext"></span>
+      <span class="gkey" aria-hidden="true">→ again to use it</span>
     </div>
     <div class="composer">
       <textarea id="wcomposer" rows="1" placeholder="walk in — say something…" autocomplete="off"></textarea>
@@ -600,10 +633,39 @@ echo '<style>' . xeric_play_css() . xeric_watch_css() . '</style>';
     });
   });
 
+  // The ghost, on the chat composer's exact contract: → at the end of the box
+  // asks, → again takes, any typed character means they had their own idea,
+  // which outranks ours. Never appears unasked.
+  var wghosted = false;
+  function wghostHide() { wghosted = false; $('#wghost').hidden = true; }
+  function wghostAsk() {
+    $('#wgtext').textContent = 'thinking…'; $('#wghost').hidden = false;
+    fetch('watch.php?w=' + encodeURIComponent(W), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ a: 'hint' })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d && d.ok && d.text) { $('#wgtext').textContent = d.text; wghosted = true; }
+      else wghostHide();
+    }).catch(wghostHide);
+  }
+  function wghostTake() {
+    var box = $('#wcomposer');
+    box.value = $('#wgtext').textContent;
+    box.dispatchEvent(new Event('input'));
+    wghostHide(); box.focus();
+  }
+
   $('#wplay').addEventListener('click', function () { setPlaying(!playing); });
   $('#wclose').addEventListener('click', closeScene);
   $('#wsay').addEventListener('click', walkIn);
   $('#wcomposer').addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight') {
+      var box = e.target;
+      var atEnd = box.selectionStart === box.selectionEnd && box.selectionStart === box.value.length;
+      if (atEnd) { e.preventDefault(); if (wghosted) wghostTake(); else wghostAsk(); return; }
+    }
+    if (e.key === 'Escape') { wghostHide(); return; }
+    if (wghosted && e.key.length === 1) wghostHide();
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); walkIn(); }
   });
   $('#wcomposer').addEventListener('input', function () {
