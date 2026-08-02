@@ -111,9 +111,18 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
     // and a character still speaking of somebody in the present tense because
     // the system message was assembled ten minutes ago is the most obvious way
     // this could look broken.
+    // When they LAST spoke, in world time — world, not wall-clock, because a
+    // week-skip is a week of absence whether it took ten real minutes or ten
+    // real days. The transcript is undated, so without this line last month's
+    // goodnight abuts today's hello and the arithmetic lands on the model,
+    // which a small model never does and a big one does at random — the
+    // "random-looking moodiness" finding. Computed here where the history is.
+    $lastSpoke = 0;
+    foreach ($history as $m) $lastSpoke = max($lastSpoke, (int)($m['world_epoch'] ?? 0));
+
     $volatile = xeric_prompt_now_block($t, $speakerHandle, $now, (string)($opts['tail'] ?? ''), $walls,
         array_key_exists('player_where', $opts) ? $opts['player_where'] : xeric_player_where($t, $db),
-        xeric_deaths($db));
+        xeric_deaths($db), $lastSpoke);
     $incoming = trim((string)($opts['user_message'] ?? ''));
 
     $last = $messages[count($messages) - 1];
@@ -417,6 +426,11 @@ function xeric_prompt_rules(array $t, string $speakerHandle, string $eff = ''): 
         '- You know only what is written above. If you do not know something, you do not know it, you do not guess your way into the world.',
         '- Do not narrate anybody else\'s insides. You see what they do and hear what they say, like everyone else.',
         '- The last thing in this conversation says what time it is and where you are. Trust it over anything you remember.',
+        // The static half of gap-awareness; the volatile half is the "last
+        // spoke" line in RIGHT NOW. Together they close the random-moodiness
+        // finding: the model knows how long it has been AND knows not to make
+        // a drama of it unless something else gives it a reason.
+        '- A quiet stretch between conversations is ordinary life, not an event. People are busy; nobody owes anybody an explanation for a few days of silence unless something above says otherwise.',
         // THE FLOOR, said about other people. One line, and it claims nothing
         // about who is in this world: "there are children here" in a world with
         // none is an invitation to invent one.
@@ -512,7 +526,8 @@ function xeric_prompt_turn(array $m): array
  * @param ?array $walls resolved here when null, so no caller can skip them.
  */
 function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, string $tail = '',
-                                ?array $walls = null, ?string $playerWhere = null, ?array $deaths = null): string
+                                ?array $walls = null, ?string $playerWhere = null, ?array $deaths = null,
+                                int $lastSpoke = 0): string
 {
     $walls ??= xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $speakerHandle]));
 
@@ -523,6 +538,23 @@ function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, str
     $clock = trim($day . ' ' . $phase) . ', ' . (string)($now['hhmm'] ?? '');
     $loc   = trim((string)($t['user']['location'] ?? ''));
     $lines[] = xeric_sentence($clock . ($loc !== '' ? ', in ' . $loc : ''));
+
+    // HOW LONG IT HAS BEEN, said only when it has actually been a while. The
+    // transcript is undated, so without this line a week-skip's goodbye abuts
+    // today's hello and the model either misses the gap entirely (small
+    // models) or invents a grievance about it (big ones, at random). Under
+    // eight world-hours nothing prints — an ordinary same-day rhythm needs no
+    // remark — and the figure is COARSE on purpose: a timer here would change
+    // every message and imply a precision nobody texting a friend possesses.
+    if ($lastSpoke > 0) {
+        $gapH = ((int)($now['epoch'] ?? 0) - $lastSpoke) / 3600;
+        $ago  = '';
+        if     ($gapH >= 24 * 60) $ago = 'months';
+        elseif ($gapH >= 24 * 14) $ago = 'weeks';
+        elseif ($gapH >= 24 * 2)  $ago = (string)(int)round($gapH / 24) . ' days';
+        elseif ($gapH >= 8)       $ago = 'about a day';
+        if ($ago !== '') $lines[] = 'You two last spoke ' . $ago . ' ago.';
+    }
 
     $presence = xeric_world_who_is_where($t, $now, $deaths === null ? null : array_keys($deaths));
     $mine     = $presence[$speakerHandle] ?? ['where' => null, 'doing' => null];
