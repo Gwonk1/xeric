@@ -378,20 +378,24 @@ function xeric_rewind_watermarks(PDO $db): array
  *               hours:float, label:string, now:?array}
  *         `ok:false` writes NOTHING; `why` says so in words a screen can show.
  */
-function xeric_rewind(array $t, PDO $db): array
+/**
+ * The guard chain, shared by the rewind and the button that offers it.
+ *
+ * Returns [manifest, null] when the last skip is still takeable-back, or
+ * [null, why] in a human sentence when it is not. One home for the checks so
+ * the play view's "is the button lit" and the rewind's "may I actually" can
+ * never drift into disagreeing — a button that offers what the engine then
+ * refuses is the exact lie this extraction prevents.
+ */
+function xeric_rewind_check(PDO $db): array
 {
-    $no = static fn(string $why): array => [
-        'ok' => false, 'why' => $why,
-        'events' => 0, 'memories' => 0, 'messages' => 0, 'hours' => 0.0, 'label' => '0s', 'now' => null,
-    ];
-
     $raw = xeric_world_state_get($db, XERIC_REWIND_KEY);
     if ($raw === null || trim((string)$raw) === '') {
-        return $no('there is no skip to take back — the last one was already rewound, or the world has only ever moved on its own');
+        return [null, 'there is no skip to take back — the last one was already rewound, or the world has only ever moved on its own'];
     }
     $m = json_decode((string)$raw, true);
     if (!is_array($m) || (int)($m['v'] ?? 0) !== XERIC_REWIND_V) {
-        return $no('the last skip\'s record was written by a different build of the engine, and a rewind that half-understands its manifest leaves ghosts — this one stays lived');
+        return [null, 'the last skip\'s record was written by a different build of the engine, and a rewind that half-understands its manifest leaves ghosts — this one stays lived'];
     }
 
     // ── the staleness check ────────────────────────────────────────────────
@@ -404,20 +408,50 @@ function xeric_rewind(array $t, PDO $db): array
     // about the skipped span is how it stops being undoable.
     $after = (array)($m['after'] ?? []);
     if (xeric_clock_offset($db) !== (int)($after['offset'] ?? PHP_INT_MIN)) {
-        return $no('the clock has moved again since that skip — only the most recent movement can be taken back');
+        return [null, 'the clock has moved again since that skip — only the most recent movement can be taken back'];
     }
     $topNow = static fn(string $tbl): int =>
         (int)$db->query("SELECT COALESCE(MAX(id),0) n FROM $tbl")->fetchAll()[0]['n'];
     if ($topNow('messages') !== (int)($after['messages'] ?? -1)) {
-        return $no('words have been said since that skip — those hours are lived-in now, and the world keeps them');
+        return [null, 'words have been said since that skip — those hours are lived-in now, and the world keeps them'];
     }
     // Loose == on purpose: two maps with the same keys and values are the same
     // watermarks whatever order json_decode handed them back in.
     if ($topNow('events') !== (int)($after['events'] ?? -1)
         || $topNow('memories') !== (int)($after['memories'] ?? -1)
         || xeric_rewind_watermarks($db) != (array)($after['watermarks'] ?? [])) {
-        return $no('the world has lived hours of its own since that skip — it has moved on, and moved-on hours stay');
+        return [null, 'the world has lived hours of its own since that skip — it has moved on, and moved-on hours stay'];
     }
+    return [$m, null];
+}
+
+/**
+ * What a rewind WOULD take back, or null when the window is closed. This is
+ * the play view's read: label + counts for the button and its warning card,
+ * from the same guards the rewind itself runs.
+ */
+function xeric_rewind_peek(array $t, PDO $db): ?array
+{
+    [$m, $why] = xeric_rewind_check($db);
+    if ($m === null) return null;
+    $ids = (array)($m['ids'] ?? []);
+    return [
+        'span'     => (string)($m['span'] ?? ''),
+        'events'   => count((array)($ids['events'] ?? [])),
+        'memories' => count((array)($ids['memories'] ?? [])),
+        'messages' => count((array)($ids['messages'] ?? [])),
+    ];
+}
+
+function xeric_rewind(array $t, PDO $db): array
+{
+    $no = static fn(string $why): array => [
+        'ok' => false, 'why' => $why,
+        'events' => 0, 'memories' => 0, 'messages' => 0, 'hours' => 0.0, 'label' => '0s', 'now' => null,
+    ];
+
+    [$m, $why] = xeric_rewind_check($db);
+    if ($m === null) return $no((string)$why);
 
     $ids   = (array)($m['ids'] ?? []);
     $list  = static fn(string $k): array =>

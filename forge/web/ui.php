@@ -629,6 +629,10 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 .ratebtns{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0}
 .ratebtns .nbtn.on{box-shadow:inset 0 0 0 1px var(--accent)}
 
+/* the rewind: dark until the window is open, warned before it fires */
+.rewindrow{margin:.6rem 0 0}
+.rwbtn{border-style:dashed}
+
 /* the exit door: a question asked at the threshold, in the room's own idiom */
 .pnav .leave{margin-left:auto}
 .leavecard{border:1px solid var(--line);border-radius:.5rem;padding:.8rem 1rem;margin:.6rem 0 1rem;background:var(--card,var(--bg))}

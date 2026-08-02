@@ -61,6 +61,26 @@ try {
 // down: xeric_clock_advance() would throw anyway, but by then this request has
 // probed the model, taken a place in the queue and detached a worker to
 // discover it. Everything answerable now is answered now (see the header).
+// ── THE REWIND, answered inline (owner, 2026-08-02) ───────────────────────
+// Before the paused check on purpose: a held-still world's last skip is still
+// takeable-back, and rewinding moves no hours forward. No worker, no model
+// slot, one transaction — the guards in xeric_rewind_check() are the whole
+// authority, and its refusals are written for a screen. The one thing checked
+// here is a skip in flight: its manifest is not committed yet, and the honest
+// sentence is that the world is still moving.
+if (!empty($in['rewind'])) {
+    require_once dirname(__DIR__, 2) . '/engine/rewind.php';
+    if (!empty(xeric_queue_status()['busy'])) {
+        // Over-broad on purpose: "the model is doing something" includes other
+        // worlds' turns, but a rewind is instant and rare — waiting out a busy
+        // light costs seconds, while rewinding under an uncommitted manifest
+        // could cost a world. The cheap check is the safe one.
+        xeric_web_json(['ok' => false, 'why' => 'The world is still moving — let it finish before taking anything back.'], 409);
+    }
+    $r = xeric_rewind($w['template'], $w['db']);
+    xeric_web_json($r, empty($r['ok']) ? 409 : 200);
+}
+
 if (xeric_clock_is_paused($w['db'])) {
     xeric_web_json([
         'error' => 'This xeric is stopped, so there are no hours to live through. Attach a machine '
@@ -70,7 +90,10 @@ if (xeric_clock_is_paused($w['db'])) {
 }
 
 $now   = xeric_clock_now($w['db'], $w['template']);
-$spans = xeric_play_spans($now);
+// The template and the dead ride along so the timetable spans ("skip to when
+// the Bluebird opens") resolve HERE too — a span the state offered must be a
+// span this endpoint honors, or the button is a lie with a nice label.
+$spans = xeric_play_spans($now, $w['template'], xeric_dead_handles($w['db']));
 $want  = (string)($in['span'] ?? 'hour');
 
 if (isset($spans[$want])) {

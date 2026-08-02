@@ -847,6 +847,30 @@ echo '<style>' . xeric_play_css() . '
         </button>
         <?php endforeach; ?>
       </div>
+      <?php $rw = $state['rewind'] ?? null; if ($rw !== null): ?>
+      <!-- THE REWIND (owner, 2026-08-02). Offered only while the window is
+           open — same guards as the engine — and never without the warning,
+           in the owner's words: experimental and destructive. The card states
+           the physics before the button will fire: the world un-remembers,
+           the player does not. -->
+      <div class="rewindrow" id="rewindrow">
+        <button type="button" class="tbtn rwbtn" id="rewindbtn">
+          <span class="tl">⏪ take back the <?= h((string)$rw['span']) ?></span>
+          <span class="ts">the last skip, un-happened</span>
+        </button>
+        <div class="leavecard" id="rewindcard" hidden>
+          <p><strong>Experimental and destructive.</strong> The world un-remembers
+            those hours — <?= (int)$rw['events'] ?> events, <?= (int)$rw['memories'] ?> memories,
+            <?= (int)$rw['messages'] ?> messages — and will live them again, differently.
+            You keep what you know; they keep nothing. There is no undo of the undo.</p>
+          <div class="leavebtns">
+            <button type="button" class="nbtn" id="rewindgo">take it back</button>
+            <button type="button" class="nbtn ghost" id="rewindstay">never mind</button>
+          </div>
+          <p class="note warn" id="rewinderr" hidden></p>
+        </div>
+      </div>
+      <?php endif; ?>
       <p class="note warn" id="tickerr" hidden></p>
       <?php if ($queue['drained']): ?>
         <p class="note warn" id="busybanner">The machine's owner has taken the GPU back for a while, this demo runs on their own workstation. The xeric is still here; it just cannot move yet.</p>
@@ -934,6 +958,34 @@ echo '<style>' . xeric_play_css() . '
 (function () {
   'use strict';
   var W = <?= json_encode($w['slug']) ?>;
+
+  // -- the rewind ------------------------------------------------------------
+  // The button never fires without the card, the card never lies about what
+  // goes, and a refusal prints the engine's own sentence. Success reloads the
+  // page whole: every pane is stale after a week un-happens, and a repaint
+  // that missed one would show a ghost.
+  (function () {
+    var btn = document.getElementById('rewindbtn');
+    if (!btn) return;
+    var card = document.getElementById('rewindcard');
+    btn.addEventListener('click', function () { card.hidden = !card.hidden; });
+    var stay = document.getElementById('rewindstay');
+    if (stay) stay.addEventListener('click', function () { card.hidden = true; });
+    var go = document.getElementById('rewindgo');
+    if (go) go.addEventListener('click', function () {
+      go.disabled = true;
+      fetch('tick.php?w=' + encodeURIComponent(W), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rewind: 1 })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d && d.ok) { location.reload(); return; }
+        var err = document.getElementById('rewinderr');
+        err.textContent = (d && d.why) || 'that did not take';
+        err.hidden = false;
+        go.disabled = false;
+      }).catch(function () { go.disabled = false; });
+    });
+  })();
 
   // -- the exit door ---------------------------------------------------------
   // "Keep it running" is a plain link to the shelf; "pause it first" stops

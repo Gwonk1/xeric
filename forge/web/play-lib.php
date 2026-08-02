@@ -465,7 +465,7 @@ function xeric_play_endpoint(?string $sid = null): array
  *
  * @return array<string,array{key:string,label:string,seconds:int,to:string}>
  */
-function xeric_play_spans(array $now): array
+function xeric_play_spans(array $now, ?array $t = null, ?array $dead = null): array
 {
     $epoch = (int)($now['epoch'] ?? 0);
     try { $tz = new DateTimeZone((string)($now['tz'] ?? 'UTC')); }
@@ -484,6 +484,26 @@ function xeric_play_spans(array $now): array
         'evening' => ['label' => 'skip to evening',  'seconds' => $until(19)],
         'morning' => ['label' => 'skip to morning',  'seconds' => $until(8)],
     ];
+
+    // THE WORLD'S OWN NEXT THING (owner's ask, engine half built 2026-08-02).
+    // +1 hour and morning/evening are the clock's offers; these are the
+    // TIMETABLE's — "the Bluebird opens", "Ruth gets off shift" — read from
+    // xeric_world_next_change(), which already respects OUT and the dead. Two
+    // at most, so the timetable seasons the row rather than owning it, and
+    // only transitions at least half an hour out, because a button that lands
+    // you ninety seconds from now is the +1 hour button wearing a costume.
+    if ($t !== null) {
+        $added = 0;
+        foreach (xeric_world_next_change($t, $now, 24, $dead) as $chg) {
+            $secs = (int)($chg['epoch'] ?? 0) - $epoch;
+            if ($secs < 1800) continue;
+            $spans['next_' . ($chg['key'] ?? $added)] = [
+                'label' => 'skip to when ' . (string)($chg['label'] ?? 'things change'),
+                'seconds' => $secs,
+            ];
+            if (++$added >= 2) break;
+        }
+    }
 
     $out = [];
     foreach ($spans as $key => $s) {
@@ -1326,7 +1346,14 @@ function xeric_play_state(array $w, ?string $sid = null): array
             // the clock chip is the one thing on this screen everybody reads.
             'paused' => xeric_clock_is_paused($db),
         ],
-        'spans'      => array_values(xeric_play_spans($now)),
+        'spans'      => array_values(xeric_play_spans($now, $t, xeric_dead_handles($db))),
+        // The rewind window, read through the same guards the rewind runs —
+        // null means the button stays dark, and it goes dark the moment words
+        // are said or the world lives an hour of its own.
+        'rewind'     => (static function () use ($t, $db): ?array {
+            require_once dirname(__DIR__, 2) . '/engine/rewind.php';
+            return xeric_rewind_peek($t, $db);
+        })(),
         'cast'       => $cast,
         'cast_html'  => xeric_play_cast_html($cast, (string)$w['slug'], (bool)$w['mine']),
         'where'      => $map,
