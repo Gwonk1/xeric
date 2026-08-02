@@ -1558,5 +1558,79 @@ ok('the first wearer of an honest shape keeps it; the second is a repeat',
     && (string)$shaped[3]['one_line'] !== 'The kid who sees everything from the catwalk.',
     (string)$shaped[3]['one_line']);
 
+// ---------------------------------------------------------------------------
+// THE DEVELOPMENTAL LENS (repass.php)
+//
+// The repass gets a fourth read: flatness, not error. Three promises under
+// test, and the third is the one that lets it ride the red-button sweep at
+// all: (1) it reports with a rewrite on an editable path like every other
+// lens, (2) it runs in sweep mode too — the owner's call — and (3) it
+// CONVERGES: a line it has enriched is recorded on the world itself
+// (forge.developed), marked settled on its sheet forever after, and refused
+// by apply even if the model reports it anyway. Without that record the
+// sweep would re-polish the same line every round, which is the exact churn
+// the plot lens is excluded for.
+// ---------------------------------------------------------------------------
+
+require_once __DIR__ . '/../repass.php';
+
+$devW = ['slug' => 'dev-lens', 'dir' => sys_get_temp_dir() . '/xeric-dev-lens-' . getmypid(),
+         'template' => $deadBuild['template'], 'seed' => $deadBuild['seed']];
+[$devItems, ] = xeric_repass_digest($devW['template'], $devW['seed']);
+$devTarget = 0;
+foreach ($devItems as $n => $it) {
+    if ($it['path'] === 'cast.characters.0.one_line') { $devTarget = $n; break; }
+}
+ok('the digest carries the roster line the lens exists to improve', $devTarget > 0);
+
+$devTags = [];
+$devStub = ['base' => 'stub://', 'stub' => function (string $tag, array $m, array $o) use (&$devTags, $devTarget): array {
+    $devTags[] = $tag;
+    if ($tag === 'repass-develop') {
+        return ['findings' => [
+            ['item' => $devTarget, 'say' => 'a job description where a person should be',
+             'fix' => 'Pours the last round slow so the room ends gently.'],
+            ['item' => 0, 'say' => 'the whole world is a bit beige', 'fix' => 'be better'],
+        ]];
+    }
+    return ['findings' => []];
+}];
+$devR = xeric_repass($devW, $devStub);
+$devFound = array_values(array_filter($devR['findings'], fn($f) => $f['kind'] === 'develop'));
+ok('the developmental read runs beside consistency and plot',
+    in_array('repass-develop', $devTags, true) && in_array('repass-plot', $devTags, true));
+ok('a flatness finding carries its rewrite against the editable path',
+    ($devFound[0]['path'] ?? '') === 'cast.characters.0.one_line' && ($devFound[0]['fix'] ?? '') !== '');
+ok('a world-level flatness opinion carries no fix — there is no line for it to replace',
+    ($devFound[1]['path'] ?? 'x') === '' && ($devFound[1]['fix'] ?? 'x') === '');
+
+$devTags = [];
+xeric_repass($devW, $devStub, null, ['mode' => 'sweep']);
+ok('the developmental read rides the sweep, and the plot opinion still does not',
+    in_array('repass-develop', $devTags, true) && !in_array('repass-plot', $devTags, true),
+    implode(',', $devTags));
+
+// Convergence: an enriched line is settled on the sheet and refused by apply.
+$devDone = $devW;
+$devDone['template']['forge']['developed'] = ['cast.characters.0.one_line'];
+$devSheet = '';
+xeric_repass($devDone, ['base' => 'stub://', 'stub' => function (string $tag, array $m, array $o) use (&$devSheet): array {
+    if ($tag === 'repass-develop') $devSheet = (string)($m[1]['content'] ?? '');
+    return ['findings' => []];
+}]);
+ok('a line enriched on any earlier visit is marked settled on the develop sheet',
+    str_contains($devSheet, 'settled, do not report'));
+$devApplied = xeric_repass_apply($devDone, [['kind' => 'develop', 'about' => 'x', 'say' => 'flat',
+    'path' => 'cast.characters.0.one_line', 'fix' => 'A second coat of polish.']]);
+ok('and apply refuses to enrich it twice, whatever the model reported', $devApplied['fixed'] === 0);
+$devUser = xeric_repass_apply($devW, [['kind' => 'develop', 'about' => 'you', 'say' => 'flat',
+    'path' => 'user.motivation', 'fix' => 'A better reason to live.']]);
+ok('the player\'s own lines are not the lens\'s to improve, in any mode', $devUser['fixed'] === 0);
+// The consistency lens keeps its full reach: developed is a develop-only fence.
+$devConsistency = xeric_repass_digest($devDone['template'], $devDone['seed'])[0];
+ok('an enriched line is still on the consistency sheet un-settled — enrichment is not immunity',
+    (bool)array_filter($devConsistency, fn($it) => $it['path'] === 'cast.characters.0.one_line'
+        && !str_contains($it['label'], 'settled')));
+
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";
 exit($FAILED === 0 ? 0 : 1);

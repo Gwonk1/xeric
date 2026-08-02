@@ -4,7 +4,7 @@
  *
  * The forge writes a world in seven passes that never see each other's output
  * side by side; this is the pass that does. It reads the whole thing the way a
- * continuity editor reads a draft, and reports three kinds of trouble:
+ * continuity editor reads a draft, and reports four kinds of trouble:
  *
  *   consistency — two facts that cannot both be true: a schedule that puts
  *                 somebody in two places, an age that contradicts a memory,
@@ -12,6 +12,15 @@
  *   plot        — the through-line: does the motivation arm anything, does the
  *                 protagonist's pressure point at something that exists, do
  *                 the seeded events add up to the town the bible describes.
+ *   develop     — the developmental read: not errors but FLATNESS. A roster
+ *                 line that is a job description instead of a person, a voice
+ *                 made of adjectives instead of habits, a place with no smell
+ *                 and no economy, two interiors that could be swapped without
+ *                 anyone noticing. Its rewrites keep every stated fact and add
+ *                 the particular; and each line it improves is recorded on the
+ *                 world (forge.developed) and never re-litigated — see the
+ *                 sweep-mode comment in xeric_repass() for why that record is
+ *                 what makes this lens safe to loop.
  *   snake       — the story overlay's pacing. The shape checks are arithmetic
  *                 and run without a model (a curve that never rises, a false
  *                 calm outside the story, a peak at the front door); the model
@@ -51,12 +60,22 @@ function xeric_repass(array $w, array $endpoint, ?callable $onNote = null, array
     $t    = (array)$w['template'];
     $seed = (array)($w['seed'] ?? ['events' => [], 'memories' => []]);
 
-    // SWEEP MODE is the red button's: contradictions only. The plot lens is an
-    // opinion, and an opinion re-asked ten times rewrites the same motivation
-    // ten different ways; a loop that exists to clear contradictions has no
-    // business holding any other pen. `frozen` paths are lines an earlier pass
-    // in this loop already corrected: they are marked settled on the sheet, so
-    // the editor is told its own work is not up for re-litigation.
+    // SWEEP MODE is the red button's. The plot lens stays out of it: an
+    // OPINION re-asked ten times rewrites the same motivation ten different
+    // ways, and a loop that exists to converge has no business holding a pen
+    // that re-samples. `frozen` paths are lines an earlier pass in this loop
+    // already corrected: they are marked settled on the sheet, so the editor
+    // is told its own work is not up for re-litigation.
+    //
+    // The DEVELOPMENTAL lens rides the sweep anyway — the owner's call, and
+    // it overrules the exclusion, not the churn argument. What makes it safe
+    // where plot is not: an enrichment applies ONCE and its path goes into
+    // forge.developed on the world itself (xeric_repass_apply), so iteration
+    // N+1 sees the line marked settled whatever the caller remembered to pass
+    // in `frozen`. A lens whose every fix permanently shrinks its own field
+    // of complaint converges the same way the contradictions do; a lens that
+    // re-samples taste against the same open field is the churn the plot
+    // exclusion exists to keep out.
     $sweep  = ($opts['mode'] ?? '') === 'sweep';
     $frozen = array_fill_keys(array_map('strval', (array)($opts['frozen'] ?? [])), true);
 
@@ -64,12 +83,25 @@ function xeric_repass(array $w, array $endpoint, ?callable $onNote = null, array
     foreach ($items as $n => $it) {
         if (isset($frozen[$it['path']])) $items[$n]['label'] = 'settled, do not report: ' . $it['label'];
     }
+
+    // The developmental read gets its own sheet: everything the caller froze,
+    // PLUS every line this world has ever had enriched. Only for this lens —
+    // an enriched line can still contradict a schedule, and the consistency
+    // read must stay free to say so.
+    $developed = array_fill_keys(array_map('strval', (array)($t['forge']['developed'] ?? [])), true);
+    $devItems = $items;
+    foreach ($devItems as $n => $it) {
+        if (isset($developed[$it['path']]) && !str_starts_with($it['label'], 'settled, do not report')) {
+            $devItems[$n]['label'] = 'settled, do not report: ' . $it['label'];
+        }
+    }
     $findings = [];
     $calls    = 0;
 
     // -- the literary reads -------------------------------------------------
     $reads = [['consistency', xeric_repass_ask_consistency($items, $context)]];
     if (!$sweep) $reads[] = ['plot', xeric_repass_ask_plot($items, $context, $t)];
+    $reads[] = ['develop', xeric_repass_ask_develop($devItems, $context)];
     foreach ($reads as [$kind, $msgs]) {
         try {
             $calls++;
@@ -251,6 +283,44 @@ function xeric_repass_ask_plot(array $items, string $context, array $t): array
     ];
 }
 
+/**
+ * The developmental read: flatness, not error.
+ *
+ * The narrow promise this ask has to keep is the same one the fix pipeline
+ * enforces from the other side: a rewrite ADDS the particular and never
+ * changes the true. An editor allowed to "improve" a fact is a reroll wearing
+ * a nicer coat, and rerolls have their own button. Hence the read-against
+ * block is framed as constraints on the rewrite, the sheet's settled markers
+ * are load-bearing (they are how forge.developed reaches the model), and the
+ * player's own lines are declared off the table — a machine polishing the
+ * words somebody chose about themselves is not enrichment, whatever it thinks.
+ */
+function xeric_repass_ask_develop(array $items, string $context): array
+{
+    return [
+        ['role' => 'system', 'content' =>
+            'You are a developmental editor. You read a story world\'s sheet for FLATNESS, not error: '
+            . 'a roster line that is a job description instead of a person, a voice made of adjectives '
+            . 'instead of habits, a place with no smell and no economy to it, interiors two characters '
+            . 'could swap without anyone noticing. You propose the better line itself. '
+            . 'Reply with ONE JSON object and nothing else.'],
+        ['role' => 'user', 'content' =>
+            "The sheet:\n" . xeric_repass_sheet($items)
+            . "\nRead against (schedules, walls — facts your rewrite must not contradict):\n" . $context
+            . "\n\nReport only lines that are genuinely flat, and never one marked settled. A line that "
+            . "already carries a specific, concrete, surprising detail is DONE — polishing it again is "
+            . "how a tea set becomes spilled juice. Keep every fact a line already states: same person, "
+            . "same age, same job, same places, same relationships. You add the particular; you never "
+            . "change the true, and you never touch the player's own lines. "
+            . "At most 5, the flattest first; an empty list is a fine answer.\n"
+            . "A fix is the REPLACEMENT TEXT ITSELF, ready to sit in the world in the item's own voice. "
+            . "Never advice, never an instruction, never 'e.g.'. If the line cannot get better without "
+            . "inventing a fact that might collide with the sheet, fix is \"\".\n"
+            . '{"findings":[{"item": 3, "say": "one sentence naming what is flat", '
+            . '"fix": "the better line itself, or \"\""}]}'],
+    ];
+}
+
 /** Beats laid against the snake. null when the story has nothing to read. */
 function xeric_repass_ask_snake(array $s): ?array
 {
@@ -353,6 +423,11 @@ function xeric_repass_apply(array $w, array $findings, array $opts = []): array
     $fixed = 0;
     $sweep  = ($opts['mode'] ?? '') === 'sweep';
     $frozen = array_fill_keys(array_map('strval', (array)($opts['frozen'] ?? [])), true);
+    // The permanent half of the freeze: lines the developmental lens already
+    // improved, on any earlier visit. Read here and WRITTEN here — every
+    // develop fix that lands adds its path, and the record rides the same
+    // save as the fix, so there is no state to lose between button presses.
+    $developed = array_fill_keys(array_map('strval', (array)($t['forge']['developed'] ?? [])), true);
 
     foreach ($findings as $i => $f) {
         $findings[$i]['fixed'] = false;
@@ -365,6 +440,12 @@ function xeric_repass_apply(array $w, array $findings, array $opts = []): array
         // themselves are not a contradiction for a machine to clear.
         if (isset($frozen[$path])) continue;
         if ($sweep && str_starts_with($path, 'user.')) continue;
+        // The developmental lens holds two more lines it may never cross,
+        // whatever mode this is: a line it has enriched before (once is
+        // enrichment, twice is churn), and the player's own words in ANY
+        // mode — flatness in how somebody described themselves is theirs.
+        if ((string)($f['kind'] ?? '') === 'develop'
+            && (isset($developed[$path]) || str_starts_with($path, 'user.'))) continue;
 
         $spec = xeric_review_field($path);
         if ($spec === null) continue;
@@ -413,6 +494,11 @@ function xeric_repass_apply(array $w, array $findings, array $opts = []): array
             $seedTouched = true;
         } else {
             $t = xeric_review_set($t, $path, $fix);
+        }
+        if ((string)($f['kind'] ?? '') === 'develop') {
+            $developed[$path] = true;
+            $t['forge'] = (array)($t['forge'] ?? []);
+            $t['forge']['developed'] = array_keys($developed);
         }
         $findings[$i]['fixed'] = true;
         $fixed++;
@@ -500,11 +586,18 @@ function xeric_repass_judge(array $w, array $endpoint, string $path, string $say
         return ['still' => false, 'why' => 'the line this was about no longer exists'];
     }
     $out = xeric_forge_ask($endpoint, 'repass-judge', [
+        // Two kinds of complaint reach this judge and each is held to its own
+        // standard, spelled out so the strictness that keeps contradiction
+        // findings honest does not silently dismiss every flatness finding as
+        // "not a contradiction" — which is what the old wording did the day
+        // the developmental lens arrived.
         ['role' => 'system', 'content' =>
             'You are a fact checker. You are shown a complaint about a story world and the text as it '
-            . 'stands NOW. You answer one question: does the complaint still hold? You are strict about '
-            . 'what a contradiction is — two facts that cannot both be true. Wobbly prose, thin '
-            . 'characterisation and things you would write differently are NOT contradictions. '
+            . 'stands NOW. You answer one question: does the complaint still hold? A complaint about a '
+            . 'CONTRADICTION holds only if two facts still cannot both be true — be strict: wobbly prose '
+            . 'and things you would write differently are not contradictions. A complaint about FLATNESS '
+            . '(generic, thin, interchangeable) holds only while the text is still generic — a line that '
+            . 'now carries a specific, concrete detail has answered it. '
             . 'Reply with ONE JSON object and nothing else.'],
         ['role' => 'user', 'content' =>
             'THE COMPLAINT: ' . $say
@@ -533,12 +626,13 @@ function xeric_repass_refix(array $w, array $endpoint, string $path, string $say
 
     $out = xeric_forge_ask($endpoint, 'repass-refix', [
         ['role' => 'system', 'content' =>
-            'You rewrite one line of a story world so a stated contradiction goes away. You reply with '
-            . 'the replacement line itself, in the line\'s own voice: never advice, never an instruction, '
-            . 'never "e.g.". Reply with ONE JSON object and nothing else.'],
+            'You rewrite one line of a story world so a stated complaint goes away — a contradiction '
+            . 'resolved, or a flat line made particular without changing any fact it states. You reply '
+            . 'with the replacement line itself, in the line\'s own voice: never advice, never an '
+            . 'instruction, never "e.g.". Reply with ONE JSON object and nothing else.'],
         ['role' => 'user', 'content' =>
             'THE LINE: ' . mb_substr($current, 0, 500)
-            . "\nTHE CONTRADICTION: " . $say
+            . "\nTHE COMPLAINT: " . $say
             . ($why !== '' ? "\nWHY THE LAST REWRITE FAILED: " . $why : '')
             . "\n\n" . '{"fix": "the replacement line"}'],
     ], ['temperature' => 0.5, 'max_tokens' => 400], $onNote);
