@@ -1620,6 +1620,105 @@ ok('travel: the room line rides the LAST USER MESSAGE, never the system prompt �
     str_contains((string)$built[count($built) - 1]['content'], 'in the room with you')
     && !str_contains(xeric_prompt_system_of($built), 'in the room with you'));
 
+// -- a stopped world ---------------------------------------------------------
+xeric_clock_pause($db5);
+$stopped = xeric_travel_go($T, $db5, 'bluebird');
+ok('travel: a stopped world cannot be walked across, and the player never left',
+    !$stopped['ok'] && str_contains((string)$stopped['error'], 'stopped')
+    && xeric_player_where($T, $db5) === 'first_lutheran');
+xeric_clock_resume($db5);
+
+// -- a world mid-skip ---------------------------------------------------------
+// The stamp is the tick worker's; here it is planted by hand, because what is
+// under test is the engine's side of the contract: fresh refuses, stale is a
+// dead worker's ghost and walks right through.
+xeric_world_state_set($db5, 'skip:underway', '1000000');
+ok('travel: the skip stamp goes stale on the boundary, not before',
+    xeric_travel_skipping($db5, 1000000 + XERIC_TRAVEL_SKIP_STALE) === true
+    && xeric_travel_skipping($db5, 1000000 + XERIC_TRAVEL_SKIP_STALE + 1) === false);
+
+xeric_world_state_set($db5, 'skip:underway', (string)time());
+$off = xeric_clock_offset($db5);
+$mid = xeric_travel_go($T, $db5, 'bluebird');
+ok('travel: a world mid-skip refuses a trip — the world is already moving',
+    !$mid['ok'] && str_contains((string)$mid['error'], 'fast-forward')
+    && xeric_clock_offset($db5) === $off
+    && xeric_player_where($T, $db5) === 'first_lutheran');
+ok('travel: and the map says so, so no client offers a walk the engine would refuse',
+    xeric_travel_map($T, $db5)['skipping'] === true);
+
+xeric_world_state_set($db5, 'skip:underway', (string)(time() - XERIC_TRAVEL_SKIP_STALE - 61));
+ok('travel: a dead worker\'s stale stamp does not brick walking forever',
+    xeric_travel_go($T, $db5, 'bluebird')['ok']
+    && xeric_travel_map($T, $db5)['skipping'] === false);
+xeric_world_state_delete($db5, 'skip:underway');
+
+// -- homes as destinations ----------------------------------------------------
+// $TH and $TO come from section 4b — the same clones the presence tests use, so
+// the travel truth and the presence truth cannot drift apart. $TSolo is the case
+// 4b never needed: a roof whose ONLY resident is out of the story.
+$TSolo = mutate(
+    mutate($T, ['places'], array_merge($T['places'],
+        [['key' => 'ruths_house', 'name' => "Ruth's house", 'kind' => 'home', 'residents' => ['ruth']]])),
+    ['cast', 'characters', 0, 'out'], true);
+
+ok('travel: a home is unstaged only when EVERYBODY under its roof is out of the story',
+    xeric_travel_unstaged($TSolo, 'ruths_house') === true
+    && xeric_travel_unstaged($TO, 'ruth_and_dots') === false     // Dot still lives there
+    && xeric_travel_unstaged($TH, 'ruth_and_dots') === false
+    && xeric_travel_unstaged($T, 'bluebird') === false);         // not a home at all
+
+$off  = xeric_clock_offset($db5);
+$solo = xeric_travel_go($TSolo, $db5, 'ruths_house');
+ok('travel: the home of somebody not yet in the story refuses, in story terms, before a minute burns',
+    !$solo['ok'] && str_contains((string)$solo['error'], 'story')
+    && xeric_clock_offset($db5) === $off
+    && xeric_player_where($T, $db5) === 'bluebird');
+
+$soloMap = xeric_travel_map($TSolo, $db5);
+ok('travel: and the map does not list it — no button for a door that will not open',
+    !in_array('ruths_house', array_column($soloMap['places'], 'key'), true)
+    && count($soloMap['places']) === count($T['places'])
+    && in_array('ruth_and_dots', array_column(xeric_travel_map($TO, $db5)['places'], 'key'), true));
+
+$visit = xeric_travel_go($TH, $db5, 'ruth_and_dots');
+ok('travel: a staged home is a destination like any other — you are able to go into their home',
+    $visit['ok'] && $visit['minutes'] > 0 && xeric_player_where($TH, $db5) === 'ruth_and_dots');
+
+xeric_player_move($db5, 'ruths_house');
+ok('travel: a reroll that unstages the roof under the player leaves them nowhere, not in a ghost house',
+    xeric_player_where($TSolo, $db5) === null
+    && xeric_player_where_raw($db5) === 'ruths_house'
+    && xeric_player_where(mutate($TSolo, ['cast', 'characters', 0, 'out'], false), $db5) === 'ruths_house');
+
+// -- the kitchen table --------------------------------------------------------
+// Thursday 20:15: no week block covers Ruth or Dot, so the home catches both
+// (4b proved the placement). Stand the player in the house and the now-block
+// must say all three of it: where she is, who else lives there, and that the
+// player is IN THE HOUSE rather than on the phone — the at_home placement and
+// the playerWhere seam meeting byte-for-byte.
+$kitchen = xeric_prompt_now_block($TH, 'ruth', $thuEve, '', null, 'ruth_and_dots');
+ok('travel: a character at home is told the player is standing in their house',
+    str_contains($kitchen, "You are at Ruth and Dot's place")
+    && str_contains($kitchen, 'Also there: Dot')
+    && str_contains($kitchen, 'Walt is here, in the room with you'));
+ok('travel: and texting her from the diner puts nobody in her kitchen',
+    !str_contains(xeric_prompt_now_block($TH, 'ruth', $thuEve, '', null, 'bluebird'),
+        'in the room with you'));
+
+$whoAt = function (array $map, string $key): array {
+    foreach ($map['places'] as $p) {
+        if ($p['key'] !== $key) continue;
+        $out = [];
+        foreach ($p['who'] as $w) $out[$w['handle']] = $w['at_home'];
+        return $out;
+    }
+    return [];
+};
+ok('travel: the map says "home" is why she is there, and never dresses a shift up as one',
+    ($whoAt(xeric_travel_map($TH, $db5, $thuEve), 'ruth_and_dots')['ruth'] ?? null) === true
+    && ($whoAt(xeric_travel_map($TH, $db5, $wedAm), 'first_lutheran')['ruth'] ?? null) === false);
+
 $db5 = null;
 foreach ([$travelDb, $travelDb . '-wal', $travelDb . '-shm'] as $f) @unlink($f);
 

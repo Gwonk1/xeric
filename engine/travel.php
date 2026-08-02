@@ -23,7 +23,7 @@
  * engine has always computed into something you can miss: she is off at two, and
  * you cannot get there by two.
  *
- * FOUR DECISIONS WORTH KNOWING BEFORE EDITING THIS:
+ * SIX DECISIONS WORTH KNOWING BEFORE EDITING THIS:
  *
  *  1. NULL IS A REAL POSITION. The player being nowhere on the map is the same
  *     state as a character being off shift, and it renders with the same
@@ -48,6 +48,26 @@
  *     decide whether you may text somebody. The phone is the product and it
  *     works from anywhere. The only thing position changes about a conversation
  *     is that the person can now know you are standing in front of them.
+ *
+ *  5. AN UNSTAGED HOME IS NOT A DESTINATION. A home whose every resident is OUT
+ *     of the story is a house nobody in your story lives in yet
+ *     (WORLD_TEMPLATE.md: "their home not visitable"). It is the one refusal in
+ *     this file that is not about geometry or existence — refused by STAGING,
+ *     never by hours — and it is symmetric: the map does not list the place, the
+ *     trip is refused in story terms, and a player left standing in one (a
+ *     reroll flipped the resident out under them) resolves to nowhere, exactly
+ *     like a room that stopped existing. A shared roof stays visitable while
+ *     anybody under it is staged; the day the resident ENTERS (enter.php), the
+ *     house appears on the map with them.
+ *
+ *  6. A MOVING WORLD CANNOT BE WALKED ACROSS. Stopped is stopped (the pause
+ *     check below), and mid-skip is MOVING: a trip that lands its minutes while
+ *     tick-worker.php is walking a six-hour fast-forward would shove the clock
+ *     out from under the sweep windows and smuggle its own writes into the
+ *     skip's rewind manifest. The worker stamps `skip:underway` in world_state
+ *     while the clock is in its hands; travel refuses while the stamp is fresh
+ *     and ignores a stale one, because a worker that died mid-skip must not
+ *     brick walking forever.
  *
  * Not here, deliberately: the multi-speaker room turn, adjacency (roads, walls,
  * one-way), vehicles, and any notion of a drawn map. The map is a client of
@@ -88,6 +108,13 @@ const XERIC_TRAVEL_MAX = 240;
 
 /** The grid is 0–100 on both axes, so the longest possible trip is its diagonal. */
 const XERIC_TRAVEL_SPAN = 141.4213562373095;
+
+/** How long a `skip:underway` stamp is believed, in real seconds. The tick
+ *  worker's model hold is hard-capped at 420s (forge/web/queue.php) and its
+ *  janitor allows a minute of grace past that, so anything older than this is a
+ *  worker that died without its finally — and a dead worker must not leave a
+ *  world nobody can walk across. */
+const XERIC_TRAVEL_SKIP_STALE = 600;
 
 // ---------------------------------------------------------------------------
 // The geometry
@@ -212,6 +239,47 @@ function xeric_travel_mapped(array $t): bool
     return false;
 }
 
+/**
+ * Is this place a home nobody in the story lives in yet? (Decision 5.)
+ *
+ * True only for a `kind: "home"` whose every resident is a character with
+ * `out: true`. One staged resident — or one fixture, which cannot be out —
+ * stages the whole roof: the shared home of a marriage where one spouse has
+ * not entered is still the other spouse's front door. A home with no residents
+ * at all is the validator's problem (it refuses to load one), not travel's to
+ * re-litigate, so it reads as staged here rather than silently vanishing from
+ * a world that was hand-edited past the rules.
+ */
+function xeric_travel_unstaged(array $t, string $key): bool
+{
+    $p = xeric_world_place($t, $key);
+    if ($p === null || (string)($p['kind'] ?? '') !== 'home') return false;
+
+    $residents = (array)($p['residents'] ?? []);
+    if ($residents === []) return false;
+
+    foreach ($residents as $r) {
+        $c = xeric_world_character($t, (string)$r);
+        if ($c === null || empty($c['out'])) return false;   // a fixture, or somebody staged
+    }
+    return true;
+}
+
+/**
+ * Is a skip moving this world's clock right now? (Decision 6.)
+ *
+ * Reads the `skip:underway` real-time stamp the tick worker holds while the
+ * clock is in its hands. Fresh means refuse; stale means the worker died and
+ * the stamp is a ghost, so it is ignored. $realNow is injectable for tests,
+ * the same way the clock's is.
+ */
+function xeric_travel_skipping(PDO $db, ?int $realNow = null): bool
+{
+    $at = (int)(xeric_world_state_get($db, 'skip:underway') ?? '0');
+    if ($at <= 0) return false;
+    return (($realNow ?? xeric_state_time()) - $at) <= XERIC_TRAVEL_SKIP_STALE;
+}
+
 // ---------------------------------------------------------------------------
 // The body
 // ---------------------------------------------------------------------------
@@ -238,12 +306,18 @@ function xeric_player_where_raw(PDO $db): ?string
  * arrival report, the map) is about who else is present, and being present in a
  * room that does not exist would put the player in company with nobody, forever,
  * with no way to notice.
+ *
+ * An UNSTAGED home resolves to nowhere the same way (decision 5): a reroll can
+ * flip a resident OUT under a player standing in their kitchen, and a position
+ * inside a house that is not in the story yet is a position the map no longer
+ * lists — the ghost-room problem wearing a front door.
  */
 function xeric_player_where(array $t, PDO $db): ?string
 {
     $k = xeric_player_where_raw($db);
     if ($k === null) return null;
-    return xeric_world_place($t, $k) !== null ? $k : null;
+    if (xeric_world_place($t, $k) === null || xeric_travel_unstaged($t, $k)) return null;
+    return $k;
 }
 
 /**
@@ -302,6 +376,14 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
     if ($to !== null && xeric_world_place($t, $to) === null) {
         return $fail('There is no such place in this world.');
     }
+    // THE ONE REFUSAL THAT IS NOT HOURS (decision 5). You may walk to a closed
+    // place; you may not walk into the home of somebody who has not entered the
+    // story. Refused in story terms, before any minute burns — the map does not
+    // list this place, so only a client speaking raw keys ever gets this far.
+    if ($to !== null && xeric_travel_unstaged($t, $to)) {
+        return $fail('Whoever lives there has not come into your story yet, and that door '
+            . 'does not open for you.');
+    }
     if ($to === $from) {
         return $fail($to === null
             ? 'You are already on your own time.'
@@ -317,13 +399,29 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
             . 'starts again where it was.');
     }
 
+    // AND NEITHER CAN A MOVING ONE (decision 6). While a skip is walking its
+    // hours, a trip's advance would land inside the worker's sweep windows and
+    // its writes inside the skip's rewind manifest.
+    if (xeric_travel_skipping($db)) {
+        return $fail('This world is fast-forwarding right now. Let those hours land, then set out.');
+    }
+
     $minutes = xeric_travel_minutes($t, $from, $to);
 
     // Never let a template's arithmetic reach the clock unchecked: xeric_travel_minutes()
     // already clamps, and this is the assertion that the clamp held.
     if ($minutes < 0 || $minutes > XERIC_TRAVEL_MAX) return $fail('That is not a distance.');
 
-    $now = $minutes > 0 ? xeric_clock_advance($db, $minutes * 60, $t) : xeric_clock_now($db, $t);
+    try {
+        $now = $minutes > 0 ? xeric_clock_advance($db, $minutes * 60, $t) : xeric_clock_now($db, $t);
+    } catch (Throwable $e) {
+        // The pause landing between the guard above and the advance is a race,
+        // not a bug, and the clamp keeps every other throw in clock.php out of
+        // reach — so this is the stopped world again, refused as a state like
+        // every refusal before it. Nothing was written; the player never left.
+        return $fail('This world is stopped, so nothing takes any time. Attach a machine and it '
+            . 'starts again where it was.');
+    }
     xeric_player_move($db, $to, (int)$now['epoch']);
 
     return [
@@ -390,12 +488,22 @@ function xeric_travel_map(array $t, PDO $db, ?array $now = null): array
     foreach ((array)($t['places'] ?? []) as $p) {
         $key = (string)($p['key'] ?? '');
         if ($key === '') continue;
+        // An unstaged home is not on the map at all (decision 5). Listing it
+        // would advertise a character who has not entered the story by their
+        // front door, and a button the engine then refuses is the lie the
+        // rewind guards were extracted to prevent. The day the resident enters,
+        // the house appears — the town grows, and the entrance event says why.
+        if (xeric_travel_unstaged($t, $key)) continue;
 
         $at  = xeric_travel_at($t, $key);
         $who = [];
         foreach (xeric_world_who_is_at($presence, $key) as $h) {
-            $who[] = ['handle' => $h, 'name' => xeric_world_name($t, $h),
-                      'doing'  => xeric_text($presence[$h]['doing'] ?? '')];
+            // `at_home` rides so a renderer can say "home" instead of dressing
+            // a kitchen up as a shift — the same flag the narrator already
+            // reads off presence, put where a client is allowed to look.
+            $who[] = ['handle'  => $h, 'name' => xeric_world_name($t, $h),
+                      'doing'   => xeric_text($presence[$h]['doing'] ?? ''),
+                      'at_home' => !empty($presence[$h]['at_home'])];
         }
 
         $places[] = [
@@ -430,6 +538,10 @@ function xeric_travel_map(array $t, PDO $db, ?array $now = null): array
             'leave'   => ['minutes' => $here === null ? 0 : xeric_travel_minutes($t, $here, null)],
         ],
         'mapped' => xeric_travel_mapped($t),
+        // A skip is moving the clock right now, so every trip below would be
+        // refused — said here so a client greys its buttons instead of offering
+        // walks the engine will not take (decision 6).
+        'skipping' => xeric_travel_skipping($db),
         'how'    => xeric_travel_how($t),
         'across' => xeric_travel_across($t),
         'places' => $places,
