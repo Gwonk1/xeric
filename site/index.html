@@ -347,9 +347,18 @@
       the OpenAI chat API — llama.cpp, Ollama, LM&nbsp;Studio — found automatically
       on the ports those actually use. Around 12B is the floor for forging a world;
       once it exists, the runtime is comfortable on smaller models, because the
-      prompts are engineered to cache. One consumer GPU is plenty. Or bring an API
-      key instead and skip the GPU entirely — a key is used for the request that
-      carries it and is never stored.</p>
+      prompts are engineered to cache. Or bring an API key instead and skip local
+      models entirely — a key is used for the request that carries it and is never
+      stored.</p>
+    <p><strong>Running that local model</strong> is more ordinary than its
+      reputation: a 12B quantized to four bits is a one-time download of roughly
+      seven gigabytes and wants about eight gigabytes of video memory to answer
+      quickly — one mid-range consumer graphics card, the kind sold for gaming.
+      The smaller models the runtime is happy on fit in half that. No graphics
+      card at all still works through the same servers on CPU and ordinary RAM,
+      just slower — a forge becomes a coffee's worth of waiting instead of a few
+      minutes. The engine itself is the light part; the model is the only thing
+      in the house doing heavy lifting.</p>
     <p><strong>Nothing else.</strong> No account, no cloud dependency at runtime,
       nothing phones home. Connecting a model is a choice you make on a screen
       built for it — the app finds what is running, and nothing runs on it until
