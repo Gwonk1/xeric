@@ -667,11 +667,15 @@ xeric_web_head('Xeric: the forge');
          The wizard was its own tile until it became clear that "answer some
          questions about the xeric you want" and "describe the xeric you want"
          are the same sentence with the work split differently. -->
+    <!-- ASK ME SITS FIRST (owner, 2026-08-02): being asked is the gentler door
+         and the one a first-timer actually takes, so it gets the leading spot.
+         "type it" keeps the SELECTED state because this screen's body is the
+         typing surface — ask me is less a tab than a door, and it leaves. -->
     <div class="ways3" role="tablist" aria-label="how to describe it">
-      <button type="button" class="w3 on" role="tab" aria-selected="true" data-mode="type"
-              title="Write it in your own words, as much or as little as you like">type it</button>
       <button type="button" class="w3" role="tab" aria-selected="false" data-mode="ask"
               title="Be asked <?= count($steps) ?> questions instead, and skip any of them">ask me</button>
+      <button type="button" class="w3 on" role="tab" aria-selected="true" data-mode="type"
+              title="Write it in your own words, as much or as little as you like">type it</button>
       <button type="button" class="w3" role="tab" aria-selected="false" data-mode="pdf"
               title="Hand over a PDF and the forge reads the text out of it">a PDF</button>
     </div>
@@ -685,11 +689,14 @@ xeric_web_head('Xeric: the forge');
          somebody wrote, which is exactly what the field above holds, so it goes
          there rather than into a second hidden place the forge reads instead.
          It is editable the moment it lands: nobody hands over a whole file and
-         means every page of it. -->
+         means every page of it.
+
+         NO CHOOSE BUTTON (owner, 2026-08-02). There used to be a second button
+         here — press "a PDF", then press "choose a PDF" — two clicks for one
+         act. The tab IS the chooser now: pressing it opens the file dialog
+         directly, and this div survives only to hold the status line. -->
     <div class="pdfdrop" id="pdfdrop" hidden>
       <input type="file" id="pdffile" accept="application/pdf,.pdf" hidden>
-      <button type="button" class="btn ghost" id="pdfpick"
-              title="A PDF with text in it. Scans without text cannot be read: no OCR.">choose a PDF</button>
       <span class="pdfst" id="pdfst"></span>
     </div>
   </section>
@@ -1208,6 +1215,10 @@ xeric_web_head('Xeric: the forge');
       });
       var drop = $('#pdfdrop');
       if (drop) drop.hidden = mode !== 'pdf';
+      // THE TAB IS THE CHOOSER. There is no second button — pressing "a PDF"
+      // opens the dialog itself. Cancelling leaves the tab lit with an empty
+      // status, and pressing it again simply asks again.
+      if (mode === 'pdf' && file) file.click();
       var box = $('.screen[data-screen=premise] .val');
       if (mode === 'type' && box) box.focus();
     });
@@ -1217,9 +1228,8 @@ xeric_web_head('Xeric: the forge');
   // The text lands in the box above, editable, because a document is a thing
   // somebody wrote and that is what the box is for. Nobody hands over forty
   // pages and means all forty.
-  var pick = $('#pdfpick'), file = $('#pdffile'), pst = $('#pdfst');
-  if (pick && file) {
-    pick.addEventListener('click', function () { file.click(); });
+  var file = $('#pdffile'), pst = $('#pdfst');
+  if (file) {
     file.addEventListener('change', function () {
       var f = file.files && file.files[0];
       if (!f) return;
