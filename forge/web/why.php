@@ -7,7 +7,7 @@
  * else in this app is written so a stranger can enjoy it without knowing how it
  * works; this one is written so the author can find out why it did not.
  *
- * TWO QUESTIONS, AND NOTHING ELSE:
+ * THREE QUESTIONS, AND NOTHING ELSE:
  *
  *  1. WHAT IS SHE ACTUALLY BEING TOLD?  ?w=<slug>&h=<handle>
  *     The EXACT messages xeric_prompt_build() produces — not a description of
@@ -29,6 +29,16 @@
  *     which grouping won and by how much weight. sweeps.php produces all of that
  *     while it decides; tick-worker.php writes it to world_state keyed by the
  *     event id, so it is still answerable a week later.
+ *
+ *  3. WHAT HAS IT LEARNED?  ?w=<slug>&learn=1
+ *     The learning layer, from the evidence up: the newest signals in plain
+ *     language, the per-kind weights with their floors, each person's reach,
+ *     the lessons with the evidence that earned them where that is on record,
+ *     and anything the distil pass has struck, with its reasons. The prompt
+ *     view above shows the lessons by accident — they ride the system message —
+ *     but nothing anywhere else shows the numbers underneath them, and a weight
+ *     that cannot explain itself reads as the world being moody. learn.php
+ *     produces every figure on the page; nothing here re-derives one.
  *
  * Read-only, start to finish. No model call, no write, no clock moved.
  *
@@ -353,6 +363,157 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     }
 
 // ===========================================================================
+// What it has learned
+// ===========================================================================
+} elseif (!empty($_GET['learn'])) {
+    // Every number below is learn.php's own answer, asked the way the engine
+    // asks: the weights through xeric_learn_kind_weights (so the kill switch
+    // and the confidence floor both show as they actually bite), the reach
+    // through xeric_learn_reach, the crumbs through the same evidence-line
+    // renderer the distil pass hands the model.
+    $userName   = trim((string)($T['user']['name'] ?? '')) ?: 'the visitor';
+    $learningOn = xeric_learn_enabled($db);
+    $rates      = xeric_learn_kind_rates($db);
+    $weights    = xeric_learn_kind_weights($db);
+    $recent     = xeric_signals_recent($db, 20);
+    $struck     = xeric_lessons_struck($db, 12);
+    ?>
+  <h1>What this xeric has learned</h1>
+  <p class="sub">learn.php, from the evidence up: what <?= h($userName) ?> actually did, what the counting
+    made of it, and the few sentences the distil pass thought worth keeping. Like the rest of this page
+    it is a read of what is already there — no model call, no write, no clock moved.</p>
+
+  <?php if (!$learningOn): ?>
+    <p class="note warn">Learning is <b>switched off</b> for this xeric. The crumbs below still land — the
+      diary never goes blind — but no distil pass runs, every weight and reach on this page is held at its
+      default, and the lessons are held out of every prompt until it is switched back on. Nothing has been
+      deleted.</p>
+  <?php endif; ?>
+
+  <h2>the thumb on each kind of hour</h2>
+  <?php if ($rates === []): ?>
+    <p class="quiet">Nothing yet. These are written in hindsight, at the tail of a skip: an hour whose
+      people were spoken to afterwards landed, one walked past did not.</p>
+  <?php else: ?>
+    <ul class="sys">
+      <?php foreach ($rates as $name => $r): $wgt = $weights[$name] ?? null; ?>
+      <li><span class="k"><code><?= h((string)$name) ?></code></span>
+        <span class="v">offered <?= (int)$r['seen'] ?>, followed up <?= (int)$r['engaged'] ?><?=
+            $r['rate'] !== null ? ' (' . (int)round(100 * (float)$r['rate']) . '%)' : '' ?>
+          · weight <?php if ($wgt !== null): ?><b>×<?= h(number_format((float)$wgt, 3)) ?></b><?php
+            elseif ($learningOn): ?>×1.000, too few to move anything yet<?php
+            else: ?>×1.000, held at default while learning is off<?php endif; ?></span></li>
+      <?php endforeach; ?>
+    </ul>
+    <p class="quiet">Relative to this xeric's own average engagement, clamped to
+      ×<?= h(number_format(XERIC_LEARN_KIND_FLOOR, 2)) ?>–×<?= h(number_format(XERIC_LEARN_KIND_CEIL, 2)) ?>,
+      and nothing moves under <?= (int)XERIC_LEARN_CONFIDENT ?> observations. The floor is the point: a
+      kind nobody ever follows up on still happens, a quarter as often — a xeric pruned down to the four
+      things you liked last week has stopped being able to surprise you. The weight multiplies the kind's
+      own base rarity in sweeps.php; it leans on the order kinds are tried in, it never decides.</p>
+  <?php endif; ?>
+
+  <h2>who has earned another message</h2>
+  <ul class="sys">
+    <?php foreach ((array)($T['cast']['characters'] ?? []) as $c):
+        $hh    = (string)$c['handle'];
+        $tal   = xeric_learn_tally($db, $hh);
+        $reach = xeric_learn_reach($db, $hh);
+        $bits  = [];
+        if ($tal['reply_rate'] === null) {
+            $bits[] = 'has never texted first — never answered and never asked are different facts';
+        } else {
+            $bits[] = 'answered ' . (int)$tal['replies'] . ', left sitting ' . (int)$tal['ignored']
+                    . ' (' . (int)round(100 * (float)$tal['reply_rate']) . '%)';
+        }
+        if ((int)$tal['reads'] > 0) $bits[] = (int)$tal['reads'] . ' thread read(s)';
+        if ((int)$tal['edits'] > 0) $bits[] = (int)$tal['edits'] . ' hand edit(s)';
+        if ($tal['avg_reply_chars'] !== null) $bits[] = 'replies average ' . (int)$tal['avg_reply_chars'] . ' chars';
+    ?>
+    <li><span class="k"><?= h((string)$c['display_name']) ?> <code>×<?= h(number_format($reach, 3)) ?></code></span>
+      <span class="v"><?= h(implode(' · ', $bits)) ?></span></li>
+    <?php endforeach; ?>
+  </ul>
+  <p class="quiet">The multiplier on how often each of them reaches out (proactive.php), clamped to
+    ×<?= h(number_format(XERIC_LEARN_REACH_FLOOR, 2)) ?>–×<?= h(number_format(XERIC_LEARN_REACH_CEIL, 2)) ?>
+    and ×1.000 until <?= (int)XERIC_LEARN_CONFIDENT ?> messages have been offered: being ignored is not
+    being deleted, and one quiet evening is not a preference.</p>
+
+  <h2>the newest crumbs, in plain language</h2>
+  <?php if ($recent === []): ?>
+    <p class="quiet">Nothing yet. A crumb is written where the doing happens — a turn, a thread opened, a
+      hand edit, the tail of a skip — and this xeric has not been played since learning existed.</p>
+  <?php else: ?>
+    <ul class="sys">
+      <?php foreach ($recent as $r):
+          $line = xeric_learn_evidence_line($T, $r, $userName);
+          if ($line === '') $line = (string)$r['kind'] . ((string)$r['note'] !== '' ? ', ' . (string)$r['note'] : '');
+      ?>
+      <li class="<?= (int)$r['processed'] === 1 ? 'off' : '' ?>"><span class="v"><?= h($line) ?>
+        <span class="quiet">· <?= (int)($r['world_epoch'] ?? 0) > 0
+            ? h(xeric_play_stamp($T, (int)$r['world_epoch']))
+            : h(date('M j, H:i', (int)$r['created_at'])) ?>
+          · <?= (int)$r['processed'] === 1 ? 'read' : 'not yet read' ?></span></span></li>
+      <?php endforeach; ?>
+    </ul>
+    <p class="quiet">Newest 20, dimmed once a distil pass has read them. Read crumbs age out after
+      <?= (int)XERIC_LEARN_KEEP_DAYS ?> days — evidence, not history.</p>
+  <?php endif; ?>
+
+  <h2>the lessons, and what earned them</h2>
+  <?php
+    $buckets = ['' => 'about everybody'];
+    foreach ((array)($T['cast']['characters'] ?? []) as $c) {
+        $buckets[(string)$c['handle']] = 'about ' . (string)$c['display_name'];
+    }
+    $anyLessons = false;
+    foreach ($buckets as $bh => $label):
+        $ls = xeric_lessons_read($db, $bh === '' ? xeric_arc_world() : $bh);
+        if ($ls === []) continue;
+        $anyLessons = true;
+        $earned = xeric_lessons_earned($db, $bh === '' ? xeric_arc_world() : $bh);
+  ?>
+    <div class="take"><div class="tn"><?= h($label) ?></div>
+      <?php foreach ($ls as $l): $e = $earned[$l] ?? null; ?>
+      <div class="tt">“<?= h((string)$l) ?>”</div>
+      <?php if (is_array($e)): ?>
+        <p class="quiet blknote">distilled <?= h(date('M j', (int)($e['at'] ?? 0))) ?>, the pass that wrote
+          it was reading:<?php foreach ((array)($e['evidence'] ?? []) as $ln): ?><br>· <?= h((string)$ln) ?><?php endforeach; ?></p>
+      <?php else: ?>
+        <p class="quiet blknote">no trace — written before provenance was kept, or added by hand</p>
+      <?php endif; ?>
+      <?php endforeach; ?>
+    </div>
+  <?php endforeach; ?>
+  <?php if (!$anyLessons): ?>
+    <p class="quiet">No lessons yet. The distil pass writes one only when the words of a hand edit, a
+      reply, or a thread visit say something the counting cannot — an empty notebook is a correct answer.</p>
+  <?php elseif (!$learningOn): ?>
+    <p class="quiet">Held out of every prompt while learning is off; shown here because the notebook
+      itself is untouched.</p>
+  <?php endif; ?>
+
+  <h2>struck out</h2>
+  <?php if ($struck === []): ?>
+    <p class="quiet">Nothing. A distil pass may strike ONE lesson the recent record contradicts — the
+      only exit that is not eviction by age — and it has not happened here, or not in the last
+      <?= (int)XERIC_LEARN_KEEP_DAYS ?> days, which is as long as the trace is kept.</p>
+  <?php else: ?>
+    <ul class="sys">
+      <?php foreach ($struck as $s): ?>
+      <li><span class="k"><?= h((string)$s['handle'] === '' ? 'everybody' : xeric_world_name($T, (string)$s['handle'])) ?></span>
+        <span class="v">“<?= h((string)$s['lesson']) ?>”<br>
+          <span class="quiet">struck <?= h(date('M j, H:i', (int)$s['created_at'])) ?> —
+            <?= h((string)$s['why']) ?></span></span></li>
+      <?php endforeach; ?>
+    </ul>
+  <?php endif; ?>
+
+  <p class="jump"><a href="why.php?w=<?= h(rawurlencode($w['slug'])) ?>">every character and every event →</a>
+    · <a href="play.php?w=<?= h(rawurlencode($w['slug'])) ?>">back to the xeric</a></p>
+<?php
+
+// ===========================================================================
 // The index
 // ===========================================================================
 } else {
@@ -406,6 +567,11 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
       <?php endforeach; ?>
     </ul>
   <?php endif; ?>
+
+  <h2>what it has learned</h2>
+  <p class="quiet"><a href="why.php?w=<?= h(rawurlencode($w['slug'])) ?>&amp;learn=1">The learning layer,
+    from the evidence up →</a> the newest signals in plain language, the per-kind weights and their
+    floors, each person's reach, the lessons with what earned them, and anything struck.</p>
 
   <h2>what this xeric runs on</h2>
   <div class="panel"><?= xeric_play_panel_html(xeric_play_panel($T, $db)) ?></div>

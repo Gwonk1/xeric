@@ -45,6 +45,19 @@
  *  4. LEARNING IS GARNISH. Every write in here is allowed to fail quietly. A
  *     chat turn that died because the world could not write down that it had
  *     happened would be the tail wagging the dog.
+ *  5. A LESSON CAN BE STRUCK, NEVER REWRITTEN. Eviction is by age — six newer
+ *     lessons push out a seventh — so a habit that stopped in week two used to
+ *     ride the prompt until week five buried it. Now the distil pass may also
+ *     remove ONE lesson the evidence in front of it contradicts, and that is
+ *     the whole of its editorial power (xeric_lessons_strike says why the
+ *     other shape, rewriting the notebook each pass, was refused). A strike
+ *     leaves a trace so the inspector can say what went, and why.
+ *  6. THERE IS A SWITCH, AND OFF STOPS THE WRITER, NOT THE DIARY. One
+ *     world_state key, read engine-side (xeric_learn_enabled) so every caller
+ *     honours the same hand on it. Off, the world behaves like one that never
+ *     learned — no distil, default weights, default reach, no lessons in any
+ *     prompt — while the raw crumbs keep landing unread, so the week it sat
+ *     out is still on the record the day it is switched back on.
  *
  * Zero dependencies. PHP 8.2+.
  */
@@ -89,6 +102,62 @@ const XERIC_LEARN_KEEP_DAYS = 30;
 
 /** world_state key: what the last skip left hanging (see xeric_learn_settle). */
 const XERIC_LEARN_PENDING = 'learn.pending';
+
+/** world_state key: the kill switch. Present and non-empty = learning is off. */
+const XERIC_LEARN_OFF = 'learn.off';
+
+/** signals.kind of a struck-lesson trace. Not a crumb — see xeric_lessons_strike(). */
+const XERIC_LEARN_STRUCK = 'struck';
+
+// ---------------------------------------------------------------------------
+// The kill switch
+// ---------------------------------------------------------------------------
+
+/**
+ * May this world learn right now? On unless its owner has said otherwise.
+ *
+ * WHAT "OFF" MEANS, PRECISELY — because the obvious reading is wrong. The fear
+ * this switch answers (power.php flips it; sweep-cli's --no-learn is its older
+ * sibling) is a bad distil pass WRITING into prompts and a bad weight steering
+ * the sweeps. So off stops exactly the parts that APPLY what was learned:
+ *
+ *   - the distil refuses whole (xeric_lessons_distil): no counting, no model
+ *     call, not one crumb marked read;
+ *   - the weights come back empty and the reach comes back 1.0, so sweeps.php
+ *     and proactive.php behave as they did before this file existed;
+ *   - the lessons leave every prompt (xeric_lessons_for) — a switch that only
+ *     stopped the NEXT bad write would leave the last one steering.
+ *
+ * What off does NOT do is blind the world. xeric_signal_add and the
+ * pend/settle pair are deliberately ungated: the crumbs keep landing, unread,
+ * because a paused learner that also went blind could never explain the week
+ * it missed. Nothing is deleted in either direction — flip it back and the
+ * lessons are where they were and the backlog is read.
+ */
+function xeric_learn_enabled(PDO $db): bool
+{
+    try {
+        return trim((string)xeric_world_state_get($db, XERIC_LEARN_OFF, '')) === '';
+    } catch (Throwable $e) {
+        // Fail closed. A learner that cannot check whether it is allowed to
+        // write does not write — and every caller treats "off" as "behave as
+        // if nothing was ever learned", which is the one safe default here.
+        return false;
+    }
+}
+
+/** Flip it. Returns the state the world now stands in (true = learning). */
+function xeric_learn_switch(PDO $db, bool $on, ?int $at = null): bool
+{
+    if ($on) {
+        // Deleted, not blanked: absent and deleted must be the same state
+        // (state.php says why), and "on" is the absence of the switch.
+        xeric_world_state_delete($db, XERIC_LEARN_OFF);
+    } else {
+        xeric_world_state_set($db, XERIC_LEARN_OFF, '1', $at);
+    }
+    return xeric_learn_enabled($db);
+}
 
 // ---------------------------------------------------------------------------
 // Raw signals
@@ -156,6 +225,20 @@ function xeric_signals_unprocessed(PDO $db, int $limit = XERIC_LEARN_BATCH): arr
     return $st->fetchAll();
 }
 
+/**
+ * The newest crumbs, read or not, newest first. The inspector's window.
+ *
+ * Strike traces are excluded: they are about the notebook rather than the
+ * user, they read badly beside "Walt answered Ruth", and they have a reader of
+ * their own (xeric_lessons_struck).
+ */
+function xeric_signals_recent(PDO $db, int $limit = 20): array
+{
+    $st = $db->prepare('SELECT * FROM signals WHERE kind != ? ORDER BY id DESC LIMIT ?');
+    $st->execute([XERIC_LEARN_STRUCK, max(1, $limit)]);
+    return $st->fetchAll();
+}
+
 /** Read once, and only once. */
 function xeric_signals_mark(PDO $db, array $ids): void
 {
@@ -180,6 +263,7 @@ function xeric_signals_count(PDO $db, ?string $kind = null, bool $openOnly = fal
 /** Is there enough new evidence to be worth a pass? */
 function xeric_learn_due(PDO $db, int $min = XERIC_LEARN_MIN_BATCH): bool
 {
+    if (!xeric_learn_enabled($db)) return false;    // a pass that would refuse is not due
     return xeric_signals_count($db, null, true) >= max(1, $min);
 }
 
@@ -457,6 +541,10 @@ function xeric_learn_kind_rates(PDO $db): array
  */
 function xeric_learn_kind_weights(PDO $db, array $names = []): array
 {
+    // The kill switch reads as "nothing learned": the same empty answer a
+    // fresh world gives, and every caller already knows what to do with it.
+    if (!xeric_learn_enabled($db)) return [];
+
     $rates = xeric_learn_kind_rates($db);
     if ($rates === []) return [];
 
@@ -539,6 +627,7 @@ function xeric_learn_order(array $keys, array $weights): array
 function xeric_learn_reach(PDO $db, string $handle): float
 {
     if ($handle === '') return 1.0;
+    if (!xeric_learn_enabled($db)) return 1.0;      // the switch: everybody back to default
     $t = xeric_learn_tally($db, $handle);
     if ($t['reply_rate'] === null || ($t['replies'] + $t['ignored']) < XERIC_LEARN_CONFIDENT) return 1.0;
     return round(max(XERIC_LEARN_REACH_FLOOR, min(XERIC_LEARN_REACH_CEIL, 0.5 + (float)$t['reply_rate'])), 3);
@@ -573,6 +662,13 @@ function xeric_lessons_read(PDO $db, string $handle): array
  */
 function xeric_lessons_for(PDO $db, string $handle = ''): array
 {
+    // The one prompt-side gate. Switched off, the lessons LEAVE the prompt
+    // rather than merely stop growing: the fear behind the switch is a bad
+    // lesson already steering the cast, and a kill switch that keeps the
+    // patient on the drug is a label, not a switch. The notebook itself is
+    // untouched — flip it back on and every line is exactly where it was.
+    if (!xeric_learn_enabled($db)) return [];
+
     $out = xeric_lessons_read($db, xeric_arc_world());
     if ($handle !== '' && $handle !== xeric_arc_world()) {
         foreach (xeric_lessons_read($db, $handle) as $l) $out[] = $l;
@@ -612,6 +708,103 @@ function xeric_lessons_add(PDO $db, string $handle, array $new, ?int $at = null)
 }
 
 /**
+ * Strike one lesson out of a bucket, on the strength of the recent record.
+ *
+ * THE EXIT THAT IS NOT EVICTION. The cap evicts by AGE — six newer lessons push
+ * out a seventh — so a lesson the evidence has stopped supporting used to ride
+ * the prompt until enough unrelated ones happened to bury it. This is the other
+ * exit: the distil pass, re-reading the notebook against the crumbs in front of
+ * it, may remove a line those crumbs contradict. Deliberately narrow: the line
+ * must be THERE, matched verbatim, and one strike is all a pass gets.
+ *
+ * WHY STRIKE, AND NOT A NOTEBOOK REWRITE. The other shape — hand the model all
+ * six lines and the fresh evidence, keep whatever comes back — was considered
+ * and refused. The notebook idiom is append-mostly so the prompt stays stable:
+ * six unchanged lines cost one prefix-cache re-read a week, where a rewritten
+ * block costs one per pass, and a single bad model call could replace six true
+ * things with prose. A strike can lose the world at most one line per pass,
+ * and the trace says which line, and why.
+ *
+ * THE TRACE is a `struck` row in the signals table, carrying the lesson and
+ * the reason, written already-processed so it can never enter a distil batch
+ * or a tally — it is about the notebook, not the user, which is also why it is
+ * not in xeric_learn_kinds(). It ages out with the rest of the read evidence
+ * (XERIC_LEARN_KEEP_DAYS): evidence, not history.
+ */
+function xeric_lessons_strike(PDO $db, string $handle, string $line, string $why, ?int $at = null): bool
+{
+    $at   = $at ?? xeric_state_time();
+    $have = xeric_lessons_read($db, $handle);
+    $idx  = array_search($line, $have, true);
+    if ($idx === false) return false;               // striking what is not there is not a strike
+
+    array_splice($have, $idx, 1);
+    xeric_arc_set($db, $handle, 'learn.lessons',
+        json_encode(array_values($have), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $at);
+    xeric_lessons_earned_note($db, $handle, [], [], $at);   // the provenance map follows the notebook
+
+    try {
+        $st = $db->prepare('INSERT INTO signals (kind, handle, subject, n, lag, note, processed, created_at, world_epoch)
+                            VALUES (?, ?, ?, 0, 0, ?, 1, ?, NULL)');
+        $st->execute([XERIC_LEARN_STRUCK, $handle, mb_substr($line, 0, 200),
+            mb_substr(trim(preg_replace('/\s+/u', ' ', $why) ?? ''), 0, 400), $at]);
+    } catch (Throwable $e) {
+        // garnish — the strike itself has happened; the trace is for the inspector
+    }
+    return true;
+}
+
+/**
+ * The strikes, newest first: whose bucket, the lesson as it stood, and why.
+ * Lives as long as read evidence does (XERIC_LEARN_KEEP_DAYS) and no longer.
+ */
+function xeric_lessons_struck(PDO $db, int $limit = 12): array
+{
+    $st = $db->prepare('SELECT handle, subject AS lesson, note AS why, created_at FROM signals
+                        WHERE kind = ? ORDER BY id DESC LIMIT ?');
+    $st->execute([XERIC_LEARN_STRUCK, max(1, $limit)]);
+    return $st->fetchAll();
+}
+
+/**
+ * What earned each lesson: lesson => {at, evidence}. The inspector's half.
+ *
+ * WHERE DERIVABLE, AND NO FURTHER. A lesson is a string in a capped list;
+ * making it an object would drag the dedupe, the prompt and every caller along
+ * for the sake of a tuning page, so provenance lives in a sidecar arc instead:
+ * when the model pass keeps a lesson, the evidence lines it was shown THAT
+ * PASS are written beside it — the model is not asked to cite, it is watched.
+ * Filtered against the living notebook on the way out, so an evicted or struck
+ * lesson takes its trace with it, and a lesson written before the sidecar
+ * existed (or added by hand) simply has none — the inspector says so rather
+ * than inventing one.
+ */
+function xeric_lessons_earned(PDO $db, string $handle): array
+{
+    $raw = xeric_arc_get($db, $handle, 'learn.lessons.earned');
+    $map = $raw !== null ? json_decode($raw, true) : null;
+    if (!is_array($map)) $map = [];
+    $live = xeric_lessons_read($db, $handle);
+    return $live === [] ? [] : array_intersect_key($map, array_flip($live));
+}
+
+/** Keep the sidecar walking in step with the notebook. Garnish: fails quietly. */
+function xeric_lessons_earned_note(PDO $db, string $handle, array $lessons, array $evidence, ?int $at = null): void
+{
+    try {
+        $at  = $at ?? xeric_state_time();
+        $map = xeric_lessons_earned($db, $handle);  // the read is already pruned to the living
+        foreach ($lessons as $l) {
+            $map[(string)$l] = ['at' => $at, 'evidence' => array_slice(array_values($evidence), 0, 4)];
+        }
+        xeric_arc_set($db, $handle, 'learn.lessons.earned',
+            json_encode($map, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $at);
+    } catch (Throwable $e) {
+        // garnish
+    }
+}
+
+/**
  * The periodic pass. Read the crumbs, count them, and try to put words to them.
  *
  * There is no cron in this engine — the demo runs this off the back of a skip,
@@ -619,15 +812,27 @@ function xeric_lessons_add(PDO $db, string $handle, array $new, ?int $at = null)
  * often and cheap when there is nothing to do.
  *
  * @param array $opts batch, no_model (counting only), temperature, timeout, at
- * @return array{signals:int,tallies:array,lessons:array<string,array>,notes:array}
+ * @return array{signals:int,tallies:array,lessons:array<string,array>,struck:array,notes:array}
  */
 function xeric_lessons_distil(PDO $db, array $t, array $endpoint, array $opts = []): array
 {
-    $at   = (int)($opts['at'] ?? xeric_state_time());
+    $at = (int)($opts['at'] ?? xeric_state_time());
+
+    // THE KILL SWITCH, HONOURED HERE SO EVERY CALLER HONOURS IT. Off means no
+    // counting, no marking, no model — the crumbs stay unread and pile up, so
+    // the day the switch flips back the backlog is read and the world can say
+    // what happened while it was not learning. (Recording never stopped:
+    // xeric_signal_add is ungated, on purpose — see xeric_learn_enabled.)
+    if (!xeric_learn_enabled($db)) {
+        return ['signals' => 0, 'tallies' => [], 'lessons' => [], 'struck' => [],
+                'notes' => ['learning is switched off for this world — the crumbs pile up unread until it is switched back on']];
+    }
+
     $rows = xeric_signals_unprocessed($db, (int)($opts['batch'] ?? XERIC_LEARN_BATCH));
 
     if ($rows === []) {
-        return ['signals' => 0, 'tallies' => [], 'lessons' => [], 'notes' => ['nothing new has happened to learn from']];
+        return ['signals' => 0, 'tallies' => [], 'lessons' => [], 'struck' => [],
+                'notes' => ['nothing new has happened to learn from']];
     }
 
     // -- layer one: arithmetic, which cannot fail -----------------------------
@@ -641,6 +846,7 @@ function xeric_lessons_distil(PDO $db, array $t, array $endpoint, array $opts = 
     // for words blocks every crumb behind it, including the easy ones.
     $notes   = [];
     $written = [];
+    $struck  = [];
 
     $db->beginTransaction();
     try {
@@ -659,7 +865,9 @@ function xeric_lessons_distil(PDO $db, array $t, array $endpoint, array $opts = 
     // moved the weights and the reach, which is where behaviour actually lives.
     if (empty($opts['no_model']) && count($rows) >= (int)($opts['min_batch'] ?? XERIC_LEARN_MIN_BATCH)) {
         try {
-            $written = xeric_lessons_model($db, $t, $endpoint, $rows, $opts, $notes);
+            $lm      = xeric_lessons_model($db, $t, $endpoint, $rows, $opts, $notes);
+            $written = $lm['written'];
+            $struck  = $lm['struck'];
         } catch (Throwable $e) {
             $notes[] = 'the model had nothing to say about it, ' . $e->getMessage();
         }
@@ -667,18 +875,25 @@ function xeric_lessons_distil(PDO $db, array $t, array $endpoint, array $opts = 
         $notes[] = 'too few crumbs for a model pass, counted, and kept for next time';
     }
 
-    return ['signals' => count($rows), 'tallies' => $tallies, 'lessons' => $written, 'notes' => $notes];
+    return ['signals' => count($rows), 'tallies' => $tallies, 'lessons' => $written, 'struck' => $struck, 'notes' => $notes];
 }
 
 /**
- * One model call: crumbs and counters in, one to three short lessons out.
+ * One model call: crumbs and counters in, one to three short lessons out —
+ * and, when the evidence contradicts a lesson already held, one strike.
  *
  * Mirrors xeric_chat_extract() deliberately — same JSON-object seam, same
  * refuse-everything-questionable parse, same dedupe against what is already
  * held — because this is the same job as memory extraction with the subject
  * changed from a character to the person they are talking to.
  *
- * @return array<string,array> bucket handle ('' = the world) => lessons written
+ * The strike can only reach the buckets this batch put in front of the model —
+ * the world's, and those of the people the crumbs are about — which is not a
+ * limitation worth fixing: a lesson about somebody absent from the batch has
+ * nothing in the batch to be contradicted BY.
+ *
+ * @return array{written:array<string,array>,struck:array} written is bucket
+ *         handle ('' = the world) => lessons; struck is {bucket,lesson,why}
  */
 function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, array $opts, array &$notes): array
 {
@@ -707,21 +922,27 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
         if ($h !== '' && !in_array($h, $buckets, true)) $buckets[] = $h;
     }
 
-    $known = [];
+    // Numbered, so a strike can point at a line without retyping it: a model
+    // asked to quote a lesson back paraphrases it, and a paraphrase matches
+    // nothing. The number is the id and the map is the truth.
+    $known    = [];
+    $knownMap = [];                                  // number => [bucket, lesson]
     foreach ($buckets as $h) {
         foreach (xeric_lessons_read($db, $h) as $l) {
-            $known[] = ($h === xeric_arc_world() ? '(everybody) ' : '(' . xeric_world_name($t, $h) . ') ') . $l;
+            $n = count($knownMap) + 1;
+            $knownMap[$n] = [$h, $l];
+            $known[] = '[' . $n . '] ' . ($h === xeric_arc_world() ? '(everybody) ' : '(' . xeric_world_name($t, $h) . ') ') . $l;
         }
     }
 
-    $evidence = [];
+    $evLines = [];
     foreach ($shown as $r) {
         $line = xeric_learn_evidence_line($t, $r, $userName);
-        if ($line !== '') $evidence[] = '- ' . $line;
+        if ($line !== '') $evLines[] = $line;
     }
-    if ($evidence === []) {
+    if ($evLines === []) {
         $notes[] = 'nothing in this batch says anything a number has not already said';
-        return [];
+        return ['written' => [], 'struck' => []];
     }
 
     // The counting, handed over as fact. A model is far better at putting a
@@ -769,10 +990,12 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
     }
     $lines[] = '';
     $lines[] = 'WHAT ' . strtoupper($userName) . ' DID';
-    foreach ($evidence as $e) $lines[] = $e;
+    foreach ($evLines as $e) $lines[] = '- ' . $e;
     $lines[] = '';
     $lines[] = 'WRITE ONE JSON OBJECT';
-    $lines[] = '{ "lessons": [ { "about": "", "lesson": "…" } ] }';
+    $lines[] = $knownMap === []
+        ? '{ "lessons": [ { "about": "", "lesson": "…" } ] }'
+        : '{ "lessons": [ { "about": "", "lesson": "…" } ], "strike": [ { "n": 1, "why": "…" } ] }';
     $lines[] = '';
     $lines[] = '- 0 to 3 lessons. Fewer is better. An empty list is a correct answer.';
     $lines[] = '- "about": "" when it is true of everybody in this world, or ONE HANDLE, the name in square';
@@ -794,6 +1017,11 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
     $lines[] = '- Only what the evidence above actually shows. If it shows nothing, return an empty list.';
     $lines[] = '- A hand-retyped line is the strongest evidence here: he was shown what this world thought and';
     $lines[] = '  went and changed it in writing. Take it literally.';
+    if ($knownMap !== []) {
+        $lines[] = '- "strike": AT MOST ONE, and usually none. Only when what ' . $userName . ' just did says a numbered';
+        $lines[] = '  line under ALREADY WRITTEN DOWN is now WRONG — not stale, not unproven: contradicted by the';
+        $lines[] = '  evidence above. "n" is that number, "why" is one line naming the evidence that contradicts it.';
+    }
     $lines[] = 'No prose outside the JSON.';
 
     $raw = xeric_chat_json($endpoint, 'lessons', [
@@ -838,16 +1066,43 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
         if (++$taken >= 3) break;                    // three at a time, however many it wrote
     }
 
+    // The strike, applied BEFORE the adds: a pass that swaps a dead lesson for
+    // a live one should spend the dead one's slot, not evict the oldest
+    // survivor to make room. One per pass, however many it asked for — the cap
+    // on its editorial power IS the design (xeric_lessons_strike says why).
+    $struckOut = [];
+    if ($knownMap !== []) {
+        foreach (array_slice((array)($raw['strike'] ?? $raw['strikes'] ?? []), 0, 3) as $s) {
+            if (!is_array($s)) continue;
+            $sn = (int)($s['n'] ?? 0);
+            if (!isset($knownMap[$sn])) continue;    // struck a number that names nothing
+            [$bh, $bl] = $knownMap[$sn];
+            $why = trim((string)($s['why'] ?? $s['reason'] ?? ''));
+            if ($why === '') $why = 'the recent record contradicted it';
+            if (xeric_lessons_strike($db, $bh, $bl, $why, (int)($opts['at'] ?? xeric_state_time()))) {
+                $struckOut[] = ['bucket' => $bh, 'lesson' => $bl, 'why' => $why];
+                $notes[]     = 'struck a lesson' . ($bh === xeric_arc_world() ? '' : ' about ' . xeric_world_name($t, $bh))
+                             . ': "' . $bl . '" — ' . $why;
+                break;
+            }
+        }
+    }
+
     $written = [];
     foreach ($take as $bucket => $lessons) {
         $before = xeric_lessons_read($db, (string)$bucket);
         $after  = xeric_lessons_add($db, (string)$bucket, $lessons, (int)($opts['at'] ?? xeric_state_time()));
         $kept   = array_values(array_diff($after, $before));
-        if ($kept !== []) $written[(string)$bucket] = $kept;
+        if ($kept !== []) {
+            $written[(string)$bucket] = $kept;
+            // The inspector's half: which evidence this pass was looking at
+            // when it wrote these (xeric_lessons_earned).
+            xeric_lessons_earned_note($db, (string)$bucket, $kept, $evLines, (int)($opts['at'] ?? xeric_state_time()));
+        }
     }
-    if ($written === []) $notes[] = 'nothing came back that was not already written down';
+    if ($written === [] && $struckOut === []) $notes[] = 'nothing came back that was not already written down';
 
-    return $written;
+    return ['written' => $written, 'struck' => $struckOut];
 }
 
 /**

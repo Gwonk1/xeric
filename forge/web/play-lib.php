@@ -4710,7 +4710,7 @@ function xeric_book_expect_line(array $t, array $x): string
  * when nothing has happened yet this morning.
  *
  * Dreams are events the sweep filed as `dream` hours, pulled into their own
- * register. No sweep produces that kind as of 2026-08-02 (the ladder weight in
+ * register. The proactive dream rung produces that kind since 2026-08-02 (the ladder weight in
  * proactive.pings is authored but unconsumed), so the register renders empty —
  * which is an absence, not a fault, and the day the engine dreams its first
  * dream this page prints it without being edited.

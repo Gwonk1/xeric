@@ -2560,7 +2560,7 @@ ok('the evening\'s conversation is on the same page as a scene',
         && $i['scene']['handle'] === $bh && $i['scene']['yours'] === 1 && $i['scene']['theirs'] === 1) !== []);
 ok('and the day reads forward — the afternoon before the evening',
     $bday !== null && array_search('event', $bkinds, true) < array_search('scene', $bkinds, true));
-ok('no engine produces a dream yet, so the register is honestly empty',
+ok('a world whose nights never dreamed keeps an honestly empty register',
     !in_array('dream', $bkinds, true)
     && array_filter($bk['days'], fn($d) => in_array('dream', array_column($d['items'], 'kind'), true)) === []);
 

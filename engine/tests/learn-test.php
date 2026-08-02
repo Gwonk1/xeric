@@ -22,6 +22,13 @@
  *   - somebody who is never answered reaches out less and somebody who always is
  *     reaches out more, both clamped, because neither extreme is a decision
  *     anybody made;
+ *   - a lesson the recent record contradicts can be STRUCK by the distil pass —
+ *     one per pass, matched verbatim, with a trace — because eviction by age
+ *     was the only exit and a dead habit otherwise rides the prompt for weeks;
+ *   - the kill switch stops the writer and never the diary: the distil refuses,
+ *     weights and reach fall back to their defaults, the lessons leave the
+ *     prompt, and the raw crumbs keep landing so the missed week is still on
+ *     the record the day it is switched back on;
  *   - and a dead model still leaves the world knowing more than it did.
  */
 
@@ -599,8 +606,200 @@ ok('turn: the world is otherwise exactly as it was — nothing learning does is 
     xeric_messages_count($dbT, (int)$convT) === 7, (string)xeric_messages_count($dbT, (int)$convT));
 
 // ---------------------------------------------------------------------------
+// 9. The strike — the exit that is not eviction
+// ---------------------------------------------------------------------------
+
+$dbS = fresh_db('strike');
+
+$gone  = 'Never text him before noon; mornings go unanswered.';
+$stays = 'Keep her answers under three lines — he replies to short ones.';
+xeric_lessons_add($dbS, xeric_arc_world(), [$gone]);
+xeric_lessons_add($dbS, xeric_arc_world(), [$stays]);
+xeric_lessons_add($dbS, 'ruth', ['Ruth says the thing and stops; she does not explain herself.']);
+
+ok('strike: a lesson the record contradicts is struck out of its bucket',
+    xeric_lessons_strike($dbS, xeric_arc_world(), $gone, 'he answered at nine in the morning, twice') === true
+    && xeric_lessons_read($dbS, xeric_arc_world()) === [$stays],
+    json_encode(xeric_lessons_read($dbS, xeric_arc_world())));
+ok('strike: the other buckets never felt it',
+    count(xeric_lessons_read($dbS, 'ruth')) === 1);
+
+$tr = xeric_lessons_struck($dbS);
+ok('strike: it leaves a trace — which lesson, whose bucket, and why',
+    count($tr) === 1 && (string)$tr[0]['lesson'] === $gone && (string)$tr[0]['handle'] === xeric_arc_world()
+    && str_contains((string)$tr[0]['why'], 'nine in the morning'), json_encode($tr));
+ok('strike: the trace is inert — never in a distil batch, never in a tally, never shown as a crumb',
+    xeric_signals_count($dbS, null, true) === 0 && xeric_signals_count($dbS, 'struck') === 1
+    && xeric_signals_recent($dbS, 10) === []);
+ok('strike: striking what is not there is a refusal, not a trace',
+    xeric_lessons_strike($dbS, xeric_arc_world(), 'A lesson nobody ever wrote.', 'because') === false
+    && count(xeric_lessons_struck($dbS)) === 1);
+
+// -- and the prompt block loses it -------------------------------------------
+$dbSP = fresh_db('strike-prompt');
+xeric_state_seed($dbSP, $T);
+xeric_lessons_add($dbSP, xeric_arc_world(), [$gone]);
+xeric_lessons_add($dbSP, xeric_arc_world(), [$stays]);
+$sysB = xeric_prompt_system($T, $dbSP, 'ruth', 'sfw');
+xeric_lessons_strike($dbSP, xeric_arc_world(), $gone, 'the record moved');
+$sysA = xeric_prompt_system($T, $dbSP, 'ruth', 'sfw');
+ok('strike: the prompt block loses the struck line and keeps the rest',
+    str_contains($sysB, 'mornings go unanswered')
+    && !str_contains($sysA, 'mornings go unanswered')
+    && str_contains($sysA, 'he replies to short ones'));
+
+// -- the distil pass wields it -----------------------------------------------
+$dbSD = fresh_db('strike-distil');
+xeric_lessons_add($dbSD, xeric_arc_world(), [$gone]);
+xeric_lessons_add($dbSD, xeric_arc_world(), [$stays]);
+for ($i = 0; $i < 3; $i++) xeric_signal_add($dbSD, 'reply', ['handle' => 'ruth', 'n' => 30, 'lag' => 60]);
+
+$askedS = null;
+$rs = xeric_lessons_distil($dbSD, $T, stub_says(function (string $tag, array $m) use (&$askedS) {
+    $askedS = $m;
+    return ['lessons' => [], 'strike' => [['n' => 1, 'why' => 'he has answered before noon three times running']]];
+}, $askedS));
+
+ok('strike: the model is shown the notebook numbered, so it can point without retyping',
+    str_contains($askedS[1]['content'] ?? '', '[1] (everybody)')
+    && str_contains($askedS[1]['content'] ?? '', '"strike"'),
+    (string)strstr((string)($askedS[1]['content'] ?? ''), 'ALREADY WRITTEN DOWN'));
+ok('strike: the contradicted lesson is gone and the survivor stands',
+    xeric_lessons_read($dbSD, xeric_arc_world()) === [$stays],
+    json_encode(xeric_lessons_read($dbSD, xeric_arc_world())));
+ok('strike: the pass reports what it struck, and the trace carries the model\'s why',
+    ($rs['struck'][0]['lesson'] ?? '') === $gone
+    && (xeric_lessons_struck($dbSD)[0]['why'] ?? '') === 'he has answered before noon three times running',
+    json_encode($rs['struck']));
+
+$dbSE = fresh_db('strike-empty');
+for ($i = 0; $i < 3; $i++) xeric_signal_add($dbSE, 'reply', ['handle' => 'ruth', 'n' => 30]);
+$askedE = null;
+xeric_lessons_distil($dbSE, $T, stub_says(['lessons' => []], $askedE));
+ok('strike: a notebook with nothing in it is never offered the power',
+    !str_contains($askedE[1]['content'] ?? '', '"strike"'));
+
+$dbS1 = fresh_db('strike-one');
+xeric_lessons_add($dbS1, xeric_arc_world(), [$gone]);
+xeric_lessons_add($dbS1, xeric_arc_world(), [$stays]);
+for ($i = 0; $i < 3; $i++) xeric_signal_add($dbS1, 'reply', ['handle' => 'ruth', 'n' => 30]);
+$r1 = xeric_lessons_distil($dbS1, $T, stub_says(['lessons' => [],
+    'strike' => [['n' => 1, 'why' => 'first'], ['n' => 2, 'why' => 'second']]]));
+ok('strike: one per pass, however many the model asks for — a notebook cannot be emptied in a night',
+    count(xeric_lessons_read($dbS1, xeric_arc_world())) === 1 && count($r1['struck']) === 1,
+    json_encode($r1['struck']));
+
+$dbSB = fresh_db('strike-bad');
+xeric_lessons_add($dbSB, xeric_arc_world(), [$stays]);
+for ($i = 0; $i < 3; $i++) xeric_signal_add($dbSB, 'reply', ['handle' => 'ruth', 'n' => 30]);
+$rb = xeric_lessons_distil($dbSB, $T, stub_says(['lessons' => [], 'strike' => [['n' => 9, 'why' => 'no such line']]]));
+ok('strike: a number that names nothing strikes nothing',
+    xeric_lessons_read($dbSB, xeric_arc_world()) === [$stays] && $rb['struck'] === []
+    && xeric_lessons_struck($dbSB) === []);
+
+// A pass that swaps a dead lesson for a live one spends the dead one's slot.
+$dbSF = fresh_db('strike-slot');
+foreach (array_slice($ten, 0, 6) as $line) xeric_lessons_add($dbSF, xeric_arc_world(), [$line]);
+for ($i = 0; $i < 3; $i++) xeric_signal_add($dbSF, 'reply', ['handle' => 'ruth', 'n' => 30]);
+$rf = xeric_lessons_distil($dbSF, $T, stub_says(['lessons' => [
+    ['about' => '', 'lesson' => 'He never answers on Sundays; leave Sundays be.']],
+    'strike' => [['n' => 3, 'why' => 'he read three weekday mornings running']]]));
+$now6 = xeric_lessons_read($dbSF, xeric_arc_world());
+ok('strike: applied before the adds, so a swap never evicts the oldest survivor',
+    count($now6) === XERIC_LEARN_MAX_LESSONS
+    && in_array($ten[0], $now6, true)                 // the oldest survivor is untouched
+    && !in_array($ten[2], $now6, true)                // the struck one is the one that went
+    && in_array('He never answers on Sundays; leave Sundays be.', $now6, true),
+    json_encode($now6));
+
+// -- provenance: what earned a lesson, kept beside it for the inspector ------
+$earnedW = xeric_lessons_earned($dbD, xeric_arc_world());
+$firstLesson = 'Keep it short — he answers short messages and lets long ones sit.';
+ok('earned: the pass that writes a lesson leaves the evidence it was reading beside it',
+    isset($earnedW[$firstLesson])
+    && (bool)preg_grep('/RETYPED BY HAND/', (array)($earnedW[$firstLesson]['evidence'] ?? [])),
+    json_encode($earnedW));
+ok('earned: a lesson added by hand has no trace — the inspector says so rather than inventing one',
+    xeric_lessons_earned($dbL, xeric_arc_world()) === []);
+xeric_lessons_strike($dbD, xeric_arc_world(), $firstLesson, 'the record turned');
+ok('earned: a struck lesson takes its trace with it',
+    !isset(xeric_lessons_earned($dbD, xeric_arc_world())[$firstLesson]));
+
+$rec = xeric_signals_recent($dbD, 3);
+ok('recent: the inspector\'s window is newest first',
+    count($rec) === 3 && (int)$rec[0]['id'] > (int)$rec[1]['id'], json_encode(array_column($rec, 'id')));
+
+// ---------------------------------------------------------------------------
+// 10. The kill switch — off stops the writer, never the diary
+// ---------------------------------------------------------------------------
+
+$dbO = fresh_db('off');
+xeric_state_seed($dbO, $T);
+
+ok('switch: a world is learning unless somebody said otherwise',
+    xeric_learn_enabled($dbO) === true);
+
+// Teach it something first, so there is something to switch off.
+for ($i = 0; $i < 6; $i++) xeric_signal_add($dbO, 'dwell',   ['handle' => 'ruth', 'subject' => 'rumor']);
+for ($i = 0; $i < 6; $i++) xeric_signal_add($dbO, 'skipped', ['subject' => 'friction']);
+for ($i = 0; $i < 4; $i++) xeric_signal_add($dbO, 'reply',   ['handle' => 'ruth', 'n' => 30]);
+count_them($dbO);
+xeric_lessons_add($dbO, xeric_arc_world(), ['Keep it short — he answers short messages and lets long ones sit.']);
+
+ok('switch: while on, everything learned is in force',
+    (xeric_learn_kind_weights($dbO)['rumor'] ?? 0) > 1.0
+    && xeric_learn_reach($dbO, 'ruth') > 1.0
+    && count(xeric_lessons_for($dbO, 'ruth')) === 1
+    && str_contains(xeric_prompt_system($T, $dbO, 'ruth', 'sfw'), 'WHAT YOU HAVE WORKED OUT'));
+
+ok('switch: flipping it answers with the state the world now stands in',
+    xeric_learn_switch($dbO, false) === false && xeric_learn_enabled($dbO) === false);
+
+ok('switch: off, the weights fall back to defaults — the world behaves as one that never learned',
+    xeric_learn_kind_weights($dbO) === [] && xeric_learn_reach($dbO, 'ruth') === 1.0,
+    json_encode(xeric_learn_kind_weights($dbO)));
+
+$TW2 = world(['rumors', 'rivals', 'shared_meals']);
+$plainW = array_map(fn($k) => $k['weight'], xeric_sweep_kinds_for($TW2));
+$offW   = array_map(fn($k) => $k['weight'], xeric_sweep_kinds_for($TW2, $dbO));
+ok('switch: and sweeps.php feels it — every kind back to its own base weight',
+    $offW === $plainW, json_encode($offW));
+
+ok('switch: the lessons leave the prompt — a bad line stops steering the moment it flips',
+    !str_contains(xeric_prompt_system($T, $dbO, 'ruth', 'sfw'), 'WHAT YOU HAVE WORKED OUT'));
+ok('switch: but the notebook is not touched — off is a switch, not an eraser',
+    count(xeric_lessons_read($dbO, xeric_arc_world())) === 1);
+
+$openBefore = xeric_signals_count($dbO, null, true);
+xeric_signal_add($dbO, 'reply', ['handle' => 'ruth', 'n' => 25]);
+xeric_signal_add($dbO, 'ignored', ['handle' => 'dot']);
+ok('switch: the diary never goes blind — crumbs still land while learning is off',
+    xeric_signals_count($dbO, null, true) === $openBefore + 2);
+
+$ro = xeric_lessons_distil($dbO, $T, stub_says(['lessons' => [['about' => '', 'lesson' => 'Confidently wrong while switched off.']]]));
+ok('switch: the distil refuses whole — nothing read, nothing marked, nothing written',
+    $ro['signals'] === 0 && (bool)preg_grep('/switched off/', $ro['notes'])
+    && xeric_signals_count($dbO, null, true) === $openBefore + 2
+    && xeric_learn_tally($dbO, 'ruth')['replies'] === 4
+    && xeric_lessons_read($dbO, xeric_arc_world()) === ['Keep it short — he answers short messages and lets long ones sit.'],
+    json_encode($ro['notes']));
+ok('switch: a pass that would refuse is not due', !xeric_learn_due($dbO, 1));
+
+xeric_learn_switch($dbO, true);
+$rBack = xeric_lessons_distil($dbO, $T, stub_dead());
+ok('switch: back on, the backlog is read — the week it sat out is on the record, not lost',
+    $rBack['signals'] === 2
+    && xeric_learn_tally($dbO, 'ruth')['replies'] === 5
+    && xeric_learn_tally($dbO, 'dot')['ignored'] === 1, json_encode($rBack));
+ok('switch: and everything it knew is in force again, untouched',
+    (xeric_learn_kind_weights($dbO)['rumor'] ?? 0) > 1.0
+    && xeric_learn_reach($dbO, 'ruth') > 1.0
+    && count(xeric_lessons_for($dbO, 'ruth')) === 1);
+
+// ---------------------------------------------------------------------------
 
 $db = $db2 = $dbK = $dbL = $dbD = $dbH = $dbH2 = $dbT = $dbP = $dbPr = null;
+$dbS = $dbSP = $dbSD = $dbSE = $dbS1 = $dbSB = $dbSF = $dbO = null;
 $dbClamp = $dbDead = $dbThin = $dbThin2 = $dbTx = null;
 foreach ($DBFILES as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
