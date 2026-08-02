@@ -425,15 +425,10 @@ function xeric_web_rating_box(array $presets, string $floor, string $now, bool $
 // every single time. The shelf's plus aims here already — this is the same
 // refusal one level deeper, for a bookmark, a back button, or a typed URL.
 //
-// AND AN ATTACHMENT NOBODY MADE GOES THROUGH THE SAME DOOR, ONCE. The probe
-// finding a live model on first sight is convenience, not consent: which
-// machine writes the world is the most consequential choice on this page, and
-// silently connecting skipped the screen where it is visible. The `auto` flag
-// (xeric_web_model) routes the first visit through model.php — green lamp
-// already lit, Continue already pointing back here — and model.php clears the
-// flag on render, so this happens exactly once and cannot loop.
-$xm = xeric_web_model($sid);
-if (!xeric_web_connected($xm) || !empty($xm['auto'])) {
+// AND A FRESH INSTALL IS EXACTLY THIS CASE, on purpose. Nothing auto-attaches
+// any more (xeric_web_model: FOUND IS NOT CONNECTED), so the first visit lands
+// on the machines screen, sees what is alive, and connects it in one press.
+if (!xeric_web_connected(xeric_web_model($sid))) {
     header('Location: model.php');
     exit;
 }

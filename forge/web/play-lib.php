@@ -1737,23 +1737,25 @@ function xeric_web_connected(array $model): bool
 }
 
 /**
- * This visitor's machine, resolved — and attached once, on first sight, if there
- * is obviously one there.
+ * This visitor's machine, resolved. NOTHING IS EVER ATTACHED HERE.
  *
- * A FRESH INSTALL HAS NOTHING ATTACHED, and should say so rather than fail at
- * the first message with an error about a chat box. But a hosted demo, and a
- * laptop with a model already running, would both be worse for making everybody
- * click a button to state the obvious. So the two cases are told apart by
- * whether a choice was ever MADE:
+ * This function used to probe on first sight and attach whatever answered,
+ * on the argument that clicking a button to state the obvious is friction.
+ * The owner overruled it, twice, and the second time named the principle:
+ * FOUND IS NOT CONNECTED. Detection is a fact about the machine; connection
+ * is a decision by a person, and the moment they learn the difference must
+ * not be after the first world is already running on a model a port scan
+ * picked. The machines screen shows what is alive (its lamps are filled in by
+ * the browser); one press on a lit machine is the whole ceremony.
  *
- *   no `kind` at all  →  never chosen. Probe the address this install was set up
- *                        with; attach if something answers, otherwise `none`.
+ *   no `kind` at all  →  never chosen. Nothing attached; forge.php sends the
+ *                        visitor to the machines screen, where the choice is.
  *   `kind` = 'none'   →  chosen. Somebody detached on purpose and it stays
  *                        detached, however alive the local model is.
  *
- * The answer is written back, so the probe costs one request per visitor rather
- * than one per page — and so that "never chosen" cannot silently re-attach a
- * world somebody deliberately stopped.
+ * Nothing is written back for the never-chosen case — there is no probe left
+ * to amortise, and an unwritten record is what keeps "never chosen" visibly
+ * different from "detached on purpose" in the session file itself.
  */
 function xeric_web_model(?string $sid = null): array
 {
@@ -1761,28 +1763,7 @@ function xeric_web_model(?string $sid = null): array
     $m   = (array)(xeric_web_session_read($sid)['model'] ?? []);
     if (array_key_exists('kind', $m) && trim((string)$m['kind']) !== '') return $m;
 
-    // ATTACHED TO THE BEST ONE RUNNING, not to whatever this install was
-    // configured to expect. The configured address is a starting point; if it is
-    // not answering and something better is, attaching to the configured one
-    // anyway means a fresh install opens detached beside a working 26B.
-    $up = false;
-    $at = '';
-    try { $up = xeric_llm_up(xeric_web_endpoint(['kind' => 'local']), 3); } catch (Throwable $e) { $up = false; }
-    if (!$up) {
-        $at = xeric_model_best();
-        $up = $at !== '';
-    }
-
-    // `auto` MARKS AN ATTACHMENT NOBODY MADE. Everything downstream treats the
-    // machine as connected — worlds run, the heart ticks — but forge.php reads
-    // this flag and routes the visitor through the machines screen ONCE, because
-    // which machine writes a world is the most consequential choice in the app
-    // and a fresh install was skipping the screen where it is made. model.php
-    // clears the flag the first time it renders: seen is chosen.
-    $m = ['kind' => $up ? 'local' : 'none', 'base' => '', 'local' => $at, 'model' => ''];
-    if ($up) $m['auto'] = true;
-    xeric_web_session_edit(function (array &$s) use ($m): void { $s['model'] = $m; }, $sid);
-    return $m;
+    return ['kind' => 'none', 'base' => '', 'local' => '', 'model' => ''];
 }
 
 // ---------------------------------------------------------------------------
