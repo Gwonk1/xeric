@@ -11,10 +11,10 @@
  *     `require '../engine/…'` then works unchanged in both — which is the whole
  *     point of mirroring the layout instead of rewriting include paths.
  *
- *  2. KNOW WHERE THE MODEL IS. On this workstation the llama.cpp server is on
- *     127.0.0.1:8080. On the cloud the same model is 127.0.0.1:18080 — the far
- *     end of a permanent ssh tunnel. Hardcoding either one is a bug waiting for
- *     a deploy, so: config file, then env, then a 400ms connect probe of both.
+ *  2. KNOW WHERE THE MODEL IS. It may be llama.cpp on 127.0.0.1:8080, Ollama on
+ *     11434, LM Studio on 1234, or the far end of an ssh tunnel on a host that
+ *     is not the one serving this. Hardcoding any of them is a bug waiting for
+ *     a deploy, so: config file, then env, then a 400ms connect probe.
  *
  *  3. HOLD THE ANSWERS BETWEEN SCREENS. A session id in a cookie and a JSON
  *     file in a temp dir. No database, and — the one rule with teeth — NEVER an
@@ -135,17 +135,15 @@ function xeric_web_home_dir(): string
  * Which loopback port has a model behind it.
  *
  * A connect probe, not an HTTP call: a closed port fails in microseconds, and
- * being wrong here costs a user two minutes of watching nothing happen. 8080
- * first because that is the box the model actually runs on; 18080 is the
- * tunnel's far end, which is what the cloud sees.
+ * being wrong here costs a user two minutes of watching nothing happen.
  */
 function xeric_web_probe_local(): string
 {
     // THE PORTS PEOPLE ACTUALLY RUN, in the order they are likely to be the one
-    // somebody meant. This knew about 8080 and 18080 — llama.cpp's default and
-    // this project's own tunnel — so an install with Ollama or LM Studio running
-    // reported "no model found" while a model sat there answering, which is the
-    // worst possible first run: correct-looking, and wrong.
+    // somebody meant. This once knew only about llama.cpp's default and one ssh
+    // tunnel, so an install with Ollama or LM Studio running reported "no model
+    // found" while a model sat there answering — the worst possible first run:
+    // correct-looking, and wrong.
     //
     // A short list on purpose. Every entry costs 0.4s of a page load when
     // nothing is listening, and a scan of everything above 1024 to find a model
@@ -227,9 +225,9 @@ function xeric_web_php_bin(): string
 // Jobs — a build that outlives the request that asked for it
 // ---------------------------------------------------------------------------
 //
-// A world takes two to three minutes. Cloudflare (and most proxies) cut a
-// streaming response long before that — measured at ~120s on dev.xeric.dev, no
-// matter how often it is flushed. So the build does NOT live in an HTTP
+// A world takes two to three minutes. CDNs and most reverse proxies cut a
+// streaming response long before that — measured at ~120s behind one common
+// CDN, no matter how often it is flushed. So the build does NOT live in an HTTP
 // request: build.php starts a detached worker, the worker appends one JSON line
 // per note to a job file, and progress.php tails that file over SSE in short,
 // resumable stretches. A dropped connection then costs a reconnect instead of

@@ -32,11 +32,16 @@ session.
 
 ## Status
 
-Pre-release. The engine exists and runs end to end; the generalization (world
-templates, setup forge, SFW content pools) is in progress. See
-[`docs/WORLD_TEMPLATE.md`](docs/WORLD_TEMPLATE.md) for the template schema,
-worked end to end against `engine/fixtures/milldale.json` — the fictional
-world the engine is tested with.
+**Beta.** The engine runs end to end: the forge builds a world from an
+interview, the review step lets you edit or reroll any of it, and the play view
+is a world you can talk to and skip time inside. Seven test suites, all green.
+
+Start with [`QUICKSTART.md`](QUICKSTART.md) — what you need, how to start it,
+and how to read the inspector when something surprises you.
+[`ROADMAP.md`](ROADMAP.md) is what is next and, more usefully, what is still
+missing. [`docs/WORLD_TEMPLATE.md`](docs/WORLD_TEMPLATE.md) is the template
+schema, worked end to end against `engine/fixtures/milldale.json` — the
+fictional world the engine is tested with.
 
 ## Architecture (the short version)
 

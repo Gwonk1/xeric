@@ -2,10 +2,10 @@
 /**
  * session.php — who this visitor is, and which worlds are theirs.
  *
- * The demo is one machine, one GPU and one directory of worlds, being used by
- * strangers who have never met. Everything below exists to make that survivable
- * without asking anybody for a name (DEMO_PLAN.md: "sessions are cheap but not
- * free").
+ * A shared instance is one machine, one GPU and one directory of worlds, being
+ * used by strangers who have never met. Everything below exists to make that
+ * survivable without asking anybody for a name — sessions are cheap, but they
+ * are not free.
  *
  * THE FOUR RULES THIS FILE IS:
  *

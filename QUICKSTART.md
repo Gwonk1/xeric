@@ -1,69 +1,67 @@
 # Xeric — the card you actually need
 
-Everything to run, test, and stop the thing, in one page.
+Everything to start it, forge a world, and look inside it, in one page.
 
-## The URLs
+## What you need
 
-| What | Where |
-|---|---|
-| Public site | https://xeric.dev · https://www.xeric.dev |
-| Staging (everything below lives here) | https://dev.xeric.dev — basic auth |
-| **Forge a world** | https://dev.xeric.dev/forge |
-| **Play a world** | https://dev.xeric.dev/forge/play.php |
-| Review / edit / reroll | `…/forge/review.php?w=<slug>` |
-| **The inspector** | `…/forge/why.php?w=<slug>` |
-| Raw template JSON | `…/forge/world.php?w=<slug>` |
+- **PHP 8.1 or newer** on your PATH, with `sqlite3`, `pdo_sqlite`, `mbstring`,
+  `json` and `curl`. `bootstrap.php` checks all of it and names anything missing.
+- **A model.** Either something running locally that speaks the OpenAI chat API
+  — llama.cpp's server, Ollama, LM Studio — or an API key you bring at the time
+  you use it. Nothing is stored either way.
 
-Staging is private (basic auth) and `noindex`. The public site is just the
-landing page — nothing playable is exposed. The staging credential is not in
-this repo and never will be: it lives in the `AuthUserFile` the staging vhost
-points at, on the server, and in your password manager.
+A 12B is the floor for forging and it works. Bigger is better and slower; the
+runtime, once a world exists, is comfortable on small models because the prompt
+is engineered to cache.
 
-## Two variables, then everything below works
-
-The host and the data dir are yours, not the project's, so nothing here bakes
-them in. Set them once per shell:
+## Start it
 
 ```bash
-export XERIC_HOST=<the ssh target that serves dev.xeric.dev>
-export XERIC_DATA=/var/www/xeric-data   # worlds, sessions, queue — outside the docroot
+./xeric               # starts on 127.0.0.1:8787 and opens a browser
+./xeric --port 9000   # somewhere else
+./xeric --data ~/worlds   # keep your worlds somewhere else
+./xeric --no-open     # do not touch the browser
 ```
 
-`deploy.sh` reads the same two names, and refuses to run without `XERIC_HOST`
-rather than guessing.
+On Windows, `xeric.cmd` takes the same arguments.
 
-## Take your GPU back, instantly
+There is **no config file**. Every decision — which PHP, which port is free,
+where the data lives — is made in `bootstrap.php` and passed as environment,
+so a local install has nothing to write, hand-edit, or get out of date.
 
-The demo runs on your workstation and must never get in your way:
+The app finds a local model by probing the ports people actually use (11434,
+8080, 1234, 5000, 8000, 4891). If yours is somewhere else, the machines screen
+in the UI takes an address, or set it and skip the probe.
 
-```bash
-ssh "$XERIC_HOST" "sudo -u www-data touch $XERIC_DATA/queue.drained"
-```
+## Your first world
 
-Every model endpoint immediately answers *"The machine's owner has taken the GPU
-back for a while… nothing is lost."* In-flight work stops where it is and keeps
-what it already produced. Undo it:
+Open the wizard, answer as much or as little as you like — every question has a
+✨ that fills it in for you, and *start blank* is a legitimate answer to all of
+them. Two to four minutes on a local model and you have a cast, the places they
+haunt, their weeks, and their secrets.
 
-```bash
-ssh "$XERIC_HOST" "sudo -u www-data rm -f $XERIC_DATA/queue.drained"
-```
+Then **review it before you launch it.** The review page shows every section
+with a reroll button, 159 editable fields, and every knowledge wall written out
+in plain English — because a wall the forge got wrong is a secret told to the
+wrong person, and you are the only one who can catch that.
 
-## Reading the inspector (the tuning tool)
+## Reading the inspector — the tuning tool
 
-`why.php?w=<slug>` is the index.
+`why.php?w=<slug>` is the index, and it is the thing to reach for whenever the
+world does something you did not expect.
 
 - `&h=<handle>` — **the exact prompt that character receives**, section by
   section with sizes. When somebody behaves oddly, look here first: it is
-  usually not the model, it is that one section is crowding out another.
-  Watch the bible size in particular — it is the biggest block and it grows
-  with the cast.
+  usually not the model, it is that one section is crowding out another. Watch
+  the bible size in particular — it is the biggest block and it grows with
+  the cast.
 - `&e=<event id>` — **why that event happened**: which kind was chosen and why,
   who was free, who was excluded and on what grounds, whether it sat on the
-  secret's spine, how many groupings competed and at what weight.
-- It also records why an hour produced *nothing*, which is the answer to "why
-  is my world so quiet?"
+  spine of a secret, how many groupings competed and at what weight.
+- It also records why an hour produced *nothing*, which is the answer to
+  "why is my world so quiet?"
 
-## What a world has learned about you
+## What a world learns about you
 
 `engine/learn.php`. A world writes down what you actually did — who you answered
 and how long the answer was, whose message you left sitting, which hours you
@@ -78,33 +76,19 @@ periodic pass turns those into two things:
 - **a handful of short lessons in plain language**, which ride each character's
   system prompt. Capped and deduped, so the notebook can never become the prompt.
 
-Where to look:
-
 ```bash
-php engine/sweep-cli.php --world=worlds/<slug> --advance=6h     # "can happen here: rumor ×2, glimpse ×0.25"
-php engine/sweep-cli.php --world=worlds/<slug> --advance=6h --no-learn
-sqlite3 worlds/<slug>/world.db "SELECT kind,handle,subject,note FROM signals ORDER BY id DESC LIMIT 20"
-sqlite3 worlds/<slug>/world.db "SELECT handle,value FROM arcs WHERE key='learn.lessons'"
+sqlite3 <data>/worlds/<slug>/world.db \
+  "SELECT kind,handle,subject,note FROM signals ORDER BY id DESC LIMIT 20"
+sqlite3 <data>/worlds/<slug>/world.db \
+  "SELECT handle,value FROM arcs WHERE key='learn.lessons'"
 ```
 
-In the demo it runs off the back of a skip, while the tick already holds the GPU.
+## From the command line
 
-## Where things live
-
-| | |
-|---|---|
-| Code (local) | this checkout — 7 test suites, all green, all local commits |
-| Deploy the web app | `bash forge/web/deploy.sh` |
-| Worlds + sessions (server) | `$XERIC_DATA/` (www-data) |
-| Worlds (local, from the CLI) | `worlds/<slug>/` — gitignored, and they are real worlds with real names in them |
-| Local model | `127.0.0.1:8080` on the workstation · `127.0.0.1:18080` on the server (the far end of the tunnel) |
-
-## Doing it from the command line
+Everything the browser does has a CLI behind it.
 
 ```bash
-cd <this checkout>
-
-# forge a world (2-4 min on the local model)
+# forge a world (2-4 min on a local model)
 php forge/forge-cli.php --local --surprise \
     --answers='name=Vera,job=run the night desk,motivation=find out who keeps leaving keys'
 
@@ -113,25 +97,43 @@ php engine/chat-cli.php --world=worlds/<slug> --speaker=<handle> --say="..."
 
 # skip time and see what happened without you
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h
+php engine/sweep-cli.php --world=worlds/<slug> --advance=6h --no-learn
 
-# everything still works? all seven suites, no exceptions — learn-test.php is
-# the one guarding the pass that can write text into a live world's prompts.
+# the test suites — all of them, no exceptions
 for t in render engine chat sweep learn; do php engine/tests/$t-test.php; done
 php forge/tests/forge-test.php && php forge/web/tests/demo-test.php
 ```
 
+## Running it where other people can reach it
+
+`forge/web/deploy.sh` puts the web app behind a real web server. It is
+parameterized and bakes in no host: set `XERIC_HOST` to an ssh target and
+`XERIC_DATA` to a directory outside the docroot, and it refuses to run rather
+than guess.
+
+Three things to know before you do:
+
+- **The data directory must be outside the docroot.** Worlds hold real people's
+  names, and `owner.json` holds a session token.
+- **Give every host its own `XERIC_DATA`.** Sharing one between a private shelf
+  and a public one is how a world with your own name in it ends up on a page
+  strangers can open.
+- **`touch $XERIC_DATA/queue.drained` takes the GPU back instantly.** Every
+  model endpoint starts answering with a human sentence, in-flight work stops
+  where it is and keeps what it already produced, and `rm` puts it back.
+
+The web app's session, queue and rate-limit layer exists for exactly this case —
+strangers sharing one GPU. Running locally, it costs you nothing and does
+nothing.
+
 ## The rules this project runs on
 
-- **Nothing is pushed to GitHub without your say-so.** 28+ commits sit on local
-  `main`; the remote is private and empty of them.
-- **The demo never starves your machine** — hence the drain flag above.
-- **The engine is world-agnostic**; anything that exists only because strangers
+- **The engine is world-agnostic.** Anything that exists only because strangers
   share a GPU lives in `forge/web/`, never in `engine/`.
-- Worlds you forge on staging belong to your browser session (7 days idle).
-  The pre-existing example worlds are shared and never expire; playing one forks
-  your own copy rather than changing it.
-
-## When you find something
-
-Tell me and it goes in `PUNCHLIST.md`. That is the standing practice — nothing
-gets lost between "I noticed" and "I have time."
+- **A world is a file you own.** The template, the database, and everything your
+  cast ever said are yours. Nothing phones home.
+- **API keys are never stored.** A key you bring is posted with the request that
+  uses it and lives in one PHP process for the life of that request.
+- **Worlds you forge belong to you.** On a shared instance they belong to your
+  browser session; playing somebody else's forks your own copy rather than
+  changing theirs.

@@ -2,11 +2,11 @@
 /**
  * queue.php — one model slot, shared honestly.
  *
- * DEMO_PLAN.md, the constraint that shapes everything: "the A2000 runs one llama
- * at a time, shared with the author's private app and image generation. The demo
- * must serialize: a global in-flight lock, a short queue, and an honest
- * 'someone else is talking — you're next' state. Never let the demo starve the
- * owner's own machine."
+ * The constraint that shapes everything: one GPU runs one model at a time, and
+ * on a self-hosted instance it is shared with whatever else that machine is for.
+ * So a shared instance must serialize — a global in-flight lock, a short queue,
+ * and an honest "someone else is talking — you're next" state. Never let the
+ * web app starve the machine it is running on.
  *
  * What was here before was half of that: an flock, and a 409 for whoever lost
  * the race. A 409 is not a queue — it is a race the fastest tab wins, over and
@@ -49,8 +49,8 @@
  *    flag file, `data/queue.drained` — `touch` it and the demo stops asking for
  *    the model at all, in mid-skip, without a deploy, a restart, or a wait:
  *
- *        ssh <host> touch /var/www/xeric-data/queue.drained     # take it back
- *        ssh <host> rm    /var/www/xeric-data/queue.drained     # give it back
+ *        ssh <host> touch "$XERIC_DATA/queue.drained"     # take it back
+ *        ssh <host> rm    "$XERIC_DATA/queue.drained"     # give it back
  */
 
 declare(strict_types=1);

@@ -2,11 +2,11 @@
 /**
  * limits.php — what one visitor may spend, said out loud.
  *
- * DEMO_PLAN.md: "rate limits are the product's dignity, not an afterthought."
- * That is the whole design brief for this file. The demo runs on one RTX A2000
- * shared with the author's own work; the question is never "how do we punish
- * abuse" but "what can we honestly promise a stranger, and how do we say no
- * when we cannot". So:
+ * Rate limits are the product's dignity, not an afterthought — that is the whole
+ * design brief for this file. A shared instance runs on one GPU that is also
+ * somebody's working machine; the question is never "how do we punish abuse"
+ * but "what can we honestly promise a stranger, and how do we say no when we
+ * cannot". So:
  *
  *  • EVERY REFUSAL IS A SENTENCE A PERSON WROTE, with a retry_after wherever
  *    there is a real time when the answer changes. Never a 500, never a silent
@@ -378,8 +378,8 @@ function xeric_limit_in_cidr(string $ip, string $cidr): bool
 /**
  * The visitor's address as this app sees it — for hashing, and for nothing else.
  *
- * dev.xeric.dev is served through Cloudflare, so REMOTE_ADDR is the proxy on
- * every request and would put every visitor in one bucket. CF-Connecting-IP is
+ * Behind a CDN, REMOTE_ADDR is the proxy on every request and would put every
+ * visitor in one bucket. CF-Connecting-IP is
  * therefore read — but ONLY when the request actually arrived from Cloudflare,
  * because a header is a fact from a trusted hop and a free choice of bucket from
  * anybody else. Any origin is reachable directly sooner or later (a shared host

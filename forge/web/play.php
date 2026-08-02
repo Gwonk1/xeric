@@ -2,10 +2,10 @@
 /**
  * play.php — a forged world, playable.
  *
- * This is the screen the whole project is selling (docs/DEMO_PLAN.md): a visitor
- * arrives somewhere that was already running, talks to somebody in it, presses
- * *skip to evening*, watches the cast do something without them, and gets a
- * message about it. Five minutes, on the author's own GPU.
+ * This is the screen the whole project is selling: you arrive somewhere that was
+ * already running, talk to somebody in it, press *skip to evening*, watch the
+ * cast do something without you, and get a message about it. Five minutes, on
+ * one ordinary GPU.
  *
  * Three things this page is built around, in order of how load-bearing they are:
  *

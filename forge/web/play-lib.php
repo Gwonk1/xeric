@@ -2,9 +2,9 @@
 /**
  * play-lib.php — what the play view needs to know, and nothing the engine owns.
  *
- * The demo is a THIN consumer of engine/ (DEMO_PLAN.md). Everything below is
- * either (a) a read of the world shaped for a screen, or (b) a rule that exists
- * only because strangers are sharing one GPU. Nothing here decides what a world
+ * The web app is a THIN consumer of engine/. Everything below is either (a) a
+ * read of the world shaped for a screen, or (b) a rule that exists only because
+ * strangers are sharing one GPU. Nothing here decides what a world
  * IS, what may happen in it, or how time works — clock.php, sweeps.php and
  * proactive.php own all of that and are called exactly the way the CLIs call
  * them (engine/sweep-cli.php is the reference sequence).
@@ -2278,7 +2278,7 @@ function xeric_model_active(array $list, ?string $sid = null): int
 //
 //   engine     runs your worlds — every chat turn, every hour the heart lives,
 //              every proactive ping. There is one because a world has one voice,
-//              and because the prompt cache is per-model (PUNCHLIST): spreading
+//              and because the prompt cache is per-model: spreading
 //              a world's turns across machines multiplies its cold prefixes.
 //   connected  set up, reachable, and available to forge with. Costs nothing
 //              until it is used, which is the whole point of setting it up now.
