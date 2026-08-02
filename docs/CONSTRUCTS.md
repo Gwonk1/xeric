@@ -99,17 +99,27 @@ world may not want it) and an inspector answer — why.php must be able to say
 "she is short with you because you missed Thursday and never said why", or a
 grudge reads as the model being moody.
 
-## Open questions
+## Decided (owner, 2026-08-02, same session)
 
-1. **Rewind semantics.** The clean version: rewind undoes the *last skip
-   only, whole* — its events, memories and fuse-firings un-happen, the clock
-   returns, and you live those hours differently. It is destructive (the
-   world un-remembers), it cannot branch, and it cannot reach past the most
-   recent skip. Alternative designs (branching saves, arbitrary rewind)
-   multiply state beyond what a single-file world should carry. Owner call.
-2. **The book view.** Named by the owner as where obligations live; the
-   sidebar calendar page is the nearest existing surface. Confirm what the
-   book view wants to be before wiring.
-3. **Which sibling second.** Gossip ripple is now cheap (observables-only
-   makes it walls-safe); confidences (a user-created wall; betrayal as the
-   highest-stakes event) is the deep one. Sequence to owner's taste.
+1. **Rewind is real time travel — approved, with real effects.** It undoes
+   the *last skip only, whole*: its events, memories and fuse-firings
+   un-happen, the clock returns, and you live those hours differently. It is
+   destructive on purpose — the world un-remembers that week. The physics of
+   it is the point: **the world forgets the undone future; the player does
+   not.** You rewind to make the appointment precisely because you know what
+   happened when you missed it. No branches, no reach past the most recent
+   skip.
+2. **The book view is its own page**, off the main user-menu pill: it prints
+   the day as it lands — events, things, and **dreams** — the world writing
+   its own story as it happens. Obligations live there naturally (a promise
+   is a fact about a coming day), and dreams belong to the same page because
+   a dream is the one kind of event that only the book could ever have seen.
+   Implementation note: the owner observes there is already "another settings
+   page or view buried somewhere" — audit the buried views before adding this
+   one, so the menu grows a page and not a pile.
+
+## Still open
+
+- **Which sibling second.** Gossip ripple is now cheap (observables-only
+  makes it walls-safe); confidences (a user-created wall; betrayal as the
+  highest-stakes event) is the deep one. Sequence to owner's taste.
