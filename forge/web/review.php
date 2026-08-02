@@ -432,6 +432,32 @@ if ($action !== '') {
             'note' => 'Put back the version from before the last change. Undo again to swap them the other way.']);
     }
 
+    // -- bring somebody into the story ------------------------------------
+    // The door for an OUT character (cast.characters[].out), which until now
+    // only a hand edit to the JSON could open. One call into the engine, which
+    // owns the whole of it — the flip, the validation, the prev-copy save and
+    // the event the town remembers — so this action is a doorbell, not a
+    // second implementation. Owner-only and POST-only by the same shared
+    // guards as every other write on this page.
+    //
+    // THE DATABASE IS PASSED ONLY IF IT EXISTS. Opening it here would create
+    // it, and world.db existing is what "this world has been lived in" means
+    // to everything that reads the shelf (see xeric_review_learn_edit). An
+    // unopened world gets the flip with no event — there is no past yet for
+    // an entrance to land in, and the engine says so in its note.
+    if ($action === 'enter') {
+        require_once dirname(__DIR__, 2) . '/engine/enter.php';
+        $dir    = xeric_review_dir($slug);
+        $dbFile = $dir . '/world.db';
+        try {
+            $r = xeric_enter($dir, is_file($dbFile) ? xeric_state_open($dbFile) : null,
+                (string)($in['handle'] ?? ''));
+        } catch (Throwable $e) {
+            xeric_web_json(['error' => $e->getMessage()], 422);
+        }
+        xeric_web_json(['ok' => true] + $r);
+    }
+
     if ($action === 'launch') {
         $t = $w['template'];
         // A DRAFT MAY BE EMPTY; A LAUNCHED XERIC MAY NOT. The save below would

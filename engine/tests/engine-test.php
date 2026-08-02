@@ -20,6 +20,7 @@ require_once __DIR__ . '/../world.php';
 require_once __DIR__ . '/../state.php';
 require_once __DIR__ . '/../prompt.php';
 require_once __DIR__ . '/../story.php';
+require_once __DIR__ . '/../enter.php';
 
 $FAILED = 0;
 
@@ -482,6 +483,73 @@ ok('next: back-to-back blocks hand off as one move, not a leave and an arrive',
             && $mv['label'] === 'Ruth Amberg leaves the Bluebird Diner for Beck Hardware'
             && ($row($nx, 'leaves', 'ruth')['in'] ?? 0) === 420;
     })());
+
+// ---------------------------------------------------------------------------
+// 4d. The entrance — an OUT character comes into the story
+// ---------------------------------------------------------------------------
+// The flip and the memory of it are one operation: the template changes AND
+// the town remembers, or neither happens. The lived world here is the homes
+// clone with Dot benched, so the entrance also proves the event lands on her
+// own doorstep rather than in a guessed public room.
+
+$entDir = sys_get_temp_dir() . '/xeric-enter-test-' . getmypid();
+@mkdir($entDir, 0777, true);
+$entFlags = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+file_put_contents($entDir . '/world-template.json',
+    json_encode(mutate($TH, ['cast', 'characters', 2, 'out'], true), $entFlags) . "\n");
+$entDb = xeric_state_open($entDir . '/world.db');
+$entEp = ep('2026-07-30 18:00');
+
+$rEnt = xeric_enter($entDir, $entDb, 'dot', $entEp);
+$entOnDisk = json_decode((string)file_get_contents($entDir . '/world-template.json'), true);
+ok('enter: the flip lands on disk, still a real boolean, and the world still validates',
+    $rEnt['entered'] === true
+    && $entOnDisk['cast']['characters'][2]['out'] === false
+    && err(fn() => xeric_world_validate($entOnDisk, 'entered')) === '');
+
+ok('enter: the last good copy was kept first, with the bench still in it',
+    json_decode((string)file_get_contents($entDir . '/world-template.prev.json'),
+        true)['cast']['characters'][2]['out'] === true);
+
+$entEv = xeric_events_recent($entDb, 1)[0] ?? [];
+ok('enter: the town remembers — one event, hers, at the world hour, on her own doorstep',
+    (int)$entEv['id'] === (int)$rEnt['event_id']
+    && $entEv['title'] === 'Dot Vance turned up today'
+    && (int)$entEv['world_epoch'] === $entEp
+    && $entEv['participants'] === ['dot']
+    && $entEv['place'] === 'ruth_and_dots'
+    && str_contains((string)$entEv['prose'], 'counted Dot Vance among the people who are here'),
+    json_encode($entEv));
+
+ok('enter: a second press is a no-op, not a second arrival',
+    xeric_enter($entDir, $entDb, 'dot', $entEp)['entered'] === false
+    && xeric_events_count($entDb) === 1);
+
+ok('enter: nobody by that name refuses loudly, and nothing changes',
+    str_contains(err(fn() => xeric_enter($entDir, $entDb, 'norbert')), 'not a character')
+    && xeric_events_count($entDb) === 1);
+
+// A world never opened has no past for an entrance to land in. The caller
+// says so by passing null, and the flip still goes through the same door —
+// and must not conjure a world.db into being, because the file existing is
+// what "lived in" means to everything that reads the shelf.
+$entDir2 = $entDir . '-unopened';
+@mkdir($entDir2, 0777, true);
+file_put_contents($entDir2 . '/world-template.json',
+    json_encode(mutate($T, ['cast', 'characters', 2, 'out'], true), $entFlags) . "\n");
+$rEnt2 = xeric_enter($entDir2, null, 'dot');
+ok('enter: a world never opened gets the flip, no event, and no database conjured into being',
+    $rEnt2['entered'] === true && $rEnt2['event_id'] === null
+    && json_decode((string)file_get_contents($entDir2 . '/world-template.json'),
+        true)['cast']['characters'][2]['out'] === false
+    && !is_file($entDir2 . '/world.db'), json_encode($rEnt2));
+
+$entDb = null;
+foreach ([$entDir . '/world.db', $entDir . '/world.db-wal', $entDir . '/world.db-shm',
+          $entDir . '/world-template.json', $entDir . '/world-template.prev.json',
+          $entDir2 . '/world-template.json'] as $f) @unlink($f);
+@rmdir($entDir);
+@rmdir($entDir2);
 
 // ---------------------------------------------------------------------------
 // 5. State: migrations, seeding, round-trips
