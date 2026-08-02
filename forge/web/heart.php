@@ -104,6 +104,12 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         $T  = $w['template'];
         $db = $w['db'];
 
+        // Fuses next to reminders, and for the same reason: no model, cheap,
+        // and a promise must miss on time whether or not the queue is busy.
+        // The tick is idempotent, and a miss detected here is stamped at the
+        // hour the person actually waited (constructs.php).
+        try { xeric_constructs_tick($T, $db, xeric_clock_now($db, $T)); } catch (Throwable $e) { /* next tick retries */ }
+
         // Reminders first, and whatever else happens. They need no model, they
         // are the thing somebody explicitly asked for, and they must not be
         // behind a queue that is busy or a world that has nothing to sweep.

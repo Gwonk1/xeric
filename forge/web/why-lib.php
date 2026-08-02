@@ -94,6 +94,16 @@ function xeric_why_system_sections(array $t, PDO $db, string $handle, string $ef
                   'text' => $lessons];
     }
 
+    require_once dirname(__DIR__, 2) . '/engine/constructs.php';
+    $owed = xeric_expect_block($t, $db, $handle, ['epoch' => $epoch ?? 0]);
+    if ($owed !== '') {
+        $out[] = ['name' => 'what she is owed',
+                  'note' => 'xeric_expect_block(), the promises this character heard and what became of '
+                          . 'them — her OWN ledger, so no wall applies. Day-coarse on purpose: it changes '
+                          . 'only when a promise changes state, never per turn.',
+                  'text' => $owed];
+    }
+
     $story = xeric_prompt_story($t, $handle);
     if ($story !== '') {
         $out[] = ['name' => 'where she stands on what is going on',

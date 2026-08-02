@@ -2372,6 +2372,7 @@ function xeric_forge_default_character(array $ctx, array $taken): array
 const XERIC_SYSTEMS = [
     'daily_rhythms'            => 'schedules, routines, the ordinary week',
     'visits'                   => 'people come to you, and expect you to come to them',
+    'expectations'             => 'promises are heard, kept, missed, and remembered — a plan made is a plan somebody waits on',
     'shared_meals'             => 'food as the unit of togetherness',
     'remembering'              => 'they hold what you told them and bring it back',
     'gentle_proactive_contact' => 'someone checks on you, softly, unprompted',
@@ -2422,9 +2423,9 @@ function xeric_forge_armed(string $motivation, ?array $endpoint = null, ?callabl
     // vocabulary, so the one case this table was written for — the elderly user
     // who wants company and nothing sharper — disarmed nothing at all.
     $table = [
-        'company'    => [['daily_rhythms', 'visits', 'shared_meals', 'remembering', 'gentle_proactive_contact'],
+        'company'    => [['daily_rhythms', 'visits', 'shared_meals', 'remembering', 'gentle_proactive_contact', 'expectations'],
                          ['rivals', 'jealousy', 'unreliable_witnesses']],
-        'romance'    => [['attraction', 'arcs', 'jealousy', 'private_history'], []],
+        'romance'    => [['attraction', 'arcs', 'jealousy', 'private_history', 'expectations'], []],
         'ambition'   => [['standings', 'favors', 'rivals', 'boons', 'the_ladder'], []],
         'mystery'    => [['strange_place', 'rumors', 'unreliable_witnesses', 'slow_reveal'], []],
         'redemption' => [['a_debt', 'people_who_remember', 'a_chance_to_be_different'], []],

@@ -186,6 +186,14 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     $lessons = xeric_prompt_lessons($t, $db, $speakerHandle, $walls);
     if ($lessons !== '') $parts[] = $lessons;
 
+    // What this character is owed (constructs.php). Their OWN state, so no
+    // wall applies — you always know who stood you up. Day-coarse by design:
+    // the text changes only when a state changes, so the prefix cache survives
+    // every ordinary turn and pays one rebuild at each real transition.
+    require_once __DIR__ . '/constructs.php';
+    $owed = xeric_expect_block($t, $db, $speakerHandle, ['epoch' => $epoch ?? 0]);
+    if ($owed !== '') $parts[] = $owed;
+
     $story = xeric_prompt_story($t, $speakerHandle);
     if ($story !== '') $parts[] = $story;
 

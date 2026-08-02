@@ -52,6 +52,7 @@ require_once __DIR__ . '/seed.php';      // xeric_seed_norm(), shared by the ded
 require_once __DIR__ . '/learn.php';     // where a turn is written down as a signal
 require_once __DIR__ . '/death.php';     // the dead do not answer
 require_once __DIR__ . '/notify.php';    // "remind me" — the one clock that is not the world's
+require_once __DIR__ . '/constructs.php'; // promises heard, kept, missed, explained
 require_once __DIR__ . '/llm.php';
 
 /** A text message, not an essay. Anything past this is collapsed at a full stop. */
@@ -911,7 +912,19 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             . "over the bare fact that something was said.\n"
             . "- Only what actually happened or was actually said above. Invent nothing.\n"
             . "- Nothing already in the list above. If there is nothing new worth keeping, return an empty list.\n"
-            . "{ \"memories\": [\"…\"] }\nNo prose outside the JSON."],
+            // THE PROMISE WATCH rides the same call (docs/CONSTRUCTS.md). The
+            // model only REPORTS the verbatim words; whether they constitute a
+            // promise is decided in code by the weasel-word gate — a linguistic
+            // rule enforced by regex is a fact, enforced by instruction is a
+            // hope. Same split for the explanation: the model spots it, the
+            // repair mechanic is PHP's.
+            . "Also watch for two things {$userName} did:\n"
+            . "- \"promise\": if {$userName} committed to be somewhere or do something AT A STATED TIME, "
+            . "return {\"quote\": their exact words, \"what\": it in 5 words, \"when\": their words for when}. "
+            . "Else null. Report their words exactly; do not judge whether it was firm.\n"
+            . "- \"explained\": true only if {$userName} gave a reason or apology for having missed "
+            . "something they were expected at. Else false.\n"
+            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false }\nNo prose outside the JSON."],
     ];
 
     try {
@@ -956,6 +969,13 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
         if ($db->inTransaction()) $db->rollBack();
         throw new RuntimeException('chat: could not store harvested memories, ' . $e->getMessage(), 0, $e);
     }
+
+    // The constructs read the same harvest. Formation and repair both fail
+    // soft — a malformed proposal forms nothing, and an explanation with no
+    // repairable miss repairs nothing — so the memory path above never pays
+    // for their problems.
+    xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null, $now);
+    if (!empty($raw['explained'])) xeric_expect_repair($template, $db, $speaker, $now);
 
     return count($keep);
 }
