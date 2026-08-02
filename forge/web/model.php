@@ -311,6 +311,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 $active = xeric_model_active($list, $sid);         // the engine, or -1
 $wired  = xeric_model_wired_at($list, $sid);      // every connected row
 
+// SEEN IS CHOSEN. The auto-attach on first sight (xeric_web_model) carries an
+// `auto` flag so forge.php can route the first visit through this screen — the
+// one place the choice of machine is visible. Rendering it once is the whole
+// point, so the flag clears here: leaving from this screen, by Continue or by
+// picking a different machine, is the person deciding, and forge.php never
+// bounces back. Cleared on render rather than on an action so it cannot loop.
+$auto = !empty((array)(xeric_web_session_read($sid)['model'] ?? [])['auto']);
+if ($auto) {
+    xeric_web_session_edit(function (array &$s): void { unset($s['model']['auto']); }, $sid);
+}
 
 xeric_web_head('Xeric');
 echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
@@ -361,6 +371,14 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
          the whole reason for the screen below two things somebody may never
          scroll to. Beside the sentence that says the screen is done, it is where
          the eye already is. -->
+    <?php if ($auto): ?>
+      <!-- THE FIRST-RUN SENTENCE. Somebody was sent here by an attachment they
+           did not make; the screen has to say what happened before it says
+           everything is fine, or "Engine Connected" reads as a claim they
+           never agreed to. -->
+      <p class="mstop">A model was found running on this machine and connected for you.
+        This screen is where that choice lives — keep it, or point at another.</p>
+    <?php endif; ?>
     <div class="mstops row">
       <p class="mstop on">Engine Connected</p>
       <a class="btn go" href="forge.php?fresh=1">Continue &rarr;</a>

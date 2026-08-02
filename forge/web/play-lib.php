@@ -1773,7 +1773,14 @@ function xeric_web_model(?string $sid = null): array
         $up = $at !== '';
     }
 
+    // `auto` MARKS AN ATTACHMENT NOBODY MADE. Everything downstream treats the
+    // machine as connected — worlds run, the heart ticks — but forge.php reads
+    // this flag and routes the visitor through the machines screen ONCE, because
+    // which machine writes a world is the most consequential choice in the app
+    // and a fresh install was skipping the screen where it is made. model.php
+    // clears the flag the first time it renders: seen is chosen.
     $m = ['kind' => $up ? 'local' : 'none', 'base' => '', 'local' => $at, 'model' => ''];
+    if ($up) $m['auto'] = true;
     xeric_web_session_edit(function (array &$s) use ($m): void { $s['model'] = $m; }, $sid);
     return $m;
 }
