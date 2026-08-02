@@ -38,32 +38,9 @@ Three things it will not do:
 These are real, they are deliberate as of today, and they are the first things
 you will notice.
 
-- **Nobody knows you were gone.** The transcript is undated, so last week's
-  goodnight abuts today's hello. Characters cannot tell a quiet stretch from a
-  continuous conversation, which reads as random moodiness. The fix is two
-  halves: one "you last spoke ⟨date⟩" line in the volatile part of the prompt,
-  and a standing rule that a quiet stretch is ordinary life and not an event.
-
-- **Editing a launched world is live and unannounced.** The next turn uses the
-  new text while every stored memory still refers to who they were, and any
-  system-prompt edit discards the model's prefix cache, so the following turns
-  are slower for reasons the UI never explains.
-
 - **The undo is one step deep.** Deliberate — a deep undo stack in a
   single-user tool is a way to lose track of which world you are in — but a
   reroll spree past two steps is unrecoverable.
-
-- **Nothing exposes "what is scheduled next."** The cast panel knows where
-  everyone is *now* but not when a shift changes, so the time control cannot
-  offer "skip to when the bar opens."
-
-- **A lesson never expires, it is only pushed out.** Each bucket caps at six and
-  evicts the oldest, so a lesson learned in week one survives until six newer
-  ones replace it — even if the habit it describes stopped in week two.
-
-- **The inspector cannot show what a world has learned.** It prints the exact
-  prompt a character receives, so the lessons block is visible there by
-  accident, but nothing shows the signals behind it or the per-kind weights.
 
 ---
 
