@@ -3712,11 +3712,17 @@ function xeric_forge_pass_seed(array $template, array $endpoint, ?callable $onNo
                 $match = xeric_forge_pick_key($h, array_keys($handles), '');
                 if ($match !== '' && !in_array($match, $who, true)) $who[] = $match;
             }
-            $place = (string)($e['place'] ?? '');
+            // The place resolves the way participants always have: through the
+            // tolerant matcher, because the model answers "Salt & Silt" or a
+            // near-key as readily as the key itself — and did so reliably the
+            // moment the list grew past six entries (homes made it thirteen).
+            // Exact-match-or-null was the participants bug of 2026-07-30 worn
+            // by a different field; unmatchable still fails closed to null.
+            $place = xeric_forge_pick_key((string)($e['place'] ?? ''), array_keys($placeKeys), '');
             $out[] = [
                 'title' => $title,
                 'days_ago' => max(1, min(60, (int)($e['days_ago'] ?? 7))),
-                'place' => isset($placeKeys[$place]) ? $place : null,
+                'place' => $place !== '' ? $place : null,
                 'participants' => $who,
                 'prose' => $prose,
             ];
