@@ -777,7 +777,7 @@ echo '<style>' . xeric_play_css() . '
   <!-- The same document it always was, now a PAGE inside the app rather than
        the app itself. The bar's buttons bring you here and to the right part of
        it; the back button takes you to the people. -->
-  <section class="screen" data-screen="book">
+  <section class="screen" data-screen="world">
     <div class="pbar">
       <div class="pclock">
         <h1 class="pname"><?= h($T['meta']['name']) ?></h1>
@@ -1196,9 +1196,9 @@ echo '<style>' . xeric_play_css() . '
     b.addEventListener('click', function () {
       // The book is one page and these are its chapters, so this shows the page
       // and then goes to the part that was asked for. Pressed from inside the
-      // book it is just the scroll, which is why the show() is unconditional and
+      // world page it is just the scroll, which is why the show() is unconditional and
       // harmless: showing the screen you are on does nothing.
-      show('book');
+      show('world');
       var to = document.getElementById(b.dataset.to);
       if (!to) return;
       // After the switch, not during it: a scroll into a section that is still
@@ -1252,7 +1252,7 @@ echo '<style>' . xeric_play_css() . '
     $$('#cmodal [data-to]').forEach(function (b) {
       b.addEventListener('click', function () {
         // same contract as the old app bar: show the page, then the chapter
-        closeCog(); show('book');
+        closeCog(); show('world');
         var to = document.getElementById(b.dataset.to);
         if (to) requestAnimationFrame(function () { to.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
       });

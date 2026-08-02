@@ -684,7 +684,17 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
   <ul class="facts">
     <?php if (trim((string)($T['setting']['locale'] ?? '')) !== ''): ?><li><?= h((string)$T['setting']['locale']) ?></li><?php endif; ?>
     <?php if (trim((string)($T['setting']['era'] ?? '')) !== ''): ?><li><?= h((string)$T['setting']['era']) ?></li><?php endif; ?>
-    <li>rating: <?= h((string)($T['meta']['rating'] ?? 'sfw')) ?></li>
+    <?php
+      // The rating wears its broadcast name here, and when the cast has a
+      // child the pin is said OUT LOUD: a minor renders at TV-G in every
+      // world whatever this line says, and a reviewer reading "TV-MA" beside
+      // a twelve-year-old deserves to be told the engine already knows.
+      $revMinor = false;
+      foreach ((array)($T['cast']['characters'] ?? []) as $rc) { if (xeric_is_minor((array)$rc)) { $revMinor = true; break; } }
+    ?>
+    <li>rating: <?= h(xeric_rating_label((string)($T['meta']['rating'] ?? 'sfw'))) ?><?=
+      $revMinor && xeric_rating_rank((string)($T['meta']['rating'] ?? 'sfw')) > 0
+        ? ' — children in this cast are always written TV-G, whatever this says' : '' ?></li>
     <?php if (!empty($T['meta']['themes'])): ?><li><?= h(implode(' · ', (array)$T['meta']['themes'])) ?></li><?php endif; ?>
     <?php if (trim((string)($T['user']['motivation'] ?? '')) !== ''): ?><li>here for: <?= h((string)$T['user']['motivation']) ?></li><?php endif; ?>
   </ul>

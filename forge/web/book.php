@@ -30,7 +30,8 @@
  * behind it turns pages; it does not arrive as megabytes.
  *
  * (play.php has a SCREEN it calls "the book" — the old single-document view,
- * data-screen="book", which is the time control and the map. This page is the
+ * data-screen="world" (renamed from "book" the day this page arrived), which
+ * is the time control and the map. This page is the
  * other book, the printed one, and it deliberately does not reuse that name in
  * markup: its sections are .bday, its idiom is type, and the only thing the
  * two share is a spine.)
