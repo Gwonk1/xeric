@@ -1216,7 +1216,7 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
-              '/power.php', '/addchar.php', '/book.php', '/forge/forge.php', '/forge/play.php'];
+              '/power.php', '/addchar.php', '/book.php', '/watch.php', '/forge/forge.php', '/forge/play.php'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
 ok('every include, worker and test path is denied', $served === [], implode(' ', $served));
@@ -1227,7 +1227,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 // list is a hand-written enumeration, and a hand-written enumeration goes stale.
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
-          'notify.php', 'power.php', 'addchar.php', 'book.php'];
+          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);
@@ -2660,6 +2660,158 @@ ok('a world with nothing lived renders a quiet page, not a warning',
     && !str_contains($bookBlank, 'Warning:') && !str_contains($bookBlank, 'Notice:')
     && !str_contains($bookBlank, 'Deprecated:') && !str_contains($bookBlank, 'Fatal'),
     mb_substr($bookBlank, 0, 200));
+
+echo "\n# the watch\n";
+
+// ---------------------------------------------------------------------------
+// watch.php — the duet's watching surface. What is being defended, in the
+// order it would hurt:
+//   1. it is the OWNER's page, refused at book.php's own door — a scene is the
+//      world's insides moving;
+//   2. admission is the ENGINE's: a separated pair is refused in the duet's
+//      verbatim sentence, geography and all;
+//   3. a watched line is a model call and SPENDS like one; a walk-in is not
+//      and does not — and the next scheduled speaker answers having actually
+//      seen the player's words, as a user turn;
+//   4. nothing lands until the close, so an abandoned scene costs the world
+//      nothing — and the close lands exactly what the CLI's close lands: one
+//      commons event, each speaker's diary in their own head, one trail under
+//      the inspector's key.
+// Driven against engine/fixtures/milldale.json for the duet test's own
+// geometry: Tue 07:30 puts ruth and dot at the Bluebird together, Mon 10:00
+// puts pastor_dale and dot in different buildings.
+// ---------------------------------------------------------------------------
+
+$WK = sid();
+xeric_session_use($WK);
+$wtDir = xeric_web_worlds_dir() . '/watch-town';
+@mkdir($wtDir, 0775, true);
+@copy(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json', $wtDir . '/world-template.json');
+xeric_session_claim('watch-town', $WK);
+
+$ww  = xeric_play_open('watch-town');
+$wT  = $ww['template'];
+$wdb = $ww['db'];
+$wep  = fn(string $when): int =>
+    (new DateTimeImmutable($when, new DateTimeZone('America/New_York')))->getTimestamp();
+$TUEW = xeric_world_now($wT, $wep('2026-07-28 07:30'));   // ruth + dot, the bluebird
+$MONW = xeric_world_now($wT, $wep('2026-07-27 10:00'));   // dale and dot, two buildings
+
+// The page itself: the owner's whole, the stranger's nothing.
+$watchOwner = $run('watch.php', $WK, ['w' => 'watch-town']);
+ok('watch.php serves its owner the watching surface',
+    str_contains($watchOwner, 'two of them, talking')
+    && str_contains($watchOwner, 'the duet plus a voice'), mb_substr($watchOwner, 0, 160));
+$watchStranger = $run('watch.php', $B, ['w' => 'watch-town']);
+ok('and refuses a stranger at the book\'s own door',
+    str_contains($watchStranger, 'not yours to read')
+    && !str_contains($watchStranger, 'two of them, talking'), mb_substr($watchStranger, 0, 160));
+
+// Admission is the engine's, sentence and all.
+$apartW = '';
+try { xeric_watch_start($ww, 'pastor_dale', 'dot', $MONW); }
+catch (Throwable $e) { $apartW = $e->getMessage(); }
+ok('a separated pair is refused with the duet\'s own geography',
+    str_contains($apartW, 'not in a room together')
+    && str_contains($apartW, 'First Lutheran') && str_contains($apartW, 'Bluebird'), $apartW);
+
+// The scene, driven through the stub seam — no network, no model.
+$wcalls = [];
+$wn = 0;
+$wstub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) use (&$wcalls, &$wn) {
+    $wcalls[] = ['tag' => $tag, 'msgs' => $msgs];
+    if ($tag === 'chat') { $wn++; return "watched line $wn, nothing much."; }
+    if ($tag === 'extract') {
+        $u = (string)$msgs[1]['content'];
+        if (str_contains($u, 'Ruth Amberg would still know')) {
+            return ['memories' => ['Ruth heard the freezer was on its way out.']];
+        }
+        if (str_contains($u, 'Dot Vance would still know')) {
+            return ['memories' => ['Dot noticed Ruth folding the same napkin twice.']];
+        }
+        return ['memories' => []];
+    }
+    return ['memories' => []];
+}];
+
+$wbase = [xeric_events_count($wdb), xeric_memories_count($wdb), xeric_conversations_count($wdb)];
+reset_limits();
+
+$ws = xeric_watch_start($ww, 'ruth', 'dot', $TUEW);
+ok('the pair the presence read admits opens a scene in their shared room',
+    (string)$ws['room']['where'] === 'bluebird'
+    && in_array($ws['turns'], [6, 7], true)
+    && in_array($ws['first'], ['ruth', 'dot'], true));
+
+$wleft = xeric_limit_left($WK)['messages'];
+$wl1 = xeric_watch_line($ww, $ws, $wstub, $WK);
+ok('one watched line is one model call, in the scheduled mouth',
+    $wl1['handle'] === $ws['first'] && str_contains($wl1['text'], 'watched line 1'));
+ok('and it spends a message note like any turn — watching is not a way around the meter',
+    xeric_limit_left($WK)['messages'] === $wleft - 1,
+    $wleft . ' → ' . xeric_limit_left($WK)['messages']);
+
+$wl2 = xeric_watch_line($ww, $ws, $wstub, $WK);
+ok('the speakers strictly alternate', $wl2['handle'] !== $wl1['handle']);
+
+// The walk-in: appended as the player, no model call, nothing spent.
+$wmid      = xeric_limit_left($WK)['messages'];
+$wmidCalls = count($wcalls);
+xeric_watch_say($ww, $ws, 'It is only me, do not stop on my account.');
+$wlastLine = $ws['lines'][count($ws['lines']) - 1];
+ok('a walk-in appends the player as themselves — no model call, nothing spent',
+    (string)$wlastLine['handle'] === XERIC_WATCH_PLAYER
+    && count($wcalls) === $wmidCalls
+    && xeric_limit_left($WK)['messages'] === $wmid);
+
+$wl3 = xeric_watch_line($ww, $ws, $wstub, $WK);
+$wlastChat = null;
+foreach ($wcalls as $c) if ($c['tag'] === 'chat') $wlastChat = $c;
+$wsaw = false;
+foreach ((array)$wlastChat['msgs'] as $m) {
+    if ((string)$m['role'] === 'user' && str_contains((string)$m['content'], 'only me, do not stop')) $wsaw = true;
+}
+ok('alternation carries on, and the next speaker answers having seen the player\'s words as a user turn',
+    $wl3['handle'] === $wl1['handle'] && $wsaw);
+
+// Nothing has landed, so walking away costs the world nothing.
+ok('a scene in flight has written nothing — abandoning it leaves the world exactly as found',
+    [xeric_events_count($wdb), xeric_memories_count($wdb), xeric_conversations_count($wdb)] === $wbase);
+unset($ws);                              // the abandon: the state simply stops being held
+
+// A fresh scene, ended early on purpose: the affirmative close is the CLI's.
+$ws2 = xeric_watch_start($ww, 'ruth', 'dot', $TUEW);
+xeric_watch_line($ww, $ws2, $wstub, $WK);
+xeric_watch_line($ww, $ws2, $wstub, $WK);
+$closedW = xeric_watch_close($ww, $ws2, $wstub);
+ok('the close lands one event, titled as the CLI\'s close titles it',
+    xeric_events_count($wdb) === $wbase[0] + 1 && $closedW['title'] === 'ruth and dot talked');
+$wev = xeric_events_recent($wdb, 1)[0];
+ok('the record is commons — both names, the place, and not one watched word',
+    str_contains((string)$wev['prose'], 'Ruth Amberg and Dot Vance')
+    && (string)$wev['place'] === 'bluebird'
+    && !str_contains((string)$wev['prose'], 'watched line'), (string)$wev['prose']);
+$wmemR  = xeric_memories_for($wdb, 'ruth', 5);
+$wlastM = $wmemR[count($wmemR) - 1];
+ok('the diaries land in the right heads, marked duet, carrying event, partner and place',
+    (string)$wlastM['source'] === 'duet'
+    && (int)$wlastM['meta']['event_id'] === (int)$closedW['event_id']
+    && $wlastM['meta']['with'] === ['dot'] && (string)$wlastM['meta']['place'] === 'bluebird'
+    && $closedW['memories']['dot'] === ['Dot noticed Ruth folding the same napkin twice.']);
+$wtrail = json_decode((string)xeric_world_state_get($wdb, 'why:event:' . $closedW['event_id']), true);
+ok('the trail lands under the inspector\'s key, kind duet, and owns up to being watched',
+    is_array($wtrail) && $wtrail['kind'] === 'duet'
+    && $wtrail['people'] === ['ruth', 'dot'] && !empty($wtrail['watched']),
+    json_encode($wtrail));
+ok('and no thread was created — the transcript was watched, not texted',
+    xeric_conversations_count($wdb) === $wbase[2]);
+
+// A scene where nobody spoke closes to nothing: "they talked" may not be
+// written about a room where nobody did.
+$ws3 = xeric_watch_start($ww, 'ruth', 'dot', $TUEW);
+$emptyW = xeric_watch_close($ww, $ws3, $wstub);
+ok('a scene with no spoken line closes to nothing at all',
+    !empty($emptyW['empty']) && xeric_events_count($wdb) === $wbase[0] + 1);
 
 // ---------------------------------------------------------------------------
 

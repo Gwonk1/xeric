@@ -1232,3 +1232,52 @@ main.book .bsub{margin:0 0 2.4rem;text-align:center;font-size:.88rem;color:var(-
 .person.out .pw{font-style:italic}
 CSS;
 }
+
+/**
+ * The watching surface's CSS, on top of the play view's.
+ *
+ * The transcript deliberately owns NO bubble rules: watch.php prints the play
+ * view's own .msgs idiom and inherits its voice whole, so a scene reads like
+ * the threads do and cannot drift from them. What lives here is only what a
+ * thread never needed — a room card with pair buttons, a name line over a
+ * bubble that could be either of two voices, the play/pause row, and the
+ * ending card the close leaves behind.
+ */
+function xeric_watch_css(): string
+{
+    return <<<'CSS'
+/* ── the watch (watch.php) ── */
+.watch .wnote{font-size:.85rem;color:var(--fg-dim);margin:.2rem 0 1.2rem}
+.wroom{border:1px solid var(--line);border-radius:12px;padding:.8rem .95rem;margin:0 0 .8rem;
+  background:var(--bg-2)}
+.wroom h3{margin:0 0 .3rem;font-size:1rem;font-weight:600}
+.wroom .wpeople{margin:0 0 .5rem;font-size:.85rem;color:var(--fg-dim)}
+.wroom .wone{font-size:.85rem;color:var(--fg-dim);font-style:italic}
+.wpairs{display:flex;gap:.5rem;flex-wrap:wrap}
+/* the pair button wears the time control's shape, because it is the same kind
+   of promise: press it and the xeric moves without you */
+.wpair{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--accent-dim);
+  border-radius:10px;background:var(--bg-3);color:var(--fg);padding:.5rem .8rem;cursor:pointer;
+  font-size:.9rem;min-height:44px}
+.wpair:hover{border-color:var(--accent)}
+.wshead{border:1px solid var(--line);border-radius:12px;padding:.7rem .95rem;margin:0 0 .9rem;
+  background:var(--bg-2);font-size:.9rem}
+.wshead b{font-weight:600}
+.wshead .wsw{display:block;font-size:.8rem;color:var(--fg-dim);margin-top:.15rem}
+/* the name over a bubble: two voices share the .them lane, so every spoken
+   line says whose mouth it came out of */
+.msgs .wwho{display:block;font-size:.68rem;letter-spacing:.04em;color:var(--fg-dim);margin:0 0 .2rem}
+.wctl{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.4rem 0 .8rem}
+.wctl .grow{flex:1 1 auto}
+/* the ending card: the close's own account — the event as the town will keep
+   it, and what each of them privately took away */
+.wend{border:1px solid var(--accent-dim);border-radius:12px;padding:.9rem 1rem;margin:.6rem 0 1rem;
+  background:var(--bg-2)}
+.wend .weh{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+  margin:0 0 .35rem}
+.wend .wet{font-weight:600;margin:0 0 .3rem}
+.wend .wep{margin:0 0 .5rem;font-size:.9rem}
+.wend .wem{font-size:.82rem;color:var(--fg-dim);margin:.15rem 0 0}
+.wend .wem b{color:var(--fg)}
+CSS;
+}

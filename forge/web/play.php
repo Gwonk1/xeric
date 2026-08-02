@@ -1244,7 +1244,9 @@ echo '<style>' . xeric_play_css() . '
         ? '<div class="xcrow"><a class="nbtn" href="review.php?w=' + encodeURIComponent(W) + '#repass">📖 literary repass</a>' +
           '<span class="xchint">an editor reads the whole xeric: contradictions, plotline, and the snake’s pacing</span></div>' +
           '<div class="xcrow"><a class="nbtn" href="book.php?w=' + encodeURIComponent(W) + '">📕 the book</a>' +
-          '<span class="xchint">the xeric’s own story, day by day — events, scenes and dreams, fit to print</span></div>'
+          '<span class="xchint">the xeric’s own story, day by day — events, scenes and dreams, fit to print</span></div>' +
+          '<div class="xcrow"><a class="nbtn" href="watch.php?w=' + encodeURIComponent(W) + '">🎭 watch</a>' +
+          '<span class="xchint">sit in on two of them talking — play, pause, or walk into the middle of it</span></div>'
         : '') +
       '<div class="xcrow"><button type="button" class="nbtn" id="ccancel">close</button></div>';
     $('#coverlay').classList.add('open');
