@@ -2,6 +2,8 @@
 
 **A living world that runs on your own machine — and doesn't wait for you.**
 
+**[xeric.dev](https://xeric.dev)** · [the whitepaper](https://xeric.dev/paper.html) · [terms](https://xeric.dev/terms.html)
+
 Xeric is a local-first world engine for language models. You describe who you
 are and what you want your world to be; a one-time setup forge builds a cast
 of characters, the places they haunt, their friendships, grudges, schedules,
