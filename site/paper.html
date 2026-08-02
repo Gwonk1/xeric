@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="description" content="A systems paper describing the Xeric engine: a local-first architecture for persistent simulated communities — prompt-cache discipline, typed knowledge walls, divergent per-witness memory, and a world that runs unattended.">
+<title>Xeric: An Architecture for Persistent, Locally-Hosted Simulated Communities</title>
+<style>
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #e9e7e1;
+    color: #141310;
+  }
+
+  body {
+    font-family: Georgia, "Times New Roman", Times, serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sheet {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: clamp(2rem, 6vw, 4.5rem) clamp(1.1rem, 5vw, 3.5rem) clamp(3rem, 7vw, 5rem);
+    background: #ffffff;
+    min-height: 100vh;
+    box-shadow: 0 0 0.4rem rgba(20, 19, 16, 0.12);
+  }
+
+  h1 {
+    font-size: clamp(1.45rem, 4.4vw, 1.9rem);
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    margin: 0 0 1.1rem;
+  }
+
+  .authors {
+    text-align: center;
+    margin: 0 0 0.2rem;
+    font-size: 1rem;
+  }
+
+  .affil {
+    text-align: center;
+    margin: 0 0 1.6rem;
+    font-size: 0.9rem;
+    font-style: italic;
+    color: #3d3a33;
+  }
+
+  .abstract {
+    margin: 0 auto 1.8rem;
+    max-width: 38rem;
+  }
+
+  .abstract h2 {
+    text-align: center;
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    margin: 0 0 0.5rem;
+  }
+
+  .abstract p {
+    font-size: 0.92rem;
+    margin: 0 0 0.7rem;
+    text-align: justify;
+    hyphens: auto;
+  }
+
+  h2 {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin: 2rem 0 0.6rem;
+  }
+
+  h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    font-style: italic;
+    margin: 1.4rem 0 0.4rem;
+  }
+
+  p {
+    margin: 0 0 0.85rem;
+    text-align: justify;
+    hyphens: auto;
+  }
+
+  ul, ol {
+    margin: 0 0 0.85rem;
+    padding-left: 1.4rem;
+  }
+
+  li { margin-bottom: 0.35rem; }
+
+  .figwrap {
+    margin: 1.2rem 0;
+    border: 1px solid #c9c5ba;
+    border-radius: 2px;
+  }
+
+  .figwrap pre {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.74rem;
+    line-height: 1.45;
+  }
+
+  .figcap {
+    margin: 0.35rem 0 1.2rem;
+    font-size: 0.83rem;
+    color: #3d3a33;
+    text-align: left;
+  }
+
+  .figcap b { font-style: normal; }
+
+  .tablewrap {
+    margin: 1.2rem 0 0.35rem;
+    overflow-x: auto;
+  }
+
+  table {
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    min-width: 100%;
+  }
+
+  th, td {
+    border-top: 1px solid #c9c5ba;
+    border-bottom: 1px solid #c9c5ba;
+    padding: 0.4rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  thead th {
+    border-top: 2px solid #141310;
+    border-bottom: 1px solid #141310;
+    font-weight: 700;
+  }
+
+  tbody tr:last-child td { border-bottom: 2px solid #141310; }
+
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.83em;
+    background: #f3f1ec;
+    padding: 0.05em 0.25em;
+    border-radius: 2px;
+  }
+
+  a { color: #1a3a6b; }
+
+  .refs {
+    font-size: 0.88rem;
+  }
+
+  .refs li { margin-bottom: 0.45rem; }
+
+  .toplink {
+    margin: 2.5rem 0 0;
+    padding-top: 1rem;
+    border-top: 1px solid #c9c5ba;
+    font-size: 0.85rem;
+    color: #3d3a33;
+    text-align: left;
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+<h1>Xeric: An Architecture for Persistent,<br>Locally-Hosted Simulated Communities</h1>
+
+<p class="authors">Mr.&nbsp;Gwonk</p>
+<p class="affil">gwonk@xeric.dev · August 2, 2026<br>
+Preprint. The software artifact is the repository itself&nbsp;[1].</p>
+
+<div class="abstract">
+<h2>Abstract</h2>
+<p>We describe Xeric, a working engine for persistent simulated communities that run on a
+user's own hardware. A one-time construction phase (the <i>forge</i>) interviews the user and
+directs a capable language model through a sequence of validated passes that produce a world
+as data: places with hours and coordinates, a cast (twelve by default) with weekly schedules,
+homes, interiors, and secrets, and a set of typed knowledge walls declaring who may know what.
+The world then runs indefinitely on a small local model. A once-a-minute heartbeat process
+lives unattended hours: sweeps write offscreen events whose participants receive deliberately
+divergent memories, characters initiate contact, and a world clock — real time plus a stored
+offset — supports pausing, bounded skips, and historical start dates.</p>
+<p>The contribution is architectural rather than algorithmic. We present five disciplines that
+together make a persistent world tractable on consumer hardware: (i)&nbsp;a byte-stable prompt
+prefix layout that preserves the inference server's cache across turns; (ii)&nbsp;knowledge
+walls as typed deny rules that fail closed, consumed by renderers and never re-derived;
+(iii)&nbsp;an age floor enforced by structural exclusion rather than instruction;
+(iv)&nbsp;per-witness memory divergence, measured and enforced, as the mechanism of
+subjectivity; and (v)&nbsp;a recorded decision trail that makes every generated hour
+inspectable after the fact. We additionally describe a story overlay format whose closure is a
+subtraction — the composed world returns byte-identical to its pre-story state — and a rewind
+semantics in which the world forgets an undone week while the player does not. The engine is
+implemented in approximately 50,000 lines of dependency-free PHP over SQLite and is exercised
+by eight test suites comprising 1,322 assertions.</p>
+</div>
+
+<h2>1&nbsp;&nbsp;Introduction</h2>
+
+<p>Language-model character applications are, almost universally, request–response systems: a
+static character card, a transcript, and a model asked to continue it. Nothing happens between
+requests. Continuity — who knows what, who promised what, who was where on Tuesday — is
+delegated to the model's attention over a growing transcript, and degrades accordingly. The
+resulting failure modes are familiar: characters who know things they were never told,
+worlds in which nothing occurs unless the user causes it, and casts whose knowledge is
+one shared pool wearing several names.</p>
+
+<p>Xeric starts from a different premise: the world is data, and the model is a renderer of
+last resort. What may happen offscreen is chosen by the engine from a typed catalogue the
+world's construction armed; who may participate is resolved from schedules and place hours;
+who may know a fact is decided by declared walls before a prompt is assembled. The model is
+asked only to fill in shapes the world already permits, in the voice of one person, through
+that person's walls. When generation fails a structural check — two witnesses to one event
+returning what is effectively a single memory — the output is refused rather than repaired.</p>
+
+<p>The system is deliberately local-first. Construction is the one phase permitted to be
+expensive, and may use any OpenAI-compatible endpoint or a local model; the runtime is
+engineered to be comfortable on a small model served from a single consumer GPU. No account,
+no telemetry, no cloud dependency at runtime: a world is a JSON template and a SQLite database
+on the owner's disk. This paper describes the system as implemented in the repository at the
+date above. It reports no user study and makes no benchmark claims; where numbers appear they
+are counts from the tree or its test suites.</p>
+
+<h2>2&nbsp;&nbsp;System overview</h2>
+
+<p>A world on disk is a directory of separated concerns:</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Artifact</th><th>Contents</th><th>Lifecycle</th></tr></thead>
+<tbody>
+<tr><td><code>world-template.json</code></td><td>The world as data: cast, places, orbits, economies, walls, mood physics&nbsp;[2]</td><td>Written by the forge; shareable</td></tr>
+<tr><td><code>user.json</code></td><td>The human: name, timezone, work hours, motivation</td><td>Per person</td></tr>
+<tr><td><code>engine.json</code></td><td>Machine configuration: models, endpoints</td><td>Per install</td></tr>
+<tr><td><code>seed.json</code></td><td>The past the world arrives with, in relative time (&ldquo;12 days ago&rdquo;)</td><td>Applied exactly once at launch</td></tr>
+<tr><td><code>story-&lt;key&gt;.json</code></td><td>Optional plot overlays (§10)&nbsp;[5]</td><td>Composed at load; never written into the template</td></tr>
+<tr><td><code>world.db</code></td><td>Everything that has happened since: events, memories, arcs, conversations, decision trails</td><td>Grows for the life of the world</td></tr>
+</tbody>
+</table>
+</div>
+<p class="figcap"><b>Table 1.</b> The unit of ownership is the directory. The template is read
+on every turn; the seeded past and the lived past are indistinguishable after launch, by design.</p>
+
+<p>The lifecycle has two phases with sharply different cost profiles. The <i>forge</i> (§3)
+runs once and is allowed minutes of a capable model's time; the <i>runtime</i> serves every
+subsequent turn from a small model whose prompt is engineered to cache (§4). Between visits, a
+heartbeat — one pass of a script every sixty seconds, run by the launcher, a cron entry, or
+systemd — lives the hours nobody is watching (§8.2). The engine proper is world-agnostic:
+anything that exists only because strangers might share one GPU (sessions, queues, rate
+limits) lives in the web layer, never in the engine, and costs nothing when the system runs
+privately.</p>
+
+<h2>3&nbsp;&nbsp;World construction</h2>
+
+<h3>3.1&nbsp;&nbsp;The interview and the passes</h3>
+
+<p>Construction begins with a data-driven interview: scale, identity, theme, motivation,
+social shape, rating, and exclusions. Every question offers preset answers, free text, and a
+&ldquo;surprise me&rdquo; that draws one coherent concept rather than independent per-field
+rolls — a constraint the test suite asserts, since mixing two concepts produces worlds that
+are nothing in particular. The single most consequential answer is <i>motivation</i>
+(&ldquo;why are you here?&rdquo;): it selects which of 29 named subsystems the world arms —
+attraction, standings, rumors, scarcity, gentle proactive contact, and so on — and thereby
+which kinds of offscreen event can ever occur (§7). Free-text motivations are resolved onto
+the same vocabulary by the model, with a keyword fallback so a dead endpoint still yields a
+coherent world.</p>
+
+<p>The forge then runs an ordered sequence of model passes, each validated before its output
+is load-bearing:</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Pass</th><th>Produces</th></tr></thead>
+<tbody>
+<tr><td>Concept</td><td>Name, locale, era, texture, canon rules, mood axis</td></tr>
+<tr><td>Places</td><td>Businesses and rooms: kind, hours, aliases, grid coordinates</td></tr>
+<tr><td>Cast</td><td>One call per character: voice, week, psyche, tells, drives, secrets (twelve by default; four for quick test worlds)</td></tr>
+<tr><td>Assembly</td><td>Orbits, circles, economies, boons — code, not model output</td></tr>
+<tr><td>Walls</td><td>Who must never know what; protected roles (the safety-critical pass)</td></tr>
+<tr><td>Protagonist</td><td>Whose story this is, when the user steps out of the centre</td></tr>
+<tr><td>Homes</td><td>Households appended to the place list, so off-shift hours resolve to a real kitchen table</td></tr>
+<tr><td>Seed</td><td>Weeks of backfill: events and per-character memories, in relative time</td></tr>
+</tbody>
+</table>
+</div>
+<p class="figcap"><b>Table 2.</b> The pass sequence of <code>xeric_forge_build()</code>. Later
+passes see earlier output; homes land before seed so seeded history can name a real room. The
+repository's quickstart documents two to four minutes end-to-end on a local model&nbsp;[3].</p>
+
+<p>The failure discipline is uniform: a pass returning unparseable output is retried once with
+the parse error fed back, then replaced by a deterministic hand-written default for that
+section. A world is always launchable; what happened is recorded in build notes the review
+step shows honestly. Prompts are written to a deliberately low floor — a 12B-parameter model
+must produce an acceptable world — by asking for flat keys with small values and assembling
+all nesting in code. A locally-forged world is treated as a legitimate world, not a degraded
+one.</p>
+
+<h3>3.2&nbsp;&nbsp;Deterministic naming registers</h3>
+
+<p>An empirical observation motivated one unusual component. Each forge pass is a separate
+model call with no memory of any other world, so every world independently converges on the
+statistically safest tokens: in one eight-world sample from development, the same invented
+surname appeared in eight of eight casts, and four surnames covered 27 of 32 cast members.
+The mitigation is to assign diversity and then guarantee it deterministically. A <i>naming
+register</i> — one of thirty hand-written cultural banks — is selected per world from the
+world's own answers (never the date), and every pass that invents a proper noun carries it.
+Deterministic gates on each reply replace known repeat-offenders, and a read of the worlds
+already on disk gives the forge its only cross-world memory: the third world in a directory
+cannot reuse the first world's names, because those names are sitting right there. Names the
+user's own premise contains are exempt — the user already chose them.</p>
+
+<h3>3.3&nbsp;&nbsp;Review before launch</h3>
+
+<p>The forge proposes; the user disposes. The review step exposes every generated section with
+per-section reroll, 159 editable fields, and — critically — every knowledge wall written out
+in plain English. The design rule is stated in the repository as: <i>a hallucinated wall is a
+real secret told to the wrong person</i>, and only the person who built the world can catch
+it. Hand-retyped corrections in review are also the highest-grade signal the learning layer
+ever receives (§9), being the one correction in the system that is not an inference.</p>
+
+<h2>4&nbsp;&nbsp;Prompt assembly under a prefix-cache discipline</h2>
+
+<p>Local inference is cheap only while the server's prefix cache survives: every token before
+the first changed byte is reused between turns, and one moved byte near the top forces a full
+re-read of the world on every message. The prompt assembler therefore splits the world into a
+byte-stable prefix and a volatile tail, and the split is the entire design:</p>
+
+<div class="figwrap">
+<pre>
+SYSTEM MESSAGE — static, fixed order, byte-stable across turns
+  1. her voice                (who she is, how she sounds)
+  2. how she answers          (format and register rules)
+  3. the bible                (the world AS SHE SEES IT — walls applied)
+  4. the economies she can see
+  5. what this world has learned   (capped lessons, §9)
+  6. what a story has left her holding   (changes only on beat open/spill)
+  7. what she remembers       (LAST: the only static block that grows)
+
+CONVERSATION — real chat turns, appended monotonically
+
+LAST USER MESSAGE — volatile tail, rebuilt every turn
+  the clock · the phase of day · where she is standing ·
+  who else is in the room · who is dead · how long since
+  you last spoke (world time) · per-turn coaching
+</pre>
+</div>
+<p class="figcap"><b>Figure 1.</b> Prompt layout. Memories sit last among the static blocks
+because everything that grows must sit after everything that does not, or the growth
+invalidates the blocks above it. The volatile facts ride the bottom of the final message —
+which is also where a model pays the most attention.</p>
+
+<p>The discipline produces non-obvious placements. A death is a durable world fact and belongs
+in the bible — but it is the one durable fact that can arrive between two messages of a live
+conversation, so the dead are announced in the volatile tail, where a character cannot go on
+speaking of somebody in the present tense because her system message was assembled ten minutes
+ago. Conversely, the age floor (§6) is static: a constraint that never changes must never move
+between turns. The governing question, stated in the file header, is: <i>can this change
+between two messages of one conversation? If it can, it goes in the tail.</i> An inspector
+page reconstructs the exact assembled messages section-by-section with sizes, and verifies its
+reconstruction byte-for-byte against the real prompt (§7.3).</p>
+
+<h2>5&nbsp;&nbsp;Knowledge walls</h2>
+
+<h3>5.1&nbsp;&nbsp;Typed deny rules, consumed not re-derived</h3>
+
+<p>Shared canon leaks by default. The expensive way to learn this — recorded in the code's own
+comments — is to hand a protected relative the same world-bible as everybody else. Xeric's
+rule is that renderers <i>consume</i> walls and never re-derive them: every
+audience-restricted fact declares its audience in the template, as a wall with a key, an
+audience selector, a list of hidden paths drawn from a fixed vocabulary of about thirty
+(<code>secrets</code>, <code>drives.&lt;handle&gt;</code>, <code>economies.&lt;key&gt;</code>,
+<code>mystery.room</code>, …), and a <code>shown_as</code> framing written in the second
+person for the walled viewer to read instead. Hiding is one-directional and subtree-scoped:
+hiding one ledger removes that ledger and leaves the section standing.</p>
+
+<div class="figwrap">
+<pre>
+RESOLVING WHAT ONE VIEWER IS TOLD
+  1. resolve the viewer: character → fixture → unresolved
+       · unresolved handles get the commons only, at the weakest
+         rating (fail closed)
+       · a null viewer is the narrator: full canon, walls off
+  2. attach special_role walls named for this handle directly
+  3. match audience selectors {role, orbit, circle, handle},
+       conjunctively; an unknown selector field never matches
+  4. if the role carries own_bible: append a synthetic floor wall
+       denying the intimate layers wholesale (dossiers, secrets,
+       drives, psyche, tells, protagonist, mystery.room) —
+       a deny-by-default posture no declared wall has to remember
+  5. render: every section asks xeric_hidden(walls, path)
+       before writing a word
+</pre>
+</div>
+<p class="figcap"><b>Figure 2.</b> Wall resolution order. Load-time validation separately
+rejects the silent failure modes — a character in an undeclared orbit falls outside every wall
+audience, and a wall aimed at a role nobody holds protects nobody; both are reported loudly at
+load rather than discovered in a leak.</p>
+
+<p>The fail-closed posture is systemic: an unresolvable viewer receives the commons at the
+weakest rating; an unparseable rating ranks as the weakest and can never un-gate anything; an
+unknown wall selector never matches. The single deliberate exception is documented as such:
+an unreadable permadeath setting resolves to <i>revivable</i>, because the age floor protects
+a third party while permadeath is a constraint an author places on themselves, and losing a
+cast to a typo is damage, not caution.</p>
+
+<h3>5.2&nbsp;&nbsp;Leak detection in loose prose</h3>
+
+<p>Walls govern structured rendering, but prose leaks: a seeded memory, a lesson, an event
+title can restate a protected fact in different words. A shared six-word-run quotation test
+(<code>xeric_wall_quotes()</code>) compares loose prose against every wall's explanation and
+every protected role's <code>must_not_know</code>; the forge checks its own seed output
+against it and <i>drops</i> offending lines rather than rewriting them, and story overlays
+inherit the same check for free.</p>
+
+<h3>5.3&nbsp;&nbsp;The narrator: discretion as an output-side wall</h3>
+
+<p>The engine has carried a wall-less viewer since the first day of the renderer — rendering
+the bible with a null viewer yields full canon — and the narrator subsystem gives that viewer
+a mouth: a read-only oracle the world's author can ask <i>why</i>. Its design distinguishes
+two fences with different failure modes. Authorial knowledge — a story's solution, a red
+herring's falsity, an unspilled piece, a death's perpetrator — is <i>absent from the prompt
+entirely</i>, not fenced by instruction: instruction-following is probabilistic and absence is
+arithmetic; a model that never read the culprit's name cannot leak it. In-world hidden facts —
+secrets, drives, wall payloads — are <i>present under stated discretion</i>, because answering
+&ldquo;what has she been carrying around?&rdquo; at the right altitude requires knowing what
+and whose it is. Citations in narrator answers are deterministic — a manifest of what was
+actually assembled, never claimed by the model — and the read-only property is enforced as a
+contract, with the test suite counting every row of every table before and after an ask.</p>
+
+<h2>6&nbsp;&nbsp;Content rating and the age floor</h2>
+
+<p>A world carries a rating ceiling; a model endpoint carries its own; the effective rating is
+their minimum, so a wholesome template stays wholesome on any model and a permissive template
+degrades gracefully on a censored one. Sessions that have not affirmed adulthood are pinned to
+the floor tier. The ladder uses broadcast tiers, on the observation that television already
+taught everyone to read them, and each tier carries a house style — a rating that only gated
+content pools would change what may appear without changing how anything reads:</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Key</th><th>Rank</th><th>Label</th><th>Prose stance (abridged)</th></tr></thead>
+<tbody>
+<tr><td><code>sfw</code></td><td>0</td><td>TV-G</td><td>Warm, plain; trouble is casseroles, grudges, weather, pride</td></tr>
+<tr><td><code>pg</code></td><td>1</td><td>TV-PG</td><td>Conflict and loss happen; the camera cuts away</td></tr>
+<tr><td><code>teen</code></td><td>2</td><td>TV-14</td><td>Real stakes and menace; the wound is implied</td></tr>
+<tr><td><code>mature</code></td><td>3</td><td>TV-MA</td><td>Adult lives on screen; grim allowed, gratuitous lazy</td></tr>
+<tr><td><code>explicit</code></td><td>4</td><td>Unrated</td><td>Nothing off the table; explicitness serves the scene</td></tr>
+</tbody>
+</table>
+</div>
+<p class="figcap"><b>Table 3.</b> The rating ladder. Unknown strings rank 0: an unreadable
+rating must never un-gate anything. Any template node may carry a
+<code>rating_min</code> floor below which it simply does not exist.</p>
+
+<p>The age floor is the sharpest instance of the architecture's preference for structure over
+instruction. Minority is <i>derived, never declared</i>: a character carries an integer age
+and no flag, because a flag is a field a model can write and therefore a field a model can
+clear. Every gate funnels through one predicate, which answers &ldquo;minor&rdquo; for
+anything it cannot read. A minor's effective rating is the weakest tier in every world
+whatever the world is rated; the desire economy is closed to minors structurally, at forge
+assembly and at every render, rather than by asking a model to behave. The rule is equally
+explicit about its own boundary: it gates sexual content and nothing else. A child in a world
+is an ordinary character — schedule, orbit, secrets, witness — and the repository treats a
+rule that would keep a child out of a scene, an hour, or a conversation as the rule written
+backwards. In the worked mystery fixture, a twelve-year-old holds the piece of evidence that
+collapses a red herring, which is the oldest working part of the genre placed where it
+belongs&nbsp;[5].</p>
+
+<h2>7&nbsp;&nbsp;Offscreen life</h2>
+
+<h3>7.1&nbsp;&nbsp;Sweeps: shape and casting are not up to the model</h3>
+
+<p>A sweep converts an unlived hour into at most one event. Two decisions are made by the
+engine before any model is consulted. First, the <i>shape</i>: an event kind is drawn from a
+catalogue of eighteen (<code>shared_meal</code>, <code>rumor</code>, <code>confidence</code>,
+<code>friction</code>, <code>glimpse</code>, <code>absence</code>, …), each gated on the
+subsystems the forge armed — a world that never armed anything convivial never generates
+shared meals, however much the model would enjoy writing one. Second, the <i>casting</i>:
+participants come from presence resolution over weekly schedules, place hours, and homes, so
+the night clerk who is asleep does not have afternoon coffee with the mechanic who is under a
+truck. Events involving the spine of a protected secret exclude protected characters at
+casting time. Sweeps run on an hourly window and are idempotent per window — the guard is
+written whether the hour produced an event or was skipped — so any number of overlapping
+callers yields one hour's worth of life. A cadence parameter (default 0.35 per eligible
+window) keeps a lived-in week from becoming a soap opera.</p>
+
+<h3>7.2&nbsp;&nbsp;Divergent memory as the mechanism of subjectivity</h3>
+
+<p>Each participant in an event receives their own memory of it, and the divergence between
+those memories is measured, not hoped for. Two accounts of one hour should share nouns; what
+the check catches is the failure where the model writes one sentence and reuses it — at which
+point the world has collapsed into an omniscient narrator wearing two hats, and every later
+conversation gives it away. Above a similarity threshold (0.72) the event is refused outright,
+which the code defends as a better failure than a flat world. A second threshold (0.75)
+rejects memories that merely echo something the same character already remembers. She
+remembers what he did with his hands; he remembers that she left early: subjectivity here is
+not a prompt style but an enforced property of the data.</p>
+
+<h3>7.3&nbsp;&nbsp;Inspectability: the decision trail</h3>
+
+<p>Every sweep records its reasoning as it decides — which kinds this world could produce,
+which were tried, who was standing where, who was excluded and on what grounds, which grouping
+won and at what weight — keyed by the resulting event, so &ldquo;why did that happen?&rdquo;
+is answerable a week later. The same inspector answers &ldquo;why did <i>nothing</i>
+happen?&rdquo;, which the repository identifies as the actual question behind &ldquo;why is my
+world so quiet?&rdquo;. The other half of the inspector prints the exact prompt any character
+receives, split into its assembly sections with byte sizes, checked byte-for-byte against the
+real prompt — on the argument that an inspector showing something adjacent to the truth is
+worse than no inspector. The page refuses non-owners: it prints every secret verbatim, and
+cannot be made safe by redaction, only by refusal.</p>
+
+<h3>7.4&nbsp;&nbsp;Proactive contact</h3>
+
+<p>Characters text first, on a ladder of occasions with distinct base rates — aftermath of an
+event, mid-event, a user missing for three days, dreams, diaries, undercurrents — under
+per-character and per-cast daily caps, with quiet hours respected. The transcript itself is
+undated, so the volatile tail states how long it has been since the two of you last spoke, in
+world time; without it, last month's goodnight abuts today's hello and the arithmetic lands on
+a model that never does it.</p>
+
+<h2>8&nbsp;&nbsp;Time</h2>
+
+<h3>8.1&nbsp;&nbsp;The clock</h3>
+
+<p>World time is real time plus a stored offset, kept in the world's database so cron, web,
+and CLI agree without coordination. Three rules hold: the world does not run backwards
+(memories are stamped with world epochs, and no prose talks a model out of a date); one jump
+is bounded at seven days (a fat-finger fence, not a policy); and a paused world refuses to be
+advanced, because a skip while stopped would fabricate hours the world was not running for.
+Because everything downstream was written against real datetimes rather than an hour counter,
+a world may start at any date the platform can parse: a world set in 1873 New York reports its
+timezone as −04:56 — local mean time, standard zones not reaching the United States until
+1883 — a correctness the repository notes nobody built on purpose.</p>
+
+<h3>8.2&nbsp;&nbsp;The heart</h3>
+
+<p>Unattended life is delivered by a deliberately unambitious process: one pass, then exit,
+looped by the launcher or a crontab line. A single pass and death is crash-safe by
+construction and testable by running it once; idempotent windows mean a tick that finds no new
+hour does no work and costs no tokens, so nothing remembers when it last ran. Three refusals
+make it safe at one-minute cadence: it will not run a stopped world; it will not take the
+model from somebody mid-conversation (a person waiting on a reply outranks a town having a
+Tuesday — the window remains unswept and is simply still there next minute); and it will not
+live an unbounded gap in one tick — a month away is on the order of 240 model calls, so it
+lives at most six windows per world per tick and a long gap fills over several minutes.</p>
+
+<h3>8.3&nbsp;&nbsp;Rewind: the world forgets, the player does not</h3>
+
+<p>Skips are real time passing: obligations fall due during them, and the residue lands as if
+the hours had been lived slowly. The mercy is the rewind, and its semantics are chosen for
+their physics: a rewind undoes the <i>last skip only, whole</i> — its events, memories, and
+firings un-happen, and the clock returns. It is destructive on purpose, and asymmetric on
+purpose: the world forgets the undone future; the player does not. One rewinds to make the
+missed appointment precisely because one remembers what happened when it was missed. No
+branches, no reach past the most recent skip.</p>
+
+<h2>9&nbsp;&nbsp;Adaptation without drift</h2>
+
+<p>The world learns its user in two layers, and the ordering is the point. A <i>counting</i>
+layer needs no model and therefore always runs: per-character reply rates, per-kind
+engagement, reply lengths, tallied into weights that bend which kinds of hour the sweeps
+produce and who reaches out how often. A <i>distillation</i> layer, permitted to be absent,
+turns the raw signals — above all sentences the user retyped by hand in review — into at most
+six one-line lessons per character, deduplicated, riding the static prompt. Four rules keep
+learning from eating the world: lessons are capped (a notebook that grows forever eventually
+<i>is</i> the prompt); nothing is ever extinguished (every weight has a floor, because a world
+that only does what you liked last week has stopped being able to surprise you); a signal is
+read once; and learning is garnish — every write may fail quietly, because a chat turn that
+died for its own bookkeeping would be the tail wagging the dog.</p>
+
+<h2>10&nbsp;&nbsp;Story overlays: a plot that ends over a world that does not</h2>
+
+<p>A story is a sidecar file composed onto the world at load, never written into the template.
+The central claim is testable and tested: <i>closing a story is a subtraction, not an edit</i>
+— compose, resolve, compose again, and the composed template returns byte-identical to the
+untouched one. Residue lives where a lived past belongs, in memory: the culprit remembers the
+Tuesday it came out. Multiple overlays compose in one direction only (walls accumulate; no
+overlay may remove another's), which makes them order-independent in the only respect where
+order would be dangerous.</p>
+
+<p>The format's economy comes from an observation the repository states as engineering rather
+than metaphor: <i>a mystery is a wall structure</i>. One character knows the truth; several
+hold pieces (composed as secrets); not-knowing is a protection the sweeps already enforce; and
+pacing decides when the walls come down. Pacing is data — a piecewise-linear intensity curve
+with a mandated <i>false calm</i>, a window in which no beat may open and every multiplier is
+exactly 1.0: the story letting go for a stretch while the town carries on as if nobody had
+died, which is precisely the stretch generative systems otherwise get wrong by escalating
+forever or going slack. The curve modulates only two knobs that already exist — how often
+sweeps fire (0.4× to 1.6×) and the kind weights — and a multiplier is a thumb, never a gate: a
+story cannot arm a subsystem the world never armed, which is also what keeps the age floor's
+structural argument intact under overlays. The genuinely new mechanic is the <i>red
+herring</i>: a character who sincerely believes something false, whose falsity is engine-side
+knowledge that never enters their prompt — told it is mistaken, a model hedges, and hedging is
+the death of a wrong lead. Resolution requires the supporting beats to have actually been
+spilled: naming the right person on day one does nothing, because a guess is not a solution.
+A scratch validator run recorded in the design document executed 375 checks against the worked
+fixture and caught all ten deliberately-introduced authoring errors&nbsp;[5].</p>
+
+<h2>11&nbsp;&nbsp;Designed, not yet implemented</h2>
+
+<p>Honesty about the boundary between running code and design is a stated norm of the
+repository; three subsystems sit on the far side of it. <i>Social constructs</i>&nbsp;[6]
+generalize obligations: an expectation forms when a listener hears an unhedged commitment
+carrying a <i>when</i> — any weasel word forms nothing, except sometimes in a young child,
+because the promise test is a property of the listener. Consequences surface as trust deltas
+(invisible), stage direction (the body as a rendering of the subconscious), and gossip, which
+feeds on observables only — what travels is &ldquo;she waited outside till nine, I saw
+her,&rdquo; never &ldquo;she felt abandoned&rdquo; — a rule that makes gossip walls-safe by
+construction rather than a leak engine. The narrator's remaining powers&nbsp;[4] —
+investigate, write-ahead (intent as a pull, never a script), and a validated, undoable author
+mode — follow its shipped ask mode. Player embodiment exists in early form: places carry grid
+coordinates and a world carries its size in minutes, so travel can cost world time; the design
+document argues the consequential feature is not the map but the travel time, since a
+frictionless choice is not a choice. Media generation ships no pipeline in this tree; the
+template merely carries the fields.</p>
+
+<h2>12&nbsp;&nbsp;Status and evaluation</h2>
+
+<p>The engine runs end to end: forge, review, launch, play, heartbeat. The implementation is
+approximately 50,600 lines of PHP across 67 files, roughly 41,400 lines outside the
+test suites, with no runtime dependencies beyond PHP&nbsp;8.1+ with SQLite; a bring-your-own
+model speaks the OpenAI chat API, locally or remote, and keys are never stored. Eight suites
+exercise the system, all green at the repository state this paper describes:</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Suite</th><th>Assertions</th><th>Covers</th></tr></thead>
+<tbody>
+<tr><td>render</td><td>68</td><td>Bible rendering; wall negative-assertions; byte determinism</td></tr>
+<tr><td>engine</td><td>317</td><td>Template validation, clock, presence, deaths, travel, schedule transitions</td></tr>
+<tr><td>chat</td><td>123</td><td>Turns, prompt assembly, story observation</td></tr>
+<tr><td>sweep</td><td>143</td><td>Offscreen events, divergence, exclusions, proactive contact</td></tr>
+<tr><td>learn</td><td>80</td><td>Signals, weights, lesson caps, fail-quiet property</td></tr>
+<tr><td>narrator</td><td>43</td><td>Ask mode; read-only contract (row counts before/after); oracle-shelf absence</td></tr>
+<tr><td>forge</td><td>231</td><td>Passes, fallbacks, naming gates, age-floor assembly, idempotent homes</td></tr>
+<tr><td>demo (web)</td><td>317</td><td>Sessions, queue, pages, include reachability</td></tr>
+</tbody>
+</table>
+</div>
+<p class="figcap"><b>Table 4.</b> 1,322 assertions across eight suites, counted from a full
+run of the current tree. The interesting half is negative: walls that must not leak, writes
+that must not happen, a minor never excluded from an hour on account of age.</p>
+
+<p>Known limitations are stated plainly in the roadmap&nbsp;[7] and are visible within the
+first sessions: editing a launched world takes effect live and unannounced, while stored
+memories still describe who they were, and any prefix edit silently discards the cache; the
+undo in review is one step deep by design; a lesson never expires and is only ever pushed out
+by newer ones; and the inspector shows the lessons a world has learned but not the signal
+weights behind them. The engine has been developed and exercised on one machine in one house;
+no multi-user deployment at scale, no user study, and no formal evaluation of
+long-horizon coherence exist. The measure the project actually optimizes — whether a
+world still feels inhabited after months — is not one this paper can quantify.</p>
+
+<h2>13&nbsp;&nbsp;Related concepts</h2>
+
+<p>The work sits, deliberately, at the engineering end of a line of ideas, which are discussed
+here in prose rather than cited; the paper claims no priority over any of them. Agent
+simulations in the &ldquo;generative agents&rdquo; tradition demonstrated memory
+streams, reflection, and daily schedules for language-model townspeople; Xeric shares the
+ambition and differs in commitments: knowledge separation is typed data enforced outside the
+model rather than an emergent property of retrieval, offscreen generation is gated by an
+armed-subsystem catalogue rather than open-ended planning, and the system is engineered to a
+single consumer GPU rather than a research budget. Prefix caching in local inference servers
+is the load-bearing external fact of §4; the contribution there is not the cache but the
+discipline of byte-stable world rendering that keeps it warm. Structured-output techniques
+motivate the forge's contract of flat keys and code-side assembly. The one-viewpoint-per-call
+rule (§5) — a room of N speakers is N calls, because one call means one point of view and
+every wall collapses into it silently — is stated in the roadmap as a constraint not open to
+revisiting, and functions as the system's rejection of the multi-character single-prompt
+shortcut common in practice.</p>
+
+<h2>14&nbsp;&nbsp;Availability</h2>
+
+<p>Xeric is free software under the GNU Affero General Public License v3.0. The AGPL is chosen
+for its network clause: the system is built to run on the owner's machine, but it is a web
+application, and a hosted fork that closed the source would void the local-first promise the
+license exists to keep. The world itself is not the software — the template, the database, and
+everything a cast ever said belong to the person who forged them, and no license term reaches
+them. The repository&nbsp;[1] is the artifact this paper describes.</p>
+
+<h2>References</h2>
+
+<ol class="refs">
+<li>Xeric repository. <a href="https://github.com/Gwonk1/xeric">github.com/Gwonk1/xeric</a>.
+    See in particular <code>README.md</code> and the file headers of
+    <code>engine/prompt.php</code>, <code>engine/walls.php</code>,
+    <code>engine/sweeps.php</code>, <code>engine/clock.php</code>,
+    <code>engine/learn.php</code>, <code>engine/narrator.php</code>, and
+    <code>forge/forge.php</code>, which carry the design arguments summarized here.</li>
+<li>The world template schema, worked end to end against the engine's fictional test world.
+    <a href="https://github.com/Gwonk1/xeric/blob/main/docs/WORLD_TEMPLATE.md">docs/WORLD_TEMPLATE.md</a>;
+    fixture at <code>engine/fixtures/milldale.json</code>.</li>
+<li>Quickstart: requirements, the heartbeat, the inspector, and the command-line surface.
+    <a href="https://github.com/Gwonk1/xeric/blob/main/QUICKSTART.md">QUICKSTART.md</a>.</li>
+<li>The Narrator: four powers, the discretion design, and the world-authority/code-authority
+    split. <a href="https://github.com/Gwonk1/xeric/blob/main/docs/NARRATOR.md">docs/NARRATOR.md</a>.</li>
+<li>The literary overlay: schema, pacing curve, red herrings, composition rules, and the
+    worked mystery fixture.
+    <a href="https://github.com/Gwonk1/xeric/blob/main/docs/STORY.md">docs/STORY.md</a>;
+    fixture at <code>engine/fixtures/milldale-story.json</code>.</li>
+<li>Social constructs: the promise test, stage direction, and observables-only gossip.
+    <a href="https://github.com/Gwonk1/xeric/blob/main/docs/CONSTRUCTS.md">docs/CONSTRUCTS.md</a>.</li>
+<li>Roadmap and stated limitations.
+    <a href="https://github.com/Gwonk1/xeric/blob/main/ROADMAP.md">ROADMAP.md</a>.</li>
+<li>The forge: interview, passes, and failure discipline.
+    <a href="https://github.com/Gwonk1/xeric/blob/main/docs/FORGE.md">docs/FORGE.md</a>.</li>
+</ol>
+
+<p class="toplink"><a href="./">← xeric.dev</a></p>
+
+</div>
+</body>
+</html>
