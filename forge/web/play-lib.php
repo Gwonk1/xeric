@@ -5044,8 +5044,14 @@ function xeric_watch_line(array $w, array &$s, array $endpoint, string $sid = ''
 
     $lines = array_map(fn($l) => ['handle' => (string)$l['handle'], 'text' => (string)$l['text']],
                        (array)$s['lines']);
+    // The walk-in seam, landed: once the player has spoken into the scene,
+    // their recorded position threads into every later assembly, so the
+    // speakers stop insisting the room holds only each other. Before the
+    // walk-in, null — the duet stays the world talking to itself.
+    $pw = !empty($s['player']['present']) ? (string)($s['player']['where'] ?? '') : null;
     $messages = xeric_duet_messages($t, $speaker, $partner, $system, $lines, $tail, $now,
-        $walls, xeric_deaths($db), (int)$s['spoken'] === 0, (int)$s['spoken'] === (int)$s['turns'] - 1);
+        $walls, xeric_deaths($db), (int)$s['spoken'] === 0, (int)$s['spoken'] === (int)$s['turns'] - 1,
+        $pw !== '' ? $pw : null);
 
     if ($sid !== '') xeric_limit_note('message', ['sid' => $sid]);
 

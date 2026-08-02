@@ -624,7 +624,7 @@ function xeric_duet_scene(array $t, string $me, string $other, array $room, arra
  */
 function xeric_duet_messages(array $t, string $me, string $other, string $system, array $lines,
                              array $scene, array $now, array $walls, array $deaths,
-                             bool $opening, bool $closing): array
+                             bool $opening, bool $closing, ?string $playerWhere = null): array
 {
     $partner = xeric_world_name($t, $other);
 
@@ -639,10 +639,19 @@ function xeric_duet_messages(array $t, string $me, string $other, string $system
         $coach[] = 'Answer ' . $partner . '. A line or three, out loud. It is a conversation, not a speech.';
     }
 
-    // The player is deliberately nowhere in this block (null): the duet is
-    // the world talking to itself, and "X is here, in the room with you"
-    // about somebody who is not part of the scene would put the user in it.
-    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, null, $deaths, 0);
+    // The player is nowhere in this block BY DEFAULT (null): the duet is the
+    // world talking to itself, and "X is here, in the room with you" about
+    // somebody who is not part of the scene would put the user in it. The
+    // WALK-IN is the exception the watch surface asked for: when the player
+    // has genuinely entered the room, their position threads through so the
+    // now-block seats them — and the speaker is told a third person is
+    // standing there, which is the difference between answering your partner
+    // and answering your partner in front of company.
+    if ($playerWhere !== null && $playerWhere !== '') {
+        $coach[] = 'A third voice in the transcript is the person standing here with you both — '
+                 . 'answer whoever the moment calls for.';
+    }
+    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, $playerWhere, $deaths, 0);
 
     $messages = [['role' => 'system', 'content' => $system]];
     foreach ($lines as $l) {

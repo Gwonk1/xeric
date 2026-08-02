@@ -118,8 +118,11 @@ try {
 } catch (Throwable $e) {
     // Nothing attached. Said as the state it is rather than as a failure, and
     // with the fix in the sentence — this is the one error on this screen whose
-    // answer is a link and not "try again".
-    xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409);
+    // answer is a link and not "try again". Through $done, NOT xeric_web_json:
+    // the queue hold was already taken above, and answering around the release
+    // left the GPU slot pinned for the full 420s reap on exactly the path
+    // where no model was ever going to use it (found by the watch build).
+    $done(['error' => $e->getMessage(), 'kind' => 'detached'], 409);
 }
 if (!xeric_llm_up($endpoint, 6)) {
     $done([
