@@ -346,33 +346,76 @@ foreach ($steps as $rs) {
 $ratingPresets = (array)($ratingStep['presets'] ?? []);
 $ratingFloor   = (string)($ratingStep['gate']['required_above'] ?? xeric_ratings()[0]);
 $ratingNow     = (string)($answers['rating'] ?? '');
+$ratingAffirm  = trim((string)($ratingStep['gate']['affirm'] ?? '')) ?: 'I am 18 or older.';
 if ($ratingNow !== '') $ratingNow = xeric_session_rating($ratingNow, $sid);
 if ($ratingNow === '') $ratingNow = xeric_ratings()[0];
 
-/** One rating box. Rendered beside every control that can build without answers. */
-function xeric_web_rating_box(array $presets, string $floor, string $now, bool $adult, string $group, string $label): string
+/**
+ * The rating, as a thing you can read at a glance and open if you disagree.
+ *
+ * A ROW OF RADIOS WAS THE WRONG SHAPE, and the Auto Generate screen proved it
+ * twice over. Visually it read as a fourth question on a screen whose whole
+ * promise is that you answer nothing — and functionally it was a DEAD END: the
+ * gated options were disabled with a note pointing at "the 18+ box on the last
+ * question", which is a screen the Auto Generate path never visits. An adult who
+ * wanted an adult world had no way to say so from the only screen they were on.
+ *
+ * So it is a statement with a way in behind it. Closed, it is one line saying
+ * what will happen. Open, it is the three choices AND the affirmation together,
+ * because the affirmation is the only thing standing between a visitor and two of
+ * those choices, and it must be reachable from wherever they are being offered.
+ *
+ * THE GATE IS NOT WEAKENED BY MOVING IT. Ticking the box here posts to the same
+ * endpoint, is believed only if the SERVER says so, and every copy of this
+ * control on the page re-reads its answer. What changes is that a person is asked
+ * where they are standing rather than sent somewhere else to be asked.
+ */
+function xeric_web_rating_box(array $presets, string $floor, string $now, bool $adult, string $group, string $label, string $affirmLabel): string
 {
     if (!$presets) return '';
     $h = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
-    $out = '<div class="srate" role="group" aria-label="how far this xeric may go">'
-         . '<span class="srate-l">' . $h($label) . '</span>';
+    $nowLabel = '';
+    $opts = '';
     $gatedAny = false;
     foreach ($presets as $p) {
         $v = (string)($p['value'] ?? '');
+        if ($v === '') continue;
         $gated = !empty($p['requires_affirmation'])
                  || xeric_rating_rank($v) > xeric_rating_rank($floor);
         if ($gated) $gatedAny = true;
-        $lock = $gated && !$adult;
-        $out .= '<label class="srate-o' . ($lock ? ' off' : '') . '"' . ($gated ? ' data-gated="1"' : '') . '>'
-              . '<input type="radio" name="srate-' . $h($group) . '" class="srate-r" value="' . $h($v) . '"'
-              . ($lock ? ' disabled' : '') . ($v === $now ? ' checked' : '') . '>'
-              . '<span>' . $h($p['label'] ?? $v) . '</span></label>';
+        $lab = (string)($p['label'] ?? $v);
+        if ($v === $now) $nowLabel = $lab;
+        $opts .= '<button type="button" class="rateopt" data-value="' . $h($v) . '"'
+               . ($gated ? ' data-gated="1"' : '')
+               . ' aria-pressed="' . ($v === $now ? 'true' : 'false') . '">'
+               . '<span class="ro-l">' . $h($lab) . '</span>'
+               . (!empty($p['hint']) ? '<span class="ro-h">' . $h($p['hint']) . '</span>' : '')
+               . '</button>';
     }
-    $out .= '</div>';
-    if ($gatedAny && !$adult) {
-        $out .= '<p class="srate-n">Anything past &ldquo;' . $h($presets[0]['label'] ?? 'keep it clean')
-              . '&rdquo; needs the 18+ box on the last question.</p>';
+    if ($nowLabel === '') $nowLabel = (string)($presets[0]['label'] ?? $now);
+
+    $pop = 'ratepop-' . $h($group);
+    $out = '<div class="rateset" data-pop="' . $h($group) . '">'
+         . '<button type="button" class="ratepill" aria-expanded="false" aria-controls="' . $pop . '">'
+         // "<what will build> · <what it will be> · change". The label names the
+         // control this belongs to rather than describing the rating, because the
+         // preset labels are already sentences ("keep it clean") and gluing them
+         // to a verb produced "Auto Generate keeps it keep it clean".
+         . '<span class="rp-l">' . $h($label) . '</span>'
+         . '<span class="rp-s" aria-hidden="true"> · </span>'
+         . '<span class="rp-v">' . $h($nowLabel) . '</span>'
+         . '<span class="rp-c" aria-hidden="true">change</span>'
+         . '</button>'
+         . '<div class="ratepop" id="' . $pop . '" hidden>'
+         . '<div class="rateopts">' . $opts . '</div>';
+    if ($gatedAny) {
+        $out .= '<label class="rateaff' . ($adult ? '' : ' ask') . '">'
+              . '<input type="checkbox" class="rate-affirm"' . ($adult ? ' checked' : '') . '>'
+              . '<span>' . $h($affirmLabel) . '</span></label>'
+              . '<p class="ratenote">Nobody is asked how old they are and nothing about it is stored. '
+              . 'Untick it and anything past the first choice goes back out of reach.</p>';
     }
+    $out .= '</div></div>';
     return $out;
 }
 
@@ -508,7 +551,7 @@ xeric_web_head('Xeric: the forge');
          asking anything. -->
     <?php if ($ratingPresets): ?>
     <div class="waysrate">
-      <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, 'auto', 'Auto Generate keeps it') ?>
+      <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, 'auto', 'Auto Generate', $ratingAffirm) ?>
     </div>
     <?php endif; ?>
 
@@ -732,7 +775,7 @@ xeric_web_head('Xeric: the forge');
 
     <div class="escapes">
       <?php if (!$gate): ?>
-        <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, (string)$i, 'and keep it') ?>
+        <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, (string)$i, 'Surprise me', $ratingAffirm) ?>
       <?php endif; ?>
       <button class="linkbtn" type="button" data-all="1">✨ Surprise me for everything else and build it</button>
     </div>
@@ -984,18 +1027,9 @@ xeric_web_head('Xeric: the forge');
       c.setAttribute('aria-pressed',
         el.value.trim() !== '' && c.dataset.value === el.value.trim() ? 'true' : 'false');
     });
-    // The ✨ boxes carry the same gate, so they open and close with it. Withdrawn,
-    // a gated radio goes back to unreachable AND the value it was holding has
-    // already been cleared above — which lands on the weakest rating, the same
-    // place every unattended path lands.
-    $$('.srate-r').forEach(function (r) {
-      var lab = r.closest('.srate-o');
-      var gated = lab && lab.dataset.gated === '1';
-      if (!gated) return;
-      r.disabled = !ADULT;
-      lab.classList.toggle('off', !ADULT);
-    });
-    $$('.srate-n').forEach(function (n) { n.hidden = ADULT; });
+    // The pills carry the same gate, so they hold and release with it — and the
+    // value has already been cleared above if it needed the affirmation, which
+    // lands on the weakest rating, where every unattended path lands.
     paintSurpriseRating();
     paintNext(); save();
   }
@@ -1217,37 +1251,140 @@ xeric_web_head('Xeric: the forge');
   }
 
   // -- ✨ everything else --------------------------------------------------
-  // ONE VALUE, HOWEVER MANY COPIES OF THE BOX. The selector is rendered beside
-  // every all-surprise button, but it writes to the rating question's own field
-  // — the same one the chips write — so there is never a second answer to
-  // reconcile, and the affirmation logic above keeps working unchanged.
+  // ONE VALUE, HOWEVER MANY COPIES OF THE CONTROL. Each pill writes to the rating
+  // question's own field — the same one the chips write — so there is never a
+  // second answer to reconcile, and the affirmation logic above keeps working.
   var RATING_DEFAULT = <?= json_encode(xeric_ratings()[0]) ?>;
 
   function ratingField() { return gateScreen ? $('.val', gateScreen) : null; }
-
-  /** Every ✨ box shows what the one field actually says. */
-  function paintSurpriseRating() {
+  function ratingValue() {
     var el = ratingField();
-    var v = el && el.value.trim() ? el.value.trim() : RATING_DEFAULT;
-    $$('.srate-r').forEach(function (r) { r.checked = (r.value === v); });
+    return el && el.value.trim() ? el.value.trim() : RATING_DEFAULT;
   }
 
-  $$('.srate-r').forEach(function (r) {
-    r.addEventListener('change', function () {
-      if (r.disabled) return;                 // a gated option before the box is ticked
+  /** Every control on the page shows what the one field actually says. */
+  function paintSurpriseRating() {
+    var v = ratingValue();
+    $$('.rateset').forEach(function (set) {
+      var chosen = null;
+      $$('.rateopt', set).forEach(function (o) {
+        var on = o.dataset.value === v;
+        o.setAttribute('aria-pressed', on ? 'true' : 'false');
+        if (on) chosen = o;
+        // A GATED OPTION IS NEVER HIDDEN, only held. Hiding it would leave a
+        // visitor unable to see that there is anything to unlock, which is how
+        // the row-of-radios version dead-ended on a screen with no gate on it.
+        var held = o.dataset.gated === '1' && !ADULT;
+        o.classList.toggle('held', held);
+        o.setAttribute('aria-disabled', held ? 'true' : 'false');
+      });
+      var out = $('.rp-v', set);
+      if (out && chosen) out.textContent = $('.ro-l', chosen).textContent;
+      var box = $('.rate-affirm', set);
+      if (box) box.checked = ADULT;
+      var lab = box ? box.closest('.rateaff') : null;
+      if (lab) lab.classList.toggle('ask', !ADULT);
+    });
+  }
+
+  function closeRatePops(except) {
+    $$('.rateset').forEach(function (set) {
+      if (set === except) return;
+      var pop = $('.ratepop', set), pill = $('.ratepill', set);
+      if (pop) pop.hidden = true;
+      if (pill) pill.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  $$('.ratepill').forEach(function (pill) {
+    pill.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var set = pill.closest('.rateset'), pop = $('.ratepop', set);
+      var open = pop.hidden;
+      closeRatePops(set);
+      pop.hidden = !open;
+      pill.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
+
+  $$('.rateopt').forEach(function (o) {
+    o.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var set = o.closest('.rateset');
+      // HELD, NOT REFUSED. The box that would release it is in this same panel,
+      // so point at it rather than saying no — the whole reason this control
+      // exists is that the affirmation used to live on a screen you could not
+      // get to from here.
+      if (o.dataset.gated === '1' && !ADULT) {
+        var lab = $('.rateaff', set);
+        if (lab) {
+          lab.classList.add('want');
+          var b = $('.rate-affirm', lab);
+          if (b) b.focus();
+          setTimeout(function () { lab.classList.remove('want'); }, 1200);
+        }
+        return;
+      }
       var el = ratingField();
-      if (el) el.value = r.value;
+      if (el) el.value = o.dataset.value;
       // The chips on the gated screen are the same choice seen from the other
-      // side; leaving them stale would show two different answers to one question.
+      // side; leaving them stale would show two answers to one question.
       if (gateScreen) {
         $$('.chip', gateScreen).forEach(function (c) {
-          c.setAttribute('aria-pressed', c.dataset.value === r.value ? 'true' : 'false');
+          c.setAttribute('aria-pressed', c.dataset.value === o.dataset.value ? 'true' : 'false');
         });
       }
       paintSurpriseRating();
       paintNext(); save();
+      var pop = $('.ratepop', set), pill = $('.ratepill', set);
+      pop.hidden = true;
+      pill.setAttribute('aria-expanded', 'false');
+      pill.focus();
     });
   });
+
+  // THE SAME ENDPOINT AND THE SAME RULE AS THE BOX ON THE RATING SCREEN: the
+  // server's answer is the truth, not the checkbox's. A tick left standing over a
+  // refused write is a page telling somebody they have something they do not.
+  $$('.rate-affirm').forEach(function (box) {
+    box.addEventListener('change', function (ev) {
+      ev.stopPropagation();
+      var want = box.checked;
+      $$('.rate-affirm').forEach(function (b) { b.disabled = true; });
+      fetch('forge.php?a=affirm', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adult: want }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          ADULT = !!(d && d.ok && d.adult === true);
+          if (affirmBox) affirmBox.checked = ADULT;     // the one on the rating screen agrees
+          if (affirm) { affirm.hidden = !ADULT; }
+          if (affirmNote) { affirmNote.hidden = !ADULT; }
+          // Withdrawn, a rating that needed it goes back to nothing — which is
+          // the weakest rating, where every unattended path already lands.
+          var el = ratingField();
+          if (!ADULT && el && gatedValue(el.value.trim())) el.value = '';
+          $$('.rate-affirm').forEach(function (b) { b.disabled = false; });
+          paintSurpriseRating(); paintNext(); save();
+        })
+        .catch(function () {
+          $$('.rate-affirm').forEach(function (b) { b.disabled = false; b.checked = ADULT; });
+        });
+    });
+  });
+
+  /** Does reaching this value need the affirmation? Asked of the markup, not a list here. */
+  function gatedValue(v) {
+    if (!v) return false;
+    var hit = false;
+    $$('.rateopt').forEach(function (o) {
+      if (o.dataset.value === v && o.dataset.gated === '1') hit = true;
+    });
+    return hit;
+  }
+
+  document.addEventListener('click', function () { closeRatePops(null); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeRatePops(null); });
+  $$('.ratepop').forEach(function (p) { p.addEventListener('click', function (e) { e.stopPropagation(); }); });
 
   paintSurpriseRating();
 

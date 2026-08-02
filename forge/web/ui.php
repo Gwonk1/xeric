@@ -418,16 +418,43 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 }
 .escapes{display:flex;flex-direction:column;align-items:flex-start;gap:.15rem;margin:1.5rem 0 0}
 
-/* The rating beside the all-surprise button. Quiet on purpose: it sits under an
-   escape hatch, not a question, and the weakest option is already chosen — so it
-   should read as a thing you may adjust, never as one more thing to answer. */
-.srate{display:flex;flex-wrap:wrap;align-items:center;gap:.1rem .6rem;font-size:.85rem;margin:.1rem 0 .1rem}
-.srate-l{color:var(--dim)}
-.srate-o{display:inline-flex;align-items:center;gap:.3rem;cursor:pointer;color:var(--fg)}
-.srate-o input{accent-color:var(--accent);margin:0;cursor:pointer}
-.srate-o.off{opacity:.45;cursor:not-allowed}
-.srate-o.off input{cursor:not-allowed}
-.srate-n{font-size:.8rem;color:var(--dim);margin:0 0 .2rem}
+/* The rating, as a sentence you can open. Closed it states what will happen and
+   nothing more, because the screens it sits on promise you answer nothing; open
+   it is the three choices AND the affirmation, since the affirmation is the only
+   thing between a visitor and two of them. */
+.rateset{position:relative;display:inline-block;font-size:.85rem}
+.ratepill{
+  appearance:none;background:none;border:0;padding:.3rem 0;margin:0;font:inherit;font-size:.85rem;
+  color:var(--dim);cursor:pointer;text-align:left;
+}
+.ratepill .rp-v{color:var(--fg)}
+.ratepill .rp-s{color:var(--dim)}
+.ratepill .rp-c{
+  color:var(--accent);margin-left:.45rem;text-decoration:underline;text-underline-offset:3px;
+}
+.ratepill:hover .rp-c,.ratepill:focus-visible .rp-c{color:var(--accent)}
+.ratepop{
+  position:absolute;z-index:40;top:calc(100% + .35rem);left:0;min-width:15rem;max-width:min(22rem,90vw);
+  background:var(--card,var(--bg));border:1px solid var(--line);border-radius:.5rem;
+  padding:.5rem;box-shadow:0 10px 30px rgba(0,0,0,.35);
+}
+.rateopts{display:flex;flex-direction:column;gap:.15rem}
+.rateopt{
+  appearance:none;background:none;border:0;border-radius:.35rem;padding:.4rem .5rem;margin:0;
+  font:inherit;color:var(--fg);cursor:pointer;text-align:left;display:flex;flex-direction:column;gap:.1rem;
+}
+.rateopt:hover{background:var(--line)}
+.rateopt[aria-pressed=true]{background:var(--line);box-shadow:inset 2px 0 0 var(--accent)}
+.rateopt .ro-h{font-size:.78rem;color:var(--dim)}
+.rateopt.held{opacity:.5}
+.rateopt.held .ro-l::after{content:" · 18+";color:var(--dim);font-size:.78rem}
+.rateaff{
+  display:flex;gap:.5rem;align-items:flex-start;margin:.5rem 0 0;padding:.45rem .5rem;
+  border-top:1px solid var(--line);cursor:pointer;
+}
+.rateaff input{accent-color:var(--accent);margin:.15rem 0 0;flex:0 0 auto;cursor:pointer}
+.rateaff.want{background:var(--line);border-radius:.35rem}
+.ratenote{font-size:.75rem;color:var(--dim);margin:.15rem .5rem 0}
 
 /* ---------------------------------------------------------------- the ways */
 /* THREE BOXES, IN THE SHELF'S LANGUAGE. A channel is a thing you point at and
