@@ -442,6 +442,11 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
   grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr))}
 @media (max-width:30rem){.ways{grid-template-columns:1fr}}
 
+/* The rating under the three ways. It belongs to Auto Generate, which is the one
+   way in that builds a whole world without asking anything — so it is pulled up
+   under the tiles, tight to them, rather than floating as its own decision. */
+.waysrate{margin:-1.6rem 0 2rem}
+
 .way{position:relative;display:block;width:100%;aspect-ratio:4/3;padding:0;
   font:inherit;text-align:left;color:var(--fg);cursor:pointer;
   background:var(--bg-2);border:1px solid var(--line);border-radius:.85rem;

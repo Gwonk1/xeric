@@ -321,6 +321,61 @@ $model = (array)$sess['model'];
 // be able to take it back.
 $adult = xeric_session_adult($sid);
 
+// -- how far an unattended build may go --------------------------------------
+// THE RATING THAT A BUILD-WITHOUT-ANSWERS WILL USE, offered wherever such a build
+// can be started. There are two such places and they are the SAME build: Auto
+// Generate on the first screen, and the ✨ escape hatch on every question screen.
+//
+// Without a choice here `rating` is left unanswered, and an unanswered rating is
+// a GAP — which three separate routes will fill (the premise reader, the model
+// fill, and the concept table, four of whose five rows ask for `mature`). Nobody
+// decided that, and interview.json says in as many words that nobody deciding
+// must land clean.
+//
+// An ANSWER is not a gap, which is the whole fix: the weakest rating is
+// pre-selected, it is written into the SAME field the rating question writes,
+// and the fill routes can no longer reach the field at all.
+//
+// IT IS STILL NOT A WAY AROUND THE GATE. A rating needing the affirmation renders
+// disabled until the session carries it, so these boxes can only offer what the
+// visitor could already have chosen the long way round.
+$ratingStep = null;
+foreach ($steps as $rs) {
+    if ((string)($rs['key'] ?? '') === 'rating' || !empty($rs['gate'])) { $ratingStep = $rs; break; }
+}
+$ratingPresets = (array)($ratingStep['presets'] ?? []);
+$ratingFloor   = (string)($ratingStep['gate']['required_above'] ?? xeric_ratings()[0]);
+$ratingNow     = (string)($answers['rating'] ?? '');
+if ($ratingNow !== '') $ratingNow = xeric_session_rating($ratingNow, $sid);
+if ($ratingNow === '') $ratingNow = xeric_ratings()[0];
+
+/** One rating box. Rendered beside every control that can build without answers. */
+function xeric_web_rating_box(array $presets, string $floor, string $now, bool $adult, string $group, string $label): string
+{
+    if (!$presets) return '';
+    $h = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
+    $out = '<div class="srate" role="group" aria-label="how far this xeric may go">'
+         . '<span class="srate-l">' . $h($label) . '</span>';
+    $gatedAny = false;
+    foreach ($presets as $p) {
+        $v = (string)($p['value'] ?? '');
+        $gated = !empty($p['requires_affirmation'])
+                 || xeric_rating_rank($v) > xeric_rating_rank($floor);
+        if ($gated) $gatedAny = true;
+        $lock = $gated && !$adult;
+        $out .= '<label class="srate-o' . ($lock ? ' off' : '') . '"' . ($gated ? ' data-gated="1"' : '') . '>'
+              . '<input type="radio" name="srate-' . $h($group) . '" class="srate-r" value="' . $h($v) . '"'
+              . ($lock ? ' disabled' : '') . ($v === $now ? ' checked' : '') . '>'
+              . '<span>' . $h($p['label'] ?? $v) . '</span></label>';
+    }
+    $out .= '</div>';
+    if ($gatedAny && !$adult) {
+        $out .= '<p class="srate-n">Anything past &ldquo;' . $h($presets[0]['label'] ?? 'keep it clean')
+              . '&rdquo; needs the 18+ box on the last question.</p>';
+    }
+    return $out;
+}
+
 // NOTHING ATTACHED MEANS NOTHING TO BUILD WITH, so this page does not open. A
 // forge is fourteen model calls; twenty questions ending in "there is no machine"
 // is the worst screen in the app, and it is the one a fresh install would show
@@ -443,6 +498,19 @@ xeric_web_head('Xeric: the forge');
           your place, your era, your names and your facts, and invents only what you left out.</span>
       </button>
     </div>
+
+    <!-- AUTO GENERATE ANSWERS NOTHING, so this is the only place its content
+         rating can be said. It sits under the three ways rather than inside the
+         Auto Generate tile because that tile is a <button>, and a radio inside a
+         button is neither valid nor clickable. Start Blank calls no model and
+         invents nothing; Your Own Idea reaches the rating question the long way
+         round. This row is for the one way in that builds a whole world without
+         asking anything. -->
+    <?php if ($ratingPresets): ?>
+    <div class="waysrate">
+      <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, 'auto', 'Auto Generate keeps it') ?>
+    </div>
+    <?php endif; ?>
 
     <!-- WHAT FORGES IT — the whole list now, not a report on one machine.
          This used to print whatever model.php had settled on, because there was
@@ -580,30 +648,7 @@ xeric_web_head('Xeric: the forge');
   </section>
 
   <!-- ------------------------------------------------------------ steps -->
-  <?php
-  // THE RATING THAT ✨-EVERYTHING WILL BUILD WITH, offered beside the button that
-  // does it. Without this the all-surprise path leaves `rating` unanswered, and
-  // an unanswered rating is a GAP — which three separate routes will happily
-  // fill (the premise reader, the model fill, and the concept table, four of
-  // whose five rows ask for `mature`). Nobody decided that, and the interview
-  // says in as many words that nobody deciding must land clean.
-  //
-  // An ANSWER is not a gap, so putting the choice here is the whole fix: the
-  // weakest rating is pre-selected, it is written into the SAME field the rating
-  // question writes, and the concept table can no longer reach it.
-  //
-  // ✨ IS STILL NOT A WAY AROUND THE GATE. A rating that needs the affirmation is
-  // rendered disabled until the session has it, so this box can offer only what
-  // the visitor could already have chosen the long way round.
-  $ratingStep    = null;
-  foreach ($steps as $rs) { if ((string)($rs['key'] ?? '') === 'rating' || !empty($rs['gate'])) { $ratingStep = $rs; break; } }
-  $ratingPresets = (array)($ratingStep['presets'] ?? []);
-  $ratingFloor   = (string)($ratingStep['gate']['required_above'] ?? xeric_ratings()[0]);
-  $ratingNow     = (string)($answers['rating'] ?? '');
-  if ($ratingNow !== '') $ratingNow = xeric_session_rating($ratingNow, $sid);
-  if ($ratingNow === '') $ratingNow = xeric_ratings()[0];
-
-  $boxDrawn = false;
+  <?php $boxDrawn = false;
   foreach ($steps as $i => $s):
       $key   = (string)$s['key'];
       $open  = !empty($s['presets_are_suggestions']);
@@ -686,22 +731,8 @@ xeric_web_head('Xeric: the forge');
     <p class="hintline drew" hidden></p>
 
     <div class="escapes">
-      <?php if (!$gate && $ratingPresets): ?>
-      <div class="srate" role="group" aria-label="how far a surprise xeric may go">
-        <span class="srate-l">and keep it</span>
-        <?php foreach ($ratingPresets as $rp): $rv = (string)($rp['value'] ?? '');
-              $rgated = !empty($rp['requires_affirmation'])
-                        || xeric_rating_rank($rv) > xeric_rating_rank($ratingFloor); ?>
-          <label class="srate-o<?= $rgated && !$adult ? ' off' : '' ?>"<?= $rgated ? ' data-gated="1"' : '' ?>>
-            <input type="radio" name="srate-<?= (int)$i ?>" class="srate-r" value="<?= h($rv) ?>"
-                   <?= $rgated && !$adult ? 'disabled ' : '' ?><?= $rv === $ratingNow ? 'checked' : '' ?>>
-            <span><?= h($rp['label'] ?? $rv) ?></span>
-          </label>
-        <?php endforeach; ?>
-      </div>
-      <?php if (!$adult): ?>
-      <p class="srate-n">Anything past “keep it clean” needs the 18+ box on the last question.</p>
-      <?php endif; ?>
+      <?php if (!$gate): ?>
+        <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, (string)$i, 'and keep it') ?>
       <?php endif; ?>
       <button class="linkbtn" type="button" data-all="1">✨ Surprise me for everything else and build it</button>
     </div>
@@ -1089,7 +1120,10 @@ xeric_web_head('Xeric: the forge');
       // after the queue and the first model call, with an error about
       // authorisation. The field is right there on this screen; ask for it now.
       if (w !== 'wizard' && w !== 'blank' && !keyReady()) return;   // blank calls no model
-      if (w === 'auto') { save(); build('model'); return; }
+      // Auto Generate answers NOTHING, so the rating row under the tiles is the
+      // only thing standing between it and a gap the fill routes would fill.
+      // Untouched it reads the weakest rating, and this writes it.
+      if (w === 'auto') { lockRating(); save(); build('model'); return; }
       if (w === 'blank') { show(idxOf('blank')); return; }
       show(idxOf(w === 'own' ? 'premise' : 'q'));
     });
@@ -1217,15 +1251,16 @@ xeric_web_head('Xeric: the forge');
 
   paintSurpriseRating();
 
+  // NEVER LEAVE IT A GAP. Untouched, the boxes read the weakest rating and this
+  // writes it, so an unattended build carries a real answer rather than an
+  // absence for the fill routes to argue over. Called by both ways in.
+  function lockRating() {
+    var el = ratingField();
+    if (el && el.value.trim() === '') el.value = RATING_DEFAULT;
+  }
+
   $$('[data-all]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      // NEVER LEAVE IT A GAP. Untouched, the box reads the weakest rating and
-      // this writes it, so the all-surprise path carries a real answer rather
-      // than an absence for the concept table to fill.
-      var el = ratingField();
-      if (el && el.value.trim() === '') el.value = RATING_DEFAULT;
-      save(); build('model');
-    });
+    b.addEventListener('click', function () { lockRating(); save(); build('model'); });
   });
 
   // -- the build -----------------------------------------------------------
