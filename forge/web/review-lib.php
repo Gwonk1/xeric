@@ -319,14 +319,27 @@ function xeric_review_plain(string $msg): string
  * a text box would silently empty four people's schedules. The label is what the
  * refusal calls the field, so a person is told which box they broke.
  *
- * @return array<string,array{0:string,1:string}>  regex => [label, kind]
+ * THE THIRD ELEMENT IS WHAT THE EDIT COSTS A WORLD THAT IS ALREADY LIVE, and it
+ * lives in this table so there is exactly one list. 'deep' marks the rows that
+ * land in the identity-bearing top of somebody's system prompt — a voice, the
+ * psyche, what somebody is really after, the canon the bible carries as law,
+ * and the walls — where one changed byte costs the model a re-read of who she
+ * is before the next answer. Everything unmarked is 'live': surface prose that
+ * is simply true from the next thing anybody says. The rating would be 'deep'
+ * too, and is not here at all, because it is not editable — it is the user's,
+ * from the interview. xeric_review_edit_weight() is the only reader.
+ *
+ * @return array<string,array{0:string,1:string,2?:string}>  regex => [label, kind, weight?]
  */
 function xeric_review_editable(): array
 {
     return [
         '#^meta\.(name|description)$#'                                   => ['the xeric', 'line'],
         '#^setting\.(locale|era)$#'                                      => ['the setting', 'line'],
-        '#^setting\.(texture|canon_rules)\.\d+$#'                        => ['the setting', 'line'],
+        '#^setting\.texture\.\d+$#'                                      => ['the setting', 'line'],
+        // "These are laws here, not flavor" is how the bible hands these to
+        // every speaker — canon, not colour, hence the weight.
+        '#^setting\.canon_rules\.\d+$#'                                  => ['the setting', 'line', 'deep'],
         // THE FIELDS A BLANK XERIC HAS NONE OF. Themes and the mood axis were
         // read-only because a forged world always arrives with them written; a
         // world somebody starts empty arrives with neither, and "customise it
@@ -350,7 +363,8 @@ function xeric_review_editable(): array
         '#^places\.\d+\.description$#'                                   => ['a place', 'text'],
         '#^places\.\d+\.hours\.(open|close)$#'                           => ['a place\'s hours', 'time'],
         '#^cast\.characters\.\d+\.(display_name|one_line|surface)$#'     => ['a character', 'line'],
-        '#^cast\.characters\.\d+\.(appearance|voice|solace)$#'           => ['a character', 'text'],
+        '#^cast\.characters\.\d+\.(appearance|solace)$#'                 => ['a character', 'text'],
+        '#^cast\.characters\.\d+\.voice$#'                               => ['a character', 'text', 'deep'],
         '#^cast\.characters\.\d+\.age$#'                                 => ['a character\'s age', 'int'],
         // The cog on the play screen writes these three. Pronouns are the
         // character's own word and shade their face; the orbit select only
@@ -363,13 +377,13 @@ function xeric_review_editable(): array
         '#^cast\.characters\.\d+\.orbit$#'                               => ['a character\'s circle', 'line'],
         '#^cast\.characters\.\d+\.temperature$#'                         => ['a character\'s heat', 'num'],
         '#^cast\.characters\.\d+\.tells\.\d+$#'                          => ['a character\'s tells', 'line'],
-        '#^cast\.characters\.\d+\.psyche\.(sore_spot|jealousy|self_soothe|praise_that_lands)$#' => ['a character', 'line'],
-        '#^cast\.characters\.\d+\.drives\.pull$#'                        => ['a character', 'line'],
+        '#^cast\.characters\.\d+\.psyche\.(sore_spot|jealousy|self_soothe|praise_that_lands)$#' => ['a character', 'line', 'deep'],
+        '#^cast\.characters\.\d+\.drives\.pull$#'                        => ['a character', 'line', 'deep'],
         '#^cast\.characters\.\d+\.week\.\d+\.(from|to)$#'                => ['a shift time', 'time'],
         '#^cast\.characters\.\d+\.week\.\d+\.doing$#'                    => ['what somebody is doing', 'line'],
-        '#^cast\.special_roles\.\d+\.must_not_know$#'                    => ['what somebody must not know', 'line'],
+        '#^cast\.special_roles\.\d+\.must_not_know$#'                    => ['what somebody must not know', 'line', 'deep'],
         '#^cast\.protagonist\.(arc|pressure)$#'                          => ['whose story this is', 'line'],
-        '#^knowledge_walls\.\d+\.(explain|shown_as)$#'                   => ['a knowledge wall', 'text'],
+        '#^knowledge_walls\.\d+\.(explain|shown_as)$#'                   => ['a knowledge wall', 'text', 'deep'],
         '#^seed\.events\.\d+\.(title|prose)$#'                           => ['something that already happened', 'text'],
         '#^seed\.memories\.\d+\.text$#'                                  => ['something somebody remembers', 'text'],
     ];
@@ -382,6 +396,65 @@ function xeric_review_field(string $path): ?array
         if (preg_match($re, $path)) return $spec;
     }
     return null;
+}
+
+/**
+ * What saving this path costs a world that is already live.
+ *
+ * Read off the editable table's own third column, never off a second list:
+ * 'deep' for the rows marked identity-bearing up there, 'live' for the rest,
+ * null for a path the review does not let anybody type over at all.
+ */
+function xeric_review_edit_weight(string $path): ?string
+{
+    $spec = xeric_review_field($path);
+    if ($spec === null) return null;
+    return (string)($spec[2] ?? 'live');
+}
+
+/**
+ * The one honest sentence a save on a LAUNCHED world carries back.
+ *
+ * Editing a live world was silent, which was the documented annoyance: the
+ * person in it is different from the next message on, and nobody said so. So
+ * every accepted edit now answers with what it just did to the running world —
+ * a prose edit is simply live, an identity edit costs the model a re-read of
+ * who she is (xeric_prompt_build's caching discipline: her voice and psyche are
+ * the FIRST bytes of her system prompt, so one changed byte there re-reads
+ * everything). Classification is the table's, in code; no model is asked.
+ *
+ * Null in exactly three honest places: a world still on the anvil (nothing is
+ * running, there is nothing to warn about), a path the review cannot save
+ * anyway, and the seed of a lived world — its past is in the database, the
+ * section's own banner already says the file is all an edit changes, and "live
+ * from the next thing anybody says" would be the one lie on the page.
+ */
+function xeric_review_live_note(array $w, string $path): ?string
+{
+    if (empty($w['launched'])) return null;
+    if (str_starts_with($path, 'seed.')) return null;
+    $weight = xeric_review_edit_weight($path);
+    if ($weight === null) return null;
+
+    if ($weight !== 'deep') return 'Live from the next thing anybody says.';
+
+    $t = (array)($w['template'] ?? []);
+    if (preg_match('#^cast\.characters\.(\d+)\.#', $path, $m)) {
+        $c = (array)($t['cast']['characters'][(int)$m[1]] ?? []);
+        // The character's own word for themselves, the same way the faces read
+        // it — this page must not misgender somebody while renaming their soul.
+        $k    = xeric_play_kind($c);
+        $subj = ['f' => 'she', 'm' => 'he', 'x' => 'they'][$k];
+        $obj  = ['f' => 'her', 'm' => 'him', 'x' => 'them'][$k];
+        $who  = trim((string)($c['display_name'] ?? ''));
+        $is   = ($who === '' && $k === 'x') ? 'are' : 'is';
+        return 'This changes who ' . ($who !== '' ? $who : $subj) . ' ' . $is
+            . ' — the next answer will take longer while the model re-reads ' . $obj . '.';
+    }
+    // Canon and the walls: not one person's interior but what every speaker
+    // holds true, and every one of them pays the re-read.
+    return 'This changes what this xeric holds true — the next answer will take longer '
+        . 'while every speaker re-reads it.';
 }
 
 /** Read a dotted path out of a nested array. null when any step is missing. */
@@ -646,6 +719,16 @@ function xeric_review_apply_edit(array $w, string $path, string $value, array $o
     // and "I did not like that, try again" is not a correction.
     xeric_review_learn_edit($w, $path, (string)$before, (string)$value);
 
+    // EDITING A LAUNCHED WORLD IS LIVE, AND NOW SAYS SO. One sentence, riding
+    // the save that made it true; where a more specific note is already there
+    // (a re-arm, an age that crossed the line), this one follows it.
+    $liveNote = xeric_review_live_note($w, $path);
+    if ($liveNote !== null) {
+        $also['note'] = isset($also['note'])
+            ? rtrim((string)$also['note']) . ' ' . $liveNote
+            : $liveNote;
+    }
+
     // `was` goes back out for the same reason it goes in: a caller handed only
     // the new text has to guess what was wrong with the old.
     return ['ok' => true, 'value' => (string)$value, 'was' => (string)$before] + $also;
@@ -816,6 +899,144 @@ function xeric_review_path_walled(array $template, string $path): bool
 
     foreach ($paths as $p) if (isset($hidden[$p])) return true;
     return false;
+}
+
+// ---------------------------------------------------------------------------
+// The pronoun backfill
+// ---------------------------------------------------------------------------
+//
+// Every cast forged before pronouns were a field has none, so the faces read
+// each person's own prose and honestly grey anyone the prose does not settle.
+// New forges ask at birth and the cog fixes one person at a time; this is the
+// one-time repair for a whole old cast — ONE model call, only pronoun sets
+// back, only the EMPTY fields ever written, and an uncertain answer is
+// respected: it stays grey, because a name is never evidence.
+
+/**
+ * Who in this cast has no pronouns on record.
+ *
+ * Missing and empty are the same answer — the cog writes '' nowhere, so an
+ * empty string is a field that has never been set, not a choice.
+ *
+ * @return array<string,int> handle => position in the cast
+ */
+function xeric_review_pronounless(array $t): array
+{
+    $out = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $i => $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        if (trim((string)($c['pronouns'] ?? '')) === '') $out[$h] = (int)$i;
+    }
+    return $out;
+}
+
+/**
+ * Is this a pronoun set the engine can actually read?
+ *
+ * THE VOCABULARY IS xeric_pronouns()'S AND IS NOT COPIED HERE. That helper is
+ * what every renderer resolves a set through, and it falls back to they/them
+ * for anything it does not know — so known-ness is asked of it directly: a set
+ * is valid when the helper answers something other than its fallback, or when
+ * the set genuinely IS "they". A second copy of the word list would drift the
+ * first time somebody taught the engine a new set.
+ *
+ * "unclear" is invalid by construction, which is the point: the model saying
+ * it cannot tell must never become a stored answer.
+ */
+function xeric_review_pronoun_ok(string $set): bool
+{
+    $first = trim((string)(explode('/', mb_strtolower(trim($set)))[0] ?? ''));
+    if ($first === '' || preg_match('/[^a-z]/', $first)) return false;
+    return $first === 'they' || xeric_pronouns(['user' => ['pronouns' => $first]])['subj'] !== 'they';
+}
+
+/**
+ * One question, once, for the whole cast: which pronoun set does each person's
+ * own description use?
+ *
+ * Only the people in $missing are asked about, and only their display name and
+ * self-descriptive prose ride along — the same fields the grey fallback reads,
+ * because the model is being asked to do that reading better, not to know
+ * things the page does not. The prompt says out loud that a name is not
+ * evidence and that "unclear" is a real answer.
+ *
+ * @param array<string,int> $missing from xeric_review_pronounless()
+ * @return array<string,string> handle => the model's raw answer, unvalidated —
+ *                              xeric_review_pronoun_merge() is the gate
+ */
+function xeric_review_pronoun_ask(array $t, array $missing, array $endpoint): array
+{
+    if ($missing === []) return [];
+
+    $rows = [];
+    foreach ($missing as $h => $i) {
+        $c = (array)($t['cast']['characters'][$i] ?? []);
+        $desc = [];
+        foreach (['one_line', 'appearance', 'voice', 'solace'] as $k) {
+            $v = trim((string)($c[$k] ?? ''));
+            if ($v !== '') $desc[] = $v;
+        }
+        $rows[] = '- ' . $h . ': ' . (trim((string)($c['display_name'] ?? '')) ?: $h)
+            . ($desc !== [] ? ' — ' . mb_substr(implode(' ', $desc), 0, 320) : '');
+    }
+
+    $msgs = [
+        ['role' => 'system', 'content' =>
+            'You read a cast list and answer ONE question per person: which pronoun set '
+            . 'their own description uses. Reply with ONE JSON object and nothing else.'],
+        ['role' => 'user', 'content' =>
+            "The cast:\n" . implode("\n", $rows) . "\n\n"
+            . 'For each person, answer with a pronoun set: "he/him", "she/her", "they/them", '
+            . '"ze/hir", "xe/xem" or "it/its". Read ONLY the description. A name is not '
+            . 'evidence — if the description does not settle it, answer "unclear" rather '
+            . 'than guessing. Reply with one JSON object mapping each handle to its answer, '
+            . 'like {"' . (string)array_key_first($missing) . '": "she/her"}.'],
+    ];
+
+    $out = xeric_llm_json($endpoint, $msgs, ['tag' => 'pronouns', 'temperature' => 0.2, 'max_tokens' => 500]);
+    // Some models wrap the map; take it wherever it is.
+    if (isset($out['answers']) && is_array($out['answers'])) $out = $out['answers'];
+
+    $answers = [];
+    foreach ($missing as $h => $i) {
+        $v = $out[$h] ?? null;
+        if (is_array($v)) $v = reset($v);          // {"handle": {"pronouns": "she/her"}}
+        if (is_string($v)) $answers[$h] = $v;
+    }
+    return $answers;
+}
+
+/**
+ * The model's answers, folded onto the cast. The whole gate, in one place:
+ *
+ *   ONLY THE EMPTY FIELDS. The fold iterates what xeric_review_pronounless()
+ *   found, so a pronoun somebody already chose — at birth, or by hand in the
+ *   cog — cannot be overwritten by a machine, whatever the model answered.
+ *
+ *   ONLY SETS THE ENGINE READS. Everything else, "unclear" first among them,
+ *   leaves that person exactly as grey as before, with the reason kept so the
+ *   page can say it. Uncertain is an answer this feature was built to respect.
+ *
+ * Pure: the caller saves the returned template through xeric_review_save(),
+ * the same validated write every edit takes, so one ↺ is the whole batch back.
+ *
+ * @return array{template:array,filled:array<string,string>,left:array<string,string>}
+ */
+function xeric_review_pronoun_merge(array $t, array $answers): array
+{
+    $filled = [];
+    $left   = [];
+    foreach (xeric_review_pronounless($t) as $h => $i) {
+        $raw = trim((string)($answers[$h] ?? ''));
+        $set = mb_strtolower((string)preg_replace('/\s*/u', '', $raw));
+        if ($raw === '' || $set === 'unclear' || $set === 'unknown') { $left[$h] = 'unclear'; continue; }
+        if (!xeric_review_pronoun_ok($set)) { $left[$h] = 'not a set this app reads'; continue; }
+        $set = mb_substr($set, 0, 40);
+        $t['cast']['characters'][$i]['pronouns'] = $set;
+        $filled[$h] = $set;
+    }
+    return ['template' => $t, 'filled' => $filled, 'left' => $left];
 }
 
 // ---------------------------------------------------------------------------
@@ -1712,6 +1933,27 @@ function xeric_review_section_html(string $sec, array $w): string
     }
 
     if ($sec === 'cast') {
+        // THE ONE-TIME PRONOUN BACKFILL, offered only where there is a hole to
+        // fill: a complete cast never sees this. It lives in the section body,
+        // not the header, so the repaint that follows a successful fill is also
+        // what takes the button away.
+        if (!empty($w['mine'])) {
+            $gap = xeric_review_pronounless($t);
+            if ($gap !== []) {
+                $gapNames = [];
+                foreach ($gap as $gh => $gi) {
+                    $gapNames[] = trim((string)($t['cast']['characters'][$gi]['display_name'] ?? '')) ?: $gh;
+                }
+                $who = count($gapNames) <= 4 ? implode(', ', $gapNames) : count($gapNames) . ' of this cast';
+                echo '<p class="note pngap">' . h('Nobody asked ' . $who . ' their pronouns when '
+                        . (count($gapNames) === 1 ? 'they were' : 'this xeric was') . ' forged, so their faces are '
+                        . 'read from their prose — and grey wherever the prose does not say. ')
+                    . '<button type="button" class="linkbtn pronounfill"'
+                    . ' title="Ask the model once, for everybody at once. Only the empty fields are written; '
+                    . 'anyone it cannot place honestly stays grey, and one ↺ takes the whole thing back.">'
+                    . 'fill in pronouns — one model call</button></p>';
+            }
+        }
         $star = (string)($t['cast']['protagonist']['handle'] ?? '');
         foreach ((array)($t['cast']['characters'] ?? []) as $i => $c) {
             $h = (string)$c['handle'];
@@ -2021,6 +2263,9 @@ textarea.ed{min-height:3.1rem;resize:vertical;overflow-wrap:anywhere}
 .ed.saved{border-color:var(--good)}
 .ed.bad{border-color:var(--bad)}
 .ferr{margin:.3rem 0 0;font-size:.85rem;color:var(--bad)}
+/* the same line under the box, when it is information rather than a refusal:
+   the live-edit sentence and the re-arm note speak in the page's quiet voice */
+.ferr.kept{color:var(--fg-dim)}
 .row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(7.5rem,1fr));gap:0 .6rem}
 .cardhead{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;font-weight:600;margin:0 0 .5rem}
 .cardhead code{font:inherit;font-size:.8rem;color:var(--accent);font-weight:400}

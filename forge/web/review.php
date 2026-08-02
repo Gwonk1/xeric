@@ -257,6 +257,71 @@ if ($action !== '') {
         xeric_web_json(['ok' => true, 'value' => $value]);
     }
 
+    // -- the pronoun backfill ----------------------------------------------
+    // ONE CALL FOR THE WHOLE CAST, and only for the holes. Casts forged before
+    // pronouns were a field fall back to prose-reading and grey anyone the
+    // prose does not settle; this asks the model that one question, validates
+    // every answer against the vocabulary the engine reads, and writes ONLY
+    // the empty fields through the same validated save every edit takes — one
+    // prev copy, so ↺ is the whole batch back. An "unclear" is respected and
+    // that person stays grey: a name is never evidence.
+    if ($action === 'pronouns') {
+        $missing = xeric_review_pronounless($w['template']);
+        if ($missing === []) {
+            xeric_web_json(['error' => 'Everybody in this cast already has pronouns on record.',
+                            'kind' => 'complete'], 409);
+        }
+
+        try { $endpoint = xeric_review_pick_endpoint((array)($in['model'] ?? [])); }
+        catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
+
+        // One machine, one thing at a time — a single small call, so it waits
+        // briefly like the dice rather than queueing like a reroll.
+        $hold = xeric_queue_take('say', 6.0, 'pronouns:' . $slug);
+        if (($hold['ok'] ?? false) !== true) {
+            xeric_web_json(['error' => 'The model is busy with something else. Try again in a moment.',
+                            'kind' => 'busy'], 503);
+        }
+        try {
+            $answers = xeric_review_pronoun_ask($w['template'], $missing, $endpoint);
+        } catch (Throwable $e) {
+            xeric_queue_release($hold);
+            xeric_web_json(['error' => 'The model had no answer: ' . $e->getMessage(), 'kind' => 'model'], 502);
+        }
+        xeric_queue_release($hold);
+
+        $r = xeric_review_pronoun_merge($w['template'], $answers);
+        if ($r['filled'] !== []) {
+            try {
+                xeric_review_save($slug, $r['template']);
+            } catch (Throwable $e) {
+                xeric_web_json(['error' => $e->getMessage() . ' Nothing was written.'], 422);
+            }
+        }
+
+        // The report the page prints: what landed, and who stays grey and why.
+        $name = function (string $h) use ($w): string {
+            foreach ((array)($w['template']['cast']['characters'] ?? []) as $c) {
+                if ((string)($c['handle'] ?? '') === $h) {
+                    return trim((string)($c['display_name'] ?? '')) ?: $h;
+                }
+            }
+            return $h;
+        };
+        $said = [];
+        if ($r['filled'] !== []) {
+            $said[] = 'wrote ' . implode(', ',
+                array_map(fn($h) => $name($h) . ' (' . $r['filled'][$h] . ')', array_keys($r['filled'])));
+        }
+        if ($r['left'] !== []) {
+            $said[] = 'left ' . implode(', ', array_map($name, array_keys($r['left'])))
+                . ' grey — the prose does not say, and a name is never enough';
+        }
+        $note = 'Pronouns: ' . implode('; ', $said) . '.'
+            . ($r['filled'] !== [] ? ' One ↺ takes the whole thing back.' : '');
+        xeric_web_json(['ok' => true, 'filled' => $r['filled'], 'left' => $r['left'], 'note' => $note]);
+    }
+
     // -- rename the address ---------------------------------------------------
     // The slug is the directory, the URL, and what the owner's session points
     // at. All three move together here, or none of them do. Never automatic:
@@ -1314,9 +1379,49 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
     });
   }
 
+  // -- the pronoun backfill ---------------------------------------------------
+  // One press, one model call for the whole cast. The report lands in the
+  // section log (what was written, who stays grey), and the section repaints
+  // from disk — which is also what takes the button away once the cast is
+  // whole, because the renderer never draws it for a complete cast.
+  function bindPronounFill(root) {
+    $$('.pronounfill', root).forEach(function (b) {
+      if (b.dataset.bound) return;
+      b.dataset.bound = '1';
+      b.addEventListener('click', function () {
+        if (running || !MINE || b.disabled) return;
+        var sec = b.closest('.sec');
+        var err = sec ? $('.secerr', sec) : null, log = sec ? $('.seclog', sec) : null;
+        var was = b.textContent;
+        b.disabled = true;
+        b.textContent = 'asking…';
+        fetch('review.php?a=pronouns', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ world: W, model: rerollModel() }) })
+          .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+          .then(function (res) {
+            if (!res.ok) {
+              b.disabled = false;
+              b.textContent = was;
+              if (err) { err.textContent = res.d.error || 'no answer came back'; err.hidden = false; }
+              return;
+            }
+            if (err) err.hidden = true;
+            if (log && res.d.note) { log.hidden = false; tlog(log, res.d.note); }
+            repaint('cast');
+          },
+          function (e) {
+            b.disabled = false;
+            b.textContent = was;
+            if (err) { err.textContent = 'the forge could not be reached, ' + e.message; err.hidden = false; }
+          });
+      });
+    });
+  }
+
   function bindEdits(root) {
     bindDice(root);
     bindAddField(root);
+    bindPronounFill(root);
     $$('.ed', root).forEach(function (el) {
       if (el.dataset.bound) return;
       el.dataset.bound = '1';
@@ -1338,7 +1443,9 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
     // wrapper, so every save started throwing on a null it used to find.
     var fld = el.closest('.fld') || el.parentNode;
     var err = fld.querySelector('.ferr');
-    if (!err) { err = { hidden: true, textContent: '' }; }   // never fail a save over a missing line
+    if (!err) {   // never fail a save over a missing line
+      err = { hidden: true, textContent: '', classList: { add: function () {}, remove: function () {} } };
+    }
     if (el.value === el.dataset.was) { err.hidden = true; return; }
     var want = el.value;
 
@@ -1349,6 +1456,7 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         if (!res.ok || !res.d.ok) {
           el.value = el.dataset.was;                 // the old value, still there
           el.classList.add('bad');
+          err.classList.remove('kept');
           err.textContent = res.d.error || 'that could not be saved';
           err.hidden = false;
           return;
@@ -1360,14 +1468,17 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         // Some edits change more than the box they were typed in — retyping
         // your motivation re-arms the systems, and the panel three inches below
         // would otherwise go on naming the old ones until a reload. The note
-        // says what else moved; the stale list says what to redraw.
-        if (res.d.note) { err.textContent = res.d.note; err.hidden = false; }
-        else { err.hidden = true; }
+        // says what else moved; the stale list says what to redraw. On a LIVE
+        // world every accepted edit carries one: what this save just did to the
+        // running world. Information, not a refusal, hence the quiet class.
+        if (res.d.note) { err.classList.add('kept'); err.textContent = res.d.note; err.hidden = false; }
+        else { err.classList.remove('kept'); err.hidden = true; }
         (res.d.stale || []).forEach(repaint);
       })
       .catch(function (e) {
         el.value = el.dataset.was;
         el.classList.add('bad');
+        err.classList.remove('kept');
         err.textContent = 'the forge could not be reached, ' + e.message + '. Nothing was saved.';
         err.hidden = false;
       });
