@@ -17,6 +17,12 @@
  * And the contract that costs nothing to test and everything to lose: asking
  * is a read. Row counts across every table are identical before and after a
  * build-and-ask.
+ *
+ * The write-ahead sections (o)–(s) defend the third power the same way: an
+ * intent's words reach the owner's listing and nothing else — not the ask
+ * prompt, not the investigate prompt, not the sweep's event prompt, not the
+ * trail — and the lean they license shifts a seeded draw without ever forcing
+ * it. An incompatible world draws byte-for-byte the draw it always drew.
  */
 
 declare(strict_types=1);
@@ -596,6 +602,359 @@ ok('cli: the pressure, the killer and the oracle stay out of the CLI audit too',
     !str_contains($cli2, 'PRESSURE-NEEDLE') && !str_contains($cli2, 'KILLER-NEEDLE')
     && leaks($cli2, $ORACLE) === [],
     implode(' | ', leaks($cli2, $ORACLE)));
+
+// ---------------------------------------------------------------------------
+// (o) WRITE AHEAD — recording, parsing, and the oracle-shaped absence
+// ---------------------------------------------------------------------------
+
+/** Run $fn, return the exception message it threw, or '' if it didn't. */
+function intent_err(callable $fn): string
+{
+    try { $fn(); } catch (Throwable $e) { return $e->getMessage(); }
+    return '';
+}
+
+$IN_NEEDLE = 'INTENT-NEEDLE-OMEGA';
+$madeA = xeric_narrator_intend($T, $db,
+    '  ' . $IN_NEEDLE . " Ruth finds the missing\nhymn ledger at the Bluebird Diner  ",
+    ['epoch' => $epoch]);
+$inA = $madeA['intent'];
+
+ok('intend: the hints are parsed by code — who, where, and nothing guessed',
+    $inA['participants'] === ['ruth'] && $inA['place'] === 'bluebird' && $inA['kind'] === null,
+    json_encode($inA));
+ok('intend: the row is live, numbered, flattened, and fades fourteen world-days out',
+    $inA['n'] === 1 && $inA['state'] === 'live' && !str_contains($inA['text'], "\n")
+    && $inA['fades'] === $epoch + 14 * 86400);
+ok('intend: the intent lives where the oracle lives — a world_state row no prompt reads',
+    xeric_world_state_get($db, 'intent:1') !== null
+    && xeric_world_state_get($db, 'intent_seq') === '1');
+
+$hints = xeric_narrator_intent_hints($T, 'a rumor goes round about the mill');
+ok('intend: a kind of hour and a place are read out of plain words',
+    $hints['kind'] === 'rumor' && $hints['place'] === 'the_mill' && $hints['participants'] === []);
+
+ok('intend: no words is refused',
+    str_contains(intent_err(fn() => xeric_narrator_intend($T, $db, '   ')), 'needs words'));
+ok('intend: an essay is refused — an intent is one breath',
+    str_contains(intent_err(fn() => xeric_narrator_intend($T, $db, str_repeat('word ', 60))), 'one breath'));
+ok('intend: an explicit kind the engine does not know is refused',
+    str_contains(intent_err(fn() => xeric_narrator_intend($T, $db, 'something', ['kind' => 'wedding'])),
+        'no kind of hour'));
+ok('intend: an explicit participant outside the cast is refused',
+    str_contains(intent_err(fn() => xeric_narrator_intend($T, $db, 'something', ['participants' => ['zed']])),
+        'not in this cast'));
+
+// The absence that makes it the oracle's: the ask prompt is rebuilt over the
+// same world, now with an intent recorded, and carries not one word of it.
+$b3   = xeric_narrator_prompt($T, $db, $now, $Q, ['stories' => [$S]]);
+$all3 = (string)$b3['messages'][0]['content'] . "\n" . (string)$b3['messages'][1]['content'];
+ok('write-ahead: the intent is absent from the ask prompt by construction',
+    !str_contains($all3, $IN_NEEDLE) && !str_contains($all3, 'missing hymn ledger'));
+ok('write-ahead: the ask manifest does not even know intents exist',
+    !array_key_exists('intents', $b3['sources']));
+
+$snapI = narrator_snapshot($db);
+$audI  = xeric_narrator_investigate($T, $db, ['stub' => fn() => '[]'], ['now' => $now, 'days' => 3]);
+$iProm = '';
+foreach ($audI['messages'] as $x) $iProm .= $x['content'] . "\n";
+$iObs = '';
+foreach ($audI['observations'] as $x) $iObs .= $x['text'] . "\n";
+ok('write-ahead: the intent is absent from the investigate prompt and, unfaded, from the report',
+    !str_contains($iProm, $IN_NEEDLE) && !str_contains($iObs, $IN_NEEDLE)
+    && audit_find($audI, 'faded_intent') === []);
+ok('write-ahead: the audit reads the intent ledger onto its manifest, and settles nothing',
+    $audI['sources']['intents'] === [1] && narrator_snapshot($db) === $snapI);
+
+// ---------------------------------------------------------------------------
+// (p) matching — two doors, argued; the history fence; retiring
+// ---------------------------------------------------------------------------
+
+$dbPathM = sys_get_temp_dir() . '/xeric-narrator-intent-' . getmypid() . '.db';
+foreach ([$dbPathM, $dbPathM . '-wal', $dbPathM . '-shm'] as $f) @unlink($f);
+$dbM = xeric_state_open($dbPathM);
+
+$iA = xeric_narrator_intend($T, $dbM, 'Dot and Theo end up at a shared meal', ['epoch' => $epoch]);
+ok('match setup: people and kind both parsed',
+    $iA['intent']['participants'] === ['dot', 'theo'] && $iA['intent']['kind'] === 'shared_meal');
+
+$evBefore = xeric_event_add($dbM, 'coffee happened', $epoch - 3600, 'bluebird', ['dot', 'theo'], 'Nothing much.');
+$evWrong  = xeric_event_add($dbM, 'a quiet visit', $epoch + 3600, 'bluebird', ['dot', 'theo'], 'He dropped by.');
+xeric_world_state_set($dbM, 'why:event:' . $evWrong, json_encode(['kind' => 'visit']));
+$st0 = xeric_narrator_intents_settle($T, $dbM);
+ok('match: people alone do not retire an intent — the kind half is required too',
+    $st0['settled'] === [] && (xeric_narrator_intents($dbM)[1]['state'] ?? '') === 'live');
+
+$evYes = xeric_event_add($dbM, 'supper ran long', $epoch + 7200, 'bluebird', ['dot', 'theo', 'ruth'], 'Plates went round.');
+xeric_world_state_set($dbM, 'why:event:' . $evYes, json_encode(['kind' => 'shared_meal']));
+$st1 = xeric_narrator_intents_settle($T, $dbM);
+ok('match: the strong door — its people and its kind of hour — retires it, citing the hour',
+    isset($st1['settled'][1]) && $st1['settled'][1]['done']['event'] === $evYes
+    && $st1['settled'][1]['done']['by'] === 'its people and its kind of hour');
+
+// The kind read the other way: no kept trail, but a participant's memory of
+// the hour carries it in its meta, the way every sweep-written memory does.
+$iB = xeric_narrator_intend($T, $dbM, 'Ruth and Harlan share a routine', ['epoch' => $epoch]);
+$evMem = xeric_event_add($dbM, 'the counting went twice', $epoch + 9000, null, ['ruth', 'harlan'], 'The drawer would not balance.');
+xeric_memory_add($dbM, 'ruth', 'Ruth watched the drawer refuse to balance', 'event',
+    ['event_id' => $evMem, 'kind' => 'routine'], $epoch + 9000);
+$st2 = xeric_narrator_intents_settle($T, $dbM);
+ok('match: the kind is read from a memory\'s meta when no trail was kept',
+    isset($st2['settled'][2]) && $st2['settled'][2]['done']['event'] === $evMem);
+
+$iC = xeric_narrator_intend($T, $dbM, 'INTENT-LOOSE-NEEDLE the drawer would not balance twice', ['epoch' => $epoch]);
+ok('intend: an intent that reads nothing is stored loose, and says so',
+    $iC['intent']['participants'] === [] && $iC['intent']['kind'] === null
+    && str_contains(implode(' ', $iC['notes']), 'stored loose'));
+$st3 = xeric_narrator_intents_settle($T, $dbM);
+ok('match: the loose door — its own words, the same needle the wall uses',
+    isset($st3['settled'][3]) && $st3['settled'][3]['done']['event'] === $evMem
+    && $st3['settled'][3]['done']['by'] === 'its own words');
+
+$iD = xeric_narrator_intend($T, $dbM, 'INTENT-LATE-NEEDLE plates went round at supper again', ['epoch' => $epoch + 86400]);
+$st4 = xeric_narrator_intents_settle($T, $dbM);
+ok('match: history cannot realize an intent — an hour before the recording does not count',
+    $st4['settled'] === [] && (xeric_narrator_intents($dbM)[4]['state'] ?? '') === 'live');
+
+$ret = xeric_narrator_intent_retire($dbM, 4, $epoch + 86400);
+ok('retire: the owner takes a live intent back',
+    $ret !== null && $ret['state'] === 'retired'
+    && (xeric_narrator_intents($dbM)[4]['state'] ?? '') === 'retired');
+ok('retire: only once, and never a realized beat',
+    xeric_narrator_intent_retire($dbM, 4, $epoch) === null
+    && xeric_narrator_intent_retire($dbM, 1, $epoch) === null
+    && xeric_narrator_intent_retire($dbM, 99, $epoch) === null);
+
+// Names are content words to the needle, so an intent that names its people
+// must also find them at the hour — otherwise "Dot and Ruth see the drawer"
+// retires on Ruth alone, which a live run actually produced.
+$iE = xeric_narrator_intend($T, $dbM, 'INTENT-BAR Dot and Ruth see the drawer would not balance', ['epoch' => $epoch]);
+$st5 = xeric_narrator_intents_settle($T, $dbM);
+ok('match: the word door is barred to an hour missing somebody the intent named',
+    $iE['intent']['participants'] === ['ruth', 'dot'] || $iE['intent']['participants'] === ['dot', 'ruth']
+        ? $st5['settled'] === [] && (xeric_narrator_intents($dbM)[5]['state'] ?? '') === 'live'
+        : false,
+    json_encode($iE['intent']));
+
+// ---------------------------------------------------------------------------
+// (q) the lean — a pull the draw can feel and the prompt cannot see
+// ---------------------------------------------------------------------------
+
+// Four people, all free, nowhere to be: six equal pairs. The intent names one.
+$TL = [
+    'meta'   => ['name' => 'Leanfield'],
+    'user'   => ['name' => 'Neil', 'timezone' => 'UTC'],
+    'cast'   => ['characters' => [
+        ['handle' => 'ada',  'display_name' => 'Ada Verne'],
+        ['handle' => 'bram', 'display_name' => 'Bram Ott'],
+        ['handle' => 'cass', 'display_name' => 'Cass Rhee'],
+        ['handle' => 'dree', 'display_name' => 'Dree Fenn'],
+    ]],
+    'places' => [],
+    'forge'  => ['armed' => []],
+];
+$nowL   = xeric_world_now($TL, $epoch);
+$kindsL = xeric_sweep_kinds_for($TL);
+$pairOf = function (?array $c): array {
+    if ($c === null) return [];
+    $h = array_map('strval', (array)$c['handles']);
+    sort($h);
+    return $h;
+};
+
+$base = $lean = 0;
+$trailOk = true;
+for ($s = 1; $s <= 400; $s++) {
+    mt_srand($s);
+    $c0 = xeric_sweep_choose($TL, $nowL, $kindsL, []);
+    mt_srand($s);
+    $c1 = xeric_sweep_choose($TL, $nowL, $kindsL,
+        ['intents' => [['n' => 1, 'participants' => ['ada', 'bram']]]]);
+    if ($pairOf($c0) === ['ada', 'bram']) $base++;
+    $won = $pairOf($c1) === ['ada', 'bram'];
+    if ($won) $lean++;
+
+    $tl = $c1['trail']['lean'] ?? null;
+    if ($tl === null || $tl['why'] !== 'leaning toward an intended beat'
+        || $tl['intents'] !== [1] || $tl['groups'] !== 1 || $tl['kind'] !== false
+        || $tl['chose'] !== $won) $trailOk = false;
+    if (!array_key_exists('lean', $c0['trail']) || $c0['trail']['lean'] !== null) $trailOk = false;
+}
+ok('lean: the pull measurably shifts a seeded draw toward the intended pair',
+    $base > 0 && $lean > $base, "base $base, lean $lean of 400");
+ok('lean: and never forces it — the rest of the town keeps winning hours',
+    $lean < 400, "lean $lean of 400");
+ok('lean: the trail records it every time, by number and in the appointed words',
+    $trailOk);
+
+// An incompatible intent — a stranger, an unarmed kind — is not a smaller
+// pull, it is no pull: the same seed draws the same bytes.
+mt_srand(77);
+$p0 = xeric_sweep_choose($TL, $nowL, $kindsL, []);
+mt_srand(77);
+$p1 = xeric_sweep_choose($TL, $nowL, $kindsL, ['intents' => [
+    ['n' => 9, 'participants' => ['ada', 'zed'], 'kind' => 'rumor'],
+    ['n' => 10, 'participants' => [], 'kind' => null],
+]]);
+ok('lean: an incompatible world draws byte-for-byte the draw it always drew',
+    json_encode($p0) === json_encode($p1));
+
+// The kind half: two armed kinds, an intent asking for one by name.
+$TLK = $TL;
+$TLK['forge'] = ['armed' => ['rumors', 'faith']];
+$kindsK = xeric_sweep_kinds_for($TLK);
+$bk = $lk = 0;
+$kTrailOk = true;
+for ($s = 1; $s <= 400; $s++) {
+    mt_srand($s);
+    if (xeric_sweep_choose($TLK, $nowL, $kindsK, [])['kind']['key'] === 'ritual') $bk++;
+    mt_srand($s);
+    $c1 = xeric_sweep_choose($TLK, $nowL, $kindsK, ['intents' => [['n' => 2, 'kind' => 'ritual']]]);
+    $tl = $c1['trail']['lean'] ?? null;
+    if ($c1['kind']['key'] === 'ritual') {
+        $lk++;
+        if ($tl === null || $tl['kind'] !== true || $tl['intents'] !== [2]
+            || $tl['groups'] !== 0 || $tl['chose'] !== false) $kTrailOk = false;
+    } elseif ($tl !== null) {
+        $kTrailOk = false;      // an hour the lean did not touch says nothing about it
+    }
+}
+ok('lean: a named kind is tried sooner, and still loses hours',
+    $bk > 0 && $lk > $bk && $lk < 400, "base $bk, lean $lk of 400");
+ok('lean: the kind lean is on the trail only for the hours it actually leaned', $kTrailOk);
+
+// End to end: a lived sweep under a lean, and the event prompt clean of it.
+$TSw = $T;
+$TSw['forge'] = ['armed' => ['shared_meals']];
+$dbPathS = sys_get_temp_dir() . '/xeric-narrator-lean-' . getmypid() . '.db';
+foreach ([$dbPathS, $dbPathS . '-wal', $dbPathS . '-shm'] as $f) @unlink($f);
+$dbS = xeric_state_open($dbPathS);
+xeric_state_seed($dbS, $TSw);
+
+$i1 = xeric_narrator_intend($TSw, $dbS, 'INTENT-STUB-NEEDLE somebody put the folding chairs back wrong', ['epoch' => $epoch - 3600]);
+$i2 = xeric_narrator_intend($TSw, $dbS, 'INTENT-LEAN-NEEDLE Dot Vance and Theo Vance should share an evening soon', ['epoch' => $epoch - 3600]);
+$leans = xeric_narrator_leans($TSw, $dbS, $epoch);
+ok('leans: only the leanable cross the bridge, as hints with exactly no text',
+    count($leans) === 1 && $leans[0]['n'] === 2
+    && array_keys($leans[0]) === ['n', 'participants', 'kind', 'place']
+    && $leans[0]['participants'] === ['dot', 'theo']
+    && !str_contains(json_encode($leans), 'NEEDLE'));
+
+$seenSweep = null;
+$sweepStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) use (&$seenSweep) {
+    $seenSweep = $msgs;
+    preg_match_all('/^- \[([a-z0-9_]+)\]/mu', (string)($msgs[1]['content'] ?? ''), $m);
+    $halves = ['counted the folding chairs twice', 'left the urn switched on late', 'carried the hymnals up alone'];
+    $mem = [];
+    $i = 0;
+    foreach ($m[1] as $h) $mem[$h] = ucfirst($h) . ' ' . $halves[$i++ % 3] . ' tonight.';
+    return ['title' => 'the urn ran out early',
+            'prose' => 'Somebody put the folding chairs back wrong and nobody said so.',
+            'memories' => $mem];
+}];
+
+$r = xeric_sweep_run($TSw, $dbS, $sweepStub, $now, ['chance' => 1.0, 'seed' => 31, 'intents' => $leans]);
+ok('lean e2e: the hour landed', count($r['events']) === 1, implode('; ', $r['notes']));
+$evL = $r['events'][0] ?? ['trail' => []];
+$sweepProm = '';
+foreach ((array)$seenSweep as $x) $sweepProm .= $x['content'] . "\n";
+ok('lean e2e: the sweep EVENT prompt carries not one word of any intent',
+    $seenSweep !== null && !str_contains($sweepProm, 'INTENT-STUB-NEEDLE')
+    && !str_contains($sweepProm, 'INTENT-LEAN-NEEDLE')
+    && !str_contains($sweepProm, 'share an evening'));
+ok('lean e2e: the trail says a lean happened — by number, never by words',
+    ($evL['trail']['lean']['why'] ?? '') === 'leaning toward an intended beat'
+    && in_array(2, (array)($evL['trail']['lean']['intents'] ?? []), true)
+    && !str_contains(json_encode($evL['trail']), 'NEEDLE')
+    && !str_contains(json_encode($evL['trail']), 'share an evening'));
+
+$stS = xeric_narrator_intents_settle($TSw, $dbS);
+ok('lean e2e: the loose intent auto-retires on the hour its own words match',
+    isset($stS['settled'][1]) && $stS['settled'][1]['done']['event'] === (int)$evL['id']
+    && $stS['settled'][1]['done']['by'] === 'its own words');
+ok('lean e2e: a people-only intent stays live — an evening happened, but nobody said it was THE one',
+    (xeric_narrator_intents($dbS)[2]['state'] ?? '') === 'live'
+    && array_column(xeric_narrator_leans($TSw, $dbS, $epoch), 'n') === [2]);
+
+// ---------------------------------------------------------------------------
+// (r) the fade — the beat returns to the owner, and only to the owner
+// ---------------------------------------------------------------------------
+
+$i3 = xeric_narrator_intend($TSw, $dbS, 'INTENT-FADE-NEEDLE Ruth Amberg and the organ bench finally give way', ['epoch' => $epoch - 20 * 86400]);
+$i4 = xeric_narrator_intend($TSw, $dbS, 'INTENT-REALIZED somebody put the folding chairs back wrong again', ['epoch' => $epoch - 20 * 86400]);
+ok('fade: a faded intent stops pulling — the leans exclude it by arithmetic',
+    array_column(xeric_narrator_leans($TSw, $dbS, $epoch, ['settle' => false]), 'n') === [2]);
+
+$snapF = narrator_snapshot($dbS);
+$audF  = xeric_narrator_investigate($TSw, $dbS, ['stub' => fn() => '[]'], ['now' => $now, 'days' => 3]);
+$o = audit_find($audF, 'faded_intent');
+ok('fade: the audit returns the beat to the owner, in its own words, citing the intent',
+    count($o) === 1 && str_contains($o[0]['text'], 'INTENT-FADE-NEEDLE')
+    && str_contains($o[0]['text'], 'never found room')
+    && $o[0]['cites'] === ['intents' => [3]]);
+ok('fade: a faded intent the record already realized is not a finding',
+    !str_contains($o[0]['text'] ?? '', 'INTENT-REALIZED'));
+$fProm = '';
+foreach ($audF['messages'] as $x) $fProm .= $x['content'] . "\n";
+ok('fade: the investigate prompt still carries no intent, faded or not',
+    !str_contains($fProm, 'INTENT-FADE-NEEDLE') && !str_contains($fProm, 'INTENT-REALIZED'));
+ok('fade: the whole intent ledger is on the audit manifest, and the audit wrote nothing',
+    $audF['sources']['intents'] === [1, 2, 3, 4] && narrator_snapshot($dbS) === $snapF);
+
+$stF = xeric_narrator_intents_settle($TSw, $dbS);
+ok('fade: the realized one settles as done the next time anybody settles',
+    isset($stF['settled'][4]) && $stF['settled'][4]['done']['by'] === 'its own words'
+    && (xeric_narrator_intents($dbS)[3]['state'] ?? '') === 'live');
+
+// ---------------------------------------------------------------------------
+// (s) the CLI — record, list, retire, and the fences hold through it
+// ---------------------------------------------------------------------------
+
+$wd3 = sys_get_temp_dir() . '/xeric-narrator-intent-world-' . getmypid();
+@mkdir($wd3);
+@unlink($wd3 . '/world.db');
+file_put_contents($wd3 . '/world-template.json', json_encode($TSw, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+$cliN = function (string $flags) use ($wd3, $epoch): array {
+    $out = [];
+    $rc  = 1;
+    exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/../narrator-cli.php')
+        . ' --world=' . escapeshellarg($wd3) . ' --epoch=' . $epoch . ' ' . $flags . ' 2>&1', $out, $rc);
+    return [$rc, implode("\n", $out)];
+};
+
+[$rc, $cli] = $cliN('--intend=' . escapeshellarg('INTENT-CLI-NEEDLE Dot and Theo end up at a shared meal'));
+ok('cli: --intend records and reads the hints back to the owner',
+    $rc === 0 && str_contains($cli, 'intent #1') && str_contains($cli, 'Dot Vance')
+    && str_contains($cli, 'a shared meal hour') && str_contains($cli, 'It fades'), substr($cli, 0, 300));
+
+[$rc, $cli] = $cliN('--intents');
+ok('cli: --intents is the one surface that prints the words',
+    $rc === 0 && str_contains($cli, 'INTENDED BEATS') && str_contains($cli, 'INTENT-CLI-NEEDLE')
+    && str_contains($cli, 'live, fades'), substr($cli, 0, 300));
+
+[$rc, $cli] = $cliN('--context');
+ok('cli: the ask context stays clean of it', $rc === 0 && !str_contains($cli, 'INTENT-CLI-NEEDLE'));
+
+[$rc, $cli] = $cliN('--retire=1');
+ok('cli: --retire takes it back', $rc === 0 && str_contains($cli, 'retired'), substr($cli, 0, 200));
+[$rc, $cli] = $cliN('--retire=7');
+ok('cli: retiring nothing is an error, not a shrug', $rc === 2 && str_contains($cli, 'no live intent'));
+[$rc, $cli] = $cliN('--intents');
+ok('cli: the listing shows the retirement', $rc === 0 && str_contains($cli, 'retired —'));
+
+[$rc, $cli] = $cliN('--intend=' . escapeshellarg('INTENT-CLI-FADED the bell rope frays through at last') . ' --fade-days=1');
+ok('cli: a short fade is a flag away', $rc === 0, substr($cli, 0, 200));
+$out4 = [];
+$rc4  = 1;
+exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__DIR__ . '/../narrator-cli.php')
+    . ' --world=' . escapeshellarg($wd3) . ' --epoch=' . ($epoch + 2 * 86400)
+    . ' --investigate --no-model --days=3 2>&1', $out4, $rc4);
+$cli4 = implode("\n", $out4);
+ok('cli: the audit hands a faded beat back under its own header, cited by number',
+    $rc4 === 0 && str_contains($cli4, 'INTENDED BEATS THE WORLD NEVER FOUND ROOM FOR')
+    && str_contains($cli4, 'INTENT-CLI-FADED') && str_contains($cli4, 'intent #2')
+    && str_contains($cli4, 'intended beat'), substr($cli4, 0, 400));
 
 // ---------------------------------------------------------------------------
 

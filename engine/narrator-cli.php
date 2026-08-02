@@ -1,27 +1,33 @@
 <?php
 /**
- * narrator-cli.php — ask the world why. The author's console for ASK and
- * INVESTIGATE.
+ * narrator-cli.php — ask the world why. The author's console for ASK,
+ * INVESTIGATE and WRITE AHEAD.
  *
  *   php engine/narrator-cli.php --world=worlds/port-saltwater --ask="why has Maren gone quiet?"
  *   php engine/narrator-cli.php --world=worlds/port-saltwater --context
  *   php engine/narrator-cli.php --world=worlds/port-saltwater --investigate --days=5
+ *   php engine/narrator-cli.php --world=worlds/port-saltwater --intend="Maren finds the letter"
+ *   php engine/narrator-cli.php --world=worlds/port-saltwater --intents
  *
  * This is the acceptance surface for the narrator the way chat-cli.php is for
  * the chat turn: if the world cannot explain itself here, no web panel will
  * make it articulate.
  *
  * DELIBERATELY MISSING, next to chat-cli:
- *   --reset   A tool whose whole contract is "changes nothing" does not ship a
- *             flag that deletes the world. If you want the world gone, that is
- *             a decision to make somewhere that admits it makes decisions.
+ *   --reset   A tool whose contract on asking is "changes nothing" does not
+ *             ship a flag that deletes the world. If you want the world gone,
+ *             that is a decision to make somewhere that admits it makes
+ *             decisions.
  *   seeding   chat-cli seeds a fresh world because a first conversation needs
  *             arcs to move. The narrator moves nothing; against an unseeded
  *             world it reads empty ledgers and says so, which is the truth.
  *
- * The one write this program performs is opening the SQLite file, which will
- * create an empty, schema-only ledger where none exists. An empty ledger
- * contains nothing and changes no answer.
+ * Asking and auditing write nothing. The write-ahead flags are the deliberate
+ * exception and they write exactly one shape of row — an intent, in
+ * world_state — which no prompt ever reads (engine/narrator.php, the third
+ * power's banner). Beyond that, the one write this program performs is opening
+ * the SQLite file, which will create an empty, schema-only ledger where none
+ * exists. An empty ledger contains nothing and changes no answer.
  */
 
 declare(strict_types=1);
@@ -88,6 +94,46 @@ fwrite(STDOUT, $T['meta']['name'] . ', ' . xeric_world_day_name($now['dow']) . '
 $opts = ['stories' => $stories];
 if (isset($args['events']))   $opts['events']   = (int)$args['events'];
 if (isset($args['memories'])) $opts['memories'] = (int)$args['memories'];
+
+// -- write ahead: record, list, retire ---------------------------------------
+// The third power. An intent is a pull, never a script: the sweeps lean toward
+// hours that could realize it, and nothing is ever ordered. Its words print
+// HERE, to the owner who wrote them, and reach no prompt anywhere.
+if (isset($args['intend'])) {
+    $iopts = ['epoch' => (int)$now['epoch']];
+    if (isset($args['fade-days'])) $iopts['fade_days'] = (int)$args['fade-days'];
+    try {
+        $made = xeric_narrator_intend($T, $db, (string)$args['intend'], $iopts);
+    } catch (Throwable $e) {
+        fwrite(STDERR, $e->getMessage() . "\n");
+        exit(2);
+    }
+    $in = $made['intent'];
+    fwrite(STDOUT, "\n  intent #" . $in['n'] . ' — "' . $in['text'] . "\"\n");
+    fwrite(STDOUT, '  ' . xeric_narrator_cli_intent_reading($T, $in) . "\n");
+    fwrite(STDOUT, '  It fades ' . xeric_narrator_date($T, (int)$in['fades'])
+        . " if the world never finds room, and comes back to you in the audit.\n");
+    foreach ($made['notes'] as $note) fwrite(STDOUT, '  note: ' . $note . "\n");
+    exit(0);
+}
+
+if (isset($args['intents'])) {
+    $settled = xeric_narrator_intents_settle($T, $db);
+    fwrite(STDOUT, "\n" . xeric_narrator_cli_intents($T, xeric_narrator_intents($db),
+        $settled['notes'], (int)$now['epoch']) . "\n");
+    exit(0);
+}
+
+if (isset($args['retire'])) {
+    $n    = (int)$args['retire'];
+    $gone = xeric_narrator_intent_retire($db, $n, (int)$now['epoch']);
+    if ($gone === null) {
+        fwrite(STDERR, "--retire: there is no live intent #$n (see --intents)\n");
+        exit(2);
+    }
+    fwrite(STDOUT, "\n  intent #$n retired — \"" . $gone['text'] . "\". The world stops leaning.\n");
+    exit(0);
+}
 
 // -- the assembled prompt, without a model ----------------------------------
 // The debugger for the debugger: what would the narrator be shown? Also the
@@ -186,6 +232,7 @@ function xeric_narrator_cli_audit(array $out, int $days): string
         'unspoken'         => 'NOT SPOKEN TO IN ' . $days . ' WORLD-DAYS',
         'dropped_question' => 'QUESTIONS ASKED, NEVER ANSWERED',
         'unpaid_debt'      => 'DEBTS OPEN PAST THEIR FADE',
+        'faded_intent'     => 'INTENDED BEATS THE WORLD NEVER FOUND ROOM FOR',
         'idle_pressure'    => 'PRESSURE PRODUCING NOTHING',
         'never_lived'      => 'SEEDED, NEVER LIVED',
         'contradiction'    => 'WHAT THE RECORD CONTRADICTS',
@@ -232,8 +279,71 @@ function xeric_narrator_cli_cites(array $c): string
     foreach ((array)($c['messages'] ?? []) as $id) $bits[] = 'message #' . (int)$id;
     foreach ((array)($c['memories'] ?? []) as $id) $bits[] = 'memory #' . (int)$id;
     foreach ((array)($c['arcs'] ?? []) as $a)      $bits[] = 'arc ' . str_replace(':', '/', (string)$a);
+    foreach ((array)($c['intents'] ?? []) as $n)   $bits[] = 'intent #' . (int)$n;
     foreach ((array)($c['deaths'] ?? []) as $h)    $bits[] = 'the deaths ledger (' . (string)$h . ')';
     return implode('; ', $bits);
+}
+
+/**
+ * How an intent reads to the machine: the hints code parsed out of its words,
+ * never a guess. This is what the lean will actually use, so it is what the
+ * owner should see confirmed.
+ */
+function xeric_narrator_cli_intent_reading(array $t, array $in): string
+{
+    $bits   = [];
+    $people = (array)($in['participants'] ?? []);
+    if ($people !== []) {
+        $names = [];
+        foreach ($people as $h) $names[] = xeric_world_name($t, (string)$h);
+        $bits[] = xeric_join_list($names);
+    }
+    if (($in['place'] ?? null) !== null && (string)$in['place'] !== '') {
+        $bits[] = 'at ' . xeric_world_place_name($t, (string)$in['place']);
+    }
+    if (($in['kind'] ?? null) !== null && (string)$in['kind'] !== '') {
+        $bits[] = 'a ' . str_replace('_', ' ', (string)$in['kind']) . ' hour';
+    }
+    return $bits === []
+        ? 'reads loose: no cast, place or kind — only its own words can realize it'
+        : 'reads as: ' . implode('; ', $bits) . '. The sweeps lean; nothing is ordered.';
+}
+
+/**
+ * The intent ledger, owner-facing. The ONE surface (with the trail's numbers
+ * one step behind it) where an intent is spoken of at all, and the only one
+ * that prints its words. A faded state is derived, never stored: live past its
+ * fade IS faded, the same arithmetic the leans and the audit use.
+ */
+function xeric_narrator_cli_intents(array $t, array $rows, array $notes, int $epoch): string
+{
+    $lines = [];
+    foreach ($notes as $n) $lines[] = '  ' . $n;
+    if ($notes !== []) $lines[] = '';
+
+    if ($rows === []) {
+        $lines[] = '  No intended beats. The world is running on its own weather.';
+        return implode("\n", $lines);
+    }
+
+    $lines[] = '  INTENDED BEATS (the world leans toward these; it is never ordered)';
+    foreach ($rows as $n => $in) {
+        $state = (string)($in['state'] ?? 'live');
+        if ($state === 'live' && $epoch >= (int)($in['fades'] ?? 0)) {
+            $head = 'faded ' . xeric_narrator_date($t, (int)$in['fades'])
+                  . ' — the world never found room';
+        } elseif ($state === 'live') {
+            $head = 'live, fades ' . xeric_narrator_date($t, (int)$in['fades']);
+        } elseif ($state === 'done') {
+            $head = 'realized by event #' . (int)($in['done']['event'] ?? 0)
+                  . ', matched on ' . (string)($in['done']['by'] ?? '');
+        } else {
+            $head = 'retired';
+        }
+        $lines[] = '  #' . (int)$n . '  ' . $head . ' — "' . (string)($in['text'] ?? '') . '"';
+        $lines[] = '      ' . xeric_narrator_cli_intent_reading($t, $in);
+    }
+    return implode("\n", $lines);
 }
 
 /**
@@ -262,6 +372,8 @@ function xeric_narrator_cli_sources(array $s): string
     }
     $ar = (array)($s['arcs'] ?? []);
     if ($ar !== []) $bits[] = count($ar) . ' ledger arc' . (count($ar) === 1 ? '' : 's');
+    $it = (array)($s['intents'] ?? []);
+    if ($it !== []) $bits[] = count($it) . ' intended beat' . (count($it) === 1 ? '' : 's');
     $st = (array)($s['stories'] ?? []);
     if ($st !== []) $bits[] = count($st) . ' stor' . (count($st) === 1 ? 'y' : 'ies') . ' on the shelf';
     $dd = (array)($s['deaths'] ?? []);
@@ -300,6 +412,12 @@ function xeric_narrator_cli_usage(): string
                            and what the record contradicts. Observations, not fixes.
       --days=N             the audit's window in world-days (default 3)
       --no-model           audit by arithmetic alone; skip the transcript read
+      --intend="…"         record an intended beat: a pull the sweeps lean toward,
+                           never a script. Who, where and what kind of hour are
+                           read from the words by code; loose is allowed.
+      --intents            list intended beats, settling any the record realized
+      --retire=N           retire intent #N; the world stops leaning
+      --fade-days=N        how long an intent waits before it fades (default 14)
       --epoch=WHEN         unix time, or anything strtotime reads
       --db=PATH            default <world>/world.db
       --events=N           how many recent events to hand it (default 10)

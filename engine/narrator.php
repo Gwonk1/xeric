@@ -5,17 +5,23 @@
  * The engine has carried the narrator since the first day of the renderer:
  * `xeric_render_bible($t, null, …)` is full canon with no walls applied, and
  * every wall in the system is defined as "what this viewer does not get." This
- * file gives that viewer a voice — read-only, on request, and the first two of
- * its four powers (docs/NARRATOR.md): ASK, which answers questions about the
- * world and its history, and INVESTIGATE, which audits the lived record for
- * the failures that accumulate quietly. Neither changes anything.
+ * file gives that viewer a voice — on request, and the first three of its four
+ * powers (docs/NARRATOR.md): ASK, which answers questions about the world and
+ * its history; INVESTIGATE, which audits the lived record for the failures
+ * that accumulate quietly; and WRITE AHEAD, which records an intended beat the
+ * sweeps then lean toward — a pull, never a script (its own section, at the
+ * bottom).
  *
  * ── READ-ONLY IS A CONTRACT, NOT A MOOD ──────────────────────────────────
  *
- * Nothing in this file writes. No arc, no memory, no event, no world_state row,
- * no conversation — asking the narrator a question must be exactly as safe as
- * reading the files, because "a debugger for a world" that edited the world
- * while debugging it would be the bug. This is also why the narrator NEVER
+ * Nothing in ASK or INVESTIGATE writes. No arc, no memory, no event, no
+ * world_state row, no conversation — asking the narrator a question must be
+ * exactly as safe as reading the files, because "a debugger for a world" that
+ * edited the world while debugging it would be the bug. The write-ahead verbs
+ * are the deliberate exception, and a narrow one: they write intent rows
+ * (`intent:<n>` and their counter) into world_state and touch nothing else —
+ * never an arc, a memory, an event or a word anybody said. Asking and
+ * auditing stay reads, to the row. This is also why the narrator NEVER
  * calls xeric_story_compose(): composition has one write in it — the inciting
  * death of an overlay's victim lands on first compose — and a read-only
  * question that killed somebody would be the least read-only thing in the
@@ -90,6 +96,7 @@
 require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/story.php';   // overlay status via arcs — reads, never composes
+require_once __DIR__ . '/sweeps.php';  // the kind catalogue, and the needle the intents reuse
 require_once __DIR__ . '/death.php';
 require_once __DIR__ . '/travel.php';  // where the player is standing, if anywhere
 require_once __DIR__ . '/llm.php';
@@ -561,7 +568,7 @@ function xeric_narrator_ask(array $t, PDO $db, string $question, array $now, arr
 // Same contract as ASK, same proof in the tests: not one row changes.
 
 /** The audit's kinds, in the order the report groups them. */
-const XERIC_NARRATOR_KINDS = ['unspoken', 'dropped_question', 'unpaid_debt',
+const XERIC_NARRATOR_KINDS = ['unspoken', 'dropped_question', 'unpaid_debt', 'faded_intent',
                               'idle_pressure', 'never_lived', 'contradiction'];
 
 /** One lived line, flattened to a single quotable breath. */
@@ -621,7 +628,8 @@ function xeric_narrator_audit(array $t, PDO $db, array $now, array $opts = []): 
 
     $deaths  = xeric_deaths($db);
     $sources = ['events' => [], 'memories' => [], 'threads' => [],
-                'messages' => [], 'arcs' => [], 'deaths' => array_keys($deaths)];
+                'messages' => [], 'arcs' => [], 'intents' => [],
+                'deaths' => array_keys($deaths)];
     $obs = [];
     $add = static function (string $kind, string $text, array $cites, string $by = 'code') use (&$obs): void {
         $obs[] = ['kind' => $kind, 'text' => $text, 'cites' => $cites, 'found_by' => $by];
@@ -867,6 +875,36 @@ function xeric_narrator_audit(array $t, PDO $db, array $now, array $opts = []): 
         }
     }
 
+    // -- intended, never found room ----------------------------------------
+    // The write-ahead beats past their fade (the section at the bottom of this
+    // file). The intent's own words appear here and in the owner's listing and
+    // NOWHERE ELSE — this report is never assembled into a prompt, and the
+    // investigate model reads transcripts alone. The audit does not settle
+    // (read-only, still), so before it calls a beat unfound it checks the
+    // record the same way settling would: an intent an event already realized
+    // is not a finding, it is a listing one `--intents` behind.
+    $intentRows = xeric_narrator_intents($db);
+    if ($intentRows !== []) {
+        $evKinds = xeric_narrator_event_kinds($t, $db, $events, (int)($opts['memories'] ?? 200));
+        foreach ($intentRows as $nI => $in) {
+            $sources['intents'][] = (int)$nI;
+            if ((string)($in['state'] ?? '') !== 'live' || $epoch < (int)($in['fades'] ?? 0)) continue;
+            $realized = false;
+            foreach ($chrono as $e) {
+                if (xeric_narrator_intent_match($in, $e, $evKinds[(int)$e['id']] ?? null) !== null) {
+                    $realized = true;
+                    break;
+                }
+            }
+            if ($realized) continue;
+            $add('faded_intent',
+                'An intended beat has waited since ' . xeric_narrator_date($t, (int)($in['made'] ?? 0))
+                . ' and the world never found room for it: "' . (string)($in['text'] ?? '')
+                . '". It has come back to you — retire it, or say it again in different words.',
+                ['intents' => [(int)$nI]]);
+        }
+    }
+
     $order = array_flip(XERIC_NARRATOR_KINDS);
     usort($obs, fn($a, $b) => ($order[$a['kind']] ?? 99) <=> ($order[$b['kind']] ?? 99));
 
@@ -1023,4 +1061,346 @@ function xeric_narrator_investigate(array $t, PDO $db, ?array $endpoint, array $
         'model'        => $model,
         'messages'     => $messages,
     ];
+}
+
+// ---------------------------------------------------------------------------
+// The third power — WRITE AHEAD
+// ---------------------------------------------------------------------------
+//
+// Intent as a PULL, NEVER A SCRIPT (docs/NARRATOR.md §3). The owner records an
+// intended beat — "sometime soon, Ruth should find the letter" — and the
+// sweeps lean toward hours that could realize it without ever being ordered to
+// write it. If the world never finds room, the beat dies quietly and comes
+// back to the owner as a finding, not a forced scene.
+//
+// ── INTENTS LIVE WHERE THE ORACLE LIVES ──────────────────────────────────
+// An intent is the shape of what is coming, which is the one part of the world
+// the narrator never discusses — including with itself. So intents are tier 1
+// by construction, not by instruction: world_state rows under `intent:<n>`,
+// read by nothing that assembles a prompt. ASK's lived record reads exactly
+// one world_state shape (`why:event:<id>`); the investigate prompt is threads
+// and one instruction; the sweep prompt is built from a chosen kind and cast.
+// A narrator that never read its own plan cannot spoil it — the same
+// arithmetic-beats-instruction argument the oracle shelf already won.
+//
+// ── WHAT CROSSES TO THE SWEEPS IS HANDLES, NEVER WORDS ───────────────────
+// xeric_narrator_leans() is the one bridge, and it carries hints only: cast
+// handles, maybe a kind key, maybe a place key. Never the text. Every word the
+// chooser touches ends up in a trail or a prompt eventually, and a hint made
+// of handles cannot spoil a beat however it is echoed. The lean itself lives
+// in xeric_sweep_choose() — capped at ×2, beside the protagonist's ×3 — and
+// changes the CASTING of an hour, never its performance: the Director's law,
+// applied one power early.
+//
+// ── MATCHING IS ARITHMETIC, AND ARGUED ───────────────────────────────────
+// An intent retires itself when the record shows a realized beat, through one
+// of two doors:
+//   1. ITS PEOPLE AND ITS KIND: every named participant was at the hour, the
+//      hour is the named kind (read from the kept trail, or any participant's
+//      memory of it), and the place agrees when one was named. Both halves
+//      required — people alone would retire "Ruth finds the letter" on Ruth's
+//      first coffee, and kind alone would retire it on anybody's.
+//   2. ITS OWN WORDS: xeric_sweep_touches() between the intent's text and the
+//      hour's title-plus-prose — the same model-free needle the wall trusts,
+//      reused rather than reinvented so "carries these words" means one thing
+//      in this engine. The only door a loose intent has. When the intent DID
+//      name people, this door also requires them at the hour: names are
+//      content words to the needle, so "Dot and Theo share an evening" would
+//      otherwise retire on any evening that merely mentioned them — a live
+//      run did exactly that, on an hour Dot was not at, which is how this
+//      clause got here.
+// History cannot realize an intent: only hours at or after the recording
+// count, because "sometime soon" points forward.
+//
+// ── THE FADE ─────────────────────────────────────────────────────────────
+// ~14 world-days. A faded intent stops pulling — the leans exclude it by
+// comparison, never by write — and the audit reports it to the owner. Nothing
+// stages it: a world that never found room was telling the truth about
+// itself, and the honest response is to say so.
+
+/** How long an intent waits before it returns to the owner, in world-days. */
+const XERIC_INTENT_FADE_DAYS = 14;
+
+/** One breath. The same ceiling a stored memory lives under. */
+const XERIC_INTENT_MAX_LEN = 240;
+
+/** The world_state key one intent lives at. */
+function xeric_narrator_intent_key(int $n): string
+{
+    return 'intent:' . $n;
+}
+
+/** Every intent ever recorded, keyed by number, oldest first. */
+function xeric_narrator_intents(PDO $db): array
+{
+    $out = [];
+    foreach (xeric_world_state_all($db) as $k => $v) {
+        if (!preg_match('/^intent:(\d+)$/', (string)$k, $m)) continue;
+        $row = json_decode((string)$v, true);
+        if (is_array($row)) $out[(int)$m[1]] = $row;
+    }
+    ksort($out);
+    return $out;
+}
+
+/**
+ * What the machine can read out of an intent's words, by code and only code:
+ * cast members whose name appears (through the same index the seeder resolves
+ * names with), a place named by key or by name, a kind of hour named by its
+ * own key. No model — a hint a model guessed would be a hint nobody can audit,
+ * and everything downstream of these hints moves weights.
+ */
+function xeric_narrator_intent_hints(array $t, string $text): array
+{
+    $norm = ' ' . xeric_seed_norm($text) . ' ';
+
+    $participants = [];
+    foreach (xeric_seed_index($t, true) as $key => $handle) {
+        if ($key !== '' && str_contains($norm, ' ' . $key . ' ')) $participants[$handle] = true;
+    }
+
+    $place = null;
+    foreach ((array)($t['places'] ?? []) as $p) {
+        $pk = (string)($p['key'] ?? '');
+        if ($pk === '') continue;
+        foreach ([$pk, str_replace('_', ' ', $pk), (string)($p['name'] ?? '')] as $alias) {
+            $alias = xeric_seed_norm($alias);
+            if ($alias !== '' && str_contains($norm, ' ' . $alias . ' ')) { $place = $pk; break 2; }
+        }
+    }
+
+    $kind = null;
+    foreach (array_keys(xeric_sweep_kinds()) as $k) {
+        if (str_contains($norm, ' ' . str_replace('_', ' ', (string)$k) . ' ')) { $kind = (string)$k; break; }
+    }
+
+    return ['participants' => array_keys($participants), 'place' => $place, 'kind' => $kind];
+}
+
+/**
+ * Record an intended beat. Validates, parses what it can, stores the rest
+ * loose — a loose intent is legal, it simply pulls nothing and can only be
+ * realized by its own words.
+ *
+ * @param array $opts epoch (world time of the recording; the clock when
+ *                    absent), fade_days (default 14), and explicit overrides —
+ *                    participants, place, kind — which outrank the parse and
+ *                    are validated rather than trusted.
+ * @return array{intent:array,notes:array}
+ * @throws RuntimeException on no words, too many words, or a hint that names
+ *         nobody and nowhere this world has.
+ */
+function xeric_narrator_intend(array $t, PDO $db, string $text, array $opts = []): array
+{
+    $text = trim(preg_replace('/\s+/u', ' ', $text) ?? $text);
+    if ($text === '') throw new RuntimeException('narrator: an intent needs words');
+    if (mb_strlen($text) > XERIC_INTENT_MAX_LEN) {
+        throw new RuntimeException('narrator: an intent is one breath, ' . XERIC_INTENT_MAX_LEN
+            . ' characters or fewer (this one is ' . mb_strlen($text) . ')');
+    }
+
+    $epoch = (int)($opts['epoch'] ?? xeric_clock_epoch($db));
+    $days  = max(1, (int)($opts['fade_days'] ?? XERIC_INTENT_FADE_DAYS));
+
+    $hints = xeric_narrator_intent_hints($t, $text);
+    if (array_key_exists('participants', $opts)) {
+        $given = [];
+        foreach ((array)$opts['participants'] as $h) {
+            $h = (string)$h;
+            if (xeric_world_character($t, $h) === null) {
+                throw new RuntimeException("narrator: the intent names '$h', who is not in this cast");
+            }
+            $given[$h] = true;
+        }
+        $hints['participants'] = array_keys($given);
+    }
+    if (array_key_exists('place', $opts) && $opts['place'] !== null) {
+        $pk = (string)$opts['place'];
+        if (xeric_world_place($t, $pk) === null) {
+            throw new RuntimeException("narrator: the intent names '$pk', which is nowhere in this world");
+        }
+        $hints['place'] = $pk;
+    }
+    if (array_key_exists('kind', $opts) && $opts['kind'] !== null) {
+        $k = (string)$opts['kind'];
+        if (!isset(xeric_sweep_kinds()[$k])) {
+            throw new RuntimeException("narrator: '$k' is no kind of hour this engine knows");
+        }
+        $hints['kind'] = $k;
+    }
+
+    $notes = [];
+    if ($hints['kind'] !== null && !isset(xeric_sweep_kinds_for($t)[$hints['kind']])) {
+        $notes[] = 'this world never armed anything that produces a ' . str_replace('_', ' ', $hints['kind'])
+            . ' hour, so the lean cannot reach that kind';
+    }
+    if ($hints['participants'] === [] && $hints['kind'] === null) {
+        $notes[] = 'stored loose: no cast name or kind of hour read from it, so it pulls nothing '
+            . 'and only its own words can realize it';
+    }
+
+    $n  = (int)xeric_world_state_get($db, 'intent_seq', '0') + 1;
+    $in = [
+        'n'            => $n,
+        'text'         => $text,
+        'participants' => $hints['participants'],
+        'place'        => $hints['place'],
+        'kind'         => $hints['kind'],
+        'made'         => $epoch,
+        'fades'        => $epoch + $days * 86400,
+        'state'        => 'live',
+    ];
+    $at = xeric_state_time();
+    xeric_world_state_set($db, 'intent_seq', $n, $at);
+    xeric_world_state_set($db, xeric_narrator_intent_key($n),
+        json_encode($in, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $at);
+
+    return ['intent' => $in, 'notes' => $notes];
+}
+
+/**
+ * Did this hour realize this intent? The two doors from the section banner,
+ * tried strong-first. Returns which door matched, in words the listing can
+ * print, or null.
+ */
+function xeric_narrator_intent_match(array $in, array $event, ?string $evKind): ?string
+{
+    if ((int)($event['world_epoch'] ?? 0) < (int)($in['made'] ?? 0)) return null;
+
+    $people = array_map('strval', (array)($in['participants'] ?? []));
+    $kind   = ($in['kind'] ?? null) !== null && (string)$in['kind'] !== '' ? (string)$in['kind'] : null;
+    $place  = ($in['place'] ?? null) !== null && (string)$in['place'] !== '' ? (string)$in['place'] : null;
+
+    if ($people !== [] && $kind !== null && $evKind !== null && $kind === $evKind
+        && array_diff($people, array_map('strval', (array)($event['participants'] ?? []))) === []
+        && ($place === null || (string)($event['place'] ?? '') === $place)) {
+        return 'its people and its kind of hour';
+    }
+
+    // The word door — barred to an hour missing anybody the intent named,
+    // because the names themselves are words the needle would count.
+    if ($people !== []
+        && array_diff($people, array_map('strval', (array)($event['participants'] ?? []))) !== []) {
+        return null;
+    }
+    $evText = trim((string)($event['title'] ?? '') . ' ' . (string)($event['prose'] ?? ''));
+    if ($evText !== '' && xeric_sweep_touches($evText, (string)($in['text'] ?? ''))) {
+        return 'its own words';
+    }
+    return null;
+}
+
+/**
+ * What kind each hour was, read from the records that already carry it: the
+ * kept decision trail first, then any participant's memory of the hour. The
+ * events table never grew a kind column, and matching should not have to wish
+ * it had.
+ *
+ * @return array<int,string> event id => kind key
+ */
+function xeric_narrator_event_kinds(array $t, PDO $db, array $events, int $per = 200): array
+{
+    $kinds = [];
+    foreach ($events as $e) {
+        $raw = xeric_world_state_get($db, 'why:event:' . (int)$e['id']);
+        $why = $raw !== null ? json_decode($raw, true) : null;
+        if (is_array($why) && trim((string)($why['kind'] ?? '')) !== '') {
+            $kinds[(int)$e['id']] = (string)$why['kind'];
+        }
+    }
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        foreach (xeric_memories_for($db, $h, max(1, $per)) as $m) {
+            $eid = (int)($m['meta']['event_id'] ?? 0);
+            $mk  = trim((string)($m['meta']['kind'] ?? ''));
+            if ($eid > 0 && $mk !== '' && !isset($kinds[$eid])) $kinds[$eid] = $mk;
+        }
+    }
+    return $kinds;
+}
+
+/**
+ * Retire every live intent the record has already realized. The auto in
+ * auto-retire: this runs before every listing and before every lean, so a
+ * satisfied intent stops pulling the moment anybody looks. Oldest hour wins —
+ * `done` cites the FIRST event that realized the beat, not the latest echo of
+ * it. The one write-ahead write beyond recording and retiring, and it touches
+ * intent rows alone.
+ *
+ * @param array $opts events (walk depth, default 500), memories (per head,
+ *                    default 200)
+ * @return array{settled:array,notes:array}
+ */
+function xeric_narrator_intents_settle(array $t, PDO $db, array $opts = []): array
+{
+    $live = array_filter(xeric_narrator_intents($db),
+        fn($i) => (string)($i['state'] ?? '') === 'live');
+    if ($live === []) return ['settled' => [], 'notes' => []];
+
+    $events = xeric_events_recent($db, max(1, (int)($opts['events'] ?? 500)));
+    usort($events, fn($a, $b) => [(int)$a['world_epoch'], (int)$a['id']] <=> [(int)$b['world_epoch'], (int)$b['id']]);
+    $evKinds = xeric_narrator_event_kinds($t, $db, $events, (int)($opts['memories'] ?? 200));
+
+    $settled = [];
+    $notes   = [];
+    $at      = xeric_state_time();
+    foreach ($live as $n => $in) {
+        foreach ($events as $e) {
+            $door = xeric_narrator_intent_match($in, $e, $evKinds[(int)$e['id']] ?? null);
+            if ($door === null) continue;
+            $in['state'] = 'done';
+            $in['done']  = ['event' => (int)$e['id'], 'world_epoch' => (int)$e['world_epoch'], 'by' => $door];
+            xeric_world_state_set($db, xeric_narrator_intent_key((int)$n),
+                json_encode($in, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $at);
+            $settled[(int)$n] = $in;
+            $notes[] = 'intent #' . (int)$n . ' was realized by event #' . (int)$e['id'] . ', matched on ' . $door;
+            break;
+        }
+    }
+    return ['settled' => $settled, 'notes' => $notes];
+}
+
+/**
+ * The owner takes an intent back. Live ones only — a realized beat is history
+ * and history is not retired. Returns the retired row, or null when there is
+ * no live intent #$n to take back.
+ */
+function xeric_narrator_intent_retire(PDO $db, int $n, int $epoch): ?array
+{
+    $in = xeric_narrator_intents($db)[$n] ?? null;
+    if ($in === null || (string)($in['state'] ?? '') !== 'live') return null;
+    $in['state']   = 'retired';
+    $in['retired'] = $epoch;
+    xeric_world_state_set($db, xeric_narrator_intent_key($n),
+        json_encode($in, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    return $in;
+}
+
+/**
+ * The one bridge to the sweeps: the live, unfaded, leanable intents as hint
+ * rows — handles, maybe a kind key, maybe a place key, and NEVER the text (the
+ * section banner says why). Settles first, so a beat the record already
+ * realized stops pulling in the same breath it is noticed; pass
+ * settle => false for the read-only shape of the same question.
+ */
+function xeric_narrator_leans(array $t, PDO $db, int $epoch, array $opts = []): array
+{
+    if (($opts['settle'] ?? true) !== false) xeric_narrator_intents_settle($t, $db, $opts);
+
+    $out = [];
+    foreach (xeric_narrator_intents($db) as $n => $in) {
+        if ((string)($in['state'] ?? '') !== 'live') continue;
+        if ($epoch >= (int)($in['fades'] ?? 0)) continue;      // faded: it has returned to the owner
+        $people = array_values(array_map('strval', (array)($in['participants'] ?? [])));
+        $kind   = ($in['kind'] ?? null) !== null && (string)$in['kind'] !== '' ? (string)$in['kind'] : null;
+        if ($people === [] && $kind === null) continue;        // loose: nothing to lean with
+        $out[] = [
+            'n'            => (int)$n,
+            'participants' => $people,
+            'kind'         => $kind,
+            'place'        => ($in['place'] ?? null) !== null && (string)$in['place'] !== '' ? (string)$in['place'] : null,
+        ];
+    }
+    return $out;
 }

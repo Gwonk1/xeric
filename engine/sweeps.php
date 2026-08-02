@@ -872,6 +872,40 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
     // a world that does not exist. xeric_sweep_run() fills it in.
     $dead = array_values(array_map('strval', (array)($opts['dead'] ?? [])));
 
+    // THE NARRATOR'S LEAN (write-ahead, docs/NARRATOR.md §3), handed in the way
+    // the dead are. `$opts['intents']` is xeric_narrator_leans()'s hint list —
+    // handles, maybe a kind key, maybe a place key, and by construction NEVER an
+    // intent's text: every word this function touches ends up in a trail or a
+    // prompt eventually, and a hint made of handles cannot spoil a beat however
+    // it is echoed. The lean is bounded at ×2, beside the protagonist's ×3 —
+    // enough to tilt a draw toward an hour that could realize an intended beat,
+    // never enough to force one. It moves the CASTING and nothing after it: the
+    // kind tried sooner, the room more likely, and the performance untouched,
+    // which is the whole difference between a pull and a script. A world no
+    // intent fits consumes no extra roll and draws exactly the draw it always
+    // drew; the EVENT prompt never learns a lean happened at all.
+    $intents = [];
+    foreach ((array)($opts['intents'] ?? []) as $in) {
+        if (!is_array($in)) continue;
+        $intents[] = [
+            'n'            => (int)($in['n'] ?? 0),
+            'participants' => array_values(array_map('strval', (array)($in['participants'] ?? []))),
+            'kind'         => ($in['kind'] ?? null) !== null && (string)$in['kind'] !== '' ? (string)$in['kind'] : null,
+            'place'        => ($in['place'] ?? null) !== null && (string)$in['place'] !== '' ? (string)$in['place'] : null,
+        ];
+    }
+
+    // A kind an intent asks for by name is tried sooner: ×2 once, however many
+    // intents ask, and only a kind this world already produces — the lean casts
+    // from what is armed, it arms nothing.
+    $leanKindNs = [];
+    foreach ($intents as $in) {
+        if ($in['kind'] !== null && isset($kinds[$in['kind']])) $leanKindNs[$in['kind']][$in['n']] = true;
+    }
+    foreach (array_keys($leanKindNs) as $lk) {
+        $kinds[$lk]['weight'] = (float)($kinds[$lk]['weight'] ?? 1.0) * 2.0;
+    }
+
     $order = xeric_sweep_kind_order($kinds);
 
     // Where everybody actually was, in the words the chooser itself uses. Read
@@ -944,6 +978,27 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
             }
         }
 
+        // The lean's other half, beside the protagonist's thumb: a grouping
+        // that holds everyone a live intent names — at its place and for its
+        // kind of hour, when it names them — is twice as likely to be the
+        // room. ×2 once, however many intents agree.
+        $leanGroups = 0;
+        $leanNs     = $leanKindNs[(string)$kind['key']] ?? [];
+        foreach ($groups as $i => $g2) {
+            foreach ($intents as $in) {
+                if ($in['participants'] === []) continue;   // a kind-only intent leans the kind, not the room
+                if ($in['kind'] !== null && $in['kind'] !== (string)$kind['key']) continue;
+                if ($in['place'] !== null && ($g2['where'] ?? null) !== null
+                    && (string)$g2['where'] !== $in['place']) continue;
+                if (array_diff($in['participants'], array_map('strval', (array)($g2['handles'] ?? []))) !== []) continue;
+                $groups[$i]['weight'] = max(1, (int)($g2['weight'] ?? 1)) * 2;
+                $groups[$i]['lean']   = true;
+                $leanNs[$in['n']]     = true;
+                $leanGroups++;
+                break;
+            }
+        }
+
         $g = xeric_sweep_weighted($groups);
         return [
             'kind'     => $kind,
@@ -968,6 +1023,17 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
                 'chose'        => (string)$g['why'],
                 'weight'       => (int)($g['weight'] ?? 1),
                 'protagonist'  => $star !== '' && in_array($star, (array)$g['handles'], true),
+                // The lean, when one touched this hour — by NUMBER, never by
+                // text. The trail is kept and printed, and an intent's words in
+                // it would be the plan riding beside the record it is a plan
+                // for; the owner holds the words already, at --intents.
+                'lean'         => $leanNs === [] ? null : [
+                    'why'     => 'leaning toward an intended beat',
+                    'intents' => array_keys($leanNs),
+                    'kind'    => isset($leanKindNs[(string)$kind['key']]),
+                    'groups'  => $leanGroups,
+                    'chose'   => !empty($g['lean']),
+                ],
                 'max_people'   => $maxPeople,
             ],
         ];
