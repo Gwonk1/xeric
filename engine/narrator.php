@@ -5,9 +5,10 @@
  * The engine has carried the narrator since the first day of the renderer:
  * `xeric_render_bible($t, null, …)` is full canon with no walls applied, and
  * every wall in the system is defined as "what this viewer does not get." This
- * file gives that viewer a voice — read-only, on request, and only the first of
- * its four powers (docs/NARRATOR.md): ASK. It answers questions about the world
- * and its history. It changes nothing.
+ * file gives that viewer a voice — read-only, on request, and the first two of
+ * its four powers (docs/NARRATOR.md): ASK, which answers questions about the
+ * world and its history, and INVESTIGATE, which audits the lived record for
+ * the failures that accumulate quietly. Neither changes anything.
  *
  * ── READ-ONLY IS A CONTRACT, NOT A MOOD ──────────────────────────────────
  *
@@ -93,6 +94,8 @@ require_once __DIR__ . '/death.php';
 require_once __DIR__ . '/travel.php';  // where the player is standing, if anywhere
 require_once __DIR__ . '/llm.php';
 require_once __DIR__ . '/renderers/bible.php';
+require_once __DIR__ . '/constructs.php'; // expectations: the debts the audit reads
+require_once __DIR__ . '/seed.php';       // XERIC_SEED_MARKER: where "seeded, never lived" begins
 
 // ---------------------------------------------------------------------------
 // The canon the narrator reads — full, minus the oracle shelf
@@ -476,11 +479,13 @@ function xeric_narrator_prompt(array $t, PDO $db, array $now, string $question, 
  * One narrator reply, as text. Same stub seam as xeric_chat_say(), tagged
  * 'narrator' so a test stub can tell the two voices apart — the interesting
  * assertions here are about what the prompt CARRIES, and those need no GPU.
+ * The investigate pass rides the same seam under its own tag, for the same
+ * reason: a stub that cannot tell the audit from the ask cannot test either.
  */
-function xeric_narrator_say(array $endpoint, array $messages, array $opts = [], ?array &$usage = null): string
+function xeric_narrator_say(array $endpoint, array $messages, array $opts = [], ?array &$usage = null, string $tag = 'narrator'): string
 {
     if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) {
-        $out = ($endpoint['stub'])('narrator', $messages, $opts);
+        $out = ($endpoint['stub'])($tag, $messages, $opts);
         if (is_array($out)) {
             $usage = (array)($out['usage'] ?? []);
             return (string)($out['text'] ?? '');
@@ -516,5 +521,506 @@ function xeric_narrator_ask(array $t, PDO $db, string $question, array $now, arr
         'usage'    => $usage,
         'sources'  => $built['sources'],
         'messages' => $built['messages'],
+    ];
+}
+
+// ---------------------------------------------------------------------------
+// The second power — INVESTIGATE
+// ---------------------------------------------------------------------------
+//
+// The audit (docs/NARRATOR.md §2): the failures that accumulate quietly —
+// dropped threads, absent characters, unpaid debts, contradictions. Output is
+// a list of OBSERVATIONS, not fixes; the world's author decides.
+//
+// ── CODE COUNTS, THE MODEL READS ─────────────────────────────────────────
+// Every check that is arithmetic over rows is arithmetic over rows: who was
+// last heard when, which boon epoch has passed, who stands in two rooms in
+// one hour. The model is asked exactly one thing — to read the chat
+// transcripts (the one lived surface ASK never assembled) for questions that
+// were asked and never answered, because "was this answered" is a judgment
+// about prose and pretending otherwise would be a regex cosplaying as a
+// reader. Even there the model only POINTS: every claim it makes is a message
+// id, validated against the assembly — the id must have been handed to it,
+// the row must actually hold a question, and the observation's text is built
+// by code from the row itself. A claim that fails any of that is dropped and
+// counted, never printed. Citations are the assembly's, start to finish.
+//
+// ── THE DISCRETION HOLDS, TURNED TOWARD THE OWNER ────────────────────────
+// Investigate reads both sides of every wall, exactly as ASK does. But its
+// output is for the owner's tuning eye, and the posture stays "point at the
+// door": it names that a pressure has pressed nothing without quoting the
+// pressure, that a debt sits unclaimed by the debt's own label, that a thread
+// went quiet by its dates — never the secret behind any of them. The oracle
+// shelf stays absent exactly as ASK built it: no story outline, no beat, no
+// truth is ever assembled here (the audit reads lived tables and the
+// template's own machinery blocks, nowhere the author's answers live), and a
+// death's `by_handle` stays in the store for the same tier-1 reason it does
+// in the lived record.
+//
+// ── READ-ONLY, STILL ─────────────────────────────────────────────────────
+// Same contract as ASK, same proof in the tests: not one row changes.
+
+/** The audit's kinds, in the order the report groups them. */
+const XERIC_NARRATOR_KINDS = ['unspoken', 'dropped_question', 'unpaid_debt',
+                              'idle_pressure', 'never_lived', 'contradiction'];
+
+/** One lived line, flattened to a single quotable breath. */
+function xeric_narrator_flat(string $s): string
+{
+    return trim(preg_replace('/\s+/u', ' ', $s) ?? $s);
+}
+
+/** The flat line, cut to citation length. The id beside it is the whole text. */
+function xeric_narrator_quote(string $s, int $max = 80): string
+{
+    $s = xeric_narrator_flat($s);
+    return mb_strlen($s) > $max ? rtrim(mb_substr($s, 0, $max)) . '…' : $s;
+}
+
+/**
+ * Every living cast member's chat thread, tail first-to-last, keyed by handle.
+ * This is the one assembly ASK skipped — threads opened and dropped live here.
+ * The dead are left out: the dead do not owe answers, and flagging a question
+ * the grave already closed would be noise wearing an observation's clothes.
+ * Characters with no thread at all are absent (nothing to transcribe); the
+ * audit reports them from the cast list, not from here.
+ */
+function xeric_narrator_transcripts(array $t, PDO $db, int $per = 40, array $dead = []): array
+{
+    $out = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || in_array($h, $dead, true)) continue;
+        $conv = xeric_conversation_find($db, $h, 'chat');
+        if ($conv === null) continue;
+        $rows = xeric_messages_recent($db, (int)$conv['id'], max(1, $per));
+        if ($rows === []) continue;
+        $out[$h] = ['handle' => $h, 'name' => xeric_world_name($t, $h),
+                    'conv' => (int)$conv['id'], 'messages' => $rows];
+    }
+    return $out;
+}
+
+/**
+ * The deterministic audit: every check that is arithmetic, plus the manifest
+ * of everything read. No model anywhere in here — same rows in, same
+ * observations out, byte for byte, which is what makes it a debugger.
+ *
+ * @param array $now  from xeric_world_now()
+ * @param array $opts days (window, default 3 world-days), events (walk depth,
+ *                    default 1000), memories (per head, default 200),
+ *                    transcript (messages per thread, default 40)
+ * @return array{observations:array,sources:array,transcripts:array}
+ */
+function xeric_narrator_audit(array $t, PDO $db, array $now, array $opts = []): array
+{
+    $days  = max(1, (int)($opts['days'] ?? 3));
+    $epoch = (int)($now['epoch'] ?? 0);
+    $cut   = $epoch - $days * 86400;
+    $user  = trim((string)($t['user']['name'] ?? '')) ?: 'the one who lives here';
+
+    $deaths  = xeric_deaths($db);
+    $sources = ['events' => [], 'memories' => [], 'threads' => [],
+                'messages' => [], 'arcs' => [], 'deaths' => array_keys($deaths)];
+    $obs = [];
+    $add = static function (string $kind, string $text, array $cites, string $by = 'code') use (&$obs): void {
+        $obs[] = ['kind' => $kind, 'text' => $text, 'cites' => $cites, 'found_by' => $by];
+    };
+
+    // -- the record, whole -------------------------------------------------
+    // ASK reads the last handful; the audit walks the book. The cap exists so
+    // a years-old world does not become a memory bill, not as a policy.
+    $events = xeric_events_recent($db, max(1, (int)($opts['events'] ?? 1000)));
+    foreach ($events as $e) $sources['events'][] = (int)$e['id'];
+
+    // Where the seeded past ends and the lived one begins: every row the
+    // seeder wrote shares the marker's own created_at, to the second.
+    $seedAt = 0;
+    $marker = xeric_world_state_get($db, XERIC_SEED_MARKER);
+    if ($marker !== null) {
+        $m      = json_decode($marker, true);
+        $seedAt = (int)(is_array($m) ? ($m['at'] ?? 0) : 0);
+    }
+
+    $lastSeen = [];   // handle => ['epoch' =>, 'id' =>] — their newest hour on the record
+    $seedEv   = [];   // handle => seed event ids
+    $livedEv  = [];   // handle => count of lived events
+    foreach ($events as $e) {
+        $isSeed = $seedAt > 0 && (int)$e['created_at'] === $seedAt;
+        $when   = (int)$e['world_epoch'];
+        foreach ((array)$e['participants'] as $p) {
+            $p = (string)$p;
+            if (!isset($lastSeen[$p]) || $when > $lastSeen[$p]['epoch']) {
+                $lastSeen[$p] = ['epoch' => $when, 'id' => (int)$e['id']];
+            }
+            if ($isSeed) $seedEv[$p][] = (int)$e['id'];
+            else         $livedEv[$p] = ($livedEv[$p] ?? 0) + 1;
+        }
+    }
+
+    // Per-head memories, read once, walked twice (never-lived, contradictions).
+    $memByHead = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        $rows = xeric_memories_for($db, $h, max(1, (int)($opts['memories'] ?? 200)));
+        if ($rows === []) continue;
+        $memByHead[$h] = $rows;
+        $sources['memories'][$h] = count($rows);
+    }
+
+    $transcripts = xeric_narrator_transcripts($t, $db,
+        max(1, (int)($opts['transcript'] ?? 40)), array_keys($deaths));
+    foreach ($transcripts as $h => $tr) {
+        $ids = [];
+        foreach ($tr['messages'] as $m) $ids[] = (int)$m['id'];
+        $sources['messages'][$h] = $ids;
+        $msgs = $tr['messages'];
+        $last = end($msgs);
+        $sources['threads'][$h] = ($last['world_epoch'] ?? null) !== null
+            ? (int)$last['world_epoch'] : (int)$last['created_at'];
+    }
+
+    // -- unspoken: who has gone unheard ------------------------------------
+    // The doc's "characters who have not appeared in N days", read at the
+    // thread: the last line in each, or the fact that no thread exists. The
+    // dead are not absent, they are dead; OUT characters have not entered the
+    // story, and a silence that was authored is not a finding.
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || isset($deaths[$h]) || !empty($c['out'])) continue;
+        $name = xeric_world_name($t, $h);
+        if (!isset($transcripts[$h])) {
+            $add('unspoken', $name . ' has never had a thread at all — not one word, either direction.', []);
+            continue;
+        }
+        $when = $sources['threads'][$h];
+        if ($when > $cut) continue;
+        $msgs = $transcripts[$h]['messages'];
+        $last = end($msgs);
+        $add('unspoken',
+            'Nobody has spoken with ' . $name . ' in ' . intdiv($epoch - $when, 86400)
+            . ' world-days. The thread\'s last line (' . xeric_narrator_date($t, $when) . '): "'
+            . xeric_narrator_quote((string)$last['content']) . '"',
+            ['messages' => [(int)$last['id']]]);
+    }
+
+    // -- dropped questions, the arithmetic half ----------------------------
+    // A question that is the LAST message of a thread needs no reader: nothing
+    // followed it, so nothing answered it. The window keeps a question asked
+    // this morning from being an accusation. The subtler case — a question
+    // answered by a change of subject — is the model's, in investigate.
+    foreach ($transcripts as $h => $tr) {
+        $msgs = $tr['messages'];
+        $last = end($msgs);
+        if (!str_contains((string)$last['content'], '?')) continue;
+        $when = $sources['threads'][$h];
+        if ($when > $cut) continue;
+        $asker = (string)$last['role'] === 'user'
+            ? $user . ' asked ' . $tr['name']
+            : $tr['name'] . ' asked';
+        $add('dropped_question',
+            $asker . ' "' . xeric_narrator_quote((string)$last['content']) . '" ('
+            . xeric_narrator_date($t, $when) . '), and the thread ends there. No answer ever came.',
+            ['messages' => [(int)$last['id']]]);
+    }
+
+    // -- unpaid debts: boons and expectations past their fade --------------
+    // `boon.<key>` holds the epoch a won boon goes stale at (0 = never);
+    // xeric_state_counters() drops a stale one from every prompt, "simply
+    // gone" — which is exactly why the audit says it out loud: a prize that
+    // faded unclaimed is a thread the world opened and nobody pulled. An
+    // expectation still `open` past due-plus-grace is the same shape one
+    // system over: the fuse should have burned and nothing marked it.
+    $boonLabel = [];
+    foreach ((array)($t['boons'] ?? []) as $b) {
+        $k = (string)($b['key'] ?? '');
+        if ($k !== '') $boonLabel[$k] = trim((string)($b['label'] ?? '')) ?: $k;
+    }
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || isset($deaths[$h])) continue;
+        $name = xeric_world_name($t, $h);
+        foreach (xeric_arcs_prefixed($db, $h, 'boon.') as $k => $v) {
+            $sources['arcs'][] = $h . ':' . $k;
+            $stale = (int)$v;
+            if ($stale <= 0 || $stale > $epoch) continue;
+            $key = substr((string)$k, strlen('boon.'));
+            $add('unpaid_debt',
+                $name . ' won ' . ($boonLabel[$key] ?? $key) . ' and never claimed it. It faded '
+                . xeric_narrator_date($t, $stale) . ', and the record shows no claim.',
+                ['arcs' => [$h . ':' . $k]]);
+        }
+        foreach (xeric_expects_for($db, $h) as $e) {
+            $sources['arcs'][] = $h . ':' . $e['key'];
+            if ((string)$e['state'] !== 'open' || $epoch <= $e['due'] + XERIC_EXPECT_GRACE) continue;
+            $add('unpaid_debt',
+                $name . ' is still waiting on ' . (string)$e['what'] . ' — due '
+                . xeric_narrator_date($t, $e['due'])
+                . ', grace long past, and no miss has ever been recorded.',
+                ['arcs' => [$h . ':' . $e['key']]]);
+        }
+    }
+
+    // -- idle pressure: a protagonist whose pressure never pressed ---------
+    // The pressure itself is never quoted — the owner wrote it, and the
+    // posture stays "point at the door" even toward the person who built the
+    // door. What the audit says is only that it has produced nothing.
+    $p  = (array)($t['cast']['protagonist'] ?? []);
+    $ph = (string)($p['handle'] ?? '');
+    if ($ph !== '' && trim((string)($p['pressure'] ?? '')) !== ''
+        && !isset($deaths[$ph]) && empty((xeric_world_character($t, $ph) ?? [])['out'])) {
+        $pname = xeric_world_name($t, $ph);
+        $seen  = $lastSeen[$ph] ?? null;
+        if ($seen === null) {
+            $add('idle_pressure',
+                $pname . ' carries this world\'s pressure and has never once appeared in an event.', []);
+        } elseif ($seen['epoch'] <= $cut) {
+            $add('idle_pressure',
+                $pname . ' carries this world\'s pressure and it has pressed out nothing in '
+                . intdiv($epoch - $seen['epoch'], 86400) . ' world-days. Their last hour on the record is '
+                . xeric_narrator_date($t, $seen['epoch']) . '.',
+                ['events' => [$seen['id']]]);
+        }
+    }
+
+    // -- seeded, never lived -----------------------------------------------
+    // A character whose every appearance shares the seeder's write-second and
+    // whose head holds only 'seed' rows arrived with a past and has not lived
+    // an hour since. "Lived" is measured where living happens: a lived event,
+    // a lived memory, or a word of their own in a thread.
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || isset($deaths[$h]) || !empty($c['out'])) continue;
+        $seedMemIds = [];
+        $livedMem   = 0;
+        foreach ($memByHead[$h] ?? [] as $m) {
+            if ((string)$m['source'] === 'seed') $seedMemIds[] = (int)$m['id'];
+            else $livedMem++;
+        }
+        $seedIds = $seedEv[$h] ?? [];
+        if ($seedIds === [] && $seedMemIds === []) continue;   // never seeded: not this check's business
+        $spoke = false;
+        foreach (($transcripts[$h]['messages'] ?? []) as $m) {
+            if ((string)$m['role'] !== 'user') { $spoke = true; break; }
+        }
+        if (($livedEv[$h] ?? 0) > 0 || $livedMem > 0 || $spoke) continue;
+        $add('never_lived',
+            xeric_world_name($t, $h) . ' arrived with a past and has not lived an hour since: '
+            . count($seedIds) . ' seeded event' . (count($seedIds) === 1 ? '' : 's') . ', '
+            . count($seedMemIds) . ' seeded memor' . (count($seedMemIds) === 1 ? 'y' : 'ies')
+            . ', and not a word spoken in any thread.',
+            array_filter(['events' => $seedIds, 'memories' => $seedMemIds], fn($v) => $v !== []));
+    }
+
+    // -- contradictions the repass would care about, at the lived level ----
+    // (1) One body, two rooms, one hour: two placed events inside 60 minutes
+    // sharing a participant and disagreeing about where. Placeless hours
+    // cannot contradict — nowhere is compatible with anywhere.
+    $chrono = $events;
+    usort($chrono, fn($a, $b) => [(int)$a['world_epoch'], (int)$a['id']] <=> [(int)$b['world_epoch'], (int)$b['id']]);
+    $n = count($chrono);
+    for ($i = 0; $i < $n; $i++) {
+        $a = $chrono[$i];
+        if (($a['place'] ?? null) === null || (string)$a['place'] === '') continue;
+        for ($j = $i + 1; $j < $n && (int)$chrono[$j]['world_epoch'] - (int)$a['world_epoch'] < 3600; $j++) {
+            $b = $chrono[$j];
+            if (($b['place'] ?? null) === null || (string)$b['place'] === '') continue;
+            if ((string)$b['place'] === (string)$a['place']) continue;
+            $shared = array_values(array_intersect(
+                array_map('strval', (array)$a['participants']),
+                array_map('strval', (array)$b['participants'])));
+            if ($shared === []) continue;
+            $names = [];
+            foreach ($shared as $s) $names[] = xeric_world_name($t, $s);
+            $add('contradiction',
+                'The record places ' . xeric_join_list($names) . ' at '
+                . xeric_world_place_name($t, (string)$a['place']) . ' and at '
+                . xeric_world_place_name($t, (string)$b['place']) . ' inside the same hour ('
+                . xeric_narrator_date($t, (int)$a['world_epoch']) . ').',
+                ['events' => [(int)$a['id'], (int)$b['id']]]);
+        }
+    }
+
+    // (2) A memory that speaks of somebody as dead before they died. The
+    // match is deliberately narrow — the dead one's name AND a burial word in
+    // the same head-row, dated before the ledger's date — because an audit
+    // that cries wolf gets closed and never reopened. The death's `by` is
+    // read nowhere here: who did it is tier 1, in the audit as everywhere.
+    $deadWords = '/(?<!\w)(dead|died|dying|funeral|buried|burial|grave|passed away|the late)(?!\w)/iu';
+    foreach ($deaths as $dh => $d) {
+        $dname = xeric_world_name($t, (string)$dh);
+        $first = preg_split('/\s+/u', trim($dname))[0] ?? $dname;
+        $namePat = '/(?<!\w)(' . preg_quote($dname, '/') . '|' . preg_quote($first, '/') . ')(?!\w)/iu';
+        foreach ($memByHead as $h => $rows) {
+            foreach ($rows as $m) {
+                $when = ($m['world_epoch'] ?? null) !== null ? (int)$m['world_epoch'] : (int)$m['created_at'];
+                if ($when >= (int)$d['world_epoch']) continue;
+                $txt = (string)$m['text'];
+                if (!preg_match($namePat, $txt) || !preg_match($deadWords, $txt)) continue;
+                $add('contradiction',
+                    xeric_world_name($t, $h) . '\'s memory of ' . xeric_narrator_date($t, $when)
+                    . ' already speaks of ' . $dname . ' as dead — ' . $dname . ' died '
+                    . xeric_narrator_date($t, (int)$d['world_epoch']) . '.',
+                    ['memories' => [(int)$m['id']], 'deaths' => [(string)$dh]]);
+            }
+        }
+    }
+
+    $order = array_flip(XERIC_NARRATOR_KINDS);
+    usort($obs, fn($a, $b) => ($order[$a['kind']] ?? 99) <=> ($order[$b['kind']] ?? 99));
+
+    return ['observations' => $obs, 'sources' => $sources, 'transcripts' => $transcripts];
+}
+
+/**
+ * The transcript-reading turn, unsent. Nothing here but the threads and the
+ * one instruction — no bible, no shelf, no template prose at all, which is
+ * what keeps the oracle absent from this prompt by construction rather than
+ * by promise. The reply contract is ids, because ids are checkable.
+ */
+function xeric_narrator_investigate_prompt(array $t, array $transcripts): array
+{
+    $user = trim((string)($t['user']['name'] ?? '')) ?: 'the one who lives here';
+
+    $sys = implode("\n", [
+        'YOU ARE THE NARRATOR, READING THE RECORD',
+        'Below are chat threads from this world, exactly as written. Your one job: find',
+        'questions that were asked and never answered — not answered late, never answered',
+        'at all. A question that got its answer, however brief, is not a finding. Small',
+        'talk that merely trails off is not a finding. You are looking for a real question',
+        'left hanging while the conversation moved on, or ended.',
+        '',
+        'Reply with a JSON array and nothing else. One object per finding:',
+        '  [{"handle": "<thread handle>", "id": <the [#N] number of the question itself>}]',
+        'If every question found its answer, reply [].',
+    ]);
+
+    $blocks = [];
+    foreach ($transcripts as $tr) {
+        $lines = ['THREAD WITH ' . $tr['name'] . ' (handle: ' . $tr['handle'] . ')'];
+        foreach ($tr['messages'] as $m) {
+            $who = (string)$m['role'] === 'user'
+                ? $user : xeric_world_name($t, (string)($m['handle'] ?? $tr['handle']));
+            $lines[] = '[#' . (int)$m['id'] . '] ' . $who . ': ' . xeric_narrator_flat((string)$m['content']);
+        }
+        $blocks[] = implode("\n", $lines);
+    }
+
+    return [
+        ['role' => 'system', 'content' => $sys],
+        ['role' => 'user',   'content' => implode("\n\n", $blocks)
+            . "\n\nFind every question above that was asked and never answered. Reply with the JSON array only."],
+    ];
+}
+
+/**
+ * What the model claimed, as [{handle, id}] — and nothing it did not. Fences,
+ * preambles and trailing chat are cut away by taking the outermost [...]; a
+ * reply that holds no readable array is a reply that made no claims.
+ */
+function xeric_narrator_claims(string $reply): array
+{
+    $a = strpos($reply, '[');
+    $b = strrpos($reply, ']');
+    if ($a === false || $b === false || $b < $a) return [];
+    $d = json_decode(substr($reply, $a, $b - $a + 1), true);
+    if (!is_array($d)) return [];
+    $out = [];
+    foreach ($d as $row) {
+        if (!is_array($row)) continue;
+        $h  = (string)($row['handle'] ?? '');
+        $id = $row['id'] ?? null;
+        if ($h === '' || !is_numeric($id)) continue;
+        $out[] = ['handle' => $h, 'id' => (int)$id];
+    }
+    return $out;
+}
+
+/**
+ * Audit the world. Deterministic checks always; the transcript read only when
+ * an endpoint is offered and there are transcripts to read ($endpoint = null
+ * is the honest way to ask for arithmetic alone). Model claims are validated
+ * against the assembly and re-cited by code — see the section banner.
+ *
+ * @param array $opts everything xeric_narrator_audit() takes, plus now (from
+ *                    xeric_world_now(); derived from the world's own clock
+ *                    when not injected), temperature (0.2 — an auditor does
+ *                    not improvise), max_tokens (500), timeout (180)
+ * @return array{observations:array,sources:array,model:array,messages:array}
+ *         `messages` is the transcript-reading prompt when one was sent and
+ *         [] otherwise; `model` carries asked/claims/kept/dropped/usage.
+ */
+function xeric_narrator_investigate(array $t, PDO $db, ?array $endpoint, array $opts = []): array
+{
+    $now   = (array)($opts['now'] ?? xeric_world_now($t, xeric_clock_epoch($db)));
+    $audit = xeric_narrator_audit($t, $db, $now, $opts);
+    $obs   = $audit['observations'];
+
+    $model    = ['asked' => false, 'claims' => 0, 'kept' => 0, 'dropped' => 0, 'usage' => []];
+    $messages = [];
+
+    if ($endpoint !== null && $audit['transcripts'] !== []) {
+        $messages = xeric_narrator_investigate_prompt($t, $audit['transcripts']);
+
+        $t0    = microtime(true);
+        $usage = [];
+        $reply = xeric_narrator_say($endpoint, $messages, [
+            'temperature' => (float)($opts['temperature'] ?? 0.2),
+            'max_tokens'  => (int)($opts['max_tokens'] ?? 500),
+            'timeout'     => (int)($opts['timeout'] ?? 180),
+        ], $usage, 'investigate');
+        $usage['ms'] = (int)round((microtime(true) - $t0) * 1000);
+
+        $model['asked'] = true;
+        $model['usage'] = $usage;
+
+        // What the arithmetic already cited is not the model's to re-find.
+        $cited = [];
+        foreach ($obs as $o) {
+            foreach ((array)($o['cites']['messages'] ?? []) as $mid) $cited[(int)$mid] = true;
+        }
+
+        $claims = xeric_narrator_claims($reply);
+        $model['claims'] = count($claims);
+        $user = trim((string)($t['user']['name'] ?? '')) ?: 'the one who lives here';
+        foreach ($claims as $cl) {
+            $tr  = $audit['transcripts'][$cl['handle']] ?? null;
+            $row = null;
+            foreach ((array)($tr['messages'] ?? []) as $m) {
+                if ((int)$m['id'] === $cl['id']) { $row = $m; break; }
+            }
+            // The three gates, in order of what they catch: an id that was
+            // never assembled (invented), a row that holds no question
+            // (misread), a row the arithmetic already reported (redundant).
+            if ($row === null || !str_contains((string)$row['content'], '?') || isset($cited[$cl['id']])) {
+                $model['dropped']++;
+                continue;
+            }
+            $cited[$cl['id']] = true;
+            $when = ($row['world_epoch'] ?? null) !== null ? (int)$row['world_epoch'] : (int)$row['created_at'];
+            $msgs = $tr['messages'];
+            $tail = end($msgs);
+            $asker = (string)$row['role'] === 'user'
+                ? $user . ' asked ' . $tr['name'] : $tr['name'] . ' asked';
+            $obs[] = ['kind' => 'dropped_question',
+                'text' => $asker . ' "' . xeric_narrator_quote((string)$row['content']) . '" ('
+                    . xeric_narrator_date($t, $when) . '), and '
+                    . ((int)$tail['id'] === $cl['id']
+                        ? 'the thread ends there'
+                        : 'the conversation moved on without an answer') . '.',
+                'cites' => ['messages' => [$cl['id']]], 'found_by' => 'model'];
+            $model['kept']++;
+        }
+
+        $order = array_flip(XERIC_NARRATOR_KINDS);
+        usort($obs, fn($a, $b) => ($order[$a['kind']] ?? 99) <=> ($order[$b['kind']] ?? 99));
+    }
+
+    return [
+        'observations' => $obs,
+        'sources'      => $audit['sources'],
+        'model'        => $model,
+        'messages'     => $messages,
     ];
 }

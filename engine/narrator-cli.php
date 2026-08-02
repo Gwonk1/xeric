@@ -1,9 +1,11 @@
 <?php
 /**
- * narrator-cli.php — ask the world why. The author's console for ASK mode.
+ * narrator-cli.php — ask the world why. The author's console for ASK and
+ * INVESTIGATE.
  *
  *   php engine/narrator-cli.php --world=worlds/port-saltwater --ask="why has Maren gone quiet?"
  *   php engine/narrator-cli.php --world=worlds/port-saltwater --context
+ *   php engine/narrator-cli.php --world=worlds/port-saltwater --investigate --days=5
  *
  * This is the acceptance surface for the narrator the way chat-cli.php is for
  * the chat turn: if the world cannot explain itself here, no web panel will
@@ -99,23 +101,37 @@ if (isset($args['context'])) {
     exit(0);
 }
 
+// -- the audit ---------------------------------------------------------------
+// The second power. Deterministic checks always; the transcript read rides
+// the endpoint unless --no-model asks for arithmetic alone. Grouped by kind,
+// every line carrying the row ids it stands on — the citations are the
+// assembly's, and for the model's findings they are VALIDATED, never taken
+// on its word (engine/narrator.php, the investigate banner).
+if (isset($args['investigate'])) {
+    $days  = max(1, (int)($args['days'] ?? 3));
+    $iopts = ['now' => $now, 'days' => $days, 'timeout' => (int)($args['timeout'] ?? 180)];
+    if (isset($args['events']))   $iopts['events']   = (int)$args['events'];
+    if (isset($args['memories'])) $iopts['memories'] = (int)$args['memories'];
+
+    try {
+        $audit = xeric_narrator_investigate($T, $db,
+            isset($args['no-model']) ? null : xeric_narrator_cli_endpoint($args), $iopts);
+    } catch (Throwable $e) {
+        fwrite(STDERR, "\n" . $e->getMessage() . "\n");
+        exit(1);
+    }
+
+    fwrite(STDOUT, "\n" . xeric_narrator_cli_audit($audit, $days) . "\n");
+    exit(0);
+}
+
 $question = trim((string)($args['ask'] ?? ''));
 if ($question === '') {
-    fwrite(STDERR, "--ask=\"…\" is required (or --context to see what the narrator would read)\n");
+    fwrite(STDERR, "--ask=\"…\" is required (or --context, or --investigate)\n");
     exit(2);
 }
 
-// -- endpoint ---------------------------------------------------------------
-$endpoint = [
-    'kind'  => (string)($args['kind'] ?? 'local'),
-    'base'  => (string)($args['base'] ?? ''),
-    'model' => (string)($args['model'] ?? ''),
-    'key'   => (string)($args['key'] ?? getenv('XERIC_API_KEY') ?: ''),
-];
-if ($endpoint['base'] === '') {
-    $endpoint['kind'] = 'local';
-    $endpoint['base'] = 'http://127.0.0.1:8080';
-}
+$endpoint = xeric_narrator_cli_endpoint($args);
 
 // -- the ask ----------------------------------------------------------------
 fwrite(STDOUT, "\n  " . (trim((string)($T['user']['name'] ?? '')) ?: 'you') . ': ' . $question . "\n");
@@ -143,13 +159,92 @@ exit(0);
 
 // ---------------------------------------------------------------------------
 
+/** The endpoint, from flags. Local :8080 when nothing names another. */
+function xeric_narrator_cli_endpoint(array $args): array
+{
+    $endpoint = [
+        'kind'  => (string)($args['kind'] ?? 'local'),
+        'base'  => (string)($args['base'] ?? ''),
+        'model' => (string)($args['model'] ?? ''),
+        'key'   => (string)($args['key'] ?? getenv('XERIC_API_KEY') ?: ''),
+    ];
+    if ($endpoint['base'] === '') {
+        $endpoint['kind'] = 'local';
+        $endpoint['base'] = 'http://127.0.0.1:8080';
+    }
+    return $endpoint;
+}
+
+/**
+ * The audit, grouped by kind, every observation over its citations. The
+ * headers are the report's own vocabulary; an empty audit says so in the
+ * narrator's voice rather than printing six empty shelves.
+ */
+function xeric_narrator_cli_audit(array $out, int $days): string
+{
+    $heads = [
+        'unspoken'         => 'NOT SPOKEN TO IN ' . $days . ' WORLD-DAYS',
+        'dropped_question' => 'QUESTIONS ASKED, NEVER ANSWERED',
+        'unpaid_debt'      => 'DEBTS OPEN PAST THEIR FADE',
+        'idle_pressure'    => 'PRESSURE PRODUCING NOTHING',
+        'never_lived'      => 'SEEDED, NEVER LIVED',
+        'contradiction'    => 'WHAT THE RECORD CONTRADICTS',
+    ];
+
+    $lines = [];
+    if ($out['observations'] === []) {
+        $lines[] = '  Nothing to report. The record is keeping up with itself.';
+    }
+    $cur = '';
+    foreach ($out['observations'] as $o) {
+        if ($o['kind'] !== $cur) {
+            if ($cur !== '') $lines[] = '';
+            $lines[] = '  ' . ($heads[$o['kind']] ?? strtoupper((string)$o['kind']));
+            $cur = (string)$o['kind'];
+        }
+        $lines[] = '  - ' . $o['text'];
+        $c = xeric_narrator_cli_cites((array)$o['cites']);
+        if (($o['found_by'] ?? 'code') === 'model') {
+            $c .= ($c !== '' ? '; ' : '') . 'read by the model';
+        }
+        if ($c !== '') $lines[] = '      [' . $c . ']';
+    }
+
+    $lines[] = '';
+    $m = (array)($out['model'] ?? []);
+    if (!empty($m['asked'])) {
+        $lines[] = '  the model read ' . count((array)($out['sources']['messages'] ?? []))
+            . ' thread(s): ' . (int)$m['claims'] . ' claim(s), ' . (int)$m['kept'] . ' kept, '
+            . (int)$m['dropped'] . ' dropped'
+            . (isset($m['usage']['ms']) ? sprintf(' [%.1fs]', ((int)$m['usage']['ms']) / 1000) : '');
+    } else {
+        $lines[] = '  no model was asked; every line above is arithmetic.';
+    }
+    $lines[] = '  ' . xeric_narrator_cli_sources((array)($out['sources'] ?? []));
+    return implode("\n", $lines);
+}
+
+/** One observation's citations, in the record's own ids. */
+function xeric_narrator_cli_cites(array $c): string
+{
+    $bits = [];
+    foreach ((array)($c['events'] ?? []) as $id)   $bits[] = 'event #' . (int)$id;
+    foreach ((array)($c['messages'] ?? []) as $id) $bits[] = 'message #' . (int)$id;
+    foreach ((array)($c['memories'] ?? []) as $id) $bits[] = 'memory #' . (int)$id;
+    foreach ((array)($c['arcs'] ?? []) as $a)      $bits[] = 'arc ' . str_replace(':', '/', (string)$a);
+    foreach ((array)($c['deaths'] ?? []) as $h)    $bits[] = 'the deaths ledger (' . (string)$h . ')';
+    return implode('; ', $bits);
+}
+
 /**
  * The citations line: what the answer was drawn from, from the assembly
  * manifest rather than from the model's mouth — a model asked to cite invents.
+ * Serves both manifests: ASK's (which opens with the bible) and the audit's
+ * (which never renders it, and says so by leaving it out).
  */
 function xeric_narrator_cli_sources(array $s): string
 {
-    $bits = ['the bible'];
+    $bits = !empty($s['bible']) ? ['the bible'] : [];
     $ev = (array)($s['events'] ?? []);
     if ($ev !== []) {
         $tr = count((array)($s['trails'] ?? []));
@@ -160,11 +255,18 @@ function xeric_narrator_cli_sources(array $s): string
     if ($mem !== []) $bits[] = 'memories of ' . xeric_join_list(array_keys($mem));
     $th = (array)($s['threads'] ?? []);
     if ($th !== []) $bits[] = count($th) . ' thread' . (count($th) === 1 ? '' : 's');
+    $ms = (array)($s['messages'] ?? []);
+    if ($ms !== []) {
+        $n = array_sum(array_map('count', $ms));
+        $bits[] = $n . ' transcript line' . ($n === 1 ? '' : 's');
+    }
+    $ar = (array)($s['arcs'] ?? []);
+    if ($ar !== []) $bits[] = count($ar) . ' ledger arc' . (count($ar) === 1 ? '' : 's');
     $st = (array)($s['stories'] ?? []);
     if ($st !== []) $bits[] = count($st) . ' stor' . (count($st) === 1 ? 'y' : 'ies') . ' on the shelf';
     $dd = (array)($s['deaths'] ?? []);
     if ($dd !== []) $bits[] = 'the deaths ledger';
-    return 'drawn from: ' . implode('; ', $bits);
+    return 'drawn from: ' . ($bits !== [] ? implode('; ', $bits) : 'an empty ledger');
 }
 
 /** --flag, --key=value. Everything else is ignored. Same parser as chat-cli. */
@@ -193,6 +295,11 @@ function xeric_narrator_cli_usage(): string
       --ask="…"            the question. The narrator answers within its discretion:
                            straight about the machine, discreet about the story.
       --context            print what the narrator would read instead of asking
+      --investigate        audit the lived record: dropped threads, the unheard-from,
+                           debts past their fade, idle pressure, the seeded-never-lived,
+                           and what the record contradicts. Observations, not fixes.
+      --days=N             the audit's window in world-days (default 3)
+      --no-model           audit by arithmetic alone; skip the transcript read
       --epoch=WHEN         unix time, or anything strtotime reads
       --db=PATH            default <world>/world.db
       --events=N           how many recent events to hand it (default 10)
