@@ -789,7 +789,27 @@ echo '<style>' . xeric_play_css() . '
         <button type="button" class="nbtn" data-to="times">skip time</button>
         <button type="button" class="nbtn" data-to="where">where</button>
         <button type="button" class="nbtn" data-to="past">what happened</button>
+        <button type="button" class="nbtn leave" id="leave">leave</button>
       </nav>
+    </div>
+
+    <!-- THE EXIT ASKS THE ONE QUESTION LEAVING RAISES (owner, 2026-08-02):
+         does the world keep living while you are gone, or does it hold its
+         breath? Both answers are honest — the heart lives unattended hours,
+         and the pause is the same clock-stop the power corner uses — and the
+         question is asked HERE, at the door, because that is the moment it is
+         actually about. Leaving by tab-close keeps the world running, which
+         has always been the default and still is. -->
+    <div class="leavecard" id="leavecard" hidden>
+      <p><strong>You're leaving.</strong> Should the world keep living while
+        you're gone — shifts, evenings, people talking about you — or should it
+        hold still until you're back?</p>
+      <div class="leavebtns">
+        <a class="nbtn" href="play.php">keep it running →</a>
+        <button type="button" class="nbtn" id="leavepause">pause it first</button>
+        <button type="button" class="nbtn ghost" id="leavestay">stay</button>
+      </div>
+      <p class="note warn" id="leaveerr" hidden></p>
     </div>
 
     <noscript><div class="noscript"><strong>The time control needs JavaScript.</strong>
@@ -914,6 +934,38 @@ echo '<style>' . xeric_play_css() . '
 (function () {
   'use strict';
   var W = <?= json_encode($w['slug']) ?>;
+
+  // -- the exit door ---------------------------------------------------------
+  // "Keep it running" is a plain link to the shelf; "pause it first" stops
+  // THIS world's clock through the same power.php call the machine corner
+  // makes, then goes. A failed pause keeps you here with the reason on
+  // screen, because leaving somebody who asked for stillness in a world that
+  // is still moving is the one wrong outcome this card has.
+  (function () {
+    var card = document.getElementById('leavecard');
+    var btn  = document.getElementById('leave');
+    if (!card || !btn) return;
+    btn.addEventListener('click', function () { card.hidden = !card.hidden; });
+    var stay = document.getElementById('leavestay');
+    if (stay) stay.addEventListener('click', function () { card.hidden = true; });
+    var pause = document.getElementById('leavepause');
+    if (pause) pause.addEventListener('click', function () {
+      pause.disabled = true;
+      fetch('power.php', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ a: 'clock', world: W, set: 'stop' }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.ok) { location.href = 'play.php'; return; }
+          throw new Error((d && d.error) || 'the clock did not stop');
+        })
+        .catch(function (e) {
+          pause.disabled = false;
+          var err = document.getElementById('leaveerr');
+          err.textContent = 'Could not pause it: ' + e.message + ' — the world is still running. Stay, or leave it living.';
+          err.hidden = false;
+        });
+    });
+  })();
 
   // -- the one-time rating confirmation --------------------------------------
   // Any press is the answer; the banner never comes back because the save

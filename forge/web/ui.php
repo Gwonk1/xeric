@@ -628,6 +628,14 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 /* the one-time rating confirmation: five buttons, the current one marked */
 .ratebtns{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0}
 .ratebtns .nbtn.on{box-shadow:inset 0 0 0 1px var(--accent)}
+
+/* the exit door: a question asked at the threshold, in the room's own idiom */
+.pnav .leave{margin-left:auto}
+.leavecard{border:1px solid var(--line);border-radius:.5rem;padding:.8rem 1rem;margin:.6rem 0 1rem;background:var(--card,var(--bg))}
+.leavecard p{margin:.1rem 0 .6rem}
+.leavebtns{display:flex;flex-wrap:wrap;gap:.5rem}
+.leavebtns .nbtn{text-decoration:none}
+.leavebtns .ghost{opacity:.75}
 .note.bad{border-color:var(--bad);color:var(--fg)}
 
 /* build */
