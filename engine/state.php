@@ -604,6 +604,24 @@ function xeric_world_state_all(PDO $db): array
 }
 
 /**
+ * Remove a singleton outright. Absent and deleted must be the same state.
+ *
+ * The store went years without a delete because nothing legitimate un-happened:
+ * guards accumulate, watermarks only rise. Rewind (engine/rewind.php) is what
+ * changed that — un-happening an hour means its `sweep:<size>:<n>` guard and its
+ * `why:event:<id>` trail must not merely be blanked but GONE, because half the
+ * engine distinguishes "no row" from "a row that says nothing" (the sweep guard
+ * check is `!== null`, and a blanked guard would keep the window unsweepable
+ * forever). Deleting a key that is not there is a no-op, not an error: the
+ * caller is declaring a state, not performing surgery.
+ */
+function xeric_world_state_delete(PDO $db, string $key): void
+{
+    $st = $db->prepare('DELETE FROM world_state WHERE key = ?');
+    $st->execute([$key]);
+}
+
+/**
  * The world clock offset, in seconds. The demo's "skip to evening" writes here;
  * every other caller just asks for xeric_clock_epoch() and gets a world time.
  *
@@ -611,7 +629,10 @@ function xeric_world_state_all(PDO $db): array
  * including backwards and including a year, because a store that argued with its
  * caller would be unusable from a migration or a test. The policy — forward only,
  * one jump at a time — lives in clock.php, and everything that is not a test or a
- * repair tool goes through there.
+ * repair tool goes through there. The one production caller that moves it
+ * backwards is engine/rewind.php, and it earns the exception by moving
+ * everything else with it: the offset only rewinds under a manifest that names
+ * every event, memory and message being un-happened alongside it.
  */
 function xeric_clock_offset(PDO $db): int
 {

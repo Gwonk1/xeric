@@ -36,6 +36,7 @@ require_once __DIR__ . '/sweeps.php';
 require_once __DIR__ . '/proactive.php';
 require_once __DIR__ . '/seed.php';
 require_once __DIR__ . '/story.php';    // the overlays beside the template, if there are any
+require_once __DIR__ . '/rewind.php';   // the mark + manifest around a skip, and the way back
 
 $args = xeric_sweep_cli_args(array_slice($argv, 1));
 
@@ -136,6 +137,44 @@ if (isset($args['status'])) {
     exit(0);
 }
 
+// -- take back the last skip -------------------------------------------------
+// The whole thing or none of it, and only the most recent one: rewind.php owns
+// the rules and this only says what happened in the same voice --advance uses.
+// A refusal is exit 1 rather than 2 — the operator asked a fair question and
+// got a real answer, which is not the same failure as a flag nobody can read.
+if (isset($args['rewind'])) {
+    $r = xeric_rewind($T, $db);
+    if (!$r['ok']) {
+        fwrite(STDOUT, "\n  " . (string)$r['why'] . "\n\n");
+        exit(1);
+    }
+    fwrite(STDOUT, "\n  ⏪ " . $r['label'] . ' un-happened: '
+        . $r['events'] . ' event' . ($r['events'] === 1 ? '' : 's') . ', '
+        . $r['memories'] . ' memor' . ($r['memories'] === 1 ? 'y' : 'ies') . ', '
+        . $r['messages'] . ' message' . ($r['messages'] === 1 ? '' : 's') . "\n");
+    fwrite(STDOUT, '  the world stands at ' . xeric_sweep_cli_when((array)$r['now'])
+        . " again, and those hours are unlived — skip them a second time and they may go differently\n\n");
+    exit(0);
+}
+
+// What the LAST run left hanging, judged now that hindsight exists: an evening
+// nobody followed up on, a message nobody answered. The demo does this at the
+// top of a skip for the same reason (learn.php) — a private install that only
+// ever uses this CLI has to learn too, or learning is a demo feature.
+//
+// BEFORE the mark below, deliberately, and the demo's worker keeps the same
+// order: the settle judges the PREVIOUS span, and verdicts about hours that
+// stay lived must not ride this skip's manifest and get un-judged by a rewind.
+$settled = xeric_learn_settle($db, (int)$before['epoch']);
+
+// The near side of the skip, photographed before the clock moves. Everything
+// from here to the manifest commit at the bottom IS the skip, and the diff of
+// the two is what makes --rewind possible (engine/rewind.php). Taken even when
+// there is no --advance: the commit declines to write when the clock never
+// moved, so a sweep of the current hour cannot overwrite the manifest of the
+// skip that was.
+$mark = xeric_rewind_mark($db);
+
 // -- the clock --------------------------------------------------------------
 $span = 0;
 if (isset($args['advance'])) {
@@ -182,12 +221,6 @@ $opts = [
 ];
 if (isset($args['force'])) $opts['force'] = true;
 if (isset($args['spine'])) $opts['spine'] = $args['spine'] !== 'false';
-
-// What the LAST run left hanging, judged now that hindsight exists: an evening
-// nobody followed up on, a message nobody answered. The demo does this at the
-// top of a skip for the same reason (learn.php) — a private install that only
-// ever uses this CLI has to learn too, or learning is a demo feature.
-$settled = xeric_learn_settle($db, (int)$before['epoch']);
 
 $t0 = microtime(true);
 $sw = xeric_sweep_catchup($T, $db, $endpoint, $before['epoch'], $after['epoch'], $opts);
@@ -266,6 +299,12 @@ if (!isset($args['no-learn']) && xeric_learn_due($db)) {
     }
 }
 
+// -- the way back, written down ----------------------------------------------
+// After every write this run makes — the sweeps, the ping, the pend, the
+// distil — so the manifest's diff names all of it. A run with no --advance
+// never moved the clock and the commit declines to write (see rewind.php).
+try { xeric_rewind_commit($db, $mark); } catch (Throwable $e) { /* the hours still happened */ }
+
 // -- the ledger -------------------------------------------------------------
 fwrite(STDOUT, "\n  " . count($sw['events']) . ' event' . (count($sw['events']) === 1 ? '' : 's')
     . ' in ' . sprintf('%.1fs', $sweepMs / 1000)
@@ -328,6 +367,9 @@ function xeric_sweep_cli_usage(): string
       --world=DIR          a world directory (world-template.json [+ seed.json])
       --advance=SPAN       move the world forward: 6h, 90m, 2d (max 7d per call)
       --sweeps=N           at most N events out of the hours that went by (default 2)
+      --rewind             take back the LAST skip, whole: its events, memories and
+                           messages un-happen and the clock returns; the hours are
+                           sweepable again and may go differently the second time
       --status             print the clock and the last few events, change nothing
       --reset-clock        put the world back on real time
       --reset              delete the world db and start the world over

@@ -14,8 +14,14 @@
  *     with the world epoch at which they were written. Rewinding the offset would
  *     leave a character remembering a Tuesday that has not happened yet, and no
  *     amount of prose can talk a model out of a date. A rewind is therefore an
- *     exception, never a shrug — the only way back is xeric_clock_reset(), which
- *     is an explicit "this world's fast-forward was a mistake".
+ *     exception, never a shrug — there are exactly two ways back, and both pay
+ *     the debt the stamps create. xeric_clock_reset() is the blunt one: "this
+ *     world's fast-forward was a mistake", back to its own start. xeric_rewind()
+ *     (engine/rewind.php) is the surgical one: the last skip's clock movement
+ *     comes back OFF, but only together with every memory, message and event
+ *     that was stamped inside it — the manifest is what makes moving the offset
+ *     backwards not leave anybody remembering an unhappened Tuesday, because
+ *     the remembering goes with the Tuesday.
  *
  *  2. ONE JUMP IS BOUNDED. A demo button that reads "6h" from a query string is
  *     one typo away from "6000h", and a world that skipped a year would have a

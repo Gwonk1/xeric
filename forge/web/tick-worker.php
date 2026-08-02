@@ -40,6 +40,7 @@ declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(403); exit("tick-worker.php is not a page\n"); }
 
 require_once __DIR__ . '/play-lib.php';
+require_once XERIC_WEB_LIB . '/engine/rewind.php';   // the mark + manifest around the skip
 
 $job = (string)($argv[1] ?? '');
 if (!xeric_web_job_ok($job)) { fwrite(STDERR, "tick: bad job id\n"); exit(2); }
@@ -65,6 +66,7 @@ $sid = (string)($payload['sid'] ?? '');
 if (preg_match('/^[a-f0-9]{32}$/', $sid)) xeric_session_use($sid);
 
 $lock = null;
+$mark = null;
 
 try {
     $slug = (string)($payload['slug'] ?? '');
@@ -110,6 +112,14 @@ try {
     }
     $lock = $got['hold'];
     if ((float)($got['waited'] ?? 0) > 1.0) $say('the model is free, ' . (int)$got['waited'] . 's in line');
+
+    // -- the mark ------------------------------------------------------------
+    // The near side of the skip, photographed before the clock moves. Everything
+    // between this line and the manifest commit in the finally below IS the
+    // skip, and the diff of the two is what makes it rewindable
+    // (engine/rewind.php). After the settle above on purpose: the settle judges
+    // the PREVIOUS span, and its verdicts are about hours that stay lived.
+    $mark = xeric_rewind_mark($db);
 
     // -- the clock -----------------------------------------------------------
     $after = xeric_clock_advance($db, $span, $T);
@@ -323,6 +333,17 @@ try {
     xeric_web_job_append($job, ['k' => 'error', 't' => $el(), 'kind' => 'tick',
         'message' => $e->getMessage()]);
 } finally {
+    // THE MANIFEST RIDES OUT ON EVERY PATH THE CLOCK MOVED ON — the happy one
+    // and the one where something above threw. A skip that died halfway still
+    // moved the clock and still landed hours, and those are exactly as
+    // regrettable as a finished skip's; the commit diffs what ACTUALLY landed,
+    // so a half-skip gets a manifest that tells the truth about half. When the
+    // clock never moved (the advance itself refused), the commit declines to
+    // write and the previous skip's manifest stands. Never fatal: a skip whose
+    // rewind could not be recorded is still a skip that happened.
+    if (is_array($mark) && isset($db)) {
+        try { xeric_rewind_commit($db, $mark); } catch (Throwable $e) { /* the hours still happened */ }
+    }
     // The slot goes back with a measurement of what this skip cost, which is what
     // the next visitor's "about 40 seconds" is made of.
     if (is_array($lock)) xeric_queue_release($lock);
