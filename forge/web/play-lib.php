@@ -853,6 +853,194 @@ function xeric_play_compass_html(array $t, PDO $db, ?array $now = null): string
         . '</p>';
 }
 
+// ---------------------------------------------------------------------------
+// Presence marks — the vocabulary of the small glyph beside a name
+// ---------------------------------------------------------------------------
+//
+// COMMONS ONLY. Every state below derives from the week, the places and the
+// clock — the three things a neighbour standing in the street could know.
+// Nothing here reads a wall, a psyche, an arc or a thread: a presence mark that
+// knew what somebody was privately carrying would be the inspector's job
+// leaking onto the front page, one glyph at a time.
+
+/**
+ * Where somebody WORKS, as opposed to where they happen to be standing.
+ *
+ * The template never says "this is her job" — it says where she is, when, and
+ * what she is doing there, so a shift has to be recognised rather than looked
+ * up. The claim: a block is a shift when it carries a `doing` and at least
+ * three hours, at a place that collects three or more distinct days of such
+ * blocks a week. Days because a job is a rhythm, not an errand; hours because
+ * the counter-example is in the engine's own fixture — Theo is at the diner
+ * five days running, two hours at a time, doing homework, and calling that boy
+ * staff would be wrong in exactly the way a town would notice.
+ *
+ * UNDER-CLAIMING IS THE DESIGN. A shift this misses renders as merely placed,
+ * which is never a lie; a shift this over-claims puts a briefcase on a
+ * regular's habit. So the borderline cases — the two-day volunteer, the short
+ * turn behind a counter — stay pins on purpose.
+ *
+ * @return string[] place keys
+ */
+function xeric_play_workplaces(array $c): array
+{
+    $tally = [];
+    foreach ((array)($c['week'] ?? []) as $w) {
+        $where = (string)($w['where'] ?? '');
+        if ($where === '' || xeric_text($w['doing'] ?? '') === '') continue;
+        if (xeric_play_block_minutes($w) < 180) continue;
+        foreach ((array)($w['days'] ?? []) as $d) $tally[$where][(int)$d] = true;
+    }
+    return array_keys(array_filter($tally, fn(array $days): bool => count($days) >= 3));
+}
+
+/** Minutes inside one week[] block. A wrap past midnight counts its whole arc;
+ *  a block with no times owns its day, the same reading week_covers gives it. */
+function xeric_play_block_minutes(array $w): int
+{
+    $from = xeric_world_minutes(isset($w['from']) ? (string)$w['from'] : null);
+    $to   = xeric_world_minutes(isset($w['to'])   ? (string)$w['to']   : null);
+    if ($from === null || $to === null) return 1440;
+    return $to > $from ? $to - $from : $to + 1440 - $from;
+}
+
+/**
+ * Is this an hour the world would call sleep?
+ *
+ * The quiet-hours band when the template has a readable one, engine-canon
+ * night when it does not. Deliberately NOT xeric_sweep_quiet(): that gate
+ * protects the person holding the phone, so an unreadable field makes it call
+ * EVERY hour quiet, and a template may switch it off for events entirely —
+ * both right for pings, both wrong here, where they would put a cast to sleep
+ * at noon or never. A sleep mark guards nobody; it only has to be plausible.
+ */
+function xeric_play_sleeping_hour(array $t, array $now): bool
+{
+    $why  = null;
+    $win  = xeric_sweep_quiet_window((string)($t['user']['quiet_hours'] ?? ''), $why);
+    if ($win === null) return (string)($now['phase'] ?? '') === 'night';
+    $mins = xeric_world_minutes((string)($now['hhmm'] ?? '')) ?? 0;
+    [$f, $to] = $win;
+    return $to > $f ? ($mins >= $f && $mins < $to) : ($mins >= $f || $mins < $to);
+}
+
+/**
+ * The mark a cast chip wears, and the sentence under it.
+ *
+ * Six words and a modifier, decided in confidence order:
+ *
+ *   absent — no presence row at all. OUT of the story: the engine leaves them
+ *            off the map entirely (xeric_world_who_is_where), and absence IS
+ *            the state — not a gap to paper over with an invented placement or
+ *            a guess that they are sleeping.
+ *   work   — placed by a block xeric_play_workplaces() recognises. 💼
+ *   placed — placed by any other block. 📍
+ *   soon   — not placed, but a block of theirs starts today within two hours:
+ *            "→ the Bluebird Diner at 19:00". A written start time outranks
+ *            every guess below it — the week is data and "asleep" is only an
+ *            inference from the hour, so somebody with a five-o'clock open is
+ *            shown heading for it rather than sleeping through it.
+ *   asleep — at home inside sleeping hours. 💤
+ *   home   — at home, awake, nothing on the week. 🏠
+ *   off    — no block and no home to fall back to: the bare words "off shift",
+ *            unchanged, for worlds forged before homes existed.
+ *
+ *   slow   — a modifier riding beside any waking state before ten, when last
+ *            night's block wrapped past midnight and is over. ☕ A late close
+ *            earns a slow morning; it is a small cast over the chip, gentle on
+ *            purpose, and never shown on somebody still marked asleep —
+ *            their slow morning has not started yet.
+ *
+ * @param array|null $row this handle's row out of xeric_world_who_is_where(),
+ *                        or null when the map has no row for them
+ * @return array{state:string,glyph:string,say:string,pw:string,slow:bool}
+ *         `say` is the title-attribute sentence, `pw` the row's short line.
+ *         Glyphs stay small and the sentences stay sentences — never paragraphs.
+ */
+function xeric_play_presence_mark(array $t, array $c, ?array $row, array $now): array
+{
+    if ($row === null) {
+        return ['state' => 'absent', 'glyph' => '', 'say' => '', 'pw' => 'not in the story yet', 'slow' => false];
+    }
+
+    $dow  = (int)($now['dow'] ?? 0);
+    $prev = ($dow + 6) % 7;
+    $mins = xeric_world_minutes((string)($now['hhmm'] ?? '')) ?? 0;
+    $week = (array)($c['week'] ?? []);
+
+    // THE MORNING AFTER A WRAP. A block whose `to` is at or before its `from`
+    // ran past midnight (week_covers' own reading), so yesterday's copy of it
+    // ending in today's small hours is a late night actually worked — and a
+    // close at 00:00 exactly still counts, because `to <= mins` holds from the
+    // first minute of the day. Over by now (`to <= $mins`, or they would still
+    // be placed on it) and before ten is the whole test.
+    $slow = false;
+    if ($mins < 600) {
+        foreach ($week as $wk) {
+            $from = xeric_world_minutes(isset($wk['from']) ? (string)$wk['from'] : null);
+            $to   = xeric_world_minutes(isset($wk['to'])   ? (string)$wk['to']   : null);
+            if ($from === null || $to === null || $to > $from) continue;
+            if (!in_array($prev, array_map('intval', (array)($wk['days'] ?? [])), true)) continue;
+            if ($to <= $mins) { $slow = true; break; }
+        }
+    }
+
+    if (($row['where'] ?? null) !== null && empty($row['at_home'])) {
+        $name  = xeric_world_place_name($t, (string)$row['where']);
+        $doing = trim((string)($row['doing'] ?? ''));
+        $line  = 'at ' . $name . ($doing !== '' ? ' · ' . $doing : '');
+
+        // The block that placed them, found the engine's own way — same reader,
+        // same first-match tiebreak as who_is_where, so the block this judges
+        // is always the block that did the placing.
+        $block = null;
+        foreach ($week as $wk) {
+            if (xeric_world_week_covers($wk, $dow, $prev, $mins)) { $block = $wk; break; }
+        }
+        if ($block !== null && $doing !== '' && xeric_play_block_minutes($block) >= 180
+            && in_array((string)$row['where'], xeric_play_workplaces($c), true)) {
+            return ['state' => 'work', 'glyph' => '💼', 'say' => 'at work — ' . $name
+                    . ($doing !== '' ? ' · ' . $doing : ''), 'pw' => $line, 'slow' => $slow];
+        }
+        return ['state' => 'placed', 'glyph' => '📍', 'say' => $line, 'pw' => $line, 'slow' => $slow];
+    }
+
+    // Not placed by any block. A start time within two hours is read straight
+    // off the week — today's blocks only, because "tonight, past midnight" is
+    // tomorrow's business and this mark is about the stretch just ahead.
+    // xeric_world_next_change() was the other way to know this and it answers
+    // a different question (every transition, everybody, in label prose); one
+    // handle's next start is cheaper read where it is written.
+    $soon = null;
+    foreach ($week as $wk) {
+        if (!in_array($dow, array_map('intval', (array)($wk['days'] ?? [])), true)) continue;
+        $from  = xeric_world_minutes(isset($wk['from']) ? (string)$wk['from'] : null);
+        $where = (string)($wk['where'] ?? '');
+        if ($from === null || $where === '' || $from <= $mins || $from - $mins > 120) continue;
+        if ($soon === null || $from < $soon[0]) $soon = [$from, $where, xeric_text($wk['doing'] ?? '')];
+    }
+    if ($soon !== null) {
+        $hh   = sprintf('%02d:%02d', intdiv($soon[0], 60), $soon[0] % 60);
+        $name = xeric_world_place_name($t, $soon[1]);
+        return ['state' => 'soon', 'glyph' => '→',
+                'say'   => 'due at ' . $name . ' by ' . $hh . ($soon[2] !== '' ? ' — ' . $soon[2] : ''),
+                'pw'    => $name . ' at ' . $hh, 'slow' => $slow];
+    }
+
+    if (!empty($row['at_home'])) {
+        if (xeric_play_sleeping_hour($t, $now)) {
+            return ['state' => 'asleep', 'glyph' => '💤', 'say' => 'home and asleep, most likely',
+                    'pw' => 'home', 'slow' => false];
+        }
+        return ['state' => 'home', 'glyph' => '🏠',
+                'say'   => 'home — ' . xeric_world_place_name($t, (string)$row['where'])
+                         . ', nothing on the week right now',
+                'pw'    => 'home', 'slow' => $slow];
+    }
+
+    return ['state' => 'off', 'glyph' => '', 'say' => '', 'pw' => 'off shift', 'slow' => $slow];
+}
+
 /**
  * The cast: who they are, where they are standing, and whether the phone is lit.
  *
@@ -872,7 +1060,8 @@ function xeric_play_cast(array $t, PDO $db, array $now): array
         if ($h === '') continue;
 
         $conv  = xeric_conversation_find($db, $h, 'chat');
-        $where = $presence[$h]['where'] ?? null;
+        $row   = $presence[$h] ?? null;
+        $where = $row['where'] ?? null;
         $gone  = $deaths[$h] ?? null;
 
         $out[] = [
@@ -883,7 +1072,22 @@ function xeric_play_cast(array $t, PDO $db, array $now): array
             'face'        => xeric_play_face($c),
             'pronoun'     => xeric_play_pronoun($c),
             'where'       => $where !== null ? xeric_world_place_name($t, (string)$where) : '',
-            'doing'       => (string)($presence[$h]['doing'] ?? ''),
+            'doing'       => (string)($row['doing'] ?? ''),
+            // The home fallback is a real placement, but not the same claim as
+            // a block: `at_home` rides along so the renderer can say "home"
+            // instead of pretending somebody's kitchen is an appointment.
+            'at_home'     => !empty($row['at_home']),
+            // A LIVING character with no presence row is OUT of the story —
+            // the map leaves the unentered off entirely, and that absence is a
+            // state the renderer says out loud rather than a lookup to shrug
+            // past. Never claimed for the dead, whose absence means the ground.
+            'out'         => $gone === null && $row === null,
+            // The presence mark, computed HERE and not in the renderer: the
+            // row is the one thing that is always repainted, and a mark that
+            // rode anywhere else could be showing yesterday's morning.
+            'mark'        => $gone === null
+                ? xeric_play_presence_mark($t, $c, $row, $now)
+                : ['state' => 'dead', 'glyph' => '', 'say' => '', 'pw' => '', 'slow' => false],
             'unread'      => $conv ? (int)$conv['unread'] : 0,
             'known'       => $conv !== null,
             'protagonist' => $h !== '' && $h === $star,
@@ -1597,22 +1801,41 @@ function xeric_play_cast_html(array $cast, string $slug = '', bool $mine = true)
         // were: "off shift" is a sentence about a schedule, and they no longer
         // have one. What they get instead is what the town would say, which is
         // what `how` is for — and when nothing was said, the bare fact.
+        // Everybody living wears their presence mark instead: the glyph, the
+        // title-attribute sentence, and the short line, all decided by
+        // xeric_play_presence_mark() so this stays a renderer and not a judge.
         $dead = !empty($c['dead']);
+        $mk   = (array)($c['mark'] ?? []) + ['state' => '', 'glyph' => '', 'say' => '', 'pw' => '', 'slow' => false];
         $where = $dead
             ? ((string)$c['how'] !== '' ? h($c['how']) : 'died')
-            : ((string)$c['where'] !== ''
-                ? 'at ' . h($c['where']) . ((string)$c['doing'] !== '' ? ' · ' . h($c['doing']) : '')
-                : 'off shift');
+            : (((string)$mk['glyph'] !== ''
+                    ? '<span class="pmk" title="' . h((string)$mk['say']) . '">' . $mk['glyph'] . '</span>' : '')
+               . h((string)$mk['pw'] !== '' ? (string)$mk['pw'] : 'off shift')
+               // The slow morning is a modifier, not a state: it rides beside
+               // whatever the chip already says, and its sentence is the whole
+               // joke it is allowed to make.
+               . (!empty($mk['slow'])
+                    ? '<span class="pmk slow" title="a late one last night; slow going this morning">☕</span>' : ''));
         // Everything the chips and the thread need about this person rides on
         // the row as data: the row is the one thing that is always repainted,
         // so a view built FROM it can never be showing yesterday's face.
         $f = (array)($c['face'] ?? ['txt' => '?', 'hue' => 0, 'kind' => 'x']);
         $out .= '<li class="crow"><button type="button" class="person' . ($c['unread'] ? ' lit' : '')
-            . ($dead ? ' gone' : '') . '" data-h="' . h($c['handle']) . '"'
+            . ($dead ? ' gone' : '') . (!empty($c['out']) ? ' out' : '') . '" data-h="' . h($c['handle']) . '"'
             . ' data-hue="' . (int)$f['hue'] . '" data-av="' . h((string)$f['txt']) . '"'
-            . ' data-place="' . h((string)$c['where']) . '" data-doing="' . h((string)$c['doing']) . '"'
+            // data-place is the chip bar's word for "pinned out in the world",
+            // so the home fallback does not travel through it: a bedroom is not
+            // a placement to pin, and blanking it here is what lets the bar's
+            // night fallback keep meaning what it says.
+            . ' data-place="' . h(empty($c['at_home']) ? (string)$c['where'] : '') . '"'
+            . ' data-doing="' . h((string)$c['doing']) . '"'
             // What the chip bar calls them when twelve of them have to fit.
             . ' data-short="' . h((string)($c['short'] ?? '')) . '"'
+            // And the mark itself, as data, so the bar can wear the same glyph
+            // and say the same sentence without deriving either a second time.
+            . ((string)$mk['glyph'] !== ''
+                ? ' data-mark="' . h((string)$mk['glyph']) . '" data-say="' . h((string)$mk['say']) . '"' : '')
+            . (!empty($mk['slow']) ? ' data-slow="1"' : '')
             . ($dead ? ' data-dead="1"' : '') . '>'
             . '<span class="pdot' . ($c['unread'] ? ' on' : '') . ($dead ? ' x' : '') . '">'
             . ($dead ? '×' : '') . '</span>'
@@ -1620,7 +1843,8 @@ function xeric_play_cast_html(array $cast, string $slug = '', bool $mine = true)
             . '<span><span class="pn">' . h($c['name'])
             . ($c['protagonist'] ? '<span class="tag">their story</span>' : '') . '</span>'
             . ((string)$c['one_line'] !== '' ? '<span class="po">' . h($c['one_line']) . '</span>' : '')
-            . '<span class="pw' . ($dead ? ' rip' : ((string)$c['where'] !== '' ? '' : ' off')) . '">' . $where . '</span>'
+            . '<span class="pw' . ($dead ? ' rip'
+                : (in_array((string)$mk['state'], ['off', 'absent', ''], true) ? ' off' : '')) . '">' . $where . '</span>'
             . '</span><span class="pgo">›</span></button>'
             // The cog and the inspector, one tap from the person they are
             // about. Neither may live inside the <button>, so they ride beside

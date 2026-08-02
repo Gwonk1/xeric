@@ -2362,6 +2362,140 @@ ok('RIGHT WITHOUT CLOSED SAYS NOTHING — guessing it is not being told you gues
 ok('and a wrong name gets no line either',
     xeric_play_story_lines($sw, ['resolved' => [['key' => 'mill_stairwell', 'right' => false, 'closed' => true]]]) === []);
 
+echo "\n# presence marks\n";
+
+// ---------------------------------------------------------------------------
+// The cast chips' small vocabulary — five states and a modifier, every one
+// derived from week/places/presence commons and nothing else. Fixed clocks in
+// the world's own timezone, for the same reason the ping tests use one: a
+// wall-clock `now` makes these pass at lunch and fail at midnight.
+//
+// The fixture is milldale plus exactly what the states need: two homes (the
+// stock fixture has none, so at_home never fires there), a closing shift that
+// wraps midnight, and one character who has not entered the story. What is
+// being defended:
+//   1. A SHIFT IS RECOGNISED, NOT DECLARED — and under-claimed. Dot's six
+//      nine-hour days are work; Ruth's breakfast hour and Theo's homework
+//      booth are not, however many days they recur.
+//   2. THE WEEK OUTRANKS THE GUESS. A start time within two hours renders as
+//      the plan it is; "asleep" is only ever an inference from the hour.
+//   3. at_home plus the hour picks home vs asleep — the quiet-hours band when
+//      it is readable, engine-canon night when it is not.
+//   4. A LATE CLOSE EARNS A SLOW MORNING — only the morning after, only
+//      before ten, and never over somebody still marked asleep.
+//   5. OUT IS ABSENCE: no row, no pin, no invented placement, no sleep mark —
+//      a subdued row that says so, and no crash anywhere on the way.
+// ---------------------------------------------------------------------------
+
+$PT = json_decode((string)file_get_contents($FIX), true);
+$PT['places'][] = ['key' => 'dot_house',  'name' => "Dot's house",    'kind' => 'home', 'residents' => ['dot', 'theo']];
+$PT['places'][] = ['key' => 'kerr_house', 'name' => 'the Kerr house', 'kind' => 'home', 'residents' => ['janelle']];
+foreach ($PT['cast']['characters'] as $pi => $pc) {
+    if ((string)$pc['handle'] === 'janelle') {
+        $PT['cast']['characters'][$pi]['week'][] =
+            ['days' => [1, 2, 3, 4, 5], 'from' => '19:00', 'to' => '00:45',
+             'where' => 'bluebird', 'doing' => 'closing the diner down'];
+    }
+}
+$PT['cast']['characters'][] = ['handle' => 'cousin_rae', 'display_name' => 'Rae Kessler',
+    'one_line' => 'Talked about, never seen.', 'out' => true, 'week' => []];
+
+// 2026-08-04 is a Tuesday; milldale's week has every state on the board that
+// day. Marks are read the way the cast builder reads them — same presence map,
+// same fallback for a handle the map left off.
+$pAt = fn(array $tpl, string $when): array => xeric_world_now($tpl,
+    (new DateTimeImmutable($when, new DateTimeZone('America/New_York')))->getTimestamp());
+$pmarks = function (array $tpl, string $when) use ($pAt): array {
+    $now  = $pAt($tpl, $when);
+    $pres = xeric_world_who_is_where($tpl, $now);
+    $out  = [];
+    foreach ($tpl['cast']['characters'] as $c) {
+        $out[(string)$c['handle']] = xeric_play_presence_mark($tpl, $c, $pres[(string)$c['handle']] ?? null, $now);
+    }
+    return $out;
+};
+
+$m = $pmarks($PT, '2026-08-04 10:00');
+ok('a six-day nine-hour week behind the counter is AT WORK',
+    $m['dot']['state'] === 'work' && $m['dot']['glyph'] === '💼'
+    && str_contains($m['dot']['say'], 'at work — the Bluebird Diner'), json_encode($m['dot']));
+ok('and so is the hardware store, five days and a Saturday half', $m['harlan']['state'] === 'work');
+
+$m = $pmarks($PT, '2026-08-04 07:30');
+ok('Ruth\'s breakfast hour at the same counter is PLACED, not work — one hour, two days',
+    $m['ruth']['state'] === 'placed' && $m['ruth']['glyph'] === '📍'
+    && str_contains($m['ruth']['say'], 'at the Bluebird Diner'), json_encode($m['ruth']));
+ok('Theo\'s homework booth is placed too, five days a week or not — two hours is not a shift',
+    $pmarks($PT, '2026-08-04 16:00')['theo']['state'] === 'placed');
+
+$m = $pmarks($PT, '2026-08-04 14:00');
+ok('ninety minutes before his booth, Theo is a plan with a start time',
+    $m['theo']['state'] === 'soon' && $m['theo']['glyph'] === '→'
+    && $m['theo']['pw'] === 'the Bluebird Diner at 15:30'
+    && str_contains($m['theo']['say'], 'by 15:30'), json_encode($m['theo']));
+ok('and at noon he was not — two hours is the whole window',
+    $pmarks($PT, '2026-08-04 12:00')['theo']['state'] === 'home');
+
+$m = $pmarks($PT, '2026-08-04 15:00');
+ok('Dot off her shift mid-afternoon is HOME, awake, and the hover says which home',
+    $m['dot']['state'] === 'home' && $m['dot']['glyph'] === '🏠'
+    && str_contains($m['dot']['say'], "Dot's house"), json_encode($m['dot']));
+
+$m = $pmarks($PT, '2026-08-04 23:00');
+ok('the same home inside quiet hours is ASLEEP',
+    $m['dot']['state'] === 'asleep' && $m['dot']['glyph'] === '💤' && $m['theo']['state'] === 'asleep');
+ok('while the closer is still AT WORK at eleven — the town does not sleep as one',
+    $m['janelle']['state'] === 'work');
+
+$m = $pmarks($PT, '2026-08-04 05:30');
+ok('a five-thirty world: the opener is on, the seven-o\'clocks are plans, the rest asleep',
+    $m['dot']['state'] === 'work' && $m['ruth']['state'] === 'soon'
+    && $m['harlan']['state'] === 'soon' && $m['theo']['state'] === 'asleep',
+    json_encode(array_map(fn(array $x): string => (string)$x['state'], $m)));
+
+ok('the diner\'s closer wears the slow morning at half eight, over the home mark',
+    $pmarks($PT, '2026-08-04 08:30')['janelle']['slow'] === true
+    && $pmarks($PT, '2026-08-04 08:30')['janelle']['state'] === 'home');
+ok('but not at half ten, not while still asleep at half five, and not on a Monday after a Sunday she does not close',
+    $pmarks($PT, '2026-08-04 10:30')['janelle']['slow'] === false
+    && $pmarks($PT, '2026-08-04 05:30')['janelle']['slow'] === false
+    && $pmarks($PT, '2026-08-03 08:30')['janelle']['slow'] === false);
+ok('and nobody who did not close wears it', $pmarks($PT, '2026-08-04 08:30')['theo']['slow'] === false);
+
+$m = $pmarks($PT, '2026-08-04 23:00');
+ok('a character the story has not admitted is ABSENT — no pin, no sleep, no guess',
+    $m['cousin_rae']['state'] === 'absent' && $m['cousin_rae']['glyph'] === ''
+    && $m['cousin_rae']['pw'] === 'not in the story yet', json_encode($m['cousin_rae']));
+
+// The markup a browser actually gets, through the same door play.php uses.
+$phtml = xeric_play_cast_html(xeric_play_cast($PT, $sw['db'], $pAt($PT, '2026-08-04 10:00')), 'floor-story', true);
+ok('the rows carry the marks: a briefcase at work, and the mark as data for the chip bar',
+    str_contains($phtml, 'data-mark="💼"') && substr_count($phtml, 'class="pmk"') >= 3
+    && str_contains($phtml, 'data-say="at work — the Bluebird Diner'), mb_substr($phtml, 0, 200));
+ok('the unentered row is subdued and says why, and nobody crashed rendering it',
+    str_contains($phtml, 'class="person out" data-h="cousin_rae"')
+    && str_contains($phtml, 'not in the story yet')
+    && substr_count($phtml, 'class="crow"') === count($PT['cast']['characters']));
+
+$pnight = xeric_play_cast_html(xeric_play_cast($PT, $sw['db'], $pAt($PT, '2026-08-04 23:00')), 'floor-story', true);
+ok('at night the home rows blank data-place — the chip bar must not pin a bedroom',
+    str_contains($pnight, 'data-place="" data-doing="" data-short="Dot"')
+    && str_contains($pnight, 'data-mark="💤"'), mb_substr($pnight, 0, 160));
+ok('and the sleeping mark says so gently, in a sentence on the hover',
+    str_contains($pnight, 'title="home and asleep, most likely"'));
+
+// A template whose quiet hours cannot be read must not put the cast to sleep
+// at noon: the mark falls back to engine-canon night, unlike the ping gate,
+// which correctly treats an unreadable wall as protecting every hour.
+$QT = $PT;
+$QT['user']['quiet_hours'] = 'whenever grandma nods off';
+// Janelle, not Dot: at three in the morning Dot's five-o'clock open is exactly
+// two hours out, so she is honestly a PLAN — which is the precedence working,
+// not the fallback failing.
+ok('unreadable quiet hours: asleep at three in the morning, merely home at three in the afternoon',
+    $pmarks($QT, '2026-08-04 03:00')['janelle']['state'] === 'asleep'
+    && $pmarks($QT, '2026-08-04 15:00')['janelle']['state'] === 'home');
+
 echo "\n# the book\n";
 
 // ---------------------------------------------------------------------------

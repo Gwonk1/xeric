@@ -1213,5 +1213,22 @@ main.book .bsub{margin:0 0 2.4rem;text-align:center;font-size:.88rem;color:var(-
     --accent-dim:#888;--bad:#000}
   .bday{break-inside:avoid-page}
 }
+
+/* ----------------------------------------------------------- presence marks */
+/* The glyph on a cast row's presence line — at work, placed, home, asleep, a
+   plan with a start time — and the slow-morning cast that rides after the
+   words. A glyph and a title sentence, never a paragraph: the sentence is on
+   hover where a browser puts it, and the line beside the glyph stays short
+   enough to share a row with a name. Sized to the .pw line it sits in, not to
+   the emoji's own idea of a line-height, or the row grows a pixel at night. */
+.pw .pmk{font-style:normal;font-size:.82rem;line-height:1;margin-right:.3rem;cursor:default}
+.pw .pmk.slow{margin:0 0 0 .3rem}
+/* Not in the story yet. Subdued and whole: no pin, no invented placement, no
+   strike-through — struck-through is the dead's, and borrowing it would bury
+   somebody who has simply not walked on. Hover lifts it, because the row still
+   opens and a button should say so. */
+.person.out{opacity:.55}
+.person.out:hover,.person.out:focus-visible{opacity:.85}
+.person.out .pw{font-style:italic}
 CSS;
 }
