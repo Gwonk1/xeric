@@ -121,6 +121,16 @@ try {
     // the PREVIOUS span, and its verdicts are about hours that stay lived.
     $mark = xeric_rewind_mark($db);
 
+    // THE WORLD IS MOVING, said where travel can read it. Set AFTER the mark
+    // and cleared BEFORE the commit — the ordering is load-bearing on both
+    // edges: inside the mark/commit window the stamp would enter the manifest
+    // diff, and a rewind would then resurrect it as a removed row and leave a
+    // ghost "skip underway" on a world standing still. Real time, not world
+    // time, because xeric_travel_skipping()'s staleness cutoff is derived from
+    // the real-time queue hold cap: a dead worker's stamp goes stale and is
+    // ignored rather than freezing travel forever.
+    xeric_world_state_set($db, 'skip:underway', (string)time());
+
     // -- the clock -----------------------------------------------------------
     $after = xeric_clock_advance($db, $span, $T);
     $say(xeric_clock_span_label($span) . ', ' . xeric_play_when($before) . ' → ' . xeric_play_when($after));
@@ -341,6 +351,12 @@ try {
     // clock never moved (the advance itself refused), the commit declines to
     // write and the previous skip's manifest stands. Never fatal: a skip whose
     // rewind could not be recorded is still a skip that happened.
+    // The stamp comes down BEFORE the commit for the same manifest-window
+    // reason it went up after the mark. A worker killed between here and its
+    // own death leaves a stamp that xeric_travel_skipping() ages out.
+    if (isset($db)) {
+        try { xeric_world_state_delete($db, 'skip:underway'); } catch (Throwable $e) { /* stale-aged instead */ }
+    }
     if (is_array($mark) && isset($db)) {
         try { xeric_rewind_commit($db, $mark); } catch (Throwable $e) { /* the hours still happened */ }
     }

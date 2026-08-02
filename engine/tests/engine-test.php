@@ -1699,7 +1699,7 @@ ok('travel: a reroll that unstages the roof under the player leaves them nowhere
 // the playerWhere seam meeting byte-for-byte.
 $kitchen = xeric_prompt_now_block($TH, 'ruth', $thuEve, '', null, 'ruth_and_dots');
 ok('travel: a character at home is told the player is standing in their house',
-    str_contains($kitchen, "You are at Ruth and Dot's place")
+    str_contains($kitchen, "You are at home, at Ruth and Dot's place")
     && str_contains($kitchen, 'Also there: Dot')
     && str_contains($kitchen, 'Walt is here, in the room with you'));
 ok('travel: and texting her from the diner puts nobody in her kitchen',

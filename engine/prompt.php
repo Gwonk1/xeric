@@ -576,7 +576,11 @@ function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, str
     if ($key !== '') {
         $where = xeric_world_place_name($t, $key);
         $doing = (string)($mine['doing'] ?? '');
-        $lines[] = 'You are at ' . $where . ($doing !== '' ? ', ' . $doing : '') . '.';
+        // "At home, at ..." when the placement is the home fallback — the
+        // narrator already phrases it this way, and a kitchen that reads like
+        // a shift assignment was the audit's last cosmetic gap.
+        $athome = !empty($mine['at_home']) ? 'home, at ' : '';
+        $lines[] = 'You are at ' . $athome . $where . ($doing !== '' ? ', ' . $doing : '') . '.';
 
         $others = [];
         if (!xeric_hidden($walls, 'cast_lines')) {
