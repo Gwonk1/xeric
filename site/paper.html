@@ -207,7 +207,7 @@ inspectable after the fact. We additionally describe a story overlay format whos
 subtraction — the composed world returns byte-identical to its pre-story state — and a rewind
 semantics in which the world forgets an undone week while the player does not. The engine is
 implemented in approximately 50,000 lines of dependency-free PHP over SQLite and is exercised
-by nine test suites comprising 1,360 assertions.</p>
+by twelve test suites comprising 1,653 assertions.</p>
 </div>
 
 <h2>1&nbsp;&nbsp;Introduction</h2>
@@ -373,6 +373,95 @@ between turns. The governing question, stated in the file header, is: <i>can thi
 between two messages of one conversation? If it can, it goes in the tail.</i> An inspector
 page reconstructs the exact assembled messages section-by-section with sizes, and verifies its
 reconstruction byte-for-byte against the real prompt (§7.3).</p>
+
+<h3>4.1&nbsp;&nbsp;The anatomy of a mind</h3>
+
+<p>A character has no persistent process; the mind is re-assembled at every turn from typed
+stores, and its architecture is legible in the assembly order. It is worth describing as a
+cognitive stack, because each layer corresponds to a mechanism that exists in the code today
+rather than to an aspiration.</p>
+
+<div class="figwrap">
+<pre>
+layer            block                   store it reads             cadence
+-----            -----                   --------------             -------
+self             YOU ARE (voice,         own cast record            static
+                 interiors, pronouns)
+disposition      sampler temperature     character.temperature      static
+conscience       HOW YOU ANSWER          rules + rating style       static
+worldview        the bible               template, through walls    static
+habit            lessons                 learn.php notebook         slow (days)
+obligation       WHAT YOU ARE OWED       expect.* arcs              transitional
+episode          memories (newest N)     memories table             per harvest
+perception       RIGHT NOW               clock, presence, deaths    volatile
+temporality      "you last spoke ..."    newest message world-epoch volatile
+</pre></div>
+<p class="figcap"><b>Figure 3.</b> The assembled mind, top of the system message to the
+bottom of the volatile tail. Static layers are byte-stable and ride the prefix cache;
+transitional layers change only at state transitions; volatile layers ride the last user
+message and change every turn.</p>
+
+<p><b>The self is unwalled; the world is not.</b> A speaker's own interior — voice, psyche,
+what soothes them, what pulls at them — renders from their own record in a YOU ARE block to
+which no wall ever applies: one always knows oneself. Everyone <i>else's</i> interior arrives
+only through the bible, after the walls have taken what this viewer may not have. This split
+is why a &ldquo;protected&rdquo; character still functions: they lose knowledge about others,
+never about themselves.</p>
+
+<p><b>The subconscious is a rendering discipline, not a data structure.</b> The engine's rule
+— stated in the prompt and enforced by what the prompt withholds — is that a character never
+narrates their own or anyone else's insides. What the interior drives instead is <i>stage
+direction</i>: when a promise is missed, the wounded party's prompt says, verbatim, that it
+&ldquo;stung more than you let on&rdquo; and that they <i>never narrate this; it shows in
+small ways — what your hands do, what you leave unsaid, how long you take to answer.</i> The
+feeling steers behavior without ever becoming text about feelings, and the durable ledger it
+moves — a trust integer per relationship — is adjusted silently and printed nowhere. The
+public record diverges from the private one by construction: the event row for a missed
+promise states only what a bystander could see (&ldquo;kept half an eye on the door; left
+later than usual&rdquo;), while the sting lives exclusively in the prompt of the person who
+felt it. Anything downstream that spreads information — gossip in design, the book view in
+code — therefore spreads observables, never interiors.</p>
+
+<p><b>Episodic memory is harvested for change, not coverage.</b> Every few exchanges a second,
+cheap model call reads the recent conversation and writes at most three sentences the
+character &ldquo;would still know in a week,&rdquo; under an instruction to prefer <i>what
+changed</i> — admitted, promised, refused, learned — over the fact that something was said;
+without that preference a memory block degenerates into a transcript of itself within twenty
+turns. Offscreen hours write memory the same way but per witness: one event produces a
+different sentence for each participant, which is the engine's mechanism of subjectivity
+(§7.2). Memories are dated in world time, and the harvest is also where commitments enter the
+obligation layer: the model reports the user's verbatim words, and code — never the model —
+decides whether they constituted a promise.</p>
+
+<p><b>Temporal orientation is supplied, not inferred.</b> A transcript is undated, so the
+volatile tail states the gap outright — &ldquo;you two last spoke four days ago,&rdquo;
+day-coarse, world-clock — while a static rule instructs that a quiet stretch is ordinary life
+and not an event. The pairing matters: the first line alone invites invented grievance, the
+second alone leaves the model doing calendar arithmetic it reliably gets wrong. Obligations
+render at the same coarseness (&ldquo;you are expecting them Saturday&rdquo;), never as
+countdowns, both because nobody texting a friend counts minutes and because a timer would
+change every turn and forfeit the cache.</p>
+
+<p><b>Dreams are recombination under a wall check.</b> During the world's dream window a
+character with standing may wake and text about a dream assembled only from material already
+theirs — their own dated memories and the commons prose of hours they attended, at most three
+fragments, none invented. The prompt asks for dream logic: familiar people and places
+recombined slightly wrong, no plot, no revelation. The finished text is then scanned against
+every protected fact in the world and refused whole on contact, on the argument that a dream
+which reveals a secret is a wall breach wearing pajamas. An empty material list produces no
+dream rather than a synthetic one — the mind does not confabulate at 3 a.m. any more than it
+does at noon.</p>
+
+<p><b>What the world learns about its person lives outside any one mind.</b> The signals
+layer records what the user actually did — who they answered, whose message they left
+sitting, what they retyped by hand — and distils it into per-kind weights with floors
+(nothing is ever switched off, so the world retains the capacity to surprise) and a capped
+notebook of plain-language lessons that ride every character's prompt. The distil pass may
+also <i>strike</i> a lesson the recent record contradicts, at most one per pass, so a habit
+abandoned in week two does not steer week eight. Every layer described in this section is
+inspectable: the inspector reproduces the assembled mind byte for byte, section by section,
+with the stores and sizes named — the claim that a character's behavior has legible causes is
+checkable on any turn of any world.</p>
 
 <h2>5&nbsp;&nbsp;Knowledge walls</h2>
 
@@ -614,20 +703,19 @@ fixture and caught all ten deliberately-introduced authoring errors&nbsp;[5].</p
 <h2>11&nbsp;&nbsp;Designed, not yet implemented</h2>
 
 <p>Honesty about the boundary between running code and design is a stated norm of the
-repository; three subsystems sit on the far side of it. <i>Social constructs</i>&nbsp;[6]
-generalize obligations: an expectation forms when a listener hears an unhedged commitment
-carrying a <i>when</i> — any weasel word forms nothing, except sometimes in a young child,
-because the promise test is a property of the listener. Consequences surface as trust deltas
-(invisible), stage direction (the body as a rendering of the subconscious), and gossip, which
-feeds on observables only — what travels is &ldquo;she waited outside till nine, I saw
-her,&rdquo; never &ldquo;she felt abandoned&rdquo; — a rule that makes gossip walls-safe by
-construction rather than a leak engine. The narrator's remaining powers&nbsp;[4] —
-investigate, write-ahead (intent as a pull, never a script), and a validated, undoable author
-mode — follow its shipped ask mode. Player embodiment exists in early form: places carry grid
-coordinates and a world carries its size in minutes, so travel can cost world time; the design
-document argues the consequential feature is not the map but the travel time, since a
-frictionless choice is not a choice. Media generation ships no pipeline in this tree; the
-template merely carries the fields.</p>
+repository, and the boundary moves quickly: the expectations construct, the dream rung, the
+rewind, the narrator's investigate power, and the two-party duet all crossed it on the day of
+writing and are described above as the running code they now are. What remains on the far
+side: the <i>room</i> — the duet's three-or-more generalization, whose design fixes who
+answers and who stays silent as the interesting questions, together with its watching surface
+(play, pause, walking in mid-scene); the remaining social constructs (gossip ripple, which the
+observables-only rule has made cheap, and confidences — a user-created wall whose betrayal is
+the highest-stakes event the design names); the narrator's write-ahead (intent as a pull,
+never a script) and its validated, undoable author mode. Player embodiment exists in early
+form: places carry grid coordinates and a world carries its size in minutes, so travel can
+cost world time; the design document argues the consequential feature is not the map but the
+travel time, since a frictionless choice is not a choice. Media generation ships no pipeline
+in this tree; the template merely carries the fields.</p>
 
 <h2>12&nbsp;&nbsp;Status and evaluation</h2>
 
@@ -644,16 +732,19 @@ exercise the system, all green at the repository state this paper describes:</p>
 <tr><td>render</td><td>68</td><td>Bible rendering; wall negative-assertions; byte determinism</td></tr>
 <tr><td>engine</td><td>317</td><td>Template validation, clock, presence, deaths, travel, schedule transitions</td></tr>
 <tr><td>chat</td><td>123</td><td>Turns, prompt assembly, story observation</td></tr>
-<tr><td>sweep</td><td>143</td><td>Offscreen events, divergence, exclusions, proactive contact</td></tr>
-<tr><td>learn</td><td>80</td><td>Signals, weights, lesson caps, fail-quiet property</td></tr>
-<tr><td>narrator</td><td>43</td><td>Ask mode; read-only contract (row counts before/after); oracle-shelf absence</td></tr>
+<tr><td>sweep</td><td>163</td><td>Offscreen events, divergence, exclusions, proactive contact, the dream rung</td></tr>
+<tr><td>learn</td><td>109</td><td>Signals, weights, lesson caps and strikes, the kill switch, fail-quiet property</td></tr>
+<tr><td>narrator</td><td>80</td><td>Ask and investigate; read-only contract; oracle-shelf absence; citation gates</td></tr>
 <tr><td>constructs</td><td>38</td><td>The promise gate on verbatim words, fuses in world time, misses as observables, repair</td></tr>
+<tr><td>rewind</td><td>27</td><td>The skip manifest as a diff; exact deletion; staleness closure; refusal grammar</td></tr>
+<tr><td>duet</td><td>46</td><td>Per-speaker assembly (byte-level needle tests); room ceiling; diaries at close</td></tr>
 <tr><td>forge</td><td>231</td><td>Passes, fallbacks, naming gates, age-floor assembly, idempotent homes</td></tr>
-<tr><td>demo (web)</td><td>317</td><td>Sessions, queue, pages, include reachability</td></tr>
+<tr><td>demo (web)</td><td>373</td><td>Sessions, queue, pages, presence marks, the book, multi-process races</td></tr>
+<tr><td>review (web)</td><td>78</td><td>Edit-cost classification, pronoun backfill, validated merges</td></tr>
 </tbody>
 </table>
 </div>
-<p class="figcap"><b>Table 4.</b> 1,360 assertions across nine suites, counted from a full
+<p class="figcap"><b>Table 4.</b> 1,653 assertions across twelve suites, counted from a full
 run of the current tree. The interesting half is negative: walls that must not leak, writes
 that must not happen, a minor never excluded from an hour on account of age.</p>
 
