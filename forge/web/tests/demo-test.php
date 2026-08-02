@@ -5,7 +5,10 @@
  * NO NETWORK, NO MODEL, NO CLOCK TO WAIT ON. Every window in limits.php takes an
  * injected `now`, and the queue is driven with real flocks in one process
  * (flock() conflicts across two descriptors of the same process, which is what
- * makes a single-process test of a multi-process lock honest).
+ * makes a single-process test of a multi-process lock honest). One late section
+ * spends real child processes anyway — the check-then-write bugs this layer was
+ * reviewed for all LOOKED fixed from inside one process, so the locks are raced
+ * from outside it once, on purpose, where losing shows.
  *
  * What is being defended here, in the order it would hurt:
  *
@@ -1566,6 +1569,253 @@ ok('and mid-skip', str_contains($sd2, 'mid-skip'), $sd2);
 @unlink(xeric_queue_drain_path());
 
 @unlink(xeric_queue_path());
+
+echo "\n# the shared instance, raced from real processes\n";
+
+// ---------------------------------------------------------------------------
+// Everything above drives the locks from one process. This section pays for
+// real ones, because every bug it pins LOOKED fixed from one process: eight
+// parallel POSTs against a cap of five is the shape the review arrived in, and
+// a sequential loop cannot lose that race no matter how broken the lock is.
+// The trick that makes a race a race is the start flag — process start-up is
+// milliseconds apart, so every child spins on one file and the parent drops it
+// when all of them are already standing at the line.
+// ---------------------------------------------------------------------------
+
+/** A child's code: the sandbox it must stay in, the barrier, then the body. */
+function mp_child(string $body): string
+{
+    // argv: 1 = forge/web, 2 = data dir, 3 = start flag ('-' for none), 4+ = the
+    // body's own. The putenv lines are not decoration: a child that misses them
+    // boots against the REAL install's data dir, which is the one thing this
+    // suite promises never to touch.
+    $pre = <<<'PHP'
+putenv('XERIC_DATA_DIR=' . $argv[2]);
+putenv('XERIC_WORLDS_DIR=' . $argv[2] . '/worlds');
+putenv('XERIC_LOCAL_BASE=http://127.0.0.1:1');
+putenv('XERIC_CAPS=1');
+putenv('XERIC_SOLO=0');
+require $argv[1] . '/limits.php';
+if ($argv[3] !== '-') {
+    $t0 = microtime(true);
+    while (!is_file($argv[3])) {
+        if (microtime(true) - $t0 > 10) exit(3);   // a lost flag must not hang the suite
+        usleep(200);
+    }
+}
+PHP;
+    return $pre . "\n" . $body;
+}
+
+/**
+ * Start them all, drop the flag, and collect what each one said.
+ *
+ * @param array $children each ['code' => php, 'args' => argv 1+]
+ * @return array<int,array{out:string,err:string}>
+ */
+function mp_race(array $children, string $go, bool $barrier = true): array
+{
+    @unlink($go);
+    $php = xeric_web_php_bin();
+    $procs = [];
+    foreach ($children as $i => $c) {
+        $p = proc_open(array_merge([$php, '-r', (string)$c['code'], '--'], (array)$c['args']),
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        $procs[$i] = ['p' => $p, 'out' => $pipes[1], 'err' => $pipes[2]];
+    }
+    if ($barrier) { usleep(300000); @touch($go); }
+    $said = [];
+    foreach ($procs as $i => $pr) {
+        $said[$i] = ['out' => (string)stream_get_contents($pr['out']),
+                     'err' => (string)stream_get_contents($pr['err'])];
+        fclose($pr['out']);
+        fclose($pr['err']);
+        proc_close($pr['p']);
+    }
+    return $said;
+}
+
+$web = dirname(__DIR__);
+$go  = $tmp . '/start-flag';
+
+// THE CHECK-THEN-WRITE RACE, FOR REAL. A limit whose count is an unlocked read
+// lets eight requests that arrive together all read four-of-five and all pass;
+// xeric_limit_reserve() exists to make that impossible. Eight processes, one
+// bucket, a cap of five: exactly five may come back yes.
+$body = <<<'PHP'
+$r = xeric_limit_reserve('mp-race', 3600, 5, time());
+xeric_limit_keep('mp-race');          // the work happened: the seat must stay taken
+echo $r['ok'] ? 'Y' : 'N';
+PHP;
+$said = mp_race(array_fill(0, 8, ['code' => mp_child($body), 'args' => [$web, $tmp, $go]]), $go);
+$yes = 0;
+$no  = 0;
+foreach ($said as $s) { $yes += substr_count($s['out'], 'Y'); $no += substr_count($s['out'], 'N'); }
+ok('eight processes against a cap of five: exactly five pass', $yes === 5 && $no === 3, "Y=$yes N=$no");
+ok('and exactly five hits are on disk afterwards',
+    xeric_limit_hits('mp-race', 3600, time())['count'] === 5,
+    (string)xeric_limit_hits('mp-race', 3600, time())['count']);
+
+// THE SESSION RECORD, EDITED FROM TWO SIDES. The slow child sleeps INSIDE its
+// locked read-modify-write; unlocked, both children read the empty record at
+// the flag, the quick one writes, and the slow one clobbers that write 400ms
+// later — deterministically, which is what makes this a test and not a coin
+// flip. Locked, the quick child cannot read until the slow one's write is down.
+$rsid = sid();
+$body = <<<'PHP'
+xeric_web_session_edit(function (array &$s) use ($argv): void {
+    $own = (array)($s['own'] ?? []);
+    usleep((int)$argv[6] * 1000);
+    $own[] = (string)$argv[5];
+    $s['own'] = $own;
+}, (string)$argv[4]);
+echo 'done';
+PHP;
+$said = mp_race([
+    ['code' => mp_child($body), 'args' => [$web, $tmp, $go, $rsid, 'slow-claim', '400']],
+    ['code' => mp_child($body), 'args' => [$web, $tmp, $go, $rsid, 'quick-claim', '0']],
+], $go);
+$own = (array)(xeric_web_session_read($rsid)['own'] ?? []);
+sort($own);
+ok('a worker\'s claim survives a page load landing mid-write',
+    $own === ['quick-claim', 'slow-claim'], json_encode($own));
+
+// TWO FIRST-OPENS OF THE SAME WORLD AT ONCE. The losing snapshot used to copy
+// the SOURCE over the winner's open database and drop a foreign -wal beside it.
+// Now the copy is built under a private name and link()ed — the loser finds the
+// winner's copy in place and that IS success. The source connection is held
+// open across the race so its WAL is live, which is the honest case.
+$rWorld = $tmp . '/worlds/raced';
+@mkdir($rWorld, 0775, true);
+$rsrc = $rWorld . '/world.db';
+$rdst = $tmp . '/race-copy.db';
+$mk = new PDO('sqlite:' . $rsrc, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+$mk->exec('PRAGMA journal_mode=WAL');
+$mk->exec('CREATE TABLE messages(id INTEGER PRIMARY KEY, body TEXT)');
+$mk->exec('CREATE TABLE conversations(id INTEGER PRIMARY KEY, who TEXT)');
+$mk->exec('CREATE TABLE events(id INTEGER PRIMARY KEY, what TEXT)');
+$mk->exec("INSERT INTO messages(body) VALUES ('the last player''s own sentence'), ('and another')");
+$mk->exec("INSERT INTO conversations(who) VALUES ('neil')");
+$mk->exec("INSERT INTO events(what) VALUES ('the shared past'), ('stays shared')");
+$body = <<<'PHP'
+echo xeric_session_snapshot((string)$argv[4], (string)$argv[5]) ? 'Y' : 'N';
+PHP;
+$said = mp_race(array_fill(0, 3, ['code' => mp_child($body), 'args' => [$web, $tmp, $go, $rsrc, $rdst]]), $go);
+$mk = null;
+$snapSaid = implode(' ', array_column($said, 'out'));
+ok('three racing first-opens all succeed — somebody else winning is success',
+    $snapSaid === 'Y Y Y', $snapSaid);
+ok('one copy landed, with no foreign -wal beside it',
+    is_file($rdst) && !is_file($rdst . '-wal'));
+ok('and no half-made parts around it', glob($rdst . '.*.part') === []);
+$chk = new PDO('sqlite:' . $rdst);
+ok('the copy is clear of the last player and keeps the past',
+    (int)$chk->query('SELECT COUNT(*) FROM messages')->fetchColumn() === 0
+    && (int)$chk->query('SELECT COUNT(*) FROM events')->fetchColumn() === 2);
+$chk = null;
+$chk = new PDO('sqlite:' . $rsrc);
+ok('and the live original did not lose a word',
+    (int)$chk->query('SELECT COUNT(*) FROM messages')->fetchColumn() === 2);
+$chk = null;
+rmtree($rWorld);
+foreach ([$rdst, $rdst . '-wal', $rdst . '-shm'] as $f) @unlink($f);
+
+echo "\n# when the data dir goes wrong underneath it\n";
+
+// ---------------------------------------------------------------------------
+// An unwritable line file used to swallow every queue mutation silently and
+// turn the whole demo into "your place in the line timed out". It must degrade
+// instead: the flock still decides, the status line says so, and the complaint
+// lands in the log. Run in a child because the degraded latch is per-process
+// and must not poison this one. Skipped quietly under root, where an
+// unwritable directory is a suggestion.
+// ---------------------------------------------------------------------------
+
+$qroot = $tmp . '/degraded-data';
+@mkdir($qroot . '/queue', 0775, true);
+@chmod($qroot . '/queue', 0555);
+if (is_writable($qroot . '/queue')) {
+    ok('a queue with no line file still hands over the model (skipped: uid can write anywhere)', true);
+} else {
+    $body = <<<'PHP'
+$r = xeric_queue_take('say', 2.0, 'neil0001');
+$st = xeric_queue_status();
+echo json_encode(['ok' => (bool)($r['ok'] ?? false), 'degraded' => (bool)($st['degraded'] ?? false)]);
+PHP;
+    $said = mp_race([['code' => mp_child($body), 'args' => [$web, $qroot, '-']]], $go, false);
+    $d = (array)json_decode(trim($said[0]['out']), true);
+    ok('a queue with no line file still hands over the model', ($d['ok'] ?? false) === true,
+        $said[0]['out']);
+    ok('and says it is degraded where the status line reads it', ($d['degraded'] ?? false) === true);
+    ok('and complains to the log, not the visitor',
+        str_contains($said[0]['err'], 'not writable'), $said[0]['err']);
+}
+@chmod($qroot . '/queue', 0755);
+
+// A well-formed job id that names nothing used to be slept on for ten seconds
+// per guess, one whole PHP worker each — pool exhaustion at the price of a for
+// loop. It is answered at once now, in the stream's own grammar.
+$t0 = microtime(true);
+$body = <<<'PHP'
+$_GET['job'] = 'abcdefabcdefabcdefabcdef';
+require $argv[1] . '/progress.php';
+PHP;
+$said = mp_race([['code' => mp_child($body), 'args' => [$web, $tmp, '-']]], $go, false);
+$spent = microtime(true) - $t0;
+ok('a job id that names nothing is answered at once, in the stream\'s grammar',
+    str_contains($said[0]['out'], 'event: failed')
+    && str_contains($said[0]['out'], 'not running any more'),
+    mb_substr($said[0]['out'], 0, 120));
+ok('with no ten-second nap to farm', $spent < 6.0, round($spent, 1) . 's');
+
+// And the streams themselves are rationed: each one is a held PHP worker, so
+// one visitor gets XERIC_PROGRESS_MAX of them and the next is refused in a
+// sentence. The seats are pre-filled here rather than held by live children —
+// the cap reads the same bucket either way, without the flake.
+$watcher = 'feedfacefeedfacefeedfacefeedface';
+for ($i = 0; $i < 32; $i++) xeric_limit_reserve('sse-' . $watcher, 60, 999, time());
+$sjob = xeric_web_job_new();
+xeric_web_job_append($sjob, ['k' => 'hello']);
+$body = <<<'PHP'
+$_COOKIE[(string)$argv[6]] = (string)$argv[4];
+$_GET['job'] = (string)$argv[5];
+require $argv[1] . '/progress.php';
+PHP;
+$said = mp_race([['code' => mp_child($body),
+                  'args' => [$web, $tmp, '-', $watcher, $sjob, XERIC_WEB_COOKIE]]], $go, false);
+ok('a visitor over the stream cap is refused a live job, not slept beside it',
+    str_contains($said[0]['out'], 'event: failed')
+    && str_contains($said[0]['out'], 'live feeds'), mb_substr($said[0]['out'], 0, 120));
+preg_match('/data: (\{.*\})/', $said[0]['out'], $mFrame);
+$frame = (array)json_decode((string)($mFrame[1] ?? ''), true);
+ok('and the refusal is a sentence a person wrote', human((string)($frame['message'] ?? '')),
+    (string)($frame['message'] ?? ''));
+
+echo "\n# the worker log stays inside the budget it is counted in\n";
+
+// ---------------------------------------------------------------------------
+// worker.log was the one file that grew unattended AND went unweighed, so the
+// disk budget reported room right up until a write failed. It is counted now,
+// and trimmed to its tail — the half anybody debugging actually reads.
+// ---------------------------------------------------------------------------
+
+$logp = $tmp . '/worker.log';
+$lfh = fopen($logp, 'a');
+for ($i = 1; $i <= 20000; $i++) fwrite($lfh, "flood line $i, thirty-some bytes wide\n");
+fclose($lfh);
+clearstatcache();
+$fat = (int)filesize($logp);
+ok('a fat worker log weighs against the disk budget', $fat > 524288 && xeric_limit_disk() >= $fat,
+    $fat . ' bytes, gauge ' . xeric_limit_disk());
+xeric_web_log_trim();
+clearstatcache();
+$slim = (int)filesize($logp);
+ok('and the trim caps it', $slim > 0 && $slim <= 262144, $slim . ' bytes');
+$lines = file($logp, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+ok('keeping the newest lines, which are the ones that explain anything',
+    trim((string)end($lines)) === 'flood line 20000, thirty-some bytes wide', (string)end($lines));
+ok('and never starting the file mid-line',
+    preg_match('/^flood line \d+,/', (string)($lines[0] ?? '')) === 1, (string)($lines[0] ?? ''));
 
 echo "\n# the age of the person playing\n";
 
