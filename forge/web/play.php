@@ -1813,7 +1813,15 @@ echo '<style>' . xeric_play_css() . '
                + ' aria-hidden="true">' + esc(r.dataset.av || '?') + '</span>' + esc(shortName);
       if (dot) html += '<span class="cdot" aria-hidden="true"></span>';
       if (!dead) {
-        if (r.dataset.place) {
+        // The rows carry the whole presence vocabulary now (data-mark/say from
+        // xeric_play_presence_mark) — the bar reads it instead of re-deriving
+        // pin-or-sleep from PHASE, which put OUT characters to bed and called
+        // every shift a visit. The old two guesses remain only as fallback for
+        // a row rendered before the marks existed.
+        if (r.dataset.mark) {
+          html += '<span class="cps" title="' + escA(r.dataset.say || '') + '">' + esc(r.dataset.mark) + '</span>';
+          if (r.dataset.slow) html += '<span class="cps" title="a slow morning">☕</span>';
+        } else if (r.dataset.place) {
           html += '<span class="cps" title="at ' + escA(r.dataset.place)
                 + (r.dataset.doing ? ' · ' + escA(r.dataset.doing) : '') + '">📍</span>';
         } else if (PHASE === 'night') {
