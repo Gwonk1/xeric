@@ -986,6 +986,239 @@ ok('proactive floor: a murder among adults is never filtered — it is the genre
     && $pm['text'] === 'they carried him out under a sheet. three cruisers on the lot.', json_encode([$pm, $notes]));
 
 // ---------------------------------------------------------------------------
+// 9b. Dreams — the rung that ignores the quiet on purpose
+// ---------------------------------------------------------------------------
+//
+// The forge writes a dream window and a ladder weight into every world; the
+// dream rung is what consumes them. What is being defended, in the order it
+// would hurt: the 3am text happens AT 3am (the window, not quiet hours, is the
+// gate); it happens only to somebody with a real two-sided thread and recent
+// material (never invented, never a stranger); it costs the ladder's own 0.25
+// and one roll a night, and a forced waking beat cannot force it; it can leak
+// neither a protected secret nor a sexual line at a minor; and the hour it
+// writes carries the exact trail the book's reader files as a dream.
+
+$TD    = world(['daily_rhythms']);                       // fixture: dreams 01:00-06:00, quiet 21:30-06:00
+$NIGHT = xeric_world_now($TD, ep('2026-07-31 03:00'));   // Friday, deep inside both
+
+/** A world in which $handle is a real relationship with something to dream about. */
+function dream_db(string $tag, array $t, string $handle = 'ruth'): PDO
+{
+    $d = fresh_db($tag);
+    xeric_state_seed($d, $t);
+    $cid = xeric_conversation_for($d, $handle, 'chat');
+    xeric_message_append($d, $cid, 'user', null, 'you around?', ep('2026-07-30 19:00'));
+    xeric_message_append($d, $cid, 'character', $handle, 'in the kitchen. where else.', ep('2026-07-30 19:02'));
+    // The user speaks last, so the evening ends read and the dream is the one
+    // dot on the phone at breakfast.
+    xeric_message_append($d, $cid, 'user', null, 'good.', ep('2026-07-30 19:05'));
+    xeric_memory_add($d, $handle, ucfirst($handle) . ' showed Walt the water stain spreading on the choir room ceiling.',
+        'event', ['event_id' => 9], ep('2026-07-30 17:00'));
+    return $d;
+}
+
+$dA    = dream_db('dream-fires', $TD);
+$notes = null;
+$seenD = null;
+$pd = xeric_proactive_check($TD, $dA,
+    stub_says_text('you were in the choir room but it was the mill too. the water was singing.', $seenD),
+    $NIGHT, ['dream_chance' => 1.0, 'seed' => 3], $notes);
+ok('dream: inside the window somebody who knows you texts a dream — quiet hours notwithstanding',
+    $pd !== null && ($pd['kind'] ?? '') === 'dream' && $pd['handle'] === 'ruth' && $pd['cold_open'] === false,
+    json_encode([$pd, $notes]));
+ok('dream: it lands as a text received — a real unread message in her existing thread, held by the no-nag arc',
+    (function () use ($dA, $pd) {
+        $m = xeric_messages_recent($dA, $pd['conversation_id'], 1)[0];
+        return $m['role'] === 'character' && $m['handle'] === 'ruth'
+            && xeric_conversation_unread_total($dA) === 1
+            && (int)$m['id'] === xeric_arc_int($dA, 'ruth', 'proactive.last_message_id', 0);
+    })());
+
+$devent = xeric_events_recent($dA, 1)[0];
+$dwhy   = json_decode((string)xeric_world_state_get($dA, 'why:event:' . $pd['event_id']), true);
+ok('dream: the night wrote the dream as an hour, and its trail files the kind the book reads',
+    (int)$devent['id'] === $pd['event_id'] && $devent['participants'] === ['ruth']
+    && (string)$devent['prose'] === $pd['text']
+    && is_array($dwhy) && ($dwhy['kind'] ?? '') === 'dream', json_encode([$devent, $dwhy]));
+ok('dream: and the dream\'s own hour is guarded, so the waking rung can never text about the dream',
+    xeric_world_state_get($dA, 'proactive:event:' . $pd['event_id']) === 'ruth'
+    && xeric_world_state_get($dA, 'proactive:dream:2026-07-31') === 'ruth');
+
+// The reader the book agent built, called on the row this writer just kept.
+// play-lib is the web half; loading it here is the point — writer and reader
+// must MEET on the actual seam (why:event:<id>, field `kind`), not merely
+// agree in prose. Same env seam demo-test boots through, throwaway dirs.
+putenv('XERIC_DATA_DIR=' . sys_get_temp_dir() . '/xeric-sweep-test-web-' . getmypid());
+putenv('XERIC_WORLDS_DIR=' . sys_get_temp_dir() . '/xeric-sweep-test-web-' . getmypid() . '/worlds');
+putenv('XERIC_LOCAL_BASE=http://127.0.0.1:1');
+@mkdir(sys_get_temp_dir() . '/xeric-sweep-test-web-' . getmypid() . '/worlds', 0775, true);
+require_once __DIR__ . '/../../forge/web/play-lib.php';
+ok('dream: the book\'s own kind-reader files the hour as a dream — the two halves met',
+    xeric_book_event_kind($dA, (int)$pd['event_id']) === 'dream');
+
+$dtail = (string)($seenD[count($seenD) - 1]['content'] ?? '');
+ok('dream: she is coached into dream logic, from material she already held, and told not to ring the bell',
+    str_contains($dtail, 'JUST WOKE FROM A DREAM')
+    && str_contains($dtail, 'recombined slightly wrong')
+    && str_contains($dtail, 'No plot, no message, no revelation')
+    && str_contains($dtail, 'do not ask for anything back')
+    && str_contains($dtail, 'water stain')
+    && str_contains($dtail, 'RIGHT NOW'),               // prompt.php's volatile block is still last
+    mb_substr($dtail, 0, 200));
+
+// The window is the gate, not quiet hours: 23:00 is quiet but outside it, and
+// two in the afternoon is neither.
+$dW = dream_db('dream-window', $TD);
+$cidW2 = (int)xeric_conversation_find($dW, 'ruth', 'chat')['id'];
+$notes = null;
+$rW1 = xeric_proactive_check($TD, $dW, stub_says_text('should not be sent'),
+    xeric_world_now($TD, ep('2026-07-30 23:00')), ['dream_chance' => 1.0], $notes);
+$rW2 = xeric_proactive_check($TD, $dW, stub_says_text('should not be sent'),
+    xeric_world_now($TD, ep('2026-07-31 14:00')), ['dream_chance' => 1.0], $notes);
+ok('dream: only inside the window — quiet hours alone are not it, and daylight certainly is not',
+    $rW1 === null && $rW2 === null && xeric_messages_count($dW, $cidW2) === 3
+    && xeric_world_state_get($dW, 'proactive:dream:2026-07-30') === null
+    && xeric_world_state_get($dW, 'proactive:dream:2026-07-31') === null);
+
+// Material or silence: a head with nothing recent in it does not invent a dream.
+$dM = fresh_db('dream-dry');
+xeric_state_seed($dM, $TD);
+$cidM = xeric_conversation_for($dM, 'ruth', 'chat');
+xeric_message_append($dM, $cidM, 'user', null, 'you around?', ep('2026-07-30 19:00'));
+xeric_message_append($dM, $cidM, 'character', 'ruth', 'in the kitchen. where else.', ep('2026-07-30 19:02'));
+$notes = null;
+ok('dream: nothing to dream ABOUT means no dream — the material is the source, never invented',
+    xeric_proactive_check($TD, $dM, stub_says_text('should not be sent'), $NIGHT,
+        ['dream_chance' => 1.0], $notes) === null
+    && str_contains(implode(' ', $notes), 'slept on nothing worth dreaming about'), json_encode($notes));
+ok('dream: and a passed roll that found nobody keeps the night open — 2am may still hand somebody material',
+    xeric_world_state_get($dM, 'proactive:dream:2026-07-31') === null);
+
+// A relationship is two-sided. One hello into the void is not somebody who
+// dreams about you, and there is no involves-user licence at night.
+$dS = fresh_db('dream-stranger');
+xeric_state_seed($dS, $TD);
+xeric_memory_add($dS, 'ruth', 'Ruth showed Walt the water stain spreading on the choir room ceiling.',
+    'event', ['event_id' => 9], ep('2026-07-30 17:00'));
+$cidS = xeric_conversation_for($dS, 'ruth', 'chat');
+xeric_message_append($dS, $cidS, 'user', null, 'you around?', ep('2026-07-30 19:00'));
+$notes = null;
+ok('dream: a thread that is all one voice is not a relationship — no dream, and no new thread either',
+    xeric_proactive_check($TD, $dS, stub_says_text('should not be sent'), $NIGHT,
+        ['dream_chance' => 1.0], $notes) === null
+    && str_contains(implode(' ', $notes), 'not really spoken')
+    && xeric_conversations_count($dS) === 1, json_encode($notes));
+
+// The ladder's weight is the dream's own, and `chance` — the waking rung's
+// instruction, which the demo forces to 1.0 on every press — never reaches it.
+$dL = dream_db('dream-ladder', $TD);
+$notes = null;
+$rL = xeric_proactive_check($TD, $dL, stub_says_text('should not be sent'), $NIGHT,
+    ['chance' => 1.0, 'seed' => 1], $notes);                 // seed 1: first draw 0.417, cold at 0.25
+ok('dream: the roll consumes the LADDER\'s weight — a forced waking beat does not force a dream',
+    $rL === null && str_contains(implode(' ', $notes), 'rolled against 0.25'), json_encode($notes));
+ok('dream: and a cold roll burns the night once — the heart may tick until dawn without re-rolling',
+    xeric_world_state_get($dL, 'proactive:dream:2026-07-31') === 'nobody'
+    && (function () use ($TD, $dL) {
+        $n = null;
+        $r = xeric_proactive_check($TD, $dL, stub_says_text('should not be sent'),
+            xeric_world_now($TD, ep('2026-07-31 04:00')), ['dream_chance' => 1.0], $n);
+        return $r === null && str_contains(implode(' ', $n), 'already had its dream roll');
+    })());
+
+$dL2 = dream_db('dream-ladder-pass', $TD);
+$notes = null;
+$pd2 = xeric_proactive_check($TD, $dL2,
+    stub_says_text('the chairs were stacked to the ceiling and you kept counting them.'),
+    $NIGHT, ['seed' => 5], $notes);                          // seed 5: first draw 0.222, warm at 0.25
+ok('dream: at the ladder\'s own weight it does fire — a quarter of nights, not none of them',
+    $pd2 !== null && ($pd2['kind'] ?? '') === 'dream', json_encode($notes));
+
+// One per run holds ACROSS rungs: the night dreamed, so nobody also texts
+// about the evening — and the evening's guard is untouched for the morning.
+$dOne = dream_db('dream-one-per-run', $TD);
+$notes = null;
+$pOne = xeric_proactive_check($TD, $dOne,
+    stub_says_text('the dish was in the choir loft and it would not stop ringing.'), $NIGHT,
+    ['event' => ['id' => 501, 'title' => 'walt left the dish', 'prose' => 'Walt left the dish again.',
+                 'participants' => ['ruth'], 'memories' => ['ruth' => 'Ruth washed the dish again.']],
+     'dream_chance' => 1.0, 'chance' => 1.0, 'involves_user' => true, 'seed' => 3], $notes);
+ok('dream: one per run holds across rungs — a night that dreamed does not also text about the evening',
+    $pOne !== null && ($pOne['kind'] ?? '') === 'dream'
+    && xeric_world_state_get($dOne, 'proactive:event:501') === null, json_encode($pOne));
+
+// An hour she attended is dreamable commons, and it reaches the prompt as material.
+$dEv = fresh_db('dream-commons');
+xeric_state_seed($dEv, $TD);
+$cidE = xeric_conversation_for($dEv, 'dot', 'chat');
+xeric_message_append($dEv, $cidE, 'user', null, 'you around?', ep('2026-07-30 19:00'));
+xeric_message_append($dEv, $cidE, 'character', 'dot', 'mm.', ep('2026-07-30 19:01'));
+xeric_event_add($dEv, 'the potluck ran long', ep('2026-07-30 18:00'), null, ['dot', 'ruth'],
+    'The potluck ran long and the gravy went first.');
+$seenE = null;
+$notes = null;
+$pE = xeric_proactive_check($TD, $dEv,
+    stub_says_text('the gravy was a river and you were ladling it uphill.', $seenE),
+    $NIGHT, ['dream_chance' => 1.0, 'seed' => 3], $notes);
+ok('dream: an hour she attended is dreamable commons — and it reached the prompt as material',
+    $pE !== null && $pE['handle'] === 'dot'
+    && str_contains((string)($seenE[count($seenE) - 1]['content'] ?? ''), 'gravy went first'),
+    json_encode([$pE, $notes]));
+
+// Her own unanswered ping blocks a dream too; the cap counts dreams like any
+// other first text.
+$dNag = dream_db('dream-nag', $TD);
+$cidN = (int)xeric_conversation_find($dNag, 'ruth', 'chat')['id'];
+$hang = xeric_message_append($dNag, $cidN, 'character', 'ruth', 'four chairs short. i counted twice.',
+    ep('2026-07-30 20:00'));
+xeric_arc_set($dNag, 'ruth', 'proactive.last_message_id', $hang);
+$notes = null;
+ok('dream: her own unanswered line blocks a dream too — 3am is not an exception to not-nagging',
+    xeric_proactive_check($TD, $dNag, stub_says_text('should not be sent'), $NIGHT,
+        ['dream_chance' => 1.0], $notes) === null
+    && str_contains(implode(' ', $notes), 'has not been answered'), json_encode($notes));
+
+$dCap = dream_db('dream-cap', $TD);
+xeric_world_state_set($dCap, 'proactive:day:2026-07-31', 2);
+$notes = null;
+ok('dream: the per-day cap counts a dream like any other first text',
+    xeric_proactive_check($TD, $dCap, stub_says_text('should not be sent'), $NIGHT,
+        ['dream_chance' => 1.0], $notes) === null
+    && str_contains(implode(' ', $notes), 'already texted first'), json_encode($notes));
+
+// -- the needle, on the one output that could wear pajamas past the walls ----
+//
+// The prompt is built from what she legitimately holds (her memories, commons
+// hours, a bible already walled to her), but a character who KNOWS the secret
+// could still dream it out loud. Same needle as the sweep's, refused whole.
+$TSec = world(['daily_rhythms'], [], 'janelle');   // must_not_know: who really emptied the building fund
+$dSec = dream_db('dream-secret', $TSec);
+$msg = err(fn() => xeric_proactive_check($TSec, $dSec,
+    stub_says_text('you had emptied the building fund and the pews were full of it, coins to the rafters.'),
+    $NIGHT, ['dream_chance' => 1.0, 'seed' => 3]));
+ok('dream needle: a dream that reaches for the protected thing is refused whole — pajamas are not a licence',
+    str_contains($msg, 'proactive: refused') && str_contains($msg, 'dream'), $msg);
+ok('dream needle: and the refusal wrote nothing — no message, no hour, no guard, no day spent',
+    (function () use ($dSec) {
+        $cid = (int)xeric_conversation_find($dSec, 'ruth', 'chat')['id'];
+        return xeric_messages_count($dSec, $cid) === 3
+            && xeric_events_count($dSec) === 0
+            && xeric_world_state_get($dSec, 'proactive:dream:2026-07-31') === null
+            && xeric_world_state_get($dSec, 'proactive:day:2026-07-31') === null;
+    })());
+
+// And the age floor: the dream path shares the waking rung's plumbing — the
+// minor's prompt is already clamped to the weakest tier by xeric_prompt_system,
+// and xeric_age_floor reads the output at the same seat before the write. One
+// floor, not a second gate.
+$dKid = dream_db('dream-kid', $TD, 'theo');
+$msg = err(fn() => xeric_proactive_check($TD, $dKid,
+    stub_says_text('she took her clothes off and straddled him.'), $NIGHT,
+    ['dream_chance' => 1.0, 'seed' => 3]));
+ok('dream floor: a sexual dream written for the twelve-year-old is refused by the same floor as every ping',
+    str_contains($msg, 'proactive: refused') && str_contains($msg, 'Theo Vance'), $msg);
+
+// ---------------------------------------------------------------------------
 // 10. The whole loop, on stubs: an hour happens, and somebody mentions it
 // ---------------------------------------------------------------------------
 
@@ -1396,6 +1629,7 @@ ok('proactive: a live overlay does not stop the phone from ringing',
 
 $db = $db2 = $dbG = $dbC = $dbF = $dbS = $dbCU = $dbPR = $dbN = $dbB = $dbB2 = $dbC2 = $dbC3 = $dbQ2 = $dbR = $dbCD = $dbX = $dbL = null;
 $dbEdge = $dbHour = $dbSpine = $dbOrd = $dbDefer = $dbKill = $dbSex = null;
+$dA = $dW = $dM = $dS = $dL = $dL2 = $dOne = $dEv = $dNag = $dCap = $dSec = $dKid = null;
 $hour = $hourX = null;
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);
