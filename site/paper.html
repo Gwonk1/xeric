@@ -207,7 +207,7 @@ inspectable after the fact. We additionally describe a story overlay format whos
 subtraction — the composed world returns byte-identical to its pre-story state — and a rewind
 semantics in which the world forgets an undone week while the player does not. The engine is
 implemented in approximately 50,000 lines of dependency-free PHP over SQLite and is exercised
-by eight test suites comprising 1,322 assertions.</p>
+by nine test suites comprising 1,360 assertions.</p>
 </div>
 
 <h2>1&nbsp;&nbsp;Introduction</h2>
@@ -647,12 +647,13 @@ exercise the system, all green at the repository state this paper describes:</p>
 <tr><td>sweep</td><td>143</td><td>Offscreen events, divergence, exclusions, proactive contact</td></tr>
 <tr><td>learn</td><td>80</td><td>Signals, weights, lesson caps, fail-quiet property</td></tr>
 <tr><td>narrator</td><td>43</td><td>Ask mode; read-only contract (row counts before/after); oracle-shelf absence</td></tr>
+<tr><td>constructs</td><td>38</td><td>The promise gate on verbatim words, fuses in world time, misses as observables, repair</td></tr>
 <tr><td>forge</td><td>231</td><td>Passes, fallbacks, naming gates, age-floor assembly, idempotent homes</td></tr>
 <tr><td>demo (web)</td><td>317</td><td>Sessions, queue, pages, include reachability</td></tr>
 </tbody>
 </table>
 </div>
-<p class="figcap"><b>Table 4.</b> 1,322 assertions across eight suites, counted from a full
+<p class="figcap"><b>Table 4.</b> 1,360 assertions across nine suites, counted from a full
 run of the current tree. The interesting half is negative: walls that must not leak, writes
 that must not happen, a minor never excluded from an hour on account of age.</p>
 

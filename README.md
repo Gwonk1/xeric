@@ -34,7 +34,7 @@ session.
 
 **Beta.** The engine runs end to end: the forge builds a world from an
 interview, the review step lets you edit or reroll any of it, and the play view
-is a world you can talk to and skip time inside. Seven test suites, all green.
+is a world you can talk to and skip time inside. Nine test suites, all green.
 
 Start with [`QUICKSTART.md`](QUICKSTART.md) — what you need, how to start it,
 and how to read the inspector when something surprises you.
