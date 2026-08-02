@@ -32,7 +32,6 @@ require_once __DIR__ . '/walls.php';
 // Load + validate
 // ---------------------------------------------------------------------------
 
-/** The only three legal rating strings, weakest first. */
 /**
  * The ladder, weakest first — STANDARD BROADCAST TIERS (owner, 2026-08-02).
  *

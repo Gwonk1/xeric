@@ -112,7 +112,7 @@ php engine/sweep-cli.php --world=worlds/<slug> --advance=6h
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h --no-learn
 
 # the test suites — all of them, no exceptions
-for t in render engine chat sweep learn; do php engine/tests/$t-test.php; done
+for t in render engine chat sweep learn narrator; do php engine/tests/$t-test.php; done
 php forge/tests/forge-test.php && php forge/web/tests/demo-test.php
 ```
 

@@ -1647,7 +1647,7 @@ ok('an enriched line is still on the consistency sheet un-settled — enrichment
 $hAns = ['scale' => 'a small town', 'name' => 'Vera', 'job' => 'run the night desk',
          'hours' => '22:00-06:00', 'motivation' => 'company', 'around' => 'late nights',
          'pace' => 'steady', 'centrality' => 'ensemble', 'rating' => 'sfw'];
-$hOut = xeric_forge_build($hAns, [], ['places' => 6, 'cast' => 5, 'seed' => false, 'interview' => $IV]);
+$hOut = xeric_forge_build($hAns, [], ['places' => 6, 'cast' => 5, 'seed' => false, 'interview' => $iv]);
 $hT   = $hOut['template'];
 $hHomes = array_values(array_filter((array)$hT['places'], fn($p) => ($p['kind'] ?? '') === 'home'));
 $hCast  = (array)$hT['cast']['characters'];
