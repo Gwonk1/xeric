@@ -249,7 +249,31 @@ if ($action !== '') {
             'name'   => (string)($c['display_name'] ?? $h),
             'face'   => xeric_play_face($c),
             'orbits' => $orbits,
+            // The voice machine: the model picker, smaller and integrated —
+            // only ACTIVE (wired) machines are offered, plus the engine
+            // default. Sam can be one model and Lucy another; the per-model
+            // prefix cache makes this cheaper than it sounds, because a
+            // character pinned to a machine keeps their prefix warm THERE.
+            'voice'  => xeric_voice_choices($w['db'], $h, $sid),
             'fields' => $fields]);
+    }
+
+    // -- which model speaks for whom ------------------------------------------
+    if ($action === 'voice') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Not yours to retune.'], 403);
+        $in = xeric_web_input();
+        $h  = trim((string)($in['h'] ?? ''));
+        if (xeric_world_character($w['template'], $h) === null) {
+            xeric_web_json(['error' => 'nobody by that name'], 400);
+        }
+        try {
+            $label = xeric_voice_set($w['db'], $h, (string)($in['base'] ?? ''), $sid);
+        } catch (Throwable $e) {
+            xeric_web_json(['error' => $e->getMessage()], 422);
+        }
+        xeric_web_json(['ok' => true, 'label' => $label,
+                        'note' => 'From the next thing they say. Their first answer on a new machine '
+                                . 'takes longer — a fresh model reads them from the top.']);
     }
 
     // -- the narrator --------------------------------------------------------
@@ -2090,10 +2114,21 @@ echo '<style>' . xeric_play_css() . '
                          + '" title="Roll this from everything else about them">⚄</button>' : '')
                + '</div><p class="cerr" hidden></p></div>';
         }).join('');
+        // The model picker, smaller and integrated: one row, active machines
+        // only, saved on change — a tuning knob, not a form field, so it does
+        // not ride the Save button's review-path edit.
+        var vopts = (d.voice || []).map(function (v) {
+          return '<option value="' + escA(v.base) + '"' + (v.on ? ' selected' : '') + '>'
+               + esc(v.label) + '</option>';
+        }).join('');
+        var vrow = vopts ? '<div class="cfield"><label for="cvoice">speaks through</label>'
+          + '<div class="cline"><select id="cvoice" class="cvsel">' + vopts + '</select></div>'
+          + '<p class="cerr" id="cvnote" hidden></p></div>' : '';
+
         $('#cmodal').innerHTML =
             '<h2><span class="av" style="--hue:' + (d.face ? d.face.hue : 0) + '">'
           + esc(d.face ? d.face.txt : '?') + '</span>' + esc(d.name) + '</h2>'
-          + rows
+          + rows + vrow
           + '<div class="cbtns"><button type="button" id="csave">Save</button>'
           + '<button type="button" id="ccancel">Cancel</button><span class="grow"></span>'
           + '<a class="workbench" href="review.php?w=' + encodeURIComponent(W) + '#sec-cast">the full workbench →</a></div>';
@@ -2117,6 +2152,23 @@ echo '<style>' . xeric_play_css() . '
               .catch(function () { err.textContent = 'the dice could not be reached'; err.hidden = false; })
               .then(function () { b.disabled = false; b.classList.remove('rolling'); });
           });
+        });
+
+        // The voice picker saves on change — a tuning knob, not a form field,
+        // so it never rides the Save button's review-path edit.
+        var cv = $('#cvoice');
+        if (cv) cv.addEventListener('change', function () {
+          cv.disabled = true;
+          fetch('play.php?w=' + encodeURIComponent(W) + '&a=voice', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ h: h, base: cv.value })
+          }).then(function (r) { return r.json(); }).then(function (j) {
+            cv.disabled = false;
+            var n = $('#cvnote');
+            n.textContent = j && j.ok ? ('Now speaking through ' + j.label + '. ' + (j.note || ''))
+                                      : ((j && j.error) || 'that did not take');
+            n.hidden = false;
+          }).catch(function () { cv.disabled = false; });
         });
 
         $('#ccancel').addEventListener('click', closeCog);

@@ -3839,6 +3839,7 @@ function xeric_play_css(): string
 #cmodal h2{display:flex;align-items:center;gap:.55rem;margin:0 0 .8rem;font-size:1.05rem}
 #cmodal h2 .av{width:1.6rem;height:1.6rem;font-size:.66rem}
 .cfield{margin:0 0 .65rem}
+.cvsel{font:inherit;background:var(--card,var(--bg));color:var(--fg);border:1px solid var(--line);border-radius:.35rem;padding:.3rem .5rem;max-width:100%}
 .cfield label{display:block;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;
   color:var(--fg-dim);margin:0 0 .25rem}
 .cline{display:flex;gap:.4rem;align-items:flex-start}
@@ -5282,4 +5283,73 @@ function xeric_watch_close(array $w, array $s, ?array $endpoint): array
         'turns'       => (int)$s['spoken'],
         'notes'       => $notes,
     ];
+}
+
+// ---------------------------------------------------------------------------
+// The voice machine — which model speaks for whom (owner, 2026-08-02)
+// ---------------------------------------------------------------------------
+//
+// "Sam is Gemma, Lucy is Qwen": a character may be pinned to one of the
+// session's CONNECTED machines, and their speaking calls — chat turns, watch
+// lines — go there instead of the world's engine. Two facts make this cheaper
+// than it sounds. The prefix cache is PER MODEL, so pinning a character to a
+// machine keeps THEIR prefix warm on THAT machine — per-character models and
+// the cache discipline align instead of fighting. And every speaking path is
+// already one call per speaker (the duet's first law), so there is no call
+// anywhere that would have to split.
+//
+// WHAT IS DELIBERATELY NOT PINNED: sweeps. One call writes a whole hour and
+// every witness's memory of it; an hour has no single voice to route. The
+// assignment is stored in the world db (an arc, not the template) because a
+// machine address is a fact about THIS house, and templates travel.
+
+/** The base a character is pinned to, or '' for the world's engine. */
+function xeric_voice_machine(PDO $db, string $handle): string
+{
+    return trim((string)(xeric_arc_get($db, $handle, 'voice.machine') ?? ''));
+}
+
+/** Pin (a wired base) or clear (''). Returns the label the UI should say. */
+function xeric_voice_set(PDO $db, string $handle, string $base, ?string $sid = null): string
+{
+    $base = rtrim(trim($base), '/');
+    if ($base === '') { xeric_arc_clear($db, $handle, 'voice.machine'); return 'the world\'s engine'; }
+    if (!in_array($base, xeric_model_wired($sid), true)) {
+        throw new RuntimeException('That machine is not connected. Connect it on the machines screen first — only active machines can speak for somebody.');
+    }
+    xeric_arc_set($db, $handle, 'voice.machine', $base);
+    return (string)preg_replace('#^https?://#', '', $base);
+}
+
+/**
+ * The endpoint that speaks for this character: their pinned machine when it is
+ * still connected, else the world's engine. FALLS BACK, NEVER FAILS — a
+ * tuning choice must not be able to silence somebody, so a pin whose machine
+ * has since been forgotten or detached degrades to the default and the turn
+ * still answers. The trail of which machine actually spoke is the endpoint's
+ * own label, already recorded where calls are logged.
+ */
+function xeric_voice_endpoint(array $t, PDO $db, string $handle, ?string $sid = null): array
+{
+    $base = xeric_voice_machine($db, $handle);
+    if ($base !== '' && in_array($base, xeric_model_wired($sid), true)) {
+        try {
+            $ep = xeric_web_endpoint(xeric_model_descriptor($base));
+            if (xeric_llm_up($ep, 3)) return $ep;
+        } catch (Throwable $e) { /* fall through to the engine */ }
+    }
+    return xeric_play_endpoint($sid);
+}
+
+/** The compact picker's rows: the engine default plus every connected machine. */
+function xeric_voice_choices(PDO $db, string $handle, ?string $sid = null): array
+{
+    $now = xeric_voice_machine($db, $handle);
+    $out = [['base' => '', 'label' => "the world's engine", 'on' => $now === '']];
+    foreach (xeric_model_wired($sid) as $b) {
+        $out[] = ['base' => $b,
+                  'label' => (string)preg_replace('#^https?://#', '', $b),
+                  'on' => $b === $now];
+    }
+    return $out;
 }

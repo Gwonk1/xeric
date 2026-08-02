@@ -37,9 +37,9 @@
  *    whoever forged them. The refusal comes before the open, so it forks
  *    nothing.
  *
- * The walk-in composer has no suggestion ghost, on purpose: the chat one
- * (play.php a=suggest) reads a stored thread by conversation id, and a scene
- * has no conversation — see xeric_play_suggest for the seam it would need.
+ * The walk-in composer's suggestion ghost arrived once xeric_play_suggest()
+ * learned to take a scene transcript (a=hint below) — a scene has no
+ * conversation row, so the ghost reads the scene itself.
  */
 
 declare(strict_types=1);
@@ -147,7 +147,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         };
 
         try {
-            $endpoint = xeric_play_endpoint();
+            // The NEXT speaker's pinned voice machine, else the engine — the
+            // watch is per-speaker calls by law, which is exactly what makes
+            // per-character models possible here at all.
+            $endpoint = xeric_voice_endpoint($w['template'], $w['db'], (string)($s['next'] ?? ''), $sid);
         } catch (Throwable $e) {
             $done(['error' => $e->getMessage(), 'kind' => 'detached'], 409);
             return;

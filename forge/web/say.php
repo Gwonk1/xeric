@@ -114,7 +114,10 @@ $done = function (array $body, int $status = 200) use ($lock): void {
 $speakerName = xeric_world_name($T, $handle);
 
 try {
-    $endpoint = xeric_play_endpoint();
+    // Per-speaker: the pinned voice machine when one stands, else the engine
+    // (xeric_voice_endpoint falls back, never fails — a tuning choice must
+    // not silence somebody).
+    $endpoint = xeric_voice_endpoint($T, $db, $handle, $sid);
 } catch (Throwable $e) {
     // Nothing attached. Said as the state it is rather than as a failure, and
     // with the fix in the sentence — this is the one error on this screen whose
