@@ -684,6 +684,7 @@ xeric_web_head('Xeric: the forge');
       is like. Anything you leave out gets invented to fit what you wrote.</p>
     <textarea class="val" data-key="premise" rows="9" placeholder="A river town of nine hundred in southern Ohio, November 1973. The mill has been closing for two years and everybody knows it. My uncle runs the hardware store on Front Street and hears everything first…"></textarea>
     <p class="hintline">Names, dates and facts you put here are kept. The forge does not overrule them.</p>
+    <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, 'premise', 'And keep it', $ratingAffirm) ?>
 
     <!-- THE PDF DROPS INTO THE SAME BOX. What comes out of a document is text
          somebody wrote, which is exactly what the field above holds, so it goes
@@ -1101,7 +1102,11 @@ xeric_web_head('Xeric: the forge');
   next.addEventListener('click', function () {
     var t = screens[at].dataset.screen;
     if (t === 'blank') { startBlank(); return; }
-    if (t === 'premise') { save(); build('presets'); return; }
+    // The third door gets the same lock as the other two. A typed premise used
+    // to build with `rating` unanswered — a GAP, which the premise reader or
+    // the concept table filled, mature four times in five for an affirmed
+    // session. Same bug as ✨ and Auto Generate, found last.
+    if (t === 'premise') { lockRating(); save(); build('presets'); return; }
     if (t === 'q') {
       save();
       if (qScreens.indexOf(screens[at]) === qScreens.length - 1) { build('presets'); return; }
