@@ -418,6 +418,17 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 }
 .escapes{display:flex;flex-direction:column;align-items:flex-start;gap:.15rem;margin:1.5rem 0 0}
 
+/* The rating beside the all-surprise button. Quiet on purpose: it sits under an
+   escape hatch, not a question, and the weakest option is already chosen — so it
+   should read as a thing you may adjust, never as one more thing to answer. */
+.srate{display:flex;flex-wrap:wrap;align-items:center;gap:.1rem .6rem;font-size:.85rem;margin:.1rem 0 .1rem}
+.srate-l{color:var(--dim)}
+.srate-o{display:inline-flex;align-items:center;gap:.3rem;cursor:pointer;color:var(--fg)}
+.srate-o input{accent-color:var(--accent);margin:0;cursor:pointer}
+.srate-o.off{opacity:.45;cursor:not-allowed}
+.srate-o.off input{cursor:not-allowed}
+.srate-n{font-size:.8rem;color:var(--dim);margin:0 0 .2rem}
+
 /* ---------------------------------------------------------------- the ways */
 /* THREE BOXES, IN THE SHELF'S LANGUAGE. A channel is a thing you point at and
    pick, and choosing how to build is the same kind of act as choosing what to

@@ -580,7 +580,30 @@ xeric_web_head('Xeric: the forge');
   </section>
 
   <!-- ------------------------------------------------------------ steps -->
-  <?php $boxDrawn = false;
+  <?php
+  // THE RATING THAT ✨-EVERYTHING WILL BUILD WITH, offered beside the button that
+  // does it. Without this the all-surprise path leaves `rating` unanswered, and
+  // an unanswered rating is a GAP — which three separate routes will happily
+  // fill (the premise reader, the model fill, and the concept table, four of
+  // whose five rows ask for `mature`). Nobody decided that, and the interview
+  // says in as many words that nobody deciding must land clean.
+  //
+  // An ANSWER is not a gap, so putting the choice here is the whole fix: the
+  // weakest rating is pre-selected, it is written into the SAME field the rating
+  // question writes, and the concept table can no longer reach it.
+  //
+  // ✨ IS STILL NOT A WAY AROUND THE GATE. A rating that needs the affirmation is
+  // rendered disabled until the session has it, so this box can offer only what
+  // the visitor could already have chosen the long way round.
+  $ratingStep    = null;
+  foreach ($steps as $rs) { if ((string)($rs['key'] ?? '') === 'rating' || !empty($rs['gate'])) { $ratingStep = $rs; break; } }
+  $ratingPresets = (array)($ratingStep['presets'] ?? []);
+  $ratingFloor   = (string)($ratingStep['gate']['required_above'] ?? xeric_ratings()[0]);
+  $ratingNow     = (string)($answers['rating'] ?? '');
+  if ($ratingNow !== '') $ratingNow = xeric_session_rating($ratingNow, $sid);
+  if ($ratingNow === '') $ratingNow = xeric_ratings()[0];
+
+  $boxDrawn = false;
   foreach ($steps as $i => $s):
       $key   = (string)$s['key'];
       $open  = !empty($s['presets_are_suggestions']);
@@ -663,6 +686,23 @@ xeric_web_head('Xeric: the forge');
     <p class="hintline drew" hidden></p>
 
     <div class="escapes">
+      <?php if (!$gate && $ratingPresets): ?>
+      <div class="srate" role="group" aria-label="how far a surprise xeric may go">
+        <span class="srate-l">and keep it</span>
+        <?php foreach ($ratingPresets as $rp): $rv = (string)($rp['value'] ?? '');
+              $rgated = !empty($rp['requires_affirmation'])
+                        || xeric_rating_rank($rv) > xeric_rating_rank($ratingFloor); ?>
+          <label class="srate-o<?= $rgated && !$adult ? ' off' : '' ?>"<?= $rgated ? ' data-gated="1"' : '' ?>>
+            <input type="radio" name="srate-<?= (int)$i ?>" class="srate-r" value="<?= h($rv) ?>"
+                   <?= $rgated && !$adult ? 'disabled ' : '' ?><?= $rv === $ratingNow ? 'checked' : '' ?>>
+            <span><?= h($rp['label'] ?? $rv) ?></span>
+          </label>
+        <?php endforeach; ?>
+      </div>
+      <?php if (!$adult): ?>
+      <p class="srate-n">Anything past “keep it clean” needs the 18+ box on the last question.</p>
+      <?php endif; ?>
+      <?php endif; ?>
       <button class="linkbtn" type="button" data-all="1">✨ Surprise me for everything else and build it</button>
     </div>
   </section>
@@ -913,6 +953,19 @@ xeric_web_head('Xeric: the forge');
       c.setAttribute('aria-pressed',
         el.value.trim() !== '' && c.dataset.value === el.value.trim() ? 'true' : 'false');
     });
+    // The ✨ boxes carry the same gate, so they open and close with it. Withdrawn,
+    // a gated radio goes back to unreachable AND the value it was holding has
+    // already been cleared above — which lands on the weakest rating, the same
+    // place every unattended path lands.
+    $$('.srate-r').forEach(function (r) {
+      var lab = r.closest('.srate-o');
+      var gated = lab && lab.dataset.gated === '1';
+      if (!gated) return;
+      r.disabled = !ADULT;
+      lab.classList.toggle('off', !ADULT);
+    });
+    $$('.srate-n').forEach(function (n) { n.hidden = ADULT; });
+    paintSurpriseRating();
     paintNext(); save();
   }
 
@@ -1130,8 +1183,49 @@ xeric_web_head('Xeric: the forge');
   }
 
   // -- ✨ everything else --------------------------------------------------
+  // ONE VALUE, HOWEVER MANY COPIES OF THE BOX. The selector is rendered beside
+  // every all-surprise button, but it writes to the rating question's own field
+  // — the same one the chips write — so there is never a second answer to
+  // reconcile, and the affirmation logic above keeps working unchanged.
+  var RATING_DEFAULT = <?= json_encode(xeric_ratings()[0]) ?>;
+
+  function ratingField() { return gateScreen ? $('.val', gateScreen) : null; }
+
+  /** Every ✨ box shows what the one field actually says. */
+  function paintSurpriseRating() {
+    var el = ratingField();
+    var v = el && el.value.trim() ? el.value.trim() : RATING_DEFAULT;
+    $$('.srate-r').forEach(function (r) { r.checked = (r.value === v); });
+  }
+
+  $$('.srate-r').forEach(function (r) {
+    r.addEventListener('change', function () {
+      if (r.disabled) return;                 // a gated option before the box is ticked
+      var el = ratingField();
+      if (el) el.value = r.value;
+      // The chips on the gated screen are the same choice seen from the other
+      // side; leaving them stale would show two different answers to one question.
+      if (gateScreen) {
+        $$('.chip', gateScreen).forEach(function (c) {
+          c.setAttribute('aria-pressed', c.dataset.value === r.value ? 'true' : 'false');
+        });
+      }
+      paintSurpriseRating();
+      paintNext(); save();
+    });
+  });
+
+  paintSurpriseRating();
+
   $$('[data-all]').forEach(function (b) {
-    b.addEventListener('click', function () { save(); build('model'); });
+    b.addEventListener('click', function () {
+      // NEVER LEAVE IT A GAP. Untouched, the box reads the weakest rating and
+      // this writes it, so the all-surprise path carries a real answer rather
+      // than an absence for the concept table to fill.
+      var el = ratingField();
+      if (el && el.value.trim() === '') el.value = RATING_DEFAULT;
+      save(); build('model');
+    });
   });
 
   // -- the build -----------------------------------------------------------
