@@ -131,7 +131,10 @@ try {
     $out = xeric_forge_build($answers, $endpoint, [
         'interview' => $interview,
         'places' => (int)($cfg['places'] ?? 6),
-        'cast'   => (int)($cfg['cast'] ?? 4),
+        // Twelve by default (owner, 2026-08-02): four people is a writers' room,
+        // not a town. Overridable per-host through config.local.php's `cast`, the
+        // same way every other knob here is.
+        'cast'   => (int)($cfg['cast'] ?? 12),
         'seed'   => true,
         'fill'   => $fill,
         'timeout' => XERIC_WEB_BUILD_CALL_TIMEOUT,

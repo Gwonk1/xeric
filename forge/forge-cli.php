@@ -87,7 +87,12 @@ if (!isset($answers['rating']) || trim((string)$answers['rating']) === '') {
 }
 $opts = [
     'places' => (int)($args['places'] ?? 6),
-    'cast'   => (int)($args['cast'] ?? 4),
+    // TWELVE, NOT FOUR (owner, 2026-08-02). Four people is a writers' room, not
+    // a town: every sweep draws from the same three pairings and the world runs
+    // out of strangers in a week. Twelve gives the sweeps real choice and makes
+    // "two of them talked about you" plausible. The cost is honest — a longer
+    // forge and a bigger bible — and it is paid once, at build time.
+    'cast'   => (int)($args['cast'] ?? 12),
     'seed'   => !isset($args['no-seed']),
     // ✨ surprise-me asks the model for ONE coherent set; without the flag the
     // gaps are filled from interview.json's hand-written concepts.
@@ -223,7 +228,7 @@ function xeric_cli_usage(): string
       --rating=sfw|mature|explicit   how far this xeric may go (default sfw)
       --surprise           ask the model to fill the unanswered steps (✨)
       --places=N           how many places (6 for the slice)
-      --cast=N             how many people (4 for the slice)
+      --cast=N             how many people (default 12; 4 makes a quick test world)
       --no-seed            skip the seed-history pass
       --worlds=DIR         where to write (default ./worlds)
 
