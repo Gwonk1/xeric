@@ -320,6 +320,29 @@ function xeric_world_validate(array $t, string $label = 'template'): void
         if ($k === '')                 $bad("economies[$i].key", 'is required and must be a non-empty string');
         if (isset($economies[$k]))     $bad("economies[$i].key", "'$k' is declared twice");
         $economies[$k] = true;
+
+        // A `daily` block on a ledger that is not a daily system does nothing,
+        // and doing nothing quietly is how a world ends up with a tab the
+        // author is sure is climbing. Same posture as the rating typo above:
+        // the silent no-op is the failure worth catching at load.
+        if (isset($e['daily'])) {
+            if (!is_array($e['daily'])) {
+                $bad("economies[$i].daily", 'must be an object with a drift, floor or ceiling');
+            } elseif (empty($e['daily_system'])) {
+                $bad("economies[$i].daily", 'is set but daily_system is not true, so nothing would move it');
+            } else {
+                foreach (['drift', 'floor', 'ceiling'] as $f) {
+                    if (isset($e['daily'][$f]) && !is_int($e['daily'][$f])) {
+                        $bad("economies[$i].daily.$f", 'must be a whole number');
+                    }
+                }
+                $fl = $e['daily']['floor'] ?? null;
+                $ce = $e['daily']['ceiling'] ?? null;
+                if (is_int($fl) && is_int($ce) && $fl > $ce) {
+                    $bad("economies[$i].daily.floor", "($fl) is above the ceiling ($ce)");
+                }
+            }
+        }
     }
 
     $people = $chars + $fixtures;   // anyone a name can point at

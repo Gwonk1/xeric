@@ -2277,6 +2277,90 @@ $dbEdge = $dbHour = $dbSpine = $dbOrd = $dbDefer = $dbKill = $dbSex = null;
 $dA = $dW = $dM = $dS = $dL = $dL2 = $dOne = $dEv = $dNag = $dCap = $dSec = $dKid = null;
 $hour = $hourX = null;
 // ---------------------------------------------------------------------------
+// THE LEDGERS THAT MOVE ON THEIR OWN. `daily_system: true` has been in the
+// schema, the docs, and every affected system prompt since economies existed,
+// rendered as "It moves every day whether or not anyone touches it" — and the
+// only code that ever read the flag was the renderer writing that sentence.
+// ---------------------------------------------------------------------------
+
+echo "\n# the ledgers that move on their own\n";
+
+$dayT = world(['gossip', 'shared_meals'], [], null, [
+    'economies' => [
+        ['key' => 'casserole_ledger', 'counter' => 'per-character', 'daily_system' => true],
+        ['key' => 'bluebird_tab', 'counter' => 'per-character', 'daily_system' => true,
+         'daily' => ['drift' => 2, 'ceiling' => 7]],
+        ['key' => 'thursday_pot', 'counter' => 'per-character'],
+    ],
+]);
+$dayDb  = fresh_db('ledger-day');
+xeric_state_seed($dayDb, $dayT);
+$day1   = ['epoch' => ep('2026-07-30 18:00')];
+$day4   = ['epoch' => ep('2026-08-02 18:00')];
+$dayFar = ['epoch' => ep('2027-08-02 18:00')];
+
+xeric_arc_set($dayDb, 'dot', 'economy.casserole_ledger', '5');
+xeric_arc_set($dayDb, 'ruth', 'economy.casserole_ledger', '-2');
+
+// The first look only writes down what day it is: a ledger cannot owe for the
+// days before anybody was watching it.
+ok('daily: the first read marks the day and moves nothing',
+    xeric_ledger_day($dayDb, $dayT, $day1) === 0
+    && xeric_ledger_of($dayDb, 'casserole_ledger', 'dot') === 5);
+ok('daily: and three reads in one evening move nothing either',
+    xeric_ledger_day($dayDb, $dayT, $day1) === 0 && xeric_ledger_day($dayDb, $dayT, $day1) === 0
+    && xeric_ledger_of($dayDb, 'casserole_ledger', 'dot') === 5);
+
+// DECAY IS THE DEFAULT AND IT IS SIGN-AWARE: a tab gets paid down, a debt gets
+// forgotten, and neither runs past zero into the other one.
+xeric_ledger_day($dayDb, $dayT, $day4);
+ok('daily: three days later it has drifted back toward nothing, from both sides',
+    xeric_ledger_of($dayDb, 'casserole_ledger', 'dot') === 2
+    && xeric_arc_int($dayDb, 'ruth', 'economy.casserole_ledger', 0) === 0);
+xeric_ledger_day($dayDb, $dayT, $dayFar);
+ok('daily: and decay stops at nothing rather than digging through it',
+    xeric_ledger_of($dayDb, 'casserole_ledger', 'dot') === 0
+    && xeric_arc_int($dayDb, 'ruth', 'economy.casserole_ledger', 0) === 0);
+
+// A world you came back to after a year is somebody coming back, not somebody
+// owing three hundred days of interest.
+ok('daily: a ledger that climbs is capped by its own ceiling',
+    xeric_ledger_of($dayDb, 'bluebird_tab', 'dot') === 7);
+// The ceiling would mask the cap on the climbing ledger, so this is asserted
+// where nothing else can clamp it: a balance high enough that a year of
+// uncapped decay would take it to nothing, and one read may not.
+$capDb = fresh_db('ledger-cap');
+xeric_state_seed($capDb, $dayT);
+xeric_arc_set($capDb, 'dot', 'economy.casserole_ledger', '100');
+xeric_ledger_day($capDb, $dayT, $day1);
+xeric_ledger_day($capDb, $dayT, $dayFar);
+ok('daily: and catch-up after a long absence is capped, not compounded',
+    xeric_ledger_of($capDb, 'casserole_ledger', 'dot') === 100 - XERIC_LEDGER_CATCHUP,
+    (string)xeric_ledger_of($capDb, 'casserole_ledger', 'dot'));
+
+ok('daily: a ledger that is not a daily system is not touched by any of it',
+    xeric_ledger_of($dayDb, 'thursday_pot', 'dot') === 0
+    && xeric_world_state_get($dayDb, 'ledger.day.thursday_pot') === null);
+
+// A rewound clock is the one direction that must move nothing: rewind.php can
+// put the world back before a day it already walked, and a ledger that ran
+// backwards would hand somebody credit for time they are living through twice.
+$rwWas = xeric_ledger_of($dayDb, 'bluebird_tab', 'dot');
+ok('daily: a rewound clock moves no ledger at all',
+    xeric_ledger_day($dayDb, $dayT, $day1) === 0
+    && xeric_ledger_of($dayDb, 'bluebird_tab', 'dot') === $rwWas);
+
+// AND THE READ THAT ASSEMBLES A PROMPT DOES IT, which is the wiring rather
+// than the function — the same idiom the fuses and the debt fade use.
+$wireDb = fresh_db('ledger-day-wire');
+xeric_state_seed($wireDb, $dayT);
+xeric_arc_set($wireDb, 'dot', 'economy.casserole_ledger', '5');
+xeric_state_counters($wireDb, $dayT, 'dot', (int)$day1['epoch']);
+$wireSeen = xeric_state_counters($wireDb, $dayT, 'dot', (int)$day4['epoch']);
+ok('daily: the read that builds the prompt walks them up to today first',
+    ($wireSeen['counters']['casserole_ledger']['viewer_count'] ?? null) === 2);
+
+// ---------------------------------------------------------------------------
 // WHICH WAY THE FAVOUR WENT — the one fact about a favour hour that code
 // cannot read out of the prose, so the model reports it and code disposes of
 // it. Everything the sweep needs it takes from its own chosen row; a direction

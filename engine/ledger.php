@@ -146,3 +146,112 @@ function xeric_ledger_board(PDO $db, array $t, string $key, int $top = 0): array
     foreach ($rows as $j => $r) unset($rows[$j]['i']);
     return $top > 0 ? array_slice($rows, 0, $top) : $rows;
 }
+
+// ---------------------------------------------------------------------------
+// THE LEDGERS THAT MOVE ON THEIR OWN
+// ---------------------------------------------------------------------------
+//
+// `daily_system: true` has been in the schema, in the docs, and in every
+// affected system prompt since economies existed — rendered as the flat
+// sentence "It moves every day whether or not anyone touches it." The only
+// code that has ever read the flag is the renderer that writes that sentence.
+// The ledger did not move. A tab at the Bluebird sat at whatever it was on the
+// night it was seeded while a character was told, in her own prompt, as canon,
+// that it had been moving all along.
+//
+// THE DEFAULT IS DECAY, and the direction is not a guess. Left alone, a tab
+// gets paid down, a favour gets forgotten, and standing settles back toward
+// ordinary — the conservative motion is toward zero, and it can never invent
+// credit somebody did not earn. A world that wants a tab that GROWS says so:
+//
+//     "daily_system": true, "daily": { "drift": 1, "ceiling": 40 }
+//
+// IDEMPOTENT BY DAY, because there is no clock in this engine, only somebody
+// looking. The last day index this ledger was walked to is written down, so
+// three prompts in one evening tick nothing and a world opened after a fortnight
+// away catches up once. Catch-up is capped: a world left alone for a year is
+// somebody coming back, not somebody owing three hundred days of interest.
+
+/** How many days of catch-up one read may apply. */
+const XERIC_LEDGER_CATCHUP = 14;
+
+/** Which world-day an epoch falls in, floor-divided so pre-1970 worlds behave. */
+function xeric_ledger_day_index(int $epoch): int
+{
+    return (int)floor($epoch / 86400);
+}
+
+/** What one day does to this ledger: 0 = nothing, or a signed drift. */
+function xeric_ledger_drift(array $eco): array
+{
+    if (empty($eco['daily_system'])) return ['drift' => 0, 'decay' => false];
+    $d = $eco['daily'] ?? null;
+    if (!is_array($d) || !array_key_exists('drift', $d)) {
+        return ['drift' => 0, 'decay' => true, 'floor' => null, 'ceiling' => null];
+    }
+    return [
+        'drift'   => (int)$d['drift'],
+        'decay'   => false,
+        'floor'   => isset($d['floor'])   ? (int)$d['floor']   : null,
+        'ceiling' => isset($d['ceiling']) ? (int)$d['ceiling'] : null,
+    ];
+}
+
+/** One day's motion applied to one balance. Decay is sign-aware and stops at 0. */
+function xeric_ledger_drift_apply(int $n, array $rule, int $days): int
+{
+    if ($days <= 0) return $n;
+    if ($rule['decay']) {
+        return $n > 0 ? max(0, $n - $days) : ($n < 0 ? min(0, $n + $days) : 0);
+    }
+    if ($rule['drift'] === 0) return $n;
+    $n += $rule['drift'] * $days;
+    if ($rule['floor']   !== null) $n = max($rule['floor'], $n);
+    if ($rule['ceiling'] !== null) $n = min($rule['ceiling'], $n);
+    return $n;
+}
+
+/**
+ * Walk every self-moving ledger up to today. Returns how many rows moved.
+ *
+ * Called from the read that assembles a prompt's counters, which is the same
+ * idiom the expectation fuses and the debt fade use: nothing happens in this
+ * engine because time passed, only because somebody looked and time HAD passed.
+ */
+function xeric_ledger_day(PDO $db, array $t, array $now, ?int $at = null): int
+{
+    $today = xeric_ledger_day_index((int)($now['epoch'] ?? 0));
+    if ($today === 0) return 0;
+    $at = $at ?? xeric_state_time();
+    $moved = 0;
+
+    foreach ((array)($t['economies'] ?? []) as $eco) {
+        $key = (string)($eco['key'] ?? '');
+        if ($key === '') continue;
+        $rule = xeric_ledger_drift($eco);
+        if (!$rule['decay'] && $rule['drift'] === 0) continue;
+
+        $mark = 'ledger.day.' . $key;
+        $last = xeric_world_state_get($db, $mark);
+        if ($last === null) { xeric_world_state_set($db, $mark, (string)$today, $at); continue; }
+        $days = $today - (int)$last;
+        if ($days <= 0) continue;                       // a rewound clock moves nothing
+        $days = min($days, XERIC_LEDGER_CATCHUP);
+
+        $holders = (string)($eco['counter'] ?? 'per-character') === 'per-character'
+            ? array_values(array_filter(array_map(
+                fn($c) => (string)($c['handle'] ?? ''), (array)($t['cast']['characters'] ?? []))))
+            : [xeric_arc_world()];
+
+        foreach ($holders as $h) {
+            if ($h === '') continue;
+            $n = xeric_arc_int($db, $h, 'economy.' . $key, 0);
+            $to = xeric_ledger_drift_apply($n, $rule, $days);
+            if ($to === $n) continue;
+            xeric_arc_set($db, $h, 'economy.' . $key, (string)$to, $at);
+            $moved++;
+        }
+        xeric_world_state_set($db, $mark, (string)$today, $at);
+    }
+    return $moved;
+}

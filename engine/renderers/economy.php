@@ -88,7 +88,15 @@ function xeric_economy_block(array $eco, array $v, array $counter, string $eff):
     }
     foreach (xeric_economy_earn_lines($eco) as $line) $rules[] = '- ' . $line;
     if (!empty($eco['daily_system'])) {
-        $rules[] = '- It moves every day whether or not anyone touches it.';
+        // WHICH WAY it moves, because the flat sentence was true of a tab that
+        // grows and a tab that gets paid down at the same time, and those are
+        // opposite facts for somebody deciding whether to worry about it.
+        $drift = (int)($eco['daily']['drift'] ?? 0);
+        $rules[] = $drift > 0
+            ? '- It climbs every day whether or not anyone touches it.'
+            : ($drift < 0
+                ? '- It falls every day whether or not anyone touches it.'
+                : '- Left alone it drifts back toward nothing, a little every day.');
     }
     if (!empty($eco['board']['answer_keys'])) {
         $rules[] = '- What worked is remembered word for word, and repeated on purpose.';

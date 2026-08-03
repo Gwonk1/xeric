@@ -453,9 +453,24 @@ Design principles, learned the hard way:
       "label": "the tab at the Bluebird",
       "counter": "per-character",
       "earned_by": ["user_event:meal_taken", "user_grant"],
-      "daily_system": true                  // it moves whether or not anyone
-                                            // touches it, and the renderer says
-                                            // so out loud
+      "daily_system": true,                 // it moves whether or not anyone
+                                            // touches it, and it really does:
+                                            // walked up to today on the read
+                                            // that assembles a prompt, capped
+                                            // at 14 days of catch-up so a world
+                                            // you came back to after a month is
+                                            // somebody coming back, not
+                                            // somebody owing a month of it.
+      "daily": { "drift": 1, "ceiling": 40 }
+                                            // OPTIONAL. Absent, a daily system
+                                            // DECAYS toward zero by one a day —
+                                            // a tab gets paid down, a favour
+                                            // gets forgotten — which is the
+                                            // conservative direction and can
+                                            // never invent credit nobody
+                                            // earned. Say `drift` when you want
+                                            // one that grows, with an optional
+                                            // `floor` and `ceiling`.
     }
   ],
 

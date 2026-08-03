@@ -783,6 +783,18 @@ function xeric_state_counters(PDO $db, array $template, string $viewerHandle, ?i
         if ($h !== '') $names[$h] = (string)($c['display_name'] ?? $h);
     }
 
+    // THE LEDGERS THAT MOVE ON THEIR OWN, walked up to today before they are
+    // read. `daily_system` has been rendered into system prompts as "It moves
+    // every day whether or not anyone touches it" since economies existed, and
+    // nothing moved it — a character was told, as canon, about motion that was
+    // not happening. Read-triggered and idempotent by day index, same as the
+    // fuses and the debt fade: nothing happens here because time passed, only
+    // because somebody looked and time HAD passed.
+    if ($epoch !== null) {
+        require_once __DIR__ . '/ledger.php';
+        xeric_ledger_day($db, $template, ['epoch' => $epoch]);
+    }
+
     $counters = [];
     foreach ((array)($template['economies'] ?? []) as $eco) {
         $key = (string)($eco['key'] ?? '');
