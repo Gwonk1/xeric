@@ -1266,7 +1266,8 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 // list is a hand-written enumeration, and a hand-written enumeration goes stale.
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
-          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php'];
+          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php',
+          'debrief.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);
@@ -3026,6 +3027,72 @@ ok('spans: and the ordinary offers survive it',
 // connected, which every headless harness is, so a DOM check there would be
 // testing the machines screen and reporting on the forge.
 // ---------------------------------------------------------------------------
+
+// A discussion xeric, run through the real page. The report is the deliverable
+// of this whole mode, so it is asserted end to end rather than by unit.
+require_once dirname(__DIR__, 3) . '/forge/panel-forge.php';
+
+$panelT = xeric_forge_panel_world('twenty percent has to come out of the budget', [
+    'question' => 'where does the twenty percent come from',
+    'room' => ['name' => 'the Ridgeline lodge', 'what' => 'After dinner, and nobody has gone up.'],
+    'people' => [
+        ['name' => 'Ada Reyes',   'stake' => 'the people on the floor',
+         'red_line' => 'I will not accept anything that puts the cost on people who did not choose it'],
+        ['name' => 'Tom Vance',   'stake' => 'the balance sheet',
+         'red_line' => 'I will not accept a plan that leaves us insolvent by spring'],
+        ['name' => 'Priya Nandi', 'stake' => 'how it is told',
+         'red_line' => 'I will not accept a decision made without telling the people it lands on'],
+    ],
+]);
+$pdir = $tmp . '/worlds/argument';
+@mkdir($pdir, 0777, true);
+file_put_contents($pdir . '/world-template.json', json_encode($panelT, JSON_PRETTY_PRINT));
+xeric_session_claim('argument', $A);
+
+// The session has to be built INSIDE the request, because $run forks a
+// subprocess with its own XERIC_DATA_DIR and a world opened out here lands in a
+// different database entirely. Whole argument, then the page, in one boot.
+$seed = '$_GET = ["w" => "argument"];'
+    . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
+    . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
+    . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
+    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' $w = xeric_play_open("argument"); $d = $w["db"]; $T = $w["template"];'
+    . ' xeric_panel_think($d, "ada_reyes", "We should look at the lease before anybody talks about people.",'
+    . '   "the building costs more than four of the jobs and nobody has read the break clause");'
+    . ' xeric_panel_think($d, "tom_vance", "Twelve go on Friday and we are solvent by March.",'
+    . '   "the covenant test is the last day of Q1");'
+    . ' xeric_panel_think($d, "priya_nandi", "Then say it on Monday, not at five on a Friday.", "");'
+    . ' $x = xeric_panel_propose($d, "Nobody goes, and we borrow against next year.");'
+    . ' xeric_panel_table($T, $d, $x, ["base" => "stub://", "stub" => function ($tag, $m) {'
+    . '   return ["crosses" => str_contains((string)$m[0]["content"], "Tom"), "because" => "that is the covenant, gone"]; }]);'
+    . ' xeric_panel_made($d, "the rota", "mon: ada", "text", "ada_reyes");'
+    . ' require ' . var_export(dirname(__DIR__) . '/debrief.php', true) . ';';
+
+$deb = (string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($tmp)
+    . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
+    . ' ' . escapeshellarg($php) . ' -d error_reporting=0 -r ' . escapeshellarg($seed) . ' 2>&1');
+
+ok('debrief: a hung room is reported as a finding, not an apology',
+    str_contains($deb, 'did not get there, and that is the answer'));
+ok('debrief: and it names the pair nothing satisfied at once',
+    str_contains($deb, 'Nothing satisfied') && str_contains($deb, 'Tom Vance'));
+ok('debrief: every position is printed with the refusal behind it',
+    str_contains($deb, 'Will not accept') && str_contains($deb, 'insolvent by spring'));
+ok('debrief: every proposal carries who could live with it and who would not',
+    str_contains($deb, 'can live with it') && str_contains($deb, 'will not have it'));
+ok('debrief: the reasoning under each turn is on the page, because it is open',
+    str_contains($deb, 'the covenant test is the last day'));
+ok('debrief: the thread nobody followed is called out for the reader too',
+    str_contains($deb, 'Threads nobody followed') && str_contains($deb, 'look at the lease'));
+ok('debrief: what the room built is shown above the argument about it',
+    str_contains($deb, 'What the room made') && str_contains($deb, 'the rota'));
+ok('debrief: and the page says experimental where somebody will read it',
+    str_contains($deb, 'EXPERIMENTAL'));
+ok('debrief: a stranger is shown none of it',
+    str_contains($run('debrief.php', $B, ['w' => 'argument']), 'not yours to read'));
+ok('debrief: and an ordinary xeric is told to read its book instead',
+    str_contains($run('debrief.php', $A, ['w' => 'lived-in']), 'not a discussion'));
 
 echo "\n# the discussion door\n";
 

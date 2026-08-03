@@ -1346,6 +1346,7 @@ echo '<style>' . xeric_play_css() . '
               . ' — ' . str_replace('_', ' ', (string)$shapeAmb['stage']));
   ?>
   var SHAPE = <?= json_encode($shapeKey) ?>;
+  var PANELW = <?= !empty($T['panel']['experts']) ? 'true' : 'false' ?>;   // EXPERIMENTAL: a room, not a place
   var MONEY  = <?= json_encode((string)($state['world']['money'] ?? 'none')) ?>;
   var SHIFTS = <?= (int)($state['world']['shifts'] ?? 0) ?>;
   var SHAPELINE = <?= json_encode($shapeLine) ?>;
@@ -1604,7 +1605,15 @@ echo '<style>' . xeric_play_css() . '
           '<div class="xcrow"><a class="nbtn" href="book.php?w=' + encodeURIComponent(W) + '">📕 the book</a>' +
           '<span class="xchint">the xeric’s own story, day by day — events, scenes and dreams, fit to print</span></div>' +
           '<div class="xcrow"><a class="nbtn" href="watch.php?w=' + encodeURIComponent(W) + '">🎭 watch</a>' +
-          '<span class="xchint">sit in on two of them talking — play, pause, or walk into the middle of it</span></div>'
+          '<span class="xchint">sit in on two of them talking — play, pause, or walk into the middle of it</span></div>' +
+          // EXPERIMENTAL discussion rooms get their own report, and only they do:
+          // a debrief of a place you live in is what the book is for.
+          (PANELW
+            ? '<div class="xcrow"><a class="nbtn" href="debrief.php?w=' + encodeURIComponent(W) + '">🧪 the debrief</a>' +
+              '<span class="xchint">what the room got to and what it walked past — every position, ' +
+              'every proposal and who could live with it, the reasoning under each turn, and the ' +
+              'threads nobody followed</span></div>'
+            : '')
         : '') +
       '<div class="xcrow"><button type="button" class="nbtn" id="ccancel">close</button></div>';
     $('#coverlay').classList.add('open');

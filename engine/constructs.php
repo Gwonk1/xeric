@@ -569,6 +569,13 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now): stri
     $job = xeric_work_block($db, $t);
     if ($job !== '') $blocks[] = $job;
 
+    // AND, IN A DISCUSSION ROOM, WHY THEY ARE IN IT. Adjoins here rather than
+    // asking prompt.php and the why inspector to learn a second name, per this
+    // function's stated one-door contract. Silent in every ordinary world.
+    require_once __DIR__ . '/panel.php';
+    $why = xeric_panel_block($t, $handle, $db);
+    if ($why !== '') $blocks[] = $why;
+
     $talk = xeric_gossip_block($t, $db, $handle);
     if ($talk !== '') $blocks[] = $talk;
     return implode("\n\n", $blocks);

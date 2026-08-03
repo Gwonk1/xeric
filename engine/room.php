@@ -128,6 +128,7 @@ require_once __DIR__ . '/sweeps.php';     // the protected-secret test, the ceil
 require_once __DIR__ . '/learn.php';      // the weighted shuffle, and reach
 require_once __DIR__ . '/death.php';      // the dead do not talk, even in company
 require_once __DIR__ . '/constructs.php'; // expectations — the dormant cast-to-cast seam
+require_once __DIR__ . '/panel.php';      // and, in a discussion room, the open record
 
 /** A room, bounded: two is a duet (use xeric_duet), six is a crowd (the sweep writes crowds). */
 const XERIC_ROOM_MIN = 3;
@@ -452,6 +453,23 @@ function xeric_room(array $t, PDO $db, array $handles, array $now, array $endpoi
         // rule this file already uses to decide who answers a beat. The
         // dormant `of` notch in the draw weight above lights up from here.
         xeric_expect_from_scene($t, $db, $lines, $now);
+
+        // AND IN A DISCUSSION ROOM, THE OPEN RECORD. Silent in every ordinary
+        // world — xeric_panel() returns null and this costs one array lookup.
+        // In a panel it is the point: what each of them said goes down with the
+        // memory they took away from saying it, which is the closest thing this
+        // engine has to the thinking behind a line, and it is what every other
+        // person in the room reads before their next turn. A workshop where you
+        // can see what somebody was considering is a workshop where you can
+        // finish the idea they dropped.
+        if (xeric_panel($t) !== null) {
+            foreach ($lines as $ln) {
+                if ((string)($ln['kind'] ?? '') !== 'line') continue;
+                $h = (string)($ln['handle'] ?? '');
+                xeric_panel_think($db, $h, (string)($ln['text'] ?? ''),
+                    (string)(($kept[$h] ?? [])[0] ?? ''), $at);
+            }
+        }
 
         // The trail, under the key the inspector already reads, kind decided
         // here and only here. It carries who spoke and why — WITH the weights,

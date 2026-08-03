@@ -201,14 +201,98 @@ echo "\n# what they know walking in\n";
 $blk = xeric_panel_block($T, 'ada_reyes');
 ok('panel: an expert carries their own refusal into the room',
     str_contains($blk, 'puts the cost on people'));
-ok('panel: and not anybody else\'s, so they cannot write around it',
-    !str_contains($blk, 'insolvent') && !str_contains($blk, 'without telling'));
+// THE ROOM IS OPEN AND THE JUDGING IS BLIND, which is the corrected version of
+// a decision this file got wrong the first time. Hiding the other refusals
+// guards the wrong thing: a room where the terms are secret is a negotiation,
+// and this is meant to be a workshop. Writing around somebody's STATED line is
+// the work. The blindness that matters lives in xeric_panel_ask(), asserted
+// above — one person, one sentence, no tally.
+ok('panel: and everybody else\'s, because a secret constraint cannot be solved for',
+    str_contains($blk, 'insolvent') && str_contains($blk, 'without telling')
+    && str_contains($blk, 'that is the work'));
 ok('panel: they are told plainly not to soften it for the room',
     str_contains($blk, 'not here to be agreeable'));
 ok('panel: somebody who is not on the panel carries nothing',
     xeric_panel_block($T, 'nobody_here') === '');
 ok('panel: and an ordinary world has no panel at all',
     xeric_panel(['cast' => ['characters' => []]]) === null);
+
+// ---------------------------------------------------------------------------
+// 5. THE OPEN RECORD. What was said and what was behind it, shared — because a
+// room where you can see what somebody was thinking is a room where you can
+// pick up the half-idea they abandoned, and that is where the value is.
+// ---------------------------------------------------------------------------
+
+echo "\n# what was said, and what was behind it\n";
+
+$open = fresh('open');
+xeric_panel_think($open, 'ada_reyes', 'We should look at the lease before anybody talks about people.',
+    'the building costs more than four of the jobs and nobody has read the break clause');
+xeric_panel_think($open, 'tom_vance', 'Twelve go on Friday and we are solvent by March.',
+    'the covenant test is the last day of Q1 and nothing else moves fast enough');
+// Ada answers Tom's solvency argument on its own terms — twelve, March, the
+// covenant — so his point was PICKED UP. Priya then changes the subject, which
+// is what leaves the lease lying where Ada dropped it.
+xeric_panel_think($open, 'ada_reyes', 'Twelve out by March does not clear the covenant if the building stays.',
+    'his solvent-by-March number assumes the lease runs to term and it does not have to');
+xeric_panel_think($open, 'priya_nandi', 'Say it out loud on Monday, not at five on a Friday.',
+    'people find out anyway and finding out badly is the part that does the damage');
+
+$rec = xeric_panel_thinking($open, 'ada_reyes');
+ok('open: the record carries what everybody said', str_contains($rec, 'Twelve go on Friday'));
+ok('open: and the thinking under it, which is the half that is usually lost',
+    str_contains($rec, 'the covenant test is the last day'));
+ok('open: your own turns come back to you as yours',
+    str_contains($rec, 'You: We should look at the lease'));
+ok('open: and the room is told plainly that none of it is private',
+    str_contains($rec, 'Pick up anything somebody dropped'));
+
+$blkOpen = xeric_panel_block($T, 'tom_vance', $open);
+ok('open: it reaches the prompt, so somebody can act on what they heard',
+    str_contains($blkOpen, 'the break clause'));
+
+// THREADS NOBODY FOLLOWED. A room under pressure converges early and drops the
+// idea it did not have time for. That is the most useful thing on the page.
+$th = xeric_panel_threads($open);
+ok('threads: the lease nobody came back to is on the record as a loose end',
+    count(array_filter($th, fn($x) => str_contains($x['said'], 'lease'))) === 1,
+    json_encode(array_column($th, 'said')));
+// The last thing said is never a loose end: nothing follows it yet, so by
+// construction nobody has followed it, and the report would open with the
+// sentence still hanging in the air.
+ok('threads: the sentence still hanging in the air is not an abandoned thread',
+    !in_array('priya_nandi', array_column($th, 'who'), true));
+// Tom's covenant argument WAS picked up — Priya answered it directly — so it is
+// not a loose end either. Only the lease is.
+ok('threads: and neither is an argument somebody answered on its own terms',
+    !in_array('tom_vance', array_column($th, 'who'), true), json_encode(array_column($th, 'who')));
+
+$agree = fresh('agree');
+xeric_panel_think($agree, 'ada_reyes', 'Twelve go on Friday.', '');
+xeric_panel_think($agree, 'tom_vance', 'I agree.', '');
+ok('threads: agreeing with somebody raises no thread, because it raises nothing',
+    array_column(xeric_panel_threads($agree), 'said') === ['Twelve go on Friday.']);
+
+// ---------------------------------------------------------------------------
+// 6. WHAT THE ROOM MADE. If somebody asked for a program, the program is what
+// they came for — not the argument about whether to write it.
+// ---------------------------------------------------------------------------
+
+echo "\n# what the room made\n";
+
+$made = fresh('made');
+ok('made: a room that built nothing has nothing to show', xeric_panel_artifacts($made) === []);
+$ai = xeric_panel_made($made, 'the rota', "mon: ada\ntue: tom", 'text', 'ada_reyes');
+ok('made: a deliverable is kept apart from the positions argued about it',
+    $ai === 0 && xeric_panel_artifacts($made)[0]['title'] === 'the rota'
+    && xeric_panel_proposals($made) === []);
+ok('made: and it remembers what KIND of thing it is, so a page can show it right',
+    xeric_panel_made($made, 'the script', 'print("hi")', 'python') === 1
+    && xeric_panel_artifacts($made)[1]['kind'] === 'python');
+ok('made: a kind that is not a kind falls back rather than reaching a page raw',
+    xeric_panel_made($made, 'x', 'y', '<script>') === 2
+    && xeric_panel_artifacts($made)[2]['kind'] === 'text');
+ok('made: and nothing is not something', xeric_panel_made($made, 'x', '   ') === -1);
 
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 

@@ -369,7 +369,7 @@ function xeric_panel_say(array $t, PDO $db): string
  * not accept is something they have to find out by talking, like anybody else
  * in a room.
  */
-function xeric_panel_block(array $t, string $handle): string
+function xeric_panel_block(array $t, string $handle, ?PDO $db = null): string
 {
     $p = xeric_panel($t);
     if ($p === null || !isset($p['experts'][$handle])) return '';
@@ -378,7 +378,178 @@ function xeric_panel_block(array $t, string $handle): string
     if ($e['stake'] !== '') $out .= "\n- What you are protecting: " . $e['stake'];
     $out .= "\n- The line you will not cross: " . $e['red_line']
           . "\n- You are not here to be agreeable. If a thing crosses that line you say so, "
-          . "plainly, and you do not soften it to keep the room comfortable."
-          . "\n- You do not know what anybody else in here refuses. You find that out by talking.";
+          . "plainly, and you do not soften it to keep the room comfortable.";
+
+    // AND WHAT EVERYBODY ELSE IS DEFENDING, which is the opposite of what this
+    // block did when it was written, and the owner is right about the reversal.
+    //
+    // v1 hid the other refusals so nobody could write around them. That guards
+    // the wrong thing: a room where the terms are secret is a negotiation, and
+    // this is meant to be a workshop. People solving a hard problem together
+    // need to know what the constraints ARE — half of real progress is somebody
+    // saying "wait, if that is your actual line then here is a shape that
+    // clears it," which is impossible when the line is hidden.
+    //
+    // THE BLINDNESS THAT MATTERED IS KEPT, and it was never here: it is in
+    // xeric_panel_ask(), where a proposal is put to one person about one
+    // sentence with no tally and no peer verdicts in front of them. The room is
+    // OPEN and the judging is BLIND. Writing around somebody's stated line in
+    // open conversation is not cheating, it is the work; agreeing with a tally
+    // you can see is.
+    $others = [];
+    foreach ($p['experts'] as $h => $o) {
+        if ($h === $handle) continue;
+        $others[] = '- ' . $o['name'] . ' will not accept: ' . $o['red_line']
+                  . ($o['stake'] !== '' ? ' (protecting: ' . $o['stake'] . ')' : '');
+    }
+    if ($others !== []) {
+        $out .= "\n\nWHAT THE OTHERS WILL NOT ACCEPT\n" . implode("\n", $others)
+              . "\n- These are on the table, not secret. If you can find a shape that clears "
+              . "somebody else's line without crossing your own, say it — that is the work.";
+    }
+
+    // WHAT THEY SAID AND WHY THEY SAID IT. The reasoning is shared on purpose:
+    // a room where you can see what somebody was thinking is a room where you
+    // can pick up the half-idea they abandoned, which is where most of the
+    // value in a working session actually is.
+    if ($db !== null) {
+        $think = xeric_panel_thinking($db, $handle);
+        if ($think !== '') $out .= "\n\n" . $think;
+    }
     return $out;
+}
+
+// ---------------------------------------------------------------------------
+// The open record: what was said, and what was behind it
+// ---------------------------------------------------------------------------
+
+/** How many turns of reasoning ride into a prompt before it is too much. */
+const XERIC_PANEL_THINK_KEEP = 40;
+
+/** Everything anybody has said and the thinking under it, oldest first. */
+function xeric_panel_thoughts(PDO $db): array
+{
+    $raw = xeric_world_state_get($db, 'panel.thinking');
+    $out = $raw === null ? [] : json_decode((string)$raw, true);
+    return is_array($out) ? $out : [];
+}
+
+/**
+ * Write down a turn: who, what they said, and what was behind it.
+ *
+ * The `why` is the point. A transcript tells you what a room concluded; the
+ * reasoning tells you what it CONSIDERED, and the considered-and-dropped is
+ * usually the more useful half — it is where the threads nobody followed are.
+ */
+function xeric_panel_think(PDO $db, string $handle, string $said, string $why = '',
+                           ?int $at = null): void
+{
+    $said = trim(preg_replace('/\s+/u', ' ', $said) ?? '');
+    if ($handle === '' || $said === '') return;
+    $all = xeric_panel_thoughts($db);
+    $all[] = ['who' => $handle, 'said' => mb_substr($said, 0, 900),
+              'why' => mb_substr(trim(preg_replace('/\s+/u', ' ', $why) ?? ''), 0, 400)];
+    if (count($all) > XERIC_PANEL_THINK_KEEP) $all = array_slice($all, -XERIC_PANEL_THINK_KEEP);
+    xeric_world_state_set($db, 'panel.thinking', json_encode($all, JSON_UNESCAPED_UNICODE),
+                          $at ?? xeric_state_time());
+}
+
+/** The shared record as it reaches one person's prompt. */
+function xeric_panel_thinking(PDO $db, string $me = '', int $keep = 12): string
+{
+    $all = array_slice(xeric_panel_thoughts($db), -$keep);
+    if ($all === []) return '';
+    $lines = ['WHAT HAS BEEN SAID, AND WHAT WAS BEHIND IT'];
+    foreach ($all as $r) {
+        $who = (string)$r['who'] === $me ? 'You' : (string)$r['who'];
+        $lines[] = '- ' . $who . ': ' . (string)$r['said'];
+        if ((string)($r['why'] ?? '') !== '') {
+            $lines[] = '  (thinking: ' . (string)$r['why'] . ')';
+        }
+    }
+    $lines[] = '- Nothing here is private. Pick up anything somebody dropped.';
+    return implode("\n", $lines);
+}
+
+/**
+ * THREADS NOBODY FOLLOWED — the half-ideas that went nowhere.
+ *
+ * A thing somebody raised whose distinctive words never appear again, in
+ * anybody's later turn or in any proposal. That is not a judgement about
+ * quality: it is a record of what the room walked past, and in a working
+ * session it is routinely the most valuable thing on the page, because a room
+ * under pressure converges early and drops the idea it did not have time for.
+ *
+ * Computed with the same word machinery the red-line check uses, minus the
+ * frame everybody shares, so "we should look at the lease" counts as a thread
+ * and "I think that is right" does not.
+ */
+function xeric_panel_threads(PDO $db, int $min = 2): array
+{
+    $all = xeric_panel_thoughts($db);
+    if (count($all) < 2) return [];
+
+    $texts = array_map(fn($r) => (string)$r['said'] . ' ' . (string)($r['why'] ?? ''), $all);
+    $frame = xeric_panel_frame($texts);
+    $props = xeric_panel_proposals($db);
+
+    // THE LAST THING SAID IS NEVER A LOOSE END. Nothing follows it yet, so by
+    // construction it has been followed by nobody — and calling the sentence
+    // still hanging in the air an abandoned thread would put the room's most
+    // recent turn at the top of a report about what it walked past. A thread is
+    // something the room moved PAST, and it cannot move past what it just said.
+    $out  = [];
+    $last = count($all) - 1;
+    foreach ($all as $i => $r) {
+        if ($i >= $last) break;
+        $mine = array_diff(array_keys(xeric_ledger_words((string)$r['said'])), $frame);
+        if (count($mine) < $min) continue;              // "I agree" raises nothing
+
+        $later = '';
+        for ($j = $i + 1; $j < count($all); $j++) $later .= ' ' . $texts[$j];
+        foreach ($props as $p) $later .= ' ' . (string)($p['text'] ?? '');
+        $seen = array_keys(xeric_ledger_words($later));
+
+        $picked = array_intersect($mine, $seen);
+        // More than half of what made it distinctive never came back.
+        if (count($picked) * 2 > count($mine)) continue;
+        $out[] = ['who' => (string)$r['who'], 'said' => (string)$r['said'],
+                  'why' => (string)($r['why'] ?? '')];
+    }
+    return $out;
+}
+
+// ---------------------------------------------------------------------------
+// What the room built, if it built anything
+// ---------------------------------------------------------------------------
+
+/**
+ * A deliverable the room produced: a plan, a script, a draft, a schedule.
+ *
+ * Kept apart from the proposals because it is a different kind of thing. A
+ * proposal is a position to be held against four refusals; an artifact is the
+ * work — and if somebody asked this room for a program, the program is what
+ * they came for, not the argument about whether to write it.
+ */
+function xeric_panel_artifacts(PDO $db): array
+{
+    $raw = xeric_world_state_get($db, 'panel.artifacts');
+    $out = $raw === null ? [] : json_decode((string)$raw, true);
+    return is_array($out) ? $out : [];
+}
+
+/** Put something the room made on the record. Returns its index. */
+function xeric_panel_made(PDO $db, string $title, string $body, string $kind = 'text',
+                          string $by = '', ?int $at = null): int
+{
+    $body = trim($body);
+    if ($body === '') return -1;
+    $all = xeric_panel_artifacts($db);
+    $all[] = ['title' => mb_substr(trim($title) ?: 'what the room made', 0, 120),
+              'body' => mb_substr($body, 0, 40000),
+              'kind' => preg_match('/^[a-z0-9+#.-]{1,20}$/', $kind) ? $kind : 'text',
+              'by' => $by];
+    xeric_world_state_set($db, 'panel.artifacts', json_encode($all, JSON_UNESCAPED_UNICODE),
+                          $at ?? xeric_state_time());
+    return count($all) - 1;
 }
