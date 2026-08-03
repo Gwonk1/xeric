@@ -3022,6 +3022,19 @@ ok('spans: and the ordinary offers survive it',
     isset($spNight['hour'], $spNight['evening']));
 
 // ---------------------------------------------------------------------------
+// SITTING DOWN AT A TABLE. Owner-only, and refusing on the wrong night rather
+// than spawning a worker that would find nothing to do.
+// ---------------------------------------------------------------------------
+
+echo "\n# sitting down\n";
+
+ok('sit: a stranger cannot sit at somebody else\'s table',
+    str_contains($run('play.php', $B, ['a' => 'sit', 'w' => 'lived-in']), 'Only the owner')
+    || str_contains($run('play.php', $B, ['a' => 'sit', 'w' => 'lived-in']), 'not yours'));
+ok('sit: and a game that is not there is not a game',
+    str_contains($run('play.php', $A, ['a' => 'sit', 'w' => 'lived-in']), 'no game there'));
+
+// ---------------------------------------------------------------------------
 // THE EXPERIMENTAL DISCUSSION TAB. Asserted against the source rather than a
 // rendered page on purpose: forge.php redirects to model.php when no machine is
 // connected, which every headless harness is, so a DOM check there would be

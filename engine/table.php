@@ -49,6 +49,7 @@ require_once __DIR__ . '/cards.php';
 require_once __DIR__ . '/ledger.php';
 require_once __DIR__ . '/trust.php';
 require_once __DIR__ . '/constructs.php';  // what somebody could not cover is a debt
+require_once __DIR__ . '/chat.php';        // the model seam, for the table talk only
 
 /** Fewest and most at a table. Two is heads-up; past six it is a tournament. */
 const XERIC_TABLE_MIN = 2;
@@ -465,4 +466,179 @@ function xeric_table_say(array $t, array $result): string
     return (xeric_world_name($t, (string)$up) ?: (string)$up) . ' is up ' . $net[$up]
          . ($net[$dn] < 0 ? ', and ' . (xeric_world_name($t, (string)$dn) ?: (string)$dn)
                           . ' is down ' . abs($net[$dn]) : '') . '.';
+}
+
+// ---------------------------------------------------------------------------
+// SITTING DOWN YOURSELF
+// ---------------------------------------------------------------------------
+//
+// THE PLAYER HAS ONE PURSE, and it is the one engine/work.php already gave
+// them: `work.wages`. You earn it on shift and you lose it at cards, which is
+// the connection that makes both features mean something — a wage counter with
+// nothing to spend it on is a score, and a card table paid in its own private
+// currency is a slot machine. What the money MATTERS is still the money dial,
+// which starts at `none` in every world.
+//
+// HOW YOU PLAY IS ONE DECISION, NOT FORTY. A full betting interface is a
+// different program: check, call, raise, forty presses a night, and a xeric is
+// a place you have a conversation in. So you say how you are playing tonight —
+// careful, steady, or reckless — and that shades the same policy every other
+// seat uses. One decision with real consequences beats forty with small ones,
+// and it is the same coarseness the rest of this engine is built on.
+//
+// The player is not in the cast, has no handle, and is never a character. They
+// are a SEAT: the reserved key below never collides with a real handle because
+// handles are lower-case alphanumeric and this is not.
+
+/** The player's seat, which is not a handle and cannot be mistaken for one. */
+const XERIC_TABLE_YOU = '@you';
+
+/** How you are playing tonight → the nerve every other seat is read on. */
+function xeric_table_style(string $style): int
+{
+    return match (strtolower(trim($style))) {
+        'careful'  => 1,
+        'reckless' => 4,
+        default    => 2,        // steady
+    };
+}
+
+/** What the person at the centre has to play with. */
+function xeric_table_purse(PDO $db): int
+{
+    return (int)(xeric_world_state_get($db, 'work.wages') ?? 0);
+}
+
+/**
+ * A night with you in it. Pure, like xeric_table_play, and for the same reason.
+ *
+ * You are seated as XERIC_TABLE_YOU with a nerve from your declared style, and
+ * from there the table does not care: the same policy reads your hand, the same
+ * arithmetic ranks it, and the same pot pays out. Nothing gives you a better
+ * deck, a softer table, or a house edge in either direction — the deal is a
+ * seeded shuffle and it does not know who is sitting where.
+ */
+function xeric_table_play_with_you(array $t, array $table, array $seats, string $style,
+                                   int $hands, int $seed): array
+{
+    // The style rides in as a one-character stand-in so xeric_table_nerve()
+    // reads it the way it reads anybody's psyche — no second code path for the
+    // person at the centre, which is how a second code path stays honest.
+    $word = match (xeric_table_style($style)) { 1 => 'careful', 4 => 'reckless', default => 'steady' };
+    $t2 = $t;
+    $t2['cast']['characters'][] = ['handle' => XERIC_TABLE_YOU,
+        'display_name' => trim((string)($t['user']['name'] ?? '')) ?: 'you',
+        'one_line' => $word];
+
+    $all = array_values(array_unique(array_merge([XERIC_TABLE_YOU], array_values($seats))));
+    return xeric_table_play($t2, $table, $all, $hands, $seed) + ['template' => $t2];
+}
+
+/**
+ * Your night, written down. Opens its own transaction.
+ *
+ * The town's half goes through xeric_table_write() exactly as it would with
+ * nobody at the centre — the people at the table owe each other, cool on each
+ * other and pay the same ledger whether or not you were there. YOUR half is the
+ * purse, and it is floored at nothing: a xeric will let you lose your wages and
+ * will not let you go into the hole to a card game, because a debt to the town
+ * is a construct with a face on it and a negative purse is just a bad number.
+ *
+ * @return array{net:int,purse:int,result:array}
+ */
+function xeric_table_sit(array $t, PDO $db, array $table, array $seats, string $style,
+                         int $hands, int $seed, ?int $at = null, int $epoch = 0): array
+{
+    $at  = $at ?? xeric_state_time();
+    $r   = xeric_table_play_with_you($t, $table, $seats, $style, $hands, $seed);
+    $you = (int)($r['net'][XERIC_TABLE_YOU] ?? 0);
+
+    // What the town does among itself is the town's business — your seat is
+    // lifted out so xeric_table_write never tries to find a cast member called
+    // '@you' or open a debt against somebody who is not in the world.
+    $townOnly = $r;
+    unset($townOnly['net'][XERIC_TABLE_YOU]);
+
+    $db->beginTransaction();
+    try {
+        xeric_table_write($t, $db, $table, $townOnly, $at, $epoch);
+        $purse = max(0, xeric_table_purse($db) + $you);
+        xeric_world_state_set($db, 'work.wages', (string)$purse, $at);
+        $db->commit();
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        throw new RuntimeException('table: the night could not be settled, ' . $e->getMessage(), 0, $e);
+    }
+    return ['net' => $you, 'purse' => $purse, 'result' => $r];
+}
+
+/**
+ * WHAT WAS SAID WHILE IT HAPPENED. The one model call a night costs.
+ *
+ * The cards are settled before this runs, so the model is describing rather
+ * than deciding — and it is given each player's TELL, which the schema has
+ * carried since the day characters existed ("three things they do without
+ * noticing" is a poker tell verbatim). That is the read: not a number on
+ * screen, a person doing the thing they always do when they are lying.
+ *
+ * Returns lines to fold into the transcript, or [] if the model was no help.
+ */
+function xeric_table_talk(array $t, array $table, array $played, array $endpoint,
+                          array $opts = []): array
+{
+    $net = (array)$played['net'];
+    $who = [];
+    foreach ($net as $h => $n) {
+        if ((string)$h === XERIC_TABLE_YOU) { $who[] = '- You: ' . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level')); continue; }
+        $nerve = xeric_table_nerve($t, (string)$h);
+        $who[] = '- ' . (xeric_world_name($t, (string)$h) ?: (string)$h) . ': '
+               . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level'))
+               . ($nerve['tell'] !== '' ? ' — when he is not thinking about it, he ' . $nerve['tell'] : '');
+    }
+
+    $sys = 'You write what people said around a card table. You are not running the game: it is '
+         . 'finished and the numbers are settled. Reply with ONE JSON object and nothing else.';
+    $user = 'THE GAME: ' . (string)($table['name'] ?? 'the game') . ', ' . (int)$played['hands']
+          . " hands.
+
+HOW IT WENT — this is settled, do not change it:
+" . implode("
+", $who)
+          . "
+
+SOME OF THE TABLE:
+"
+          . implode("
+", array_map(fn($l) => '  ' . $l, array_slice((array)$played['log'], -8)))
+          . "
+
+WRITE ONE JSON OBJECT
+"
+          . '{ "talk": ["Name: \"…\"", "Name: \"…\""] }' . "
+"
+          . "- Four to seven short spoken lines from across the whole night, in order.
+"
+          . "- Speech only. No narration, no thoughts, nothing anybody could not HEAR.
+"
+          . "- A tell above is something a person DOES, not something they announce. If somebody
+"
+          . "  is losing badly it should be audible in what they say, never stated outright.
+"
+          . "- Nobody says the numbers out loud. People do not read out the score at a card table.";
+
+    try {
+        $raw = xeric_chat_json($endpoint, 'table-talk', [
+            ['role' => 'system', 'content' => $sys],
+            ['role' => 'user',   'content' => $user],
+        ], ['temperature' => 0.9, 'timeout' => (int)($opts['timeout'] ?? 90)] + $opts);
+    } catch (Throwable $e) {
+        return [];                     // a quiet game is still a game
+    }
+    $out = [];
+    foreach ((array)($raw['talk'] ?? []) as $l) {
+        $l = trim(preg_replace('/\s+/u', ' ', (string)$l) ?? '');
+        if ($l !== '') $out[] = mb_substr($l, 0, 200);
+        if (count($out) >= 8) break;
+    }
+    return $out;
 }

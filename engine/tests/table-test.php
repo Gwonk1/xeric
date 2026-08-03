@@ -277,6 +277,102 @@ ok('settle: the night has a sentence somebody would actually say about it',
     str_contains(xeric_table_say($T, $res), 'up') || str_contains(xeric_table_say($T, $res), 'ahead'),
     xeric_table_say($T, $res));
 
+// ---------------------------------------------------------------------------
+// 6. SITTING DOWN YOURSELF. One purse — the one work.php gave you — because a
+// wage counter with nothing to spend it on is a score, and a card table paid in
+// its own private currency is a slot machine.
+// ---------------------------------------------------------------------------
+
+echo "\n# sitting down yourself\n";
+
+$Tyou = $T;
+$Tyou['user'] = ['name' => 'Neil'];
+$Tyou['forge'] = ['armed' => ['favors']];
+
+$sit = xeric_table_play_with_you($Tyou, $TABLE, ['harlan', 'ruth', 'dot'], 'steady', 8, 77);
+ok('you: your seat is dealt in like anybody else\'s',
+    array_key_exists(XERIC_TABLE_YOU, $sit['net']));
+ok('you: and the pot is still one pot, with you in it',
+    array_sum($sit['net']) === 0, json_encode($sit['net']));
+ok('you: the seat is not a handle and cannot be mistaken for one',
+    !preg_match('/^[a-z0-9_]+$/', XERIC_TABLE_YOU));
+
+// HOW YOU PLAY IS ONE DECISION, NOT FORTY — and it has to actually do
+// something, or it is a menu that lies.
+$careful  = xeric_table_play_with_you($Tyou, $TABLE, ['harlan', 'ruth', 'dot'], 'careful', 8, 77);
+$reckless = xeric_table_play_with_you($Tyou, $TABLE, ['harlan', 'ruth', 'dot'], 'reckless', 8, 77);
+ok('you: how you say you are playing changes how the night goes',
+    $careful['net'][XERIC_TABLE_YOU] !== $reckless['net'][XERIC_TABLE_YOU],
+    $careful['net'][XERIC_TABLE_YOU] . ' vs ' . $reckless['net'][XERIC_TABLE_YOU]);
+ok('you: and a style nobody has heard of is steady rather than an error',
+    xeric_table_style('whatever') === xeric_table_style('steady'));
+
+// The deal does not know who is sitting where. Over a lot of nights the seat at
+// the centre is not systematically favoured — this is the assertion that would
+// catch somebody quietly giving the player a better deck.
+// Measured against the money actually MOVED, not against the other seats' net
+// — which is the same number with a minus sign and would make this pass no
+// matter what. Over three hundred nights a fair seat drifts; a rigged one runs.
+$mine = 0; $churn = 0;
+for ($sd = 0; $sd < 300; $sd++) {
+    $r = xeric_table_play_with_you($Tyou, $TABLE, ['harlan', 'ruth'], 'steady', 6, $sd);
+    $mine += $r['net'][XERIC_TABLE_YOU];
+    foreach ($r['net'] as $n) $churn += abs($n);
+}
+ok('you: the deck does not know who you are — no house edge in either direction',
+    $churn > 0 && abs($mine) < $churn / 10,
+    'you ' . $mine . ' against ' . $churn . ' moved');
+
+$yDb = fresh('you');
+xeric_world_state_set($yDb, 'work.wages', '50');
+foreach (['harlan', 'ruth', 'dot'] as $h) xeric_arc_init($yDb, $h, 'economy.thursday_pot', 0);
+$night = xeric_table_sit($Tyou, $yDb, $TABLE, ['harlan', 'ruth', 'dot'], 'steady', 8, 77, null, 900);
+ok('you: it comes out of the purse you earned at work, not a second currency',
+    xeric_table_purse($yDb) === 50 + $night['net'], json_encode($night['net']));
+ok('you: and the town settles among itself exactly as it would have without you',
+    xeric_ledger_of($yDb, 'thursday_pot', 'harlan') >= 0);
+
+// A xeric will let you lose your wages. It will not let you go into the hole to
+// a card game: a debt to the town is a construct with a face on it, and a
+// negative purse is just a bad number.
+$brokeDb = fresh('broke');
+xeric_world_state_set($brokeDb, 'work.wages', '0');
+$lost = null;
+for ($sd = 0; $sd < 60 && ($lost === null || $lost['net'] >= 0); $sd++) {
+    xeric_world_state_set($brokeDb, 'work.wages', '0');
+    $lost = xeric_table_sit($Tyou, $brokeDb, $TABLE, ['harlan', 'ruth', 'dot'], 'reckless', 10, $sd);
+}
+ok('you: a losing night with nothing in your pocket does not go negative',
+    $lost !== null && $lost['net'] < 0 && xeric_table_purse($brokeDb) === 0,
+    json_encode($lost));
+
+// ---------------------------------------------------------------------------
+// 7. WHAT WAS SAID WHILE IT HAPPENED. One model call a night, describing rather
+// than deciding — the numbers are already settled when it runs.
+// ---------------------------------------------------------------------------
+
+echo "\n# what was said while it happened\n";
+
+$tSaw = '';
+$tEp = ['base' => 'stub://', 'stub' => function (string $tag, array $m) use (&$tSaw) {
+    $tSaw = (string)$m[1]['content'];
+    return ['talk' => ['Harlan: "That is the last of my quarters."',
+                       'Dot: "You said that an hour ago."', '', str_repeat('x', 400)]];
+}];
+$talk = xeric_table_talk($T, $TABLE, $sit, $tEp);
+ok('talk: it comes back as spoken lines', count($talk) === 3
+    && str_contains($talk[0], 'quarters'));
+ok('talk: and nothing runs away with the transcript', mb_strlen($talk[2]) <= 200);
+ok('talk: the model is describing a night that is already settled',
+    str_contains($tSaw, 'do not change it') && str_contains($tSaw, 'hands'));
+ok('talk: it is handed the TELLS the schema has carried all along',
+    str_contains($tSaw, 'counts his change twice'));
+ok('talk: and told a tell is something a person does, never announces',
+    str_contains($tSaw, 'not something they announce'));
+ok('talk: a model that will not answer leaves a quiet game, not a broken one',
+    xeric_table_talk($T, $TABLE, $sit,
+        ['base' => 'stub://', 'stub' => function () { throw new RuntimeException('down'); }]) === []);
+
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

@@ -176,6 +176,35 @@ if ($action !== '') {
                                 : 'The hours pay, the ones you skip do not, and enough of those cost you the job.')]);
     }
 
+    // -- sitting down at a table -----------------------------------------------
+    // Detached, and not because the cards are slow: a night is arithmetic and
+    // finishes in under a millisecond. It is the one model call that writes
+    // what was SAID, which is the same size as any other and can outlast a
+    // request on a bad night.
+    if ($action === 'sit') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner sits down at their own table.'], 403);
+        require_once XERIC_WEB_LIB . '/engine/table.php';
+        $in    = xeric_web_input();
+        $key   = trim((string)($in['table'] ?? ''));
+        $tables = xeric_tables($w['template']);
+        if (!isset($tables[$key])) {
+            xeric_web_json(['error' => 'There is no game there.'], 404);
+        }
+        $now = xeric_clock_now($w['db'], $w['template']);
+        if (!xeric_table_tonight($tables[$key], $now)) {
+            xeric_web_json(['error' => ucfirst((string)$tables[$key]['name'])
+                . ' is not tonight. Skip forward to its night and come back.'], 409);
+        }
+        try { xeric_play_endpoint(); }
+        catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
+
+        $job = xeric_web_job_new();
+        xeric_web_spawn($job, ['slug' => (string)$w['slug'], 'sid' => $sid, 'table' => $key,
+                               'style' => (string)($in['style'] ?? 'steady'),
+                               'hands' => (int)($in['hands'] ?? 8)], 'table-worker.php');
+        xeric_web_json(['ok' => 1, 'job' => $job, 'table' => $key]);
+    }
+
     // -- putting something to a discussion room (EXPERIMENTAL) ----------------
     // Detached, because a proposal is one short model call PER EXPERT and the
     // room holds five of them: worst case is five timeouts back to back, which
@@ -1373,6 +1402,7 @@ echo '<style>' . xeric_play_css() . '
   ?>
   var SHAPE = <?= json_encode($shapeKey) ?>;
   var PANELW = <?= !empty($T['panel']['experts']) ? 'true' : 'false' ?>;   // EXPERIMENTAL: a room, not a place
+  var TABLES = <?= json_encode(array_values((array)($state['world']['tables'] ?? []))) ?>;
   var MONEY  = <?= json_encode((string)($state['world']['money'] ?? 'none')) ?>;
   var SHIFTS = <?= (int)($state['world']['shifts'] ?? 0) ?>;
   var SHAPELINE = <?= json_encode($shapeLine) ?>;
@@ -1634,6 +1664,19 @@ echo '<style>' . xeric_play_css() . '
           '<span class="xchint">sit in on two of them talking — play, pause, or walk into the middle of it</span></div>' +
           // EXPERIMENTAL discussion rooms get their own report, and only they do:
           // a debrief of a place you live in is what the book is for.
+          // THE GAMES THIS WORLD HAS. Listed whether or not one is on tonight,
+          // because "the Thursday game, not tonight" is worth knowing and a
+          // button that quietly does nothing is not.
+          (TABLES.length
+            ? TABLES.map(function (g) {
+                return '<div class="xcrow"><button type="button" class="nbtn" data-sit="' + g.key + '"' +
+                  (g.tonight ? '' : ' disabled') + '>🂡 sit in at ' + g.name + '</button>' +
+                  '<span class="xchint">' + (g.tonight
+                    ? 'it is on tonight. The cards are dealt in code — nobody is reading your hand. ' +
+                      'You play from the purse you earn at work, and one model call writes what was said.'
+                    : 'not tonight. Skip forward to its night and the seat is there.') + '</span></div>';
+              }).join('')
+            : '') +
           (PANELW
             ? '<div class="xcrow"><a class="nbtn" href="debrief.php?w=' + encodeURIComponent(W) + '">🧪 the debrief</a>' +
               '<span class="xchint">what the room got to and what it walked past — every position, ' +
@@ -1744,6 +1787,42 @@ echo '<style>' . xeric_play_css() . '
             toast('the pace did not take');
             $$('#cmodal [data-pace]').forEach(function (x) { x.disabled = false; });
           });
+      });
+    });
+
+    // Sitting down. HOW you play is one decision rather than forty presses: a
+    // full betting interface is a different program, and a xeric is a place you
+    // have a conversation in.
+    $$('#cmodal [data-sit]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var style = prompt('How are you playing tonight? careful, steady, or reckless', 'steady');
+        if (style === null) return;
+        b.disabled = true;
+        toast('you sit down…');
+        fetch('play.php?a=sit&w=' + encodeURIComponent(W), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: b.dataset.sit, style: style }) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (!d || !d.job) { toast((d && d.error) || 'nobody was there'); b.disabled = false; return; }
+            var es = new EventSource('progress.php?job=' + encodeURIComponent(d.job));
+            ['note', 'queue'].forEach(function (k) {
+              es.addEventListener(k, function (m) {
+                try { toast(JSON.parse(m.data).message || JSON.parse(m.data).text || ''); } catch (e) {}
+              });
+            });
+            es.addEventListener('done', function (m) {
+              es.close(); b.disabled = false;
+              try { toast(JSON.parse(m.data).message || 'that is the night'); } catch (e) {}
+            });
+            es.addEventListener('error', function (m) {
+              es.close(); b.disabled = false;
+              var why = 'the game did not finish';
+              try { why = JSON.parse(m.data).message || why; } catch (e) {}
+              toast(why);
+            });
+          })
+          .catch(function () { toast('nobody was there'); b.disabled = false; });
       });
     });
 

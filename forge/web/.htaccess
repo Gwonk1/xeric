@@ -33,11 +33,11 @@ Options -Indexes
 # user's API key on its stdin. tick-worker.php is the same shape for the play
 # view's time control. reroll-worker.php is the review step's re-run of one forge
 # pass, addchar-worker.php writes one new person into a running world, and
-# panel-worker.php puts a proposal to a discussion room. photo-worker.php is the reaper that develops a world's
+# panel-worker.php puts a proposal to a discussion room, table-worker.php plays a night at a table. photo-worker.php is the reaper that develops a world's
 # photographs, and story-worker.php writes a mystery over a
 # running town. All
 # six are CLI programs that happen to live here.
-<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|photo-worker|story-worker|panel-worker|heart|router)\.php(/|$)#">
+<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|photo-worker|story-worker|panel-worker|table-worker|heart|router)\.php(/|$)#">
   Require all denied
 </If>
 

@@ -171,6 +171,7 @@ foreach ([
     'the phone code'    => 'xcqr',
     'the stories'       => 'xcstories',
     'the money dial'    => 'data-money',
+    'the card table'    => 'data-sit',
 ] as $what => $needle) {
     ok("the cog carries $what", str_contains($playDom, $needle) || str_contains($playDom, 'openXericCog'),
         'neither the control nor its builder is on the page');

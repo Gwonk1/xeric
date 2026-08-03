@@ -47,6 +47,7 @@ require_once XERIC_WEB_LIB . '/engine/photo.php';       // the pictures a world 
 require_once XERIC_WEB_LIB . '/engine/qr.php';          // this xeric, on the phone in your pocket
 require_once XERIC_WEB_LIB . '/engine/mood.php';        // the town's own needle, which its hours move
 require_once XERIC_WEB_LIB . '/engine/work.php';        // the shift, and how much money is allowed to matter
+require_once XERIC_WEB_LIB . '/engine/table.php';       // and the games a place holds
 
 /**
  * How many events one press of the time control may produce.
@@ -1680,6 +1681,13 @@ function xeric_play_panel(array $t, PDO $db, bool $mine = true): array
         // never had a shift in it, the second is a choice somebody made.
         'money'    => xeric_money_dial($db, $t),
         'shifts'   => count(xeric_shifts($t)),
+        // The games this world has, and whether one is on TONIGHT — two
+        // different facts, because a table you cannot sit at until Thursday is
+        // worth knowing about and a button that does nothing is not.
+        'tables'   => array_values(array_map(
+            fn($g) => ['key' => $g['key'], 'name' => $g['name'],
+                       'tonight' => xeric_table_tonight($g, xeric_clock_now($db, $t))],
+            xeric_tables($t))),
         'chance'   => $chance,
         'gap'      => (int)($t['events']['expected_gap_hours'] ?? 0),
         // How long a world actually goes between things, which is NOT `gap`:
