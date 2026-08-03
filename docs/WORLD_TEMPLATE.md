@@ -208,6 +208,35 @@ Design principles, learned the hard way:
       "kind": "diner",                      // bar|club|gym|church|diner|school|
                                             // office|home|shop|site …
       "serves_alcohol": false,              // the bible says "they pour here"
+      // ── a table: the SUB-GAME seam (EXPERIMENTAL) ─────────────────────
+      // A place can hold a game. Poker is the first one; dominoes, darts and
+      // the pinball machine on the bar reuse the same seam, because a table
+      // is a place, a session is an hour, and the result is a ledger write
+      // and an event.
+      //
+      // THE RULE THAT KEEPS THEM HONEST: the game is code, the people are
+      // the model. Cards, betting and the showdown are arithmetic (never a
+      // model — a model asked to deal its own cards deals itself good ones);
+      // the model supplies what somebody SAYS while they are losing. How each
+      // seat plays comes off the psyche the forge already wrote, and `tells[]`
+      // is a poker tell verbatim.
+      //
+      // "table": {
+      //   "name":    "the Thursday game",
+      //   "game":    "poker",
+      //   "nights":  ["thu"],            // omit for a table that sits nightly
+      //   "buy_in":  40,                 // chips somebody sits down with
+      //   "bet":     1,                  // the ante and the size of a bet
+      //   "economy": "thursday_pot"      // which declared ledger it pays
+      // }
+      //
+      // The economy is the point: `thursday_pot` is earned by
+      // `user_event:hand_won`, which the prose matcher deliberately refuses to
+      // credit (it reduces to "hand", and the still-life rule puts hands in
+      // every hour). A real table reports the win as a FACT instead. And what
+      // somebody could not cover becomes a DEBT to whoever took it — a row
+      // with a reason, not a counter clamped at zero, because clamping quietly
+      // mints money over a season of Thursdays.
       // `hours` is a free-form bag: the bible prints every key mechanically, so
       // any vocabulary reads. The SWEEPS read a subset of it to decide whether a
       // place is open at a given hour, and a place they can read nothing from is
