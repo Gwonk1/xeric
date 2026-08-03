@@ -437,7 +437,7 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
         'open'    => $to === null ? true : xeric_travel_open($t, $to, $now, xeric_dark_places($db)),
         'who'     => $who,
         'place'   => $to !== null ? xeric_world_place($t, $to) : null,
-        'scene'   => $to !== null ? xeric_travel_scene($t, $to, $now, $presence) : '',
+        'scene'   => $to !== null ? xeric_travel_scene($t, $to, $now, $presence, $db) : '',
     ];
 }
 
@@ -461,7 +461,34 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
  * matters, and a room with no `interior` list simply has no furniture worth
  * mentioning yet — absent, not invented.
  */
-function xeric_travel_scene(array $t, string $to, array $now, array $presence): string
+/**
+ * The tail of the talk — the REAL conversation an arrival walked in on.
+ *
+ * The heartbeat writes each hour's audible surface into the event row
+ * (events.overheard, the same sweep call that wrote the hour, so it costs
+ * nothing extra). This reads the freshest one for this room and hands it to
+ * the doorway — but only while it is still WARM: within two world-hours, and
+ * only if somebody who was in that hour is still standing here. Stale talk
+ * quoted to a fresh arrival would be a room haunted by its own transcript.
+ * Wall- and floor-screened at generation like everything else in the record.
+ */
+function xeric_travel_overheard(PDO $db, string $to, array $now, array $here): string
+{
+    $epoch = (int)($now['epoch'] ?? 0);
+    $st = $db->prepare("SELECT participants, overheard FROM events
+                        WHERE place = ? AND overheard != '' AND world_epoch > ? AND world_epoch <= ?
+                        ORDER BY world_epoch DESC LIMIT 1");
+    $st->execute([$to, $epoch - 2 * 3600, $epoch]);
+    $rows = $st->fetchAll();
+    $st->closeCursor();
+    if ($rows === []) return '';
+
+    $who = array_map('strval', (array)json_decode((string)$rows[0]['participants'], true));
+    if (array_intersect($who, $here) === []) return '';   // the speakers have moved on
+    return trim((string)$rows[0]['overheard']);
+}
+
+function xeric_travel_scene(array $t, string $to, array $now, array $presence, ?PDO $db = null): string
 {
     $place = xeric_world_place($t, $to);
     if ($place === null) return '';
@@ -479,7 +506,7 @@ function xeric_travel_scene(array $t, string $to, array $now, array $presence): 
         if (($row['where'] ?? null) !== $to) continue;
         $h = (string)($row['handle'] ?? '');
         if ($h === '') continue;
-        $here[] = ['name' => xeric_world_name($t, $h) ?: $h,
+        $here[] = ['handle' => $h, 'name' => xeric_world_name($t, $h) ?: $h,
                    'doing' => trim((string)($row['doing'] ?? ''))];
     }
 
@@ -509,6 +536,19 @@ function xeric_travel_scene(array $t, string $to, array $now, array $presence): 
         if ($p['doing'] !== '') $line .= ' ' . $p['name'] . ' is ' . rtrim($p['doing'], '.') . '.';
     }
     if ($prop !== '') $line .= ' ' . ucfirst($prop) . '.';
+
+    // THE REAL TALK FIRST. When the heartbeat wrote this room an audible hour
+    // and its speakers are still standing here, the doorway gets the actual
+    // words — you caught the tail of a conversation that genuinely happened
+    // without you. Only then the generic closers, for rooms whose talk went
+    // unrecorded or cold.
+    if ($db !== null) {
+        $heard = xeric_travel_overheard($db, $to, $now, array_column($here, 'handle'));
+        if ($heard !== '') {
+            return $line . ' You catch the tail of it — ' . $heard
+                 . ' — and then the talk drops while the door swings shut behind you.';
+        }
+    }
 
     $closers = [
         'The talk drops while the door swings shut behind you.',

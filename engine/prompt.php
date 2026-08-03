@@ -124,6 +124,15 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
     $volatile = xeric_prompt_now_block($t, $speakerHandle, $now, (string)($opts['tail'] ?? ''), $walls,
         array_key_exists('player_where', $opts) ? $opts['player_where'] : xeric_player_where($t, $db),
         xeric_deaths($db), $lastSpoke);
+
+    // The camera, offered only where the world consented to photographs
+    // (opts['photos'], the web layer's read of photos.approved). It rides the
+    // volatile block, not the system message, because consent can flip — and
+    // a model never told about the marker never emits one to strip.
+    if (!empty($opts['photos'])) {
+        $volatile .= "\nYou can send a photo with your message: end it with [photo: what the "
+            . 'picture shows]. Rarely, and only when you would actually reach for your camera.';
+    }
     $incoming = trim((string)($opts['user_message'] ?? ''));
 
     $last = $messages[count($messages) - 1];

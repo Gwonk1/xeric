@@ -447,6 +447,15 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
         $out['notes'][] = 'photos are not approved for this world yet';
         return $out;
     }
+
+    // Stale claims BEFORE the pending read, so this very pass can finish what
+    // a dead reaper dropped: a worker that died mid-frame left 'working' rows
+    // behind, and ten minutes is longer than any render. done_at doubles as
+    // the claim stamp while a job is working — it becomes the real done time
+    // on completion, and a pending row never carries one.
+    $db->prepare("UPDATE photo_jobs SET status = 'pending', done_at = NULL
+                  WHERE status = 'working' AND done_at < ?")->execute([xeric_state_time() - 600]);
+
     $pending = xeric_photo_jobs($db, 'pending');
     if ($pending === []) return $out;
 
@@ -458,14 +467,36 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
         return $out;
     }
 
-    $now = xeric_clock_now($db, $t);
+    $now   = xeric_clock_now($db, $t);
+    $claim = $db->prepare("UPDATE photo_jobs SET status = 'working', done_at = ?
+                           WHERE id = ? AND status = 'pending'");
     foreach (array_slice($pending, 0, max(1, $limit)) as $job) {
         $kind = (string)$job['kind'];
         $subj = (string)$job['subject'];
+        // THE CLAIM IS THE UPDATE: two reapers behind one conversation both
+        // reach for the same row and exactly one rowCount comes back 1 —
+        // SQLite serializes writers, so this needs no lock of its own.
+        $claim->execute([xeric_state_time(), (int)$job['id']]);
+        if ($claim->rowCount() !== 1) continue;
         try {
-            $composed = $kind === 'place'
-                ? xeric_photo_prompt($t, 'place', ['place' => $subj, 'now' => $now])
-                : xeric_photo_prompt($t, 'portrait', ['handle' => $subj, 'ask' => 'a portrait']);
+            if ($kind === 'message') {
+                // A photo sent in a thread: subject is handle#messageId, the
+                // ask is the model's own proposal, and the frame is wherever
+                // that character is STANDING at render time — the reaper runs
+                // behind the conversation, and a photo taken twenty minutes
+                // after it was promised is taken where its taker now is.
+                $mh = strstr($subj, '#', true) ?: $subj;
+                $at = xeric_world_who_is_where($t, $now)[$mh]['where'] ?? null;
+                $composed = xeric_photo_prompt($t, 'message', [
+                    'handle' => $mh, 'ask' => (string)($job['ask'] ?? ''),
+                    'place' => $at !== null ? (string)$at : '', 'now' => $now,
+                    'with_carries' => true,
+                ]);
+            } else {
+                $composed = $kind === 'place'
+                    ? xeric_photo_prompt($t, 'place', ['place' => $subj, 'now' => $now])
+                    : xeric_photo_prompt($t, 'portrait', ['handle' => $subj, 'ask' => 'a portrait']);
+            }
             $img  = xeric_image_render($endpoint, $composed);
             $file = $kind . '-' . preg_replace('/[^a-z0-9_-]+/i', '_', $subj) . '.png';
             if (@file_put_contents($photosDir . '/' . $file, $img['bytes']) === false) {
@@ -479,14 +510,61 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                 $fn(['images' => 1] + $img['usage'], (string)($endpoint['base'] ?? 'stub'));
             }
         } catch (Throwable $e) {
+            // Back to pending (or failed) — and done_at comes off with the
+            // claim, because a pending row never carries one.
             $tries = (int)$job['tries'] + 1;
-            $st = $db->prepare('UPDATE photo_jobs SET status = ?, tries = ? WHERE id = ?');
+            $st = $db->prepare('UPDATE photo_jobs SET status = ?, tries = ?, done_at = NULL WHERE id = ?');
             $st->execute([$tries >= 3 ? 'failed' : 'pending', $tries, (int)$job['id']]);
             if ($tries >= 3) $out['failed']++;
             $out['notes'][] = $kind . ' of ' . $subj . ': ' . $e->getMessage();
         }
     }
     return $out;
+}
+
+/**
+ * A message-photo job: the character's promise to send a picture, queued
+ * behind the conversation. Subject is handle#messageId — the message is the
+ * caption row already sitting in the thread, and the renderer swaps the image
+ * in over it the moment this job is done. The unique (kind, subject) index
+ * holds because every message id is its own subject.
+ */
+function xeric_photo_enqueue_message(PDO $db, string $handle, int $messageId, int $convId,
+                                     string $ask, string $caption, ?int $at = null): int
+{
+    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, ask, conv, created_at)
+                         VALUES (?, ?, ?, ?, ?, ?)');
+    $ins->execute(['message', $handle . '#' . $messageId, $caption, $ask, $convId, $at ?? xeric_state_time()]);
+    return (int)$db->lastInsertId();
+}
+
+/** The done message-photos of one conversation, mapped message-id => job row. */
+function xeric_photo_thread(PDO $db, int $convId): array
+{
+    $st = $db->prepare("SELECT * FROM photo_jobs WHERE kind = 'message' AND conv = ?");
+    $st->execute([$convId]);
+    $out = [];
+    foreach ($st->fetchAll() as $row) {
+        $mid = (int)substr(strrchr((string)$row['subject'], '#') ?: '#0', 1);
+        if ($mid > 0) $out[$mid] = $row;
+    }
+    $st->closeCursor();
+    return $out;
+}
+
+/**
+ * Does rendering here SPEND MONEY? Loopback is the owner's own electricity;
+ * anything else is somebody's API key, and every surface that offers to
+ * render is obliged to say so out loud before the yes. This is the one bit
+ * every cost warning branches on.
+ */
+function xeric_image_costly(?array $endpoint = null): bool
+{
+    $endpoint ??= xeric_image_endpoint();
+    if ($endpoint === null) return false;
+    if (isset($endpoint['stub'])) return false;
+    $host = (string)parse_url((string)($endpoint['base'] ?? ''), PHP_URL_HOST);
+    return !in_array($host, ['127.0.0.1', 'localhost', '::1'], true);
 }
 
 /**

@@ -659,6 +659,39 @@ ok('record: a memory keeps its interiority — the feeling rides the feeler\'s o
         return isset($p['memories']['ruth']) && str_contains($p['memories']['ruth'], 'wished');
     })());
 
+// THE AUDIBLE SURFACE. The hour may carry one short exchange a doorway could
+// hear — real talk, tied to the heartbeat, riding the same call. The wall
+// reads it (a doorway is the least private place there is); the interiority
+// gate deliberately does not ("I felt awful" is a legal thing to SAY).
+$ovParsed = xeric_sweep_parse($TW, fresh_db('overheard'), [
+    'title'    => 'the urn ran out early',
+    'prose'    => 'The last of the coffee went at half past and the chairs went back wrong.',
+    'overheard' => 'Ruth: "And he never brought it back." / Dot: "He never does."',
+    'memories' => [
+        'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
+        'dot'  => 'Dot left before the washing up and nobody called after her.',
+    ]], ['handles' => ['ruth', 'dot']]);
+ok('overheard: the exchange survives the parse and rides the hour',
+    str_contains((string)$ovParsed['overheard'], 'never brought it back'));
+ok('overheard: spoken feelings are legal — the interiority gate reads the record, not the talk',
+    str_contains((string)xeric_sweep_parse($TW, fresh_db('overheard-felt'), [
+        'title'    => 'the urn ran out early',
+        'prose'    => 'The last of the coffee went at half past and the chairs went back wrong.',
+        'overheard' => 'Ruth: "I felt awful about the whole thing."',
+        'memories' => [
+            'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
+            'dot'  => 'Dot left before the washing up and nobody called after her.',
+        ]], ['handles' => ['ruth', 'dot']])['overheard'], 'felt awful'));
+ok('overheard: but the wall reads the doorway like everywhere else — a spoken secret refuses the hour',
+    str_contains(err(fn() => xeric_sweep_parse($TW, fresh_db('overheard-wall'), [
+        'title'    => 'the urn ran out early',
+        'prose'    => 'The last of the coffee went at half past and the chairs went back wrong.',
+        'overheard' => 'Dot: "Everybody knows who really emptied the building fund."',
+        'memories' => [
+            'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
+            'dot'  => 'Dot left before the washing up and nobody called after her.',
+        ]], ['handles' => ['ruth', 'dot']])), 'next to the thing they must not know'));
+
 ok('wall: an ordinary hour with her in it is not refused — the check is a wall, not a mood',
     count(xeric_sweep_parse($TW, fresh_db('wall-post-ok'), [
         'title'    => 'the urn ran out early',

@@ -782,7 +782,8 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
         // thing, and an unmarked spine event replays into any later prompt that
         // has the protected character standing in it.
         $eventId = xeric_event_add($db, $written['title'], $epoch, $chosen['where'],
-            array_keys($written['memories']), $written['prose'], $at, (bool)$chosen['on_spine']);
+            array_keys($written['memories']), $written['prose'], $at, (bool)$chosen['on_spine'],
+            (string)($written['overheard'] ?? ''));
 
         foreach ($written['memories'] as $handle => $text) {
             xeric_memory_add($db, $handle, $text, 'event', [
@@ -1720,7 +1721,7 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
 
     $lines[] = '';
     $lines[] = 'WRITE ONE JSON OBJECT';
-    $lines[] = '{ "title": "…", "prose": "…", "memories": { ' . implode(', ', $keys) . ' } }';
+    $lines[] = '{ "title": "…", "prose": "…", "overheard": "…", "memories": { ' . implode(', ', $keys) . ' } }';
     $lines[] = '';
     $lines[] = '- title: six words or fewer, lower case, no full stop. Name the thing, do not summarise it.';
     // THE STILL-LIFE FAILURE. This list used to end with "Hands, objects,
@@ -1737,6 +1738,13 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     $lines[] = '  No dialogue and no quotation marks, say what was DONE, not what was said.';
     $lines[] = '  No "she felt", no "he realised". Their hands on objects, weather, money, doors.';
     $lines[] = '  Weather and furniture may set the scene, never carry it: an hour with nobody in it is wrong.';
+    // THE AUDIBLE SURFACE — the one exception to "no dialogue" above, fenced
+    // into its own field so the prose stays observables. This is what an
+    // arrival quotes when somebody walks in mid-hour: real talk, tied to the
+    // heartbeat, one exchange, cheap because it rides this same call.
+    $lines[] = '- overheard: ONE audible exchange from the hour, as it would reach a doorway —';
+    $lines[] = '  \'Name: "…" / Name: "…"\', two short spoken lines at most, or "" for an hour';
+    $lines[] = '  with no talk worth catching. Speech only, things a stranger could HEAR.';
     $lines[] = '- memories: one line for EACH handle above, keyed exactly as written in the brackets.';
     $lines[] = '  Third person, past tense, naming them. One sentence, under 25 words.';
     $lines[] = '  THE IMPORTANT PART: they do not remember the same thing. Give each of them a different';
@@ -1822,6 +1830,15 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
     if (mb_strlen($title) > 90) $title = rtrim(mb_substr($title, 0, 90)) . '…';
     if (mb_strlen($prose) > 900) $prose = xeric_chat_trim_length($prose, 900);
 
+    // THE OVERHEARD LINE: the hour's audible surface, normalized to one short
+    // exchange. Quoted SPEECH, so the interiority gate below deliberately does
+    // not read it — "I felt awful about it" is a legal thing to say out loud —
+    // but the wall and the floor read it like everything else, because a
+    // doorway is the least private place in the world.
+    $overheard = trim(preg_replace('/\s+/u', ' ', xeric_text($raw['overheard'] ?? '')) ?? '');
+    if (mb_strlen($overheard) > 220) $overheard = rtrim(mb_substr($overheard, 0, 220)) . '…';
+    if ($overheard !== '' && mb_strlen($overheard) < 8) $overheard = '';
+
     // The public record is observables only — refused whole, like the wall
     // and the floor below, because half an hour is not a smaller hour. The
     // memories are deliberately NOT screened here: they are interiors, and
@@ -1879,6 +1896,7 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
         if (!in_array($h, $chosen['handles'], true)) continue;
         if (xeric_sweep_touches($title, $secret)
             || xeric_sweep_touches($prose, $secret)
+            || xeric_sweep_touches($overheard, $secret)
             || (isset($memories[$h]) && xeric_sweep_touches($memories[$h], $secret))) {
             throw new RuntimeException('sweep: refused, the hour put ' . $h
                 . ' next to the thing they must not know');
@@ -1895,7 +1913,8 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
     // It reads for sex and only for sex. An hour where a child witnessed
     // something, kept something back, was frightened, or found the body is an
     // ordinary hour and lands like any other.
-    $floor = xeric_age_floor($t, $chosen['handles'], array_merge([$title, $prose], array_values($memories)));
+    $floor = xeric_age_floor($t, $chosen['handles'],
+        array_merge([$title, $prose, $overheard], array_values($memories)));
     if ($floor !== null) throw new RuntimeException(xeric_age_refusal('sweep', $floor));
 
     // Cast order, not model order: a stable participants list makes two runs of
@@ -1905,7 +1924,8 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
         if (isset($memories[$h])) $ordered[$h] = $memories[$h];
     }
 
-    return ['title' => $title, 'prose' => $prose, 'memories' => $ordered, 'notes' => $notes];
+    return ['title' => $title, 'prose' => $prose, 'overheard' => $overheard,
+            'memories' => $ordered, 'notes' => $notes];
 }
 
 /**

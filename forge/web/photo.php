@@ -66,7 +66,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 // -- the serving half --------------------------------------------------------
 $kind = (string)($_GET['k'] ?? '');
 $subj = (string)($_GET['s'] ?? '');
-if (!in_array($kind, ['portrait', 'place'], true) || $subj === '' || strlen($subj) > 64) {
+if (!in_array($kind, ['portrait', 'place', 'message'], true) || $subj === '' || strlen($subj) > 64) {
     http_response_code(404); exit;
 }
 

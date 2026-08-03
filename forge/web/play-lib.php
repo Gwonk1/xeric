@@ -1579,9 +1579,16 @@ function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60): 
     $rows = xeric_messages_recent($db, $id, $limit);
     xeric_play_mark_read($db, $id);
 
+    // The photos running behind this conversation, mapped by the message they
+    // belong to. A done job turns its caption message into an image bubble; a
+    // pending one leaves the caption standing — the caption IS the photo until
+    // the reaper develops it, and the thread's ordinary repaint is what swaps
+    // the picture in when it lands.
+    $shots = xeric_photo_thread($db, $id);
+
     $out = [];
     foreach ($rows as $m) {
-        $out[] = [
+        $row = [
             'role' => (string)$m['role'],
             'who'  => (string)$m['role'] === 'user'
                         ? (trim((string)($t['user']['name'] ?? '')) ?: 'you')
@@ -1589,6 +1596,12 @@ function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60): 
             'text' => (string)$m['content'],
             'when' => xeric_play_stamp($t, (int)($m['world_epoch'] ?? $m['created_at'])),
         ];
+        $shot = $shots[(int)$m['id']] ?? null;
+        if ($shot !== null && (string)$shot['status'] === 'done') {
+            $row['photo'] = ['k' => 'message', 's' => (string)$shot['subject'],
+                             'caption' => (string)$shot['caption']];
+        }
+        $out[] = $row;
     }
     return ['conversation_id' => $id, 'messages' => $out];
 }

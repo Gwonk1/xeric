@@ -138,7 +138,7 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
         'tail'             => (string)($opts['tail'] ?? ''),
         'history_limit'    => (int)($opts['history_limit'] ?? 20),
         'memory_limit'     => (int)($opts['memory_limit'] ?? 12),
-    ] + array_intersect_key($opts, ['effective_rating' => 1, 'model_rating' => 1]));
+    ] + array_intersect_key($opts, ['effective_rating' => 1, 'model_rating' => 1, 'photos' => 1]));
 
     $usage = [];
     $t0    = microtime(true);
@@ -152,7 +152,21 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     }
     $ms = (int)round((microtime(true) - $t0) * 1000);
 
+    // THE PHOTO PROPOSAL, taken off the RAW reply — the cleaner four lines
+    // down strips every [bracketed] stage direction, so reading after it
+    // would eat the ask along with the noise. The thread keeps the words
+    // without the marker; the ask rides back to the caller, because whether
+    // anything is ever RENDERED is the web layer's business (consent, the
+    // machine, the reaper) and never this file's. Model proposes; everything
+    // after this line disposes.
+    $photoAsk = '';
+    if (preg_match('/\[photo:\s*([^\]]{4,200})\]/iu', $raw, $pm)) {
+        $photoAsk = trim($pm[1]);
+        $raw = trim((string)preg_replace('/\s*\[photo:[^\]]*\]/iu', ' ', $raw));
+    }
+
     $text = xeric_chat_clean($raw, $name, $userName, $opts);
+    if ($text === '' && $photoAsk !== '') $text = 'Hang on—';
     if ($text === '') {
         throw new RuntimeException("chat: $name answered with nothing usable (" . mb_substr(trim($raw), 0, 120) . ')');
     }
@@ -219,6 +233,7 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     return [
         'text'            => $text,
         'conversation_id' => $convId,
+        'photo_ask'       => $photoAsk,
         'remind'          => $remind,
         'usage'           => $usage + ['ms' => $ms, 'reply_chars' => mb_strlen($text), 'raw_chars' => mb_strlen($raw)],
         // What an overlay made of the exchange. Empty for a world carrying none,

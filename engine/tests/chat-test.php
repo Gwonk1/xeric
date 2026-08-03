@@ -698,6 +698,40 @@ ok('story turn: a caller with a button of its own does not need the sentence rea
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// The photo proposal: [photo: …] comes OFF the reply before the thread stores
+// it, and the ask rides back to the caller — whether anything renders is the
+// web layer's business (consent, machine, reaper), never this file's.
+// ---------------------------------------------------------------------------
+
+echo "\n# the photo proposal\n";
+
+$dbPh = fresh_db('photo-ask');
+$phTurn = xeric_chat_turn($T, $dbPh, 'ruth', 'Send me a picture of the diner?', $NOW,
+    stub_says('Give me a second. [photo: the counter at golden hour, stools up]'));
+ok('photo ask: the marker is stripped from what the thread stores',
+    $phTurn['text'] === 'Give me a second.'
+    && !str_contains((string)xeric_messages_recent($dbPh, $phTurn['conversation_id'], 1)[0]['content'], '[photo'));
+ok('photo ask: and the proposal rides back whole',
+    $phTurn['photo_ask'] === 'the counter at golden hour, stools up');
+$phTurn2 = xeric_chat_turn($T, $dbPh, 'ruth', 'Another?', $NOW,
+    stub_says('[photo: just the urn]'));
+ok('photo ask: a reply that was ONLY the marker still says something',
+    $phTurn2['text'] === 'Hang on—' && $phTurn2['photo_ask'] === 'just the urn');
+ok('photo ask: an ordinary reply proposes nothing',
+    xeric_chat_turn($T, $dbPh, 'ruth', 'Fine.', $NOW, stub_says('Fine yourself.'))['photo_ask'] === '');
+
+// The camera is only OFFERED under consent: the invitation line rides the
+// volatile block when opts say so, and never the system message.
+$phMsgs = xeric_prompt_build($T, $dbPh, 'ruth', $NOW,
+    ['user_message' => 'hello', 'photos' => true]);
+$phLastU = (string)$phMsgs[count($phMsgs) - 1]['content'];
+ok('photo ask: the invitation rides the LAST user message under consent',
+    str_contains($phLastU, '[photo:') && !str_contains((string)$phMsgs[0]['content'], '[photo:'));
+$phMsgs2 = xeric_prompt_build($T, $dbPh, 'ruth', $NOW, ['user_message' => 'hello']);
+ok('photo ask: and an unconsented world never hears the camera exists',
+    !str_contains((string)$phMsgs2[count($phMsgs2) - 1]['content'], '[photo:'));
+
+// ---------------------------------------------------------------------------
 // The provenance canary. One exact phrase, one deterministic engine answer,
 // before the model and before the world — and the world never hears of it.
 // The dead stub is the proof there was no model call: it throws when reached.

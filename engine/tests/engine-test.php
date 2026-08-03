@@ -2234,6 +2234,46 @@ ok('offer: asked is asked — the question never comes twice, and asking was not
 ok('offer: and with no machine answering there is nothing to ask about',
     !xeric_photo_offer($rpDb, null));
 
+// MESSAGE PHOTOS: the job queued behind the conversation, the caption row
+// already in the thread, the renderer's map from message id to picture.
+echo "\n# photos behind the conversation\n";
+
+$mpConv = xeric_conversation_create($rpDb, 'ruth', 'chat');
+$mpMid  = xeric_message_append($rpDb, $mpConv, 'character', 'ruth', '📷 Ruth the counter at golden hour', 1000);
+xeric_photo_enqueue_message($rpDb, 'ruth', $mpMid, $mpConv,
+    'the counter at golden hour, stools up', 'Ruth the counter at golden hour');
+$mpJob = xeric_photo_of($rpDb, 'message', 'ruth#' . $mpMid);
+ok('message photo: the job carries the ask, the thread, and the caption',
+    $mpJob !== null && (string)$mpJob['ask'] === 'the counter at golden hour, stools up'
+    && (int)$mpJob['conv'] === $mpConv);
+$mpSeen = null;
+$mpStub = ['stub' => function (string $tag, array $c, array $o) use (&$mpSeen) {
+    $mpSeen = $c; return ['bytes' => 'PNGBYTES-message', 'usage' => []];
+}];
+$mpRun = xeric_photo_reap($phT, $rpDb, $rpDir, $mpStub, 50);
+ok('message photo: the reaper develops it with the model\'s own ask in frame',
+    $mpRun['done'] >= 1 && $mpSeen !== null
+    && str_contains((string)$mpSeen['prompt'], 'golden hour'), json_encode($mpSeen['prompt'] ?? null));
+$mpMap = xeric_photo_thread($rpDb, $mpConv);
+ok('message photo: the thread map hands the renderer its picture by message id',
+    isset($mpMap[$mpMid]) && (string)$mpMap[$mpMid]['status'] === 'done');
+
+// The claim is the UPDATE: a row somebody else is working stays theirs.
+$mpMid2 = xeric_message_append($rpDb, $mpConv, 'character', 'ruth', '📷 another', 1001);
+xeric_photo_enqueue_message($rpDb, 'ruth', $mpMid2, $mpConv, 'another one', 'another');
+$rpDb->prepare("UPDATE photo_jobs SET status = 'working', done_at = ? WHERE subject = ?")
+     ->execute([xeric_state_time(), 'ruth#' . $mpMid2]);
+$mpHeld = xeric_photo_reap($phT, $rpDb, $rpDir, $mpStub, 50);
+ok('message photo: a job mid-claim is nobody else\'s to develop',
+    !isset(xeric_photo_thread($rpDb, $mpConv)[$mpMid2])
+    || (string)xeric_photo_thread($rpDb, $mpConv)[$mpMid2]['status'] !== 'done');
+// …and a stale claim (a reaper that died mid-frame) is reclaimed and finished.
+$rpDb->prepare("UPDATE photo_jobs SET done_at = ? WHERE subject = ?")
+     ->execute([xeric_state_time() - 700, 'ruth#' . $mpMid2]);
+xeric_photo_reap($phT, $rpDb, $rpDir, $mpStub, 50);
+ok('message photo: a claim gone stale is reclaimed — a dead reaper wedges nothing',
+    (string)(xeric_photo_thread($rpDb, $mpConv)[$mpMid2]['status'] ?? '') === 'done');
+
 $rpDb = $rpDb2 = null;
 foreach ([$rpDbP, $rpDb2P] as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
 if (is_dir($rpDir)) { foreach (glob($rpDir . '/*') ?: [] as $f) @unlink($f); @rmdir($rpDir); }
@@ -2307,6 +2347,31 @@ $arEmpty = xeric_travel_scene($arT, 'bluebird', $arDawn, xeric_world_who_is_wher
 ok('arrival: an empty room says so, with its furniture sitting where it always sits',
     str_contains($arEmpty, 'Nobody is at') && str_contains($arEmpty, 'sits where it always sits'),
     $arEmpty);
+
+// THE TAIL OF THE TALK: the heartbeat wrote this room an audible hour, and an
+// arrival inside two world-hours — while a speaker still stands there — gets
+// the actual words. Stale talk, or talk whose speakers moved on, stays quiet.
+$ovDbP = sys_get_temp_dir() . '/xeric-ov-' . getmypid() . '.db';
+foreach ([$ovDbP, $ovDbP . '-wal', $ovDbP . '-shm'] as $f) @unlink($f);
+$ovDb = xeric_state_open($ovDbP);
+xeric_state_migrate($ovDb);
+xeric_event_add($ovDb, 'the urn ran out early', (int)$arTue['epoch'] - 1800, 'bluebird',
+    ['ruth', 'dot'], 'The last of the coffee went at half past.', null, false,
+    'Ruth: "And he never brought it back." / Dot: "He never does."');
+$ovScene = xeric_travel_scene($arT, 'bluebird', $arTue, $arPres, $ovDb);
+ok('arrival: fresh talk with its speakers still standing is QUOTED at the doorway',
+    str_contains($ovScene, 'You catch the tail of it')
+    && str_contains($ovScene, 'never brought it back'), $ovScene);
+xeric_event_add($ovDb, 'an older hour', (int)$arTue['epoch'] - 3 * 3600 - 60, 'bluebird',
+    ['ruth', 'dot'], 'Long done.', null, false, 'Ruth: "Ancient words."');
+ok('arrival: the freshest exchange wins, not the oldest',
+    !str_contains($ovScene, 'Ancient words'));
+$ovCold = xeric_travel_scene($arT, 'bluebird', xeric_world_now($arT, (int)$arTue['epoch'] + 3 * 3600),
+    xeric_world_who_is_where($arT, xeric_world_now($arT, (int)$arTue['epoch'] + 3 * 3600)), $ovDb);
+ok('arrival: cold talk is not quoted — a room is not haunted by its own transcript',
+    !str_contains($ovCold, 'never brought it back'), $ovCold);
+$ovDb = null;
+foreach ([$ovDbP, $ovDbP . '-wal', $ovDbP . '-shm'] as $f) @unlink($f);
 
 // A room the forge never furnished still gets a beat — absent, not invented.
 $arBare = xeric_travel_scene($T, 'bluebird', $arTue, $arPres);

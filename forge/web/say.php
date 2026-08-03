@@ -152,6 +152,11 @@ try {
         'temperature' => 0.85,
         'timeout'     => XERIC_PLAY_CHAT_TIMEOUT,
         'stories'     => (array)($w['stories'] ?? []),
+        // The camera is only OFFERED where this world consented to photos —
+        // the cost-warned yes on the banner. A model never told about the
+        // marker never emits one, so an unconsented world spends nothing and
+        // strips nothing.
+        'photos'      => (string)(xeric_world_state_get($db, 'photos.approved') ?? '') === '1',
     ]);
 } catch (Throwable $e) {
     // Never the engine's own sentence: it is written for a log and its tail is
@@ -180,6 +185,41 @@ $took = microtime(true) - $t0;
 if (!empty($out['canary'])) {
     $done(['ok' => true, 'text' => (string)$out['text'], 'canary' => true]);
     return;
+}
+
+// -- the photo she promised ---------------------------------------------------
+// The model proposed one ([photo: …], stripped by the engine); this is where
+// the proposal is DISPOSED of. The caption message lands in the thread right
+// now — the caption IS the photo until a machine develops it — and the job
+// queues behind the conversation. The reaper only ever renders under the
+// world's standing consent (photos.approved) and an answering machine, both
+// of which were cost-warned before anybody said yes; with neither, the
+// caption stands alone and has cost nothing. Failure to file the job costs
+// the photo, never the turn.
+$photoMsg = null;
+if ((string)($out['photo_ask'] ?? '') !== '') {
+    try {
+        $pNow  = xeric_clock_now($db, $T);
+        $pAt   = xeric_world_who_is_where($T, $pNow)[$handle]['where'] ?? null;
+        $pComp = xeric_photo_prompt($T, 'message', [
+            'handle' => $handle, 'ask' => (string)$out['photo_ask'],
+            'place'  => $pAt !== null ? (string)$pAt : '', 'now' => $pNow,
+        ]);
+        $pCap = xeric_photo_caption($pComp);
+        $mid  = xeric_message_append($db, (int)$out['conversation_id'], 'character', $handle,
+            '📷 ' . $pCap, (int)$pNow['epoch']);
+        xeric_photo_enqueue_message($db, $handle, $mid, (int)$out['conversation_id'],
+            (string)$out['photo_ask'], $pCap);
+        $photoMsg = ['id' => $mid, 'caption' => $pCap];
+        // Wake the reaper only when it could actually work — consent given and
+        // a machine answering. Nothing spends otherwise, and the job waits.
+        if ((string)(xeric_world_state_get($db, 'photos.approved') ?? '') === '1' && xeric_image_up()) {
+            xeric_web_spawn(xeric_web_job_new(), ['slug' => (string)$w['slug'], 'sid' => $sid],
+                'photo-worker.php');
+        }
+    } catch (Throwable $e) {
+        // The photo died on the way to the queue; the reply already landed.
+    }
 }
 
 // -- and what the world itself says about that --------------------------------
@@ -231,6 +271,10 @@ $done([
     'waited'    => (float)($got['waited'] ?? 0),     // seconds spent in the line, honestly reported
     'mine'      => (bool)$w['mine'],
     'harvested' => $harvested,
+    // The photo she promised, when she promised one: the caption message is
+    // already in the thread, and the browser draws it without waiting for the
+    // repaint. The image itself arrives whenever the reaper develops it.
+    'photo'     => $photoMsg,
     // What an overlay made of the turn, relayed rather than rendered. The scene
     // question — who says the line a dead lead leaves behind — is answered above
     // and written down; this is the same movement handed to the page so it can

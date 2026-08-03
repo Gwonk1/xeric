@@ -639,6 +639,9 @@ echo '<style>' . xeric_play_css() . '
 /* the portrait at the top of a cog, when the reaper has developed one */
 .cportrait { margin:0 0 12px; }
 .cportrait img { max-width:100%; max-height:240px; border-radius:8px; display:block; }
+/* a photo in a thread bubble: the picture, its caption underneath */
+.mphoto { display:block; max-width:100%; max-height:280px; border-radius:.6rem; margin:0 0 .25rem; }
+.mcap { display:block; font-size:.72rem; font-style:italic; opacity:.75; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
 </style>';
@@ -879,8 +882,19 @@ echo '<style>' . xeric_play_css() . '
         <button type="button" class="nbtn" id="photoyes">Develop the film</button>
         <button type="button" class="nbtn ghost" id="photono">Not for this xeric</button>
       </div>
-      <p class="why">Renders spend real compute, counted on the meter like everything else.
-        Faces and places keep their seeds, so the same person is the same person in every frame.</p>
+      <?php if (xeric_image_costly()): ?>
+      <p class="why warn"><strong>This image machine is not on this computer.</strong> Every render
+        bills YOUR API key with that provider — portraits, places, and any photo a character
+        decides to send in a conversation, including while you are away. The meter counts every
+        one, but the meter is a receipt, not a limit: set spending caps with your provider.
+        Saying yes here is saying yes to those charges.</p>
+      <?php else: ?>
+      <p class="why">This image machine is local, so renders cost your own electricity and GPU
+        time, nothing metered. Counted on the meter anyway — nothing spends quietly.</p>
+      <?php endif; ?>
+      <p class="why">Faces and places keep their seeds, so the same person is the same person
+        in every frame. Characters may also send photos in conversation once this is on —
+        rarely, and every one is counted.</p>
     </div>
     <?php endif; ?>
 
@@ -1640,7 +1654,7 @@ echo '<style>' . xeric_play_css() . '
           $('#composer').placeholder = d.name + ' is dead' + (d.how ? ', ' + d.how : '') + '.';
           $('#tone').textContent = d.how || (d.name + ' is dead.');
         }
-        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when); });
+        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when, m.photo); });
         // the dot is out now — repaint the cast behind this screen
         refreshState();
         var t = $('#composer');
@@ -1668,7 +1682,7 @@ echo '<style>' . xeric_play_css() . '
     return { text: (initials || '?').toUpperCase(), hue: h };
   }
 
-  function addMsg(who, text, when) {
+  function addMsg(who, text, when, photo) {
     var li = document.createElement('li');
     li.className = who;
 
@@ -1678,7 +1692,20 @@ echo '<style>' . xeric_play_css() . '
       face = '<span class="av" style="--hue:' + f.hue + '" aria-hidden="true">' + esc(f.text) + '</span>';
     }
 
-    li.innerHTML = face + '<span class="b">' + esc(text)
+    // A developed message-photo renders as the picture with its caption for
+    // alt text; until then the caption message stands alone, which is the
+    // photo's own fallback everywhere in this app. onerror folds back to the
+    // caption, so a half-written file never shows a broken bubble.
+    var body = esc(text);
+    if (photo && photo.k && photo.s) {
+      body = '<img class="mphoto" src="photo.php?w=' + encodeURIComponent(W)
+           + '&k=' + encodeURIComponent(photo.k) + '&s=' + encodeURIComponent(photo.s)
+           + '" alt="' + escA(photo.caption || text) + '" loading="lazy"'
+           + ' onerror="var b=this.parentNode;this.remove();">'
+           + '<span class="mcap">' + esc(photo.caption || text) + '</span>';
+    }
+
+    li.innerHTML = face + '<span class="b">' + body
                  + (when ? '<span class="st">' + esc(when) + '</span>' : '') + '</span>';
     $('#msgs').appendChild(li);
     stickDown(li);
@@ -1845,6 +1872,12 @@ echo '<style>' . xeric_play_css() . '
         }
         pending = null;                                // the xeric has it now
         addMsg('them', res.d.text, res.d.when);
+        // The photo she promised, right behind her words: the caption bubble
+        // lands now, and the picture replaces it on a later repaint once the
+        // reaper (running behind this conversation) has developed the film.
+        if (res.d.photo && res.d.photo.caption) {
+          addMsg('them', '📷 ' + res.d.photo.caption, res.d.when);
+        }
         storyTurn(res.d);                              // ...and what the story made of it
         repaint(res.d.state);
       })

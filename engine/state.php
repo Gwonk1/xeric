@@ -285,6 +285,14 @@ function xeric_state_alters(): array
 {
     return [
         ['events', 'on_spine', 'INTEGER NOT NULL DEFAULT 0'],
+        // The audible surface of an hour: one short exchange a body in the
+        // doorway could have heard, written by the same sweep call that wrote
+        // the hour. What an arrival quotes when the talk was real.
+        ['events', 'overheard', "TEXT NOT NULL DEFAULT ''"],
+        // Where a message-photo delivers, and the words it was asked with:
+        // the reaper runs behind the conversation and needs both.
+        ['photo_jobs', 'ask',  "TEXT NOT NULL DEFAULT ''"],
+        ['photo_jobs', 'conv', 'INTEGER'],
     ];
 }
 
@@ -570,11 +578,11 @@ function xeric_arcs_count(PDO $db): int
  *        Stored, because a title written for a spine hour is not something the
  *        protected character may be shown a week later.
  */
-function xeric_event_add(PDO $db, string $title, int $worldEpoch, ?string $place, array $participants, string $prose = '', ?int $at = null, bool $onSpine = false): int
+function xeric_event_add(PDO $db, string $title, int $worldEpoch, ?string $place, array $participants, string $prose = '', ?int $at = null, bool $onSpine = false, string $overheard = ''): int
 {
     $at = $at ?? xeric_state_time();
-    $st = $db->prepare('INSERT INTO events (title, world_epoch, place, participants, prose, created_at, on_spine) VALUES (?, ?, ?, ?, ?, ?, ?)');
-    $st->execute([$title, $worldEpoch, $place, json_encode(array_values($participants), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $prose, $at, $onSpine ? 1 : 0]);
+    $st = $db->prepare('INSERT INTO events (title, world_epoch, place, participants, prose, created_at, on_spine, overheard) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    $st->execute([$title, $worldEpoch, $place, json_encode(array_values($participants), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $prose, $at, $onSpine ? 1 : 0, $overheard]);
     return (int)$db->lastInsertId();
 }
 
