@@ -452,6 +452,15 @@ ok('contradictions: and a running clock beside it, so a wedged pass is visibly w
 // of 240.
 ok('contradictions: running out of rounds is not reported as running out of calls',
     preg_match("/stop = calls >= CALL_CAP \\? 'budget' : \\(BOUNDED \\? '' : 'rounds'\\)/", $rv) === 1);
+// THE BUTTON SAYS WHAT PRESSING IT AGAIN WOULD DO. "Clear All Contradictions" is
+// a promise on the first press and a lie on the second: what it corrected stays
+// corrected, so offering to clear them ALL says the last twenty minutes achieved
+// nothing. The owner watched it stop with 42 left after correcting 15.
+ok('contradictions: after a pass the button names what is actually left',
+    preg_match("/b2\\.textContent = left > 0/", $rv) === 1
+    && str_contains($rv, "'Try to clear ' + left + ' contradiction'"));
+ok('contradictions: and goes back to its own words when there is nothing left',
+    str_contains($rv, 'var CLEAR_LABEL') && preg_match('/: CLEAR_LABEL;/', $rv) === 1);
 ok('contradictions: and the round ceiling says pressing again carries on',
     str_contains($rv, "stop === 'rounds'") && str_contains($rv, 'still moving')
     && str_contains($rv, 'carry on from here'));

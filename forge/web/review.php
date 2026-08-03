@@ -1141,6 +1141,8 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
     }
 
     var b2 = $('#repassall');
+    var CLEAR_LABEL = b2 ? b2.textContent : '';
+    var CLEAR_TITLE = b2 ? b2.title : '';
 
     // the back cover on this page, rewritten when a repass changes the book
     var cov = $('#cover');
@@ -1475,6 +1477,23 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
                  + left + ' the editor could not settle. Each one below has a fix it.';
         }
         st.textContent = head + (extra ? '  ' + extra : '');
+
+        // THE BUTTON SAYS WHAT PRESSING IT AGAIN WOULD DO. "Clear All
+        // Contradictions" is a promise on the first press and a lie on the
+        // second: the fifteen it corrected are corrected and are not going to be
+        // looked at again, so offering to clear them ALL says the last twenty
+        // minutes achieved nothing. Naming the number that is actually left is
+        // both the honest label and the progress bar this pass never had —
+        // press, watch it fall, press again.
+        if (b2) {
+            b2.textContent = left > 0
+                ? 'Try to clear ' + left + ' contradiction' + (left === 1 ? '' : 's')
+                : CLEAR_LABEL;
+            b2.title = left > 0
+                ? 'Carries on from where the last pass stopped. What it already corrected '
+                  + 'stays corrected; these ' + left + ' are what is left.'
+                : CLEAR_TITLE;
+        }
         // A spiral is a fault, not a result: it says so where a fault is said.
         if (stop === 'thrash' || stop === 'budget' || stop === 'rounds') st.classList.add('bad');
         else st.classList.remove('bad');
