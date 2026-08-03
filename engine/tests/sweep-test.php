@@ -2508,6 +2508,36 @@ ok('daily: a rewound clock moves no ledger at all',
     xeric_ledger_day($dayDb, $dayT, $day1) === 0
     && xeric_ledger_of($dayDb, 'bluebird_tab', 'dot') === $rwWas);
 
+// WHICH IS WHY THE RESET HAS TO CLEAN THEM. "A rewound clock moves nothing" is
+// right for a rewind and lethal for a RESET: the mark stands a month in the
+// future, every read returns early, and every self-moving ledger in the world is
+// silently dead until real time catches back up. The reset already sweeps the
+// sweep guards and the watermark for exactly this reason — it just never looked
+// at the ledgers' own marks, which stand forward in exactly the same way.
+// casserole_ledger, not bluebird_tab: the latter GROWS toward a ceiling of 7,
+// so it would sit still for reasons that have nothing to do with the mark.
+$resDb = fresh_db('ledger-day-reset');
+xeric_state_seed($resDb, $dayT);
+xeric_arc_set($resDb, 'dot', 'economy.casserole_ledger', '40');
+xeric_ledger_day($resDb, $dayT, $day1);
+xeric_ledger_day($resDb, $dayT, $dayFar);              // a year of fast-forward
+$farMark = (int)xeric_world_state_get($resDb, 'ledger.day.casserole_ledger');
+ok('daily: the mark really is standing in the future before the reset',
+    $farMark > xeric_ledger_day_index((int)$day1['epoch']), (string)$farMark);
+
+xeric_clock_reset($resDb, $dayT, (int)$day1['epoch']);
+ok('daily: and the reset takes it down with the sweep guards',
+    xeric_world_state_get($resDb, 'ledger.day.casserole_ledger') === null,
+    (string)xeric_world_state_get($resDb, 'ledger.day.casserole_ledger'));
+// Absent means "start from today", so the ledger is alive again rather than
+// waiting out a month it is not going to live.
+$backWas = xeric_ledger_of($resDb, 'casserole_ledger', 'dot');
+xeric_ledger_day($resDb, $dayT, $day1);
+xeric_ledger_day($resDb, $dayT, $day4);
+ok('daily: so the world goes on decaying instead of standing still for a year',
+    xeric_ledger_of($resDb, 'casserole_ledger', 'dot') < $backWas,
+    $backWas . ' -> ' . xeric_ledger_of($resDb, 'casserole_ledger', 'dot'));
+
 // AND THE READ THAT ASSEMBLES A PROMPT DOES IT, which is the wiring rather
 // than the function — the same idiom the fuses and the debt fade use.
 $wireDb = fresh_db('ledger-day-wire');

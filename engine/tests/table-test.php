@@ -427,6 +427,26 @@ ok('you: and forty more nights mint nothing out of an empty pocket',
 ok('you: and both halves stay numbers nobody has to read as negative',
     xeric_table_purse($brokeDb) >= 0 && xeric_table_owed($brokeDb) >= 0);
 
+// AND THE SENTENCE NAMES YOU, not the seat key. xeric_table_play_with_you()
+// returns a `template` carrying your seat under your own display name, for
+// exactly this — and the worker read the ORIGINAL cast, found nobody called
+// '@you', and fell through to printing the key: "Cal is up 38, and @you is down
+// 40."
+$sayDiff = null;
+for ($s = 1; $s < 20 && $sayDiff === null; $s++) {
+    $r = xeric_table_play_with_you($Tyou, $TABLE, ['harlan', 'ruth', 'dot'], 'steady', 10, $s, 1);
+    if (str_contains(xeric_table_say($Tyou, $r), XERIC_TABLE_YOU)) $sayDiff = $r;
+}
+ok('you: the seat key really does leak when the wrong template is used',
+    $sayDiff !== null);
+ok('you: and the one the night hands back knows your name',
+    $sayDiff !== null
+    && !str_contains(xeric_table_say($sayDiff['template'], $sayDiff), XERIC_TABLE_YOU),
+    $sayDiff === null ? '' : xeric_table_say($sayDiff['template'], $sayDiff));
+ok('you: which is the template the worker is told to use',
+    str_contains((string)file_get_contents(dirname(__DIR__, 2) . '/forge/web/table-worker.php'),
+        "xeric_table_say(\$night['result']['template'] ?? \$T"));
+
 // ---------------------------------------------------------------------------
 // 7. WHAT WAS SAID WHILE IT HAPPENED. One model call a night, describing rather
 // than deciding — the numbers are already settled when it runs.

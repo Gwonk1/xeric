@@ -354,6 +354,38 @@ xeric_state_migrate($mig);
 ok('migrate: and migrating twice is not an error',
     count(array_filter(xeric_state_columns($mig, 'signals'), fn($c) => $c === 'player')) === 1);
 
+// ---------------------------------------------------------------------------
+// A ROSTER NOBODY CAN READ IS A WORLD WITH ONE PERSON IN IT, not a dead worker.
+//
+// xeric_players() used to end `return $out === [] ? xeric_players($db) : $out;`
+// — a self-call that re-read the same bad row, produced the same empty result,
+// and recursed until the process ran out of memory. Nothing in the tree writes
+// that shape today, so this is about POSTURE: this function is on the
+// prompt-assembly path, the engine fails closed everywhere else, and a fatal is
+// not closed — it is just dead. The self-call also dropped $t, so even a
+// terminating version would have lost the template's own name for the person at
+// the centre.
+// ---------------------------------------------------------------------------
+
+echo "\n# a roster nobody can read\n";
+
+$T2 = ['user' => ['name' => 'Neil', 'pronouns' => 'he/him']];
+foreach ([
+    'an id below the first one'  => '[{"id":0,"name":"nobody"}]',
+    'rows that are not rows'     => '["just a string", 7]',
+    'an object where a list goes'=> '{"nope":true}',
+    'nothing at all'             => '',
+    'not even json'              => '{oh dear',
+] as $what => $bad) {
+    $d = fresh('bad-' . substr(md5($what), 0, 6));
+    xeric_world_state_set($d, 'players', $bad);
+    $got = xeric_players($d, $T2);
+    ok("roster: $what leaves one person at the centre",
+        count($got) === 1 && isset($got[XERIC_PLAYER_FIRST]), json_encode($got));
+    ok("roster: and it is still the one the template named",
+        ($got[XERIC_PLAYER_FIRST]['name'] ?? '') === 'Neil', json_encode($got));
+}
+
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

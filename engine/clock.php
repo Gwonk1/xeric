@@ -249,7 +249,8 @@ function xeric_clock_reset(PDO $db, ?array $t = null, ?int $realNow = null): voi
     // The raw SELECT is here because state.php has no prefix reader for
     // world_state and must not grow one into it (constructs.php's discipline).
     $epoch = $starts ?? $real;
-    $st    = $db->query("SELECT key, value FROM world_state WHERE key LIKE 'sweep%'");
+    $st    = $db->query("SELECT key, value FROM world_state WHERE key LIKE 'sweep%'"
+                      . " OR key LIKE 'ledger.day.%'");
     $rows  = $st->fetchAll(PDO::FETCH_ASSOC);
     $st->closeCursor();
     foreach ($rows as $r) {
@@ -264,6 +265,20 @@ function xeric_clock_reset(PDO $db, ?array $t = null, ?int $realNow = null): voi
             $q = intdiv($epoch, $size);
             if ($epoch % $size < 0) $q--;
             if ((int)$r['value'] > $q) xeric_world_state_delete($db, $k);
+        } elseif (str_starts_with($k, 'ledger.day.')) {
+            // THE LEDGERS KEEP THEIR OWN WATERMARK, and it stands forward the
+            // same way the sweep's does. xeric_ledger_day() returns early on
+            // `$days <= 0` — "a rewound clock moves nothing" — so a mark left a
+            // month ahead of the new now means every self-moving ledger in the
+            // world is silently dead until real time catches back up. Exactly
+            // the shape this whole cleanup was written for, in the one place it
+            // did not look: the reset printed success and the tabs stopped
+            // decaying for thirty world-days.
+            //
+            // Deleted rather than rewound, because absent means "start from
+            // today" (see the `$last === null` branch) — which is what a world
+            // that has just been put back to its own beginning wants.
+            if ((int)$r['value'] > (int)floor($epoch / 86400)) xeric_world_state_delete($db, $k);
         }
     }
 }

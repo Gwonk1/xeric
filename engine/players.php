@@ -76,17 +76,26 @@ function xeric_player_key(string $base, int $player = XERIC_PLAYER_FIRST): strin
  */
 function xeric_players(PDO $db, array $t = []): array
 {
+    // THE WORLD WITH NOBODY WRITTEN DOWN IN IT, built once and returned from
+    // both of the places that need it. It used to be inline here and, at the
+    // bottom, a self-call — which re-read the same row, produced the same empty
+    // result and recursed until the process died: a malformed `players` row
+    // (a truncated write, a hand edit, an id of 0) turned every prompt build
+    // into a fatal instead of into a single-player world. The engine's posture
+    // is fail-closed, and a dead worker is not closed, it is just dead. The
+    // self-call also dropped $t, so even a terminating version would have lost
+    // the template's own name for the person at the centre.
+    $implicit = static fn(): array => [XERIC_PLAYER_FIRST => [
+        'id'       => XERIC_PLAYER_FIRST,
+        'name'     => trim((string)($t['user']['name'] ?? '')) ?: 'you',
+        'pronouns' => trim((string)($t['user']['pronouns'] ?? '')) ?: 'they/them',
+        'implicit' => true,              // never written down; the template IS the record
+    ]];
+
     $raw = xeric_world_state_get($db, 'players');
     $rows = $raw === null ? [] : json_decode((string)$raw, true);
 
-    if (!is_array($rows) || $rows === []) {
-        return [XERIC_PLAYER_FIRST => [
-            'id'       => XERIC_PLAYER_FIRST,
-            'name'     => trim((string)($t['user']['name'] ?? '')) ?: 'you',
-            'pronouns' => trim((string)($t['user']['pronouns'] ?? '')) ?: 'they/them',
-            'implicit' => true,          // never written down; the template IS the record
-        ]];
-    }
+    if (!is_array($rows) || $rows === []) return $implicit();
 
     $out = [];
     foreach ($rows as $r) {
@@ -99,7 +108,7 @@ function xeric_players(PDO $db, array $t = []): array
                      'implicit' => false];
     }
     ksort($out);
-    return $out === [] ? xeric_players($db) : $out;
+    return $out === [] ? $implicit() : $out;
 }
 
 /** One of them, or null. */

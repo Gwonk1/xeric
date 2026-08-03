@@ -124,7 +124,13 @@ try {
     }
 
     xeric_web_job_append($job, ['k' => 'done',
-        'message' => xeric_table_say($T, $night['result']),
+        // THE TEMPLATE THAT KNOWS WHO `@you` IS. xeric_table_play_with_you()
+        // returns a `template` carrying the player's seat under their own
+        // display name, for exactly this — and nothing read it, so the
+        // end-of-night sentence resolved the seat key against the ORIGINAL cast,
+        // found nobody, and fell through to printing the key: "Cal is up 38, and
+        // @you is down 40."
+        'message' => xeric_table_say($night['result']['template'] ?? $T, $night['result']),
         'night' => ['net' => (int)$night['net'], 'purse' => (int)$night['purse'],
                     'hands' => (int)$night['result']['hands'], 'talk' => count($talk)]]);
 } catch (Throwable $e) {
