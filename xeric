@@ -109,10 +109,10 @@ if [ "${XERIC_HEART:-1}" = "1" ]; then
   echo
 fi
 
-if [ "${XERIC_HOST:-127.0.0.1}" != "127.0.0.1" ]; then
+if [ "${XERIC_BIND:-127.0.0.1}" != "127.0.0.1" ]; then
   echo "  ON THE NETWORK: anybody who can reach this machine can open your xerics."
   echo "  There is no password on this app — the bind address is the whole guard."
   echo
 fi
 
-"$XERIC_PHP" -S "${XERIC_HOST:-127.0.0.1}:$XERIC_PORT" -t "$XERIC_WEB" "$XERIC_WEB/router.php"
+"$XERIC_PHP" -S "${XERIC_BIND:-127.0.0.1}:$XERIC_PORT" -t "$XERIC_WEB" "$XERIC_WEB/router.php"

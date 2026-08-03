@@ -39,7 +39,7 @@ $data    = (string)(getenv('XERIC_DATA_DIR') ?: '');
 // phone on the same wifi can reach this xeric — which also means everything
 // else on that network can. There is no password on this app; the guard is
 // the bind address, and that is exactly why it is opt-in per run.
-$host    = (string)(getenv('XERIC_HOST') ?: '127.0.0.1');
+$host    = (string)(getenv('XERIC_BIND') ?: '127.0.0.1');
 
 for ($i = 1; $i < $argc; $i++) {
     switch ($argv[$i]) {
@@ -121,7 +121,7 @@ $out = [
     // anybody passing it along.
     'XERIC_PHP'        => PHP_BINARY,
     'XERIC_PORT'       => (string)$port,
-    'XERIC_HOST'       => $host,
+    'XERIC_BIND'       => $host,
     'XERIC_DATA_DIR'   => $data,
     'XERIC_WORLDS_DIR' => $data . '/worlds',
     // The browser is opened on loopback whatever the bind: this machine can

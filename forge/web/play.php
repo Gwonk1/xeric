@@ -183,7 +183,7 @@ if ($action !== '') {
     // loopback there is nothing to encode and saying so plainly beats a code
     // that scans to a page no phone can open.
     if ($action === 'qr') {
-        $host = (string)(getenv('XERIC_HOST') ?: '127.0.0.1');
+        $host = (string)(getenv('XERIC_BIND') ?: '127.0.0.1');
         $port = (string)(getenv('XERIC_PORT') ?: '8787');
         if ($host === '127.0.0.1' || $host === 'localhost') {
             xeric_web_json(['ok' => true, 'lan' => false,

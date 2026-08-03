@@ -5,6 +5,7 @@ rem  xeric.cmd — run a xeric on this machine.
 rem
 rem    xeric                     start it, and open a browser
 rem    xeric --port 9000         somewhere else
+rem    xeric --lan              reachable from your phone on the same wifi
 rem    xeric --data D:\xerics    keep xerics somewhere else
 rem    xeric --no-open           do not touch the browser
 rem
@@ -36,12 +37,14 @@ if /I "%~1"=="-h"        goto usage
 if /I "%~1"=="--help"    goto usage
 if /I "%~1"=="--port"    set "XERIC_PORT=%~2" & shift & shift & goto parse
 if /I "%~1"=="--data"    set "XERIC_DATA_DIR=%~2" & shift & shift & goto parse
+if /I "%~1"=="--lan"     set "XERIC_BIND=0.0.0.0" & shift & goto parse
 echo xeric: unknown option %~1 1>&2
 exit /b 2
 
 :usage
 echo   xeric                     start it, and open a browser
 echo   xeric --port 9000         somewhere else
+echo   xeric --lan              reachable from your phone on the same wifi
 echo   xeric --data D:\xerics    keep xerics somewhere else
 echo   xeric --no-open           do not touch the browser
 exit /b 0
@@ -102,7 +105,13 @@ rem bootstrap.php shortens the progress stream here (XERIC_PROGRESS_WINDOW) so i
 rem hands the server back every few seconds instead of holding it for a whole
 rem build. It is a mitigation and it is on the punchlist as one: the fix is a
 rem real server, or polling instead of streaming.
-"%XERIC_PHP%" -S 127.0.0.1:%XERIC_PORT% -t "%XERIC_WEB%" "%XERIC_WEB%/router.php"
+if not "%XERIC_BIND%"=="" if not "%XERIC_BIND%"=="127.0.0.1" (
+  echo   ON THE NETWORK: anybody who can reach this machine can open your xerics.
+  echo   There is no password on this app - the bind address is the whole guard.
+  echo.
+)
+if "%XERIC_BIND%"=="" set "XERIC_BIND=127.0.0.1"
+"%XERIC_PHP%" -S %XERIC_BIND%:%XERIC_PORT% -t "%XERIC_WEB%" "%XERIC_WEB%/router.php"
 
 rem The server has stopped, so the heart should too.
 taskkill /FI "WINDOWTITLE eq xeric-heart*" /T /F >nul 2>&1

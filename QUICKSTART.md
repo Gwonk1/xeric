@@ -112,8 +112,12 @@ php engine/sweep-cli.php --world=worlds/<slug> --advance=6h
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h --no-learn
 
 # the test suites — all of them, no exceptions
-for t in render engine chat sweep learn narrator constructs rewind; do php engine/tests/$t-test.php; done
-php forge/tests/forge-test.php && php forge/web/tests/demo-test.php && php forge/web/tests/review-test.php
+for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php; do php "$t" || break; done
+
+# the last of those is the smoke test: it starts a throwaway server, loads
+# every page in headless Chrome, and fails on any uncaught javascript. It
+# SKIPS when there is no browser installed, which is not a failure.
+php forge/web/tests/smoke-test.php
 ```
 
 ## Running it where other people can reach it
