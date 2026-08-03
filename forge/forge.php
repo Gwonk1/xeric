@@ -1281,6 +1281,48 @@ function xeric_forge_fresh_place_name(string $name, string $kind, array $naming,
  * Surname reuse WITHIN a world is deliberately not gated here — two Blevinses
  * in one town are a family; the same Blevins in three worlds is a rut.
  */
+/**
+ * The given names and the surnames already spoken for in THIS world, read off
+ * the handles that have been cut so far. `$taken` is keyed by handle —
+ * garrick_bragg, hester_bragg — so the halves are already in it; nothing new
+ * has to be threaded through five call sites to ask this question.
+ */
+function xeric_forge_taken_halves(array $taken): array
+{
+    $given = [];
+    $family = [];
+    foreach (array_keys($taken) as $k) {
+        $parts = array_values(array_filter(explode('_', (string)$k),
+            static fn($p) => $p !== '' && !ctype_digit($p)));   // _2 is the dedupe suffix
+        if ($parts === []) continue;
+        $given[$parts[0]] = true;
+        if (count($parts) > 1) $family[$parts[count($parts) - 1]] = true;
+    }
+    return [$given, $family];
+}
+
+/**
+ * Is this surname a near-miss for one already in the world — not the same, but
+ * one letter off it?
+ *
+ * EXACT MATCHES ARE NOT TWINS. Two Blevinses in one town are a family, and that
+ * is deliberate. Drubb and Drub are not a family; they are one family spelled
+ * two ways, and the editor reads the difference as a contradiction because from
+ * the outside that is exactly what it looks like.
+ *
+ * Four letters minimum: at three, half the surnames on earth are one letter
+ * apart from each other and the test starts refusing real names.
+ */
+function xeric_forge_name_twin(string $norm, array $used): bool
+{
+    if (mb_strlen($norm) < 4 || isset($used[$norm])) return false;
+    foreach (array_keys($used) as $u) {
+        if ($u === '' || abs(strlen($u) - strlen($norm)) > 1) continue;
+        if (levenshtein($u, $norm) <= 1) return true;
+    }
+    return false;
+}
+
 function xeric_forge_fresh_person_name(string $name, array $naming, int $index, array $taken, string $brief = ''): string
 {
     [$first, $last] = xeric_forge_name_split($name);
@@ -1292,8 +1334,33 @@ function xeric_forge_fresh_person_name(string $name, array $naming, int $index, 
     }
     $nf = xeric_forge_name_norm($first);
     $nl = xeric_forge_name_norm($last);
-    $badFirst = isset($naming['banned_given'][$nf]) || isset($naming['used']['given'][$nf]);
-    $badLast  = $last !== '' && (isset($naming['banned_family'][$nl]) || isset($naming['used']['family'][$nl]));
+
+    // NOT TWICE IN ONE TOWN. Until now this gate only asked whether a name was
+    // BANNED or already spent on another world's shelf; it never asked whether
+    // the person standing next to them was called it. A live twelve-person forge
+    // came back with THREE Garricks — Garrick Bragg, Garrick Hobb, Garrick Drubb
+    // — plus two Bramms, and a family whose name was spelled Drubb on one line
+    // and Drub on the next.
+    //
+    // That is not cosmetic. It is why the clear-contradictions pass never
+    // finishes: with three Garricks every sentence containing "Garrick" is
+    // genuinely ambiguous, so the editor finds a real contradiction, rewrites
+    // it, and the rewrite is ambiguous too. Twenty-four rounds and seventy-nine
+    // rewrites later it had not converged, and it could not have — the loop was
+    // working correctly on a world that could not be made consistent.
+    //
+    // Surnames repeat on purpose: two Blevinses in one town are a family. Given
+    // names do not, and the bare given name belongs to whoever was there first.
+    [$usedGiven, $usedFamily] = xeric_forge_taken_halves($taken);
+
+    // Twins on the given half too, and for the same reason: Bramm Keld standing
+    // next to Bram Gerrity is the Drubb/Drub problem wearing the other hat, and
+    // the first cut of this fix produced exactly that while removing the
+    // duplicate it was aimed at.
+    $badFirst = isset($naming['banned_given'][$nf]) || isset($naming['used']['given'][$nf])
+                || isset($usedGiven[$nf]) || xeric_forge_name_twin($nf, $usedGiven);
+    $badLast  = $last !== '' && (isset($naming['banned_family'][$nl]) || isset($naming['used']['family'][$nl])
+                || xeric_forge_name_twin($nl, $usedFamily));
     if (!$badFirst && !$badLast) return $name;
 
     if ($badFirst) {
@@ -1302,6 +1369,7 @@ function xeric_forge_fresh_person_name(string $name, array $naming, int $index, 
             $cand = (string)$bank[($index + $k) % count($bank)];
             $cn = xeric_forge_name_norm($cand);
             if (!isset($naming['banned_given'][$cn]) && !isset($naming['used']['given'][$cn])
+                && !isset($usedGiven[$cn]) && !xeric_forge_name_twin($cn, $usedGiven)
                 && !isset($taken[xeric_forge_key(trim($cand . ' ' . $last))])) {
                 $first = $cand;
                 break;
@@ -1314,6 +1382,7 @@ function xeric_forge_fresh_person_name(string $name, array $naming, int $index, 
             $cand = (string)$bank[($index + $k) % count($bank)];
             $cn = xeric_forge_name_norm($cand);
             if (!isset($naming['banned_family'][$cn]) && !isset($naming['used']['family'][$cn])
+                && !xeric_forge_name_twin($cn, $usedFamily)
                 && !isset($taken[xeric_forge_key($first . ' ' . $cand)])) {
                 $last = $cand;
                 break;
@@ -2308,7 +2377,11 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
             $was = xeric_forge_str($flat['display_name'] ?? '', '', 80);
             $fresh = xeric_forge_fresh_person_name($was, $naming, $i, $taken, $brief);
             if ($was !== '' && $fresh !== $was) {
-                $onNote && $onNote("naming: {$was} already lives in another world — here it is {$fresh}");
+                // "already lives in another world" was true when the shelf was the
+                // only thing this gate consulted. It now also fires on a name
+                // somebody in THIS town is already called, so the sentence has to
+                // be one that is true either way.
+                $onNote && $onNote("naming: {$was} was already spoken for — here it is {$fresh}");
                 $flat['display_name'] = $fresh;
                 $short = xeric_forge_str($flat['short_name'] ?? '', '', 32);
                 if ($short !== '' && mb_stripos($fresh, $short) === false) unset($flat['short_name']);

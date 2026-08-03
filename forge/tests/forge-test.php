@@ -1651,6 +1651,81 @@ ok('two renamed characters do not land on the same replacement',
     xeric_forge_fresh_person_name('Elias Marsh', $nm, 0, [])
     !== xeric_forge_fresh_person_name('Elias Grant', $nm, 3, []),
     xeric_forge_fresh_person_name('Elias Marsh', $nm, 0, []));
+// NOT TWICE IN ONE TOWN.
+//
+// This gate only ever asked whether a name was BANNED or already spent on
+// another world's shelf. It never asked whether the person standing next to
+// them was called it. A live twelve-person forge came back with THREE Garricks
+// — Garrick Bragg, Garrick Hobb, Garrick Drubb — plus two Bramms, and one
+// family spelled Drubb on one line and Drub on the next.
+//
+// That is why the clear-contradictions pass never finished. With three Garricks
+// every sentence containing "Garrick" is genuinely ambiguous, so the editor
+// finds a real contradiction, rewrites it, and the rewrite is ambiguous too.
+// Twenty-four rounds and seventy-nine rewrites without converging, and it could
+// not have: the loop was working correctly on a world that could not be made
+// consistent.
+(function (): void {
+    $n = ['key' => 'r', 'label' => 'Rust', 'sound' => 'x',
+        'given' => ['Mabel', 'Ruth', 'Hattie', 'Otis', 'Enid', 'Gideon', 'Martha', 'Arlo', 'Clara', 'Nell'],
+        'family' => ['Roarke', 'Stoker', 'Gerrity', 'Mudd', 'Dredge', 'Sloane', 'Wick'],
+        'toponyms' => ['a', 'b'], 'businesses' => ['c', 'd'], 'church' => 'e',
+        'over' => ['given' => [], 'family' => [], 'toponyms' => [], 'businesses' => []],
+        'banned_given' => [], 'banned_family' => [], 'banned_world' => [], 'banned_suffix' => [],
+        'used' => ['worlds' => [], 'places' => [], 'given' => [], 'family' => []]];
+
+    // The cast that forge actually produced, in the order it produced them.
+    $want = ['Garrick Bragg', 'Garrick Hobb', 'Bramm Keld', 'Gurt Hobb', 'Hester Bragg', 'Burt Grodge',
+             'Cade Brack', 'Dritch Kobb', 'Garrick Drubb', 'Bramm Drub', 'Clint Bragg', 'Thulck Bragg'];
+    $taken = [];
+    $out = [];
+    foreach ($want as $i => $w) {
+        $got = xeric_forge_fresh_person_name($w, $n, $i, $taken);
+        $out[] = $got;
+        $taken[xeric_forge_key($got, $taken)] = true;
+    }
+
+    $given = [];
+    foreach ($out as $o) { [$f, ] = xeric_forge_name_split($o); $given[] = xeric_forge_name_norm($f); }
+    ok('no two people in one town answer to the same given name',
+        count(array_unique($given)) === count($given), implode(', ', $out));
+
+    $twin = [];
+    foreach ($given as $i => $g) {
+        foreach ($given as $j => $h) {
+            if ($i >= $j || $g === $h) continue;
+            if (mb_strlen($g) >= 4 && abs(strlen($g) - strlen($h)) <= 1 && levenshtein($g, $h) <= 1) {
+                $twin[] = "$g/$h";
+            }
+        }
+    }
+    ok('nor to one a single letter away from it — Burt beside Gurt is the same problem',
+        $twin === [], implode(', ', $twin));
+
+    $fam = [];
+    foreach ($out as $o) { [, $l] = xeric_forge_name_split($o); if ($l !== '') $fam[] = xeric_forge_name_norm($l); }
+    $famTwin = [];
+    foreach ($fam as $i => $g) {
+        foreach ($fam as $j => $h) {
+            if ($i >= $j || $g === $h) continue;
+            if (mb_strlen($g) >= 4 && abs(strlen($g) - strlen($h)) <= 1 && levenshtein($g, $h) <= 1) {
+                $famTwin[] = "$g/$h";
+            }
+        }
+    }
+    ok('and one family is not spelled two ways — Drubb beside Drub reads as a contradiction',
+        $famTwin === [], implode(', ', $famTwin));
+
+    // AND SURNAMES STILL REPEAT, because that is the point of a surname. The fix
+    // for three Garricks must not also dissolve the Bragg family.
+    ok('a surname shared outright is still a family, not a collision',
+        count($fam) > count(array_unique($fam)), implode(', ', $out));
+
+    // The one who was there first keeps the bare name.
+    ok('and the first person in keeps the name — the ones after are the ones that move',
+        $out[0] === 'Garrick Bragg', $out[0]);
+})();
+
 ok('a name the brief itself contains is kept whole, banned or not',
     xeric_forge_fresh_person_name('Elias Sanders', $nm, 0, [], 'my teacher Mr. Sanders, called Elias by nobody')
         === 'Elias Sanders');
