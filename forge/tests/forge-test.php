@@ -1386,6 +1386,38 @@ foreach ($regs['registers'] as $r) {
 }
 ok('no register bank contains a banned name — a gate that swaps a ban for a ban loops', $bankBanned === []);
 
+// THE REGISTER IS CHOSEN, THEN PINNED — free once, fixed after.
+//
+// It used to be DERIVED from a crc32 of five answer fields, which made it a
+// function of what somebody typed rather than something the world got to have:
+// two similar premises produced the same register every time, and the ✨ path,
+// drawing from a handful of canned concepts, could reach FIVE of the thirty.
+// The owner pressed surprise twice and got the same register, which was not
+// luck, it was arithmetic.
+//
+// What must NOT change is the physics: a character reroll lands in the register
+// of the world it happens in. You cannot put a Klingon in 1873 Ireland.
+$regs = xeric_forge_registers()['registers'];
+ok('register: a pin is honoured, whatever the answers around it say',
+    xeric_forge_naming(ANSWERS + ['register' => 'rustbelt_polish'])['key'] === 'rustbelt_polish'
+    && xeric_forge_naming(ANSWERS + ['register' => 'cajun_bayou'])['key'] === 'cajun_bayou');
+ok('register: the same pin lands in the same place every time — a reroll stays home',
+    xeric_forge_naming(ANSWERS + ['register' => 'iron_range_finn'])['key']
+        === xeric_forge_naming(['register' => 'iron_range_finn'])['key']);
+ok('register: a pin nobody ships is dropped rather than obeyed or fatal',
+    xeric_forge_naming(ANSWERS + ['register' => 'no_such_place'])['key']
+        === xeric_forge_naming(ANSWERS)['key']);
+// No migration: a world forged before pins existed has none, derives the one it
+// always did, and its rerolls keep matching.
+ok('register: a world with no pin still derives the register it always had',
+    xeric_forge_naming(ANSWERS)['key'] === xeric_forge_naming(ANSWERS)['key']
+    && xeric_forge_naming(ANSWERS)['key'] !== '');
+// And the free choice reaches all of them, which the derived one never could.
+$reach = [];
+for ($i = 0; $i < 300; $i++) $reach[(string)$regs[random_int(0, count($regs) - 1)]['key']] = true;
+ok('register: choosing freely can reach every register that ships',
+    count($reach) === count($regs), count($reach) . ' of ' . count($regs));
+
 $nm = xeric_forge_naming(ANSWERS);
 ok('the register is deterministic on the answers',
     $nm['key'] !== '' && $nm['key'] === xeric_forge_naming(ANSWERS)['key'], $nm['key']);

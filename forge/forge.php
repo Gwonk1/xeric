@@ -579,12 +579,28 @@ function xeric_forge_shelf_names(?string $dir = null): array
  * The naming context every pass reads: the chosen register, the overflow
  * banks, the banned lists as sets, and what the shelf already spent.
  *
- * DETERMINISTIC ON THE ANSWERS, and only the answers. The same answers pick
- * the same register, which is what keeps a character reroll in the same
- * register as the world it happens in — forge.answers ride the template for
- * exactly this kind of caller. Two worlds forged from identical answers land
- * in the same register too, and that is fine: the shelf gates make the second
- * one walk further down the same banks rather than repeat the first.
+ * PINNED BY THE ANSWERS, WHICH IS NOT THE SAME AS DERIVED FROM THEM.
+ *
+ * A character reroll must land in the register of the world it happens in —
+ * that is physics, not taste: you cannot put a Klingon in 1873 Ireland. The old
+ * shape got that right by DERIVING the register from a crc32 of five answer
+ * fields, so any caller holding the same answers computed the same register.
+ *
+ * But deriving it made the register a function of what somebody typed, and it
+ * had no variety of its own. Two forges from similar answers produced the same
+ * register every time — and the ✨ path, which draws from a handful of canned
+ * concepts, could only ever reach FIVE of the thirty registers. Twenty-five of
+ * them were unreachable unless you wrote your own premise. The owner pressed
+ * surprise twice and got the same one, which was not luck; it was arithmetic.
+ *
+ * So the register is now CHOSEN — freely, once, when a world is forged — and
+ * then written into the answers, which ride the template. Every later caller
+ * reads the pin instead of recomputing it, so a reroll stays in register for
+ * the same reason it did before, and two fresh worlds no longer have to agree.
+ *
+ * The crc32 remains as the fallback, and that is what makes this need no
+ * migration: a world forged before the pin existed has no `register` in its
+ * answers, derives the same one it always did, and its rerolls keep matching.
  */
 function xeric_forge_naming(array $answers): array
 {
@@ -597,12 +613,24 @@ function xeric_forge_naming(array $answers): array
     $i = 0;
     $row = [];
     if ($n > 0) {
-        $seed = mb_strtolower(implode('|', [
-            (string)($answers['name'] ?? ''), (string)($answers['job'] ?? ''),
-            (string)($answers['motivation'] ?? ''), (string)($answers['scale'] ?? ''),
-            mb_substr((string)($answers['premise'] ?? ''), 0, 200),
-        ]));
-        $i = (crc32($seed) & 0x7fffffff) % $n;
+        // The pin, when the world carries one.
+        $want = mb_strtolower(trim((string)($answers['register'] ?? '')));
+        $found = -1;
+        if ($want !== '') {
+            foreach ($rows as $k => $r) {
+                if (mb_strtolower((string)($r['key'] ?? '')) === $want) { $found = $k; break; }
+            }
+        }
+        if ($found >= 0) {
+            $i = $found;
+        } else {
+            $seed = mb_strtolower(implode('|', [
+                (string)($answers['name'] ?? ''), (string)($answers['job'] ?? ''),
+                (string)($answers['motivation'] ?? ''), (string)($answers['scale'] ?? ''),
+                mb_substr((string)($answers['premise'] ?? ''), 0, 200),
+            ]));
+            $i = (crc32($seed) & 0x7fffffff) % $n;
+        }
         $row = (array)$rows[$i];
     }
 
@@ -5336,6 +5364,28 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
 
     $iv = $opts['interview'] ?? null;
     $interview = is_array($iv) ? $iv : xeric_forge_interview(is_string($iv) ? $iv : null);
+
+    // THE REGISTER IS CHOSEN HERE, ONCE, AND FREELY — see xeric_forge_naming().
+    // Deriving it from the answers made it a function of what somebody typed
+    // rather than a thing the world got to have: two similar premises produced
+    // the same register every time, and the ✨ path could reach five of thirty.
+    //
+    // Written into the answers so it rides the template as `forge.answers`,
+    // which is exactly how a character reroll finds its way back to the same
+    // register a year later. Chosen, then pinned: free once, fixed after. A
+    // caller that already carries one — a reroll, a redraft, a test that wants
+    // the same world twice — passes it in and nothing here overrules them.
+    if (trim((string)($answers['register'] ?? '')) === '') {
+        $regRows = xeric_forge_registers()['registers'];
+        if ($regRows !== []) {
+            $pick = $regRows[random_int(0, count($regRows) - 1)];
+            $rk = trim((string)($pick['key'] ?? ''));
+            if ($rk !== '') {
+                $answers['register'] = $rk;
+                $note('register: ' . (string)($pick['label'] ?? $rk));
+            }
+        }
+    }
 
     $guard();
     $before = array_keys(xeric_forge_answers_clean($answers));

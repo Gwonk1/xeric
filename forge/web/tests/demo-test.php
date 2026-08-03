@@ -3628,6 +3628,18 @@ ok('sidebar: writing somebody new is the owner\'s button, inside the owner gate'
     preg_match('/\$w\[.mine.\][^;]*\?>\s*<button[^>]*id="qadd"/s', $playS) === 1
     || preg_match('/mine.*?id="qadd".*?endif/s', $playS) === 1);
 
+// THE REGISTER PIN SURVIVES THE FUNNEL. It is not an interview question, so the
+// key filter drops anything it does not recognise — and a REDRAFT re-forges from
+// these answers, so losing the pin there would re-roll the register and move a
+// world out of its own naming. Validated against the shipped list, because this
+// now arrives over HTTP.
+$pinIv = xeric_forge_interview(XERIC_WEB_LIB . '/forge/interview.json');
+ok('register: a real pin survives the answer funnel',
+    (xeric_web_clean_answers(['name' => 'Walt', 'register' => 'rustbelt_polish'], $pinIv)['register'] ?? '')
+        === 'rustbelt_polish');
+ok('register: and one nobody ships is dropped rather than carried',
+    !isset(xeric_web_clean_answers(['name' => 'Walt', 'register' => '../../etc/passwd'], $pinIv)['register']));
+
 // THE THREAD LIST. The clean room opens its sidebar with the conversations; this
 // app had none at all, so the chip bar was doing two jobs — "who exists" and
 // "who I am mid-conversation with" — and only answering the first.

@@ -1575,5 +1575,22 @@ function xeric_web_clean_answers(array $in, array $interview): array
     if (isset($out['rating']) || !xeric_session_adult()) {
         $out['rating'] = xeric_session_rating((string)($out['rating'] ?? ''));
     }
+
+    // THE REGISTER PIN SURVIVES THE FUNNEL. It is not an interview question, so
+    // the key filter above drops it — and a REDRAFT re-forges from these
+    // answers, which would have re-rolled the register and moved a world out of
+    // its own naming: the thing xeric_forge_naming() exists to prevent. You
+    // cannot put a Klingon in 1873 Ireland, and a redraft is still that Ireland.
+    //
+    // Validated against the shipped list rather than trusted, because this now
+    // arrives over HTTP: an unknown value is dropped, and xeric_forge_naming()
+    // falls back to deriving one, which is what a world with no pin does anyway.
+    $reg = mb_strtolower(trim((string)($in['register'] ?? '')));
+    if ($reg !== '') {
+        require_once XERIC_WEB_LIB . '/forge/forge.php';
+        foreach (xeric_forge_registers()['registers'] as $r) {
+            if (mb_strtolower((string)($r['key'] ?? '')) === $reg) { $out['register'] = $reg; break; }
+        }
+    }
     return $out;
 }
