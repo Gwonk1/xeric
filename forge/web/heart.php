@@ -78,7 +78,12 @@ function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, 
         $where = (string)($row['where'] ?? '');
         if ($where !== '') $rooms[$where] = ($rooms[$where] ?? 0) + 1;
     }
+    // Public places only — see xeric_chatter_public. Filtered here as well as in
+    // the run so the rota walks the rooms that can actually talk: with homes in
+    // the list the budget's starting point spent most of its turns on houses
+    // that were going to refuse.
     $rooms = array_keys(array_filter($rooms, fn($n) => $n >= XERIC_CHATTER_MIN));
+    $rooms = array_values(array_filter($rooms, fn($p) => xeric_chatter_public($t, (string)$p)));
     if ($rooms === []) return 0;
     sort($rooms);                                    // a stable order for the rota to walk
 

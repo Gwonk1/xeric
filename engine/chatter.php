@@ -156,6 +156,30 @@ function xeric_chatter_due(array $t, PDO $db, string $place, int $realNow, array
     ];
 }
 
+/**
+ * May a room be a channel at all?
+ *
+ * NOT SOMEBODY'S HOUSE. The first live beat filled six home conversations —
+ * Bragg cottage, Drubb house, the room over the blacksmith — because at 21:39
+ * that is genuinely where everybody was, and two people standing together was
+ * the only test. It read correctly and was completely wrong: a couple in their
+ * own kitchen is not a channel you walk into and scroll back through. What this
+ * feature is for is the bar, the post office, the diner — the places where a
+ * town overhears itself.
+ *
+ * A home is also where the walls matter most and where nobody consented to an
+ * audience. The private conversation between two people who live together is a
+ * thing the engine already has: it is a duet, and it is theirs.
+ */
+function xeric_chatter_public(array $t, string $place): bool
+{
+    foreach ((array)($t['places'] ?? []) as $p) {
+        if ((string)($p['key'] ?? '') !== $place) continue;
+        return mb_strtolower(trim((string)($p['kind'] ?? ''))) !== 'home';
+    }
+    return false;                                    // a place not on the map is not a room
+}
+
 /** Everyone alive and standing in this place right now. */
 function xeric_chatter_present(array $t, PDO $db, string $place, array $now): array
 {
@@ -299,6 +323,8 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
     $now     = $opts['now'] ?? xeric_clock_now($db, $t, $realNow);
     $epoch   = (int)($now['epoch'] ?? 0);
     $out     = ['said' => 0, 'place' => $place, 'pace' => 'steady', 'lines' => []];
+
+    if (!xeric_chatter_public($t, $place)) return $out;
 
     $present = xeric_chatter_present($t, $db, $place, $now);
     if (count($present) < XERIC_CHATTER_MIN) return $out;
