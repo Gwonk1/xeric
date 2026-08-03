@@ -340,6 +340,40 @@ if ($action !== '') {
                         'svg' => xeric_qr_svg($url, 4)]);
     }
 
+    // -- inviting somebody in the house ---------------------------------------
+    // The same LAN address the phone QR uses, pointed at join.php with a code
+    // on it. Owner only, obviously: an invitation somebody can invite
+    // themselves to is a door with no lock at all.
+    if ($action === 'invite' || $action === 'uninvite') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner invites anybody in.'], 403);
+        require_once XERIC_WEB_LIB . '/engine/pair.php';
+
+        if ($action === 'uninvite') {
+            xeric_pair_clear($w['db']);
+            xeric_web_json(['ok' => true, 'cleared' => true]);
+        }
+
+        $in  = xeric_web_input();
+        $way = (string)($in['way'] ?? 'guest');
+        try {
+            $made = xeric_pair_new($w['db'], (string)($in['name'] ?? ''), $way);
+        } catch (Throwable $e) {
+            xeric_web_json(['error' => trim((string)preg_replace('/^pair:\s*/', '', $e->getMessage()))], 409);
+        }
+
+        $lan = xeric_play_lan_url('join.php?w=' . rawurlencode((string)$w['slug'])
+                                . '&c=' . rawurlencode($made['code']));
+        if ($lan === null) {
+            xeric_web_json(['ok' => true, 'lan' => false, 'code' => $made['code'], 'ttl' => $made['ttl'],
+                'note' => 'This xeric is only listening to this computer, so a phone cannot reach it. '
+                        . 'Start it with ./xeric --lan and the code becomes something to scan — '
+                        . 'which also means anybody on that wifi can reach it, so do it on a network '
+                        . 'you know.']);
+        }
+        xeric_web_json(['ok' => true, 'lan' => true, 'code' => $made['code'], 'ttl' => $made['ttl'],
+                        'url' => $lan, 'svg' => xeric_qr_svg($lan, 4)]);
+    }
+
     // -- the world's shape, changed mid-play ----------------------------------
     // The other half of the wizard's rhythm answer, switchable from the same
     // cog: pace is how MUCH, shape is WHEN. Architecturally free to change
@@ -1623,6 +1657,16 @@ echo '<style>' . xeric_play_css() . '
       '<div class="xcrow"><button type="button" class="nbtn" id="xcqr">📱 open on my phone</button>' +
         '<span class="xchint">a code to scan from the same wifi</span></div>' +
       '<div class="xcqrbox" id="xcqrbox" hidden></div>' +
+      // SOMEBODY ELSE IN THE HOUSE. A different thing from "my phone": that one
+      // is the same person on a second screen, this one is a second PERSON, who
+      // gets their own place at the centre of the world and their own standing
+      // with everybody in it.
+      (MINE
+        ? '<div class="xcrow"><button type="button" class="nbtn" id="xcinv">👥 invite somebody here</button>' +
+          '<span class="xchint">a code for somebody else in the house to scan. They join THIS world, ' +
+          'not a copy — what they do happens to you too. Codes last five minutes and work once.</span></div>' +
+          '<div class="xcqrbox" id="xcinvbox" hidden></div>'
+        : '') +
       '<div class="xcrow"><button type="button" class="nbtn" id="xcoff">⏻ shut down</button>' +
         '<span class="xchint">stops the local xeric server itself — close the tab after</span></div>' +
       (MINE
@@ -1862,6 +1906,35 @@ echo '<style>' . xeric_play_css() . '
     });
     // The phone: asked when pressed, never on every cog open — it costs a
     // socket and most opens are not about the phone.
+    var inv = $('#xcinv');
+    if (inv) inv.addEventListener('click', function () {
+      var box = $('#xcinvbox');
+      box.hidden = false;
+      box.textContent = 'making a code…';
+      fetch('play.php?a=invite&w=' + encodeURIComponent(W), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          box.textContent = '';
+          if (!d || d.error) { box.textContent = (d && d.error) || 'no code came back'; return; }
+          if (d.svg) box.insertAdjacentHTML('beforeend', d.svg);
+          // THE CODE IN WORDS AS WELL AS IN A PICTURE. Half the time the camera
+          // will not focus, or the other phone is across the room, and reading
+          // eight characters out loud is faster than walking over.
+          var p = document.createElement('p');
+          p.className = 'xcqrurl';
+          p.textContent = d.code;
+          box.appendChild(p);
+          var s = document.createElement('p');
+          s.className = 'xchint';
+          s.textContent = d.lan
+            ? 'Scan it, or open ' + d.url.replace(/&c=.*$/, '') + ' and type the code. It runs out in five minutes.'
+            : (d.note || '');
+          box.appendChild(s);
+        })
+        .catch(function () { box.textContent = 'no code came back'; });
+    });
+
     $('#xcqr').addEventListener('click', function () {
       var box = $('#xcqrbox');
       box.hidden = false;

@@ -164,6 +164,19 @@ foreach ($pages as [$path, $what, $needle]) {
 // Opening it is a click, and a click needs a driver — but the cog is BUILT by
 // a function on the page, so the honest cheap check is that the function and
 // every element it reaches for exist in the source it was compiled into.
+// The join screen, reached the way a phone reaches it. In this harness the
+// browser OWNS the world — solo mode keys a session to the machine — so the
+// property under test is the other one: being already through the door is the
+// opposite of an error, and somebody who is already in goes into the world
+// rather than at a form telling them their code is spent.
+[$joinDom, ] = $visit('/join.php?w=smoke-town&c=NOTACODE');
+ok('somebody already in this world is sent into it, not shown a code form',
+    !str_contains($joinDom, 'The code'),
+    mb_substr(preg_replace('/\s+/', ' ', strip_tags($joinDom)) ?? '', 0, 120));
+[$joinGone, ] = $visit('/join.php?w=no-such-world&c=NOTACODE');
+ok('and a code for a world this machine does not have says so plainly',
+    str_contains($joinGone, 'no xeric here'));
+
 [$playDom, ] = $visit('/play.php?w=smoke-town');
 foreach ([
     'the pace switch'   => 'data-pace',
@@ -172,6 +185,7 @@ foreach ([
     'the stories'       => 'xcstories',
     'the money dial'    => 'data-money',
     'the card table'    => 'data-sit',
+    'the invitation'    => 'xcinv',
 ] as $what => $needle) {
     ok("the cog carries $what", str_contains($playDom, $needle) || str_contains($playDom, 'openXericCog'),
         'neither the control nor its builder is on the page');

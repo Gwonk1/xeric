@@ -1267,7 +1267,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
           'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php',
-          'debrief.php'];
+          'debrief.php', 'join.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);

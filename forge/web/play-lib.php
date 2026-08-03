@@ -388,7 +388,13 @@ function xeric_play_guard(string $slug, string $because, ?string $sid = null): v
     if (!is_file(xeric_web_worlds_dir() . '/' . $slug . '/world-template.json')) {
         xeric_play_no("No xeric called '$slug' has been forged here.", 404, 'There is no xeric to show you');
     }
-    if (xeric_session_owns($slug, $sid ?? xeric_session_id())) return;
+    // OWNING AND PLAYING ARE TWO DIFFERENT THINGS. Somebody who came through a
+    // pairing code is in this world for real — the owner's own evening, not a
+    // forked copy — so they pass the door. What they may DO once inside is a
+    // separate question, answered by $w['mine'] at every action that changes
+    // the machine or the world rather than the story.
+    $sid = $sid ?? xeric_session_id();
+    if (xeric_session_player($slug, $sid) !== null) return;
 
     xeric_play_no($because, 403, 'That xeric is not yours to read',
         'What everybody in it privately wants, and what one of them is not allowed to know, are the whole of '
@@ -5594,4 +5600,43 @@ function xeric_voice_choices(PDO $db, string $handle, ?string $sid = null): arra
                   'on' => $b === $now];
     }
     return $out;
+}
+
+
+/**
+ * This machine's address ON THE NETWORK, with a path hung off it — or null.
+ *
+ * Asked of the routing table rather than guessed: a UDP socket aimed at a
+ * public address picks the interface a phone would come back through, and
+ * connects to nothing (UDP has no handshake, and no packet is ever sent).
+ * Falls back to the Host header, which on a LAN-bound server IS the address
+ * the browser dialled.
+ *
+ * Null means there is nothing a phone could reach — either this xeric is
+ * listening only to its own machine, or the machine cannot work out its own
+ * address. Both are the caller's to explain; they are different sentences.
+ */
+function xeric_play_lan_url(string $path): ?string
+{
+    $host = (string)(getenv('XERIC_BIND') ?: '127.0.0.1');
+    $port = (string)(getenv('XERIC_PORT') ?: '8787');
+    if ($host === '127.0.0.1' || $host === 'localhost') return null;
+
+    $ip = '';
+    if (function_exists('socket_create')) {
+        $sock = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+        if ($sock !== false) {
+            if (@socket_connect($sock, '203.0.113.1', 9)) {   // TEST-NET-3, routed nowhere
+                @socket_getsockname($sock, $ip);
+            }
+            @socket_close($sock);
+        }
+    }
+    if ($ip === '') {
+        $h = (string)preg_replace('/:\d+$/', '', (string)($_SERVER['HTTP_HOST'] ?? ''));
+        if (filter_var($h, FILTER_VALIDATE_IP) && !in_array($h, ['127.0.0.1', '::1'], true)) $ip = $h;
+    }
+    if ($ip === '' || $ip === '0.0.0.0') return null;
+
+    return 'http://' . $ip . ':' . $port . '/' . ltrim($path, '/');
 }

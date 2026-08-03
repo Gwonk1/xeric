@@ -313,6 +313,40 @@ function xeric_session_owns(string $slug, ?string $sid = null): bool
     return false;
 }
 
+/**
+ * WHICH PERSON AT THE CENTRE THIS SESSION IS, in this world. Null for nobody.
+ *
+ * The owner is player one. Somebody who came through a pairing code is the
+ * player their code minted, remembered here against the world's slug — and
+ * OWNING and PLAYING are two different things from this line on. The person
+ * whose machine it is stays the person whose machine it is: a guest may play a
+ * world, and may not shut the server down, edit the world, or delete anything.
+ */
+function xeric_session_player(string $slug, ?string $sid = null): ?int
+{
+    $sid  = $sid ?? xeric_session_id();
+    $slug = xeric_web_slug($slug);
+    if ($slug === '') return null;
+    if (xeric_session_owns($slug, $sid)) return 1;              // XERIC_PLAYER_FIRST
+
+    $s = xeric_web_session_read($sid);
+    $id = (int)((array)($s['joined'] ?? []))[$slug] ?? 0;
+    return $id > 1 ? $id : null;
+}
+
+/** Remember that this session came in through a code, as this person. */
+function xeric_session_join(string $slug, int $player, ?string $sid = null): void
+{
+    $sid  = $sid ?? xeric_session_id();
+    $slug = xeric_web_slug($slug);
+    if ($slug === '' || $player < 2 || !preg_match('/^[a-f0-9]{32}$/', $sid)) return;
+    xeric_web_session_edit(function (array &$s) use ($slug, $player): void {
+        $j = (array)($s['joined'] ?? []);
+        $j[$slug] = $player;
+        $s['joined'] = $j;
+    }, $sid);
+}
+
 /** Record that this session forged this world. Idempotent. */
 function xeric_session_claim(string $slug, ?string $sid = null): void
 {
@@ -415,8 +449,22 @@ function xeric_session_db(string $slug, ?string $sid = null): array
     $slug = xeric_web_slug($slug);
     $dir  = xeric_web_worlds_dir() . '/' . $slug;
 
+    // THE OWNER, AND ANYBODY THEY LET IN, PLAY THE SAME DATABASE.
+    //
+    // Forking is for a stranger reading somebody else's shelf: they get a copy
+    // so their evening does not move the owner's on. A guest who came through a
+    // pairing code is the exact opposite case — being in the SAME evening is
+    // the entire point of having been invited, and handing them a private copy
+    // would give two people in one house two silently diverging towns.
+    //
+    // `mine` stays false for them, and that is not a slip: it is the flag every
+    // owner-only action reads, so a guest plays the real world and still cannot
+    // shut the server down, edit the template, or delete anything.
     if (xeric_session_owns($slug, $sid)) {
         return ['path' => $dir . '/world.db', 'mine' => true, 'forked' => false];
+    }
+    if (xeric_session_player($slug, $sid) !== null) {
+        return ['path' => $dir . '/world.db', 'mine' => false, 'forked' => false];
     }
 
     $mine = xeric_session_db_dir($sid) . '/' . $slug . '.db';
