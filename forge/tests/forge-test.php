@@ -1484,6 +1484,77 @@ ok('axes: the observed repeat offenders are still gated, invented register or no
     in_array('vane', $bannedFam, true) && in_array('thorne', $bannedFam, true));
 
 $regs = xeric_forge_registers()['registers'];
+// A PREMISE DECIDES THE REGISTER; THE DICE DECIDE ONLY WHAT NOBODY HAS.
+//
+// The coordinate exists because nobody said what the world is — on Auto Generate
+// the era, the people and the place SHOULD be rolled. Somebody who typed a
+// paragraph has already said, and rolling anyway put the two in a fight: a
+// Cornish fishing village whose coordinate came up rust-belt Polish got a
+// register invented for the wrong country, and every gate downstream then
+// enforced it AGAINST the brief. That fight is new — until the gates landed the
+// register was a suggestion the model could drift away from.
+(function (): void {
+    $seen = [];
+    $stub = ['base' => 'stub://', 'stub' => function (string $tag, array $m, array $o) use (&$seen): array {
+        $seen[] = (string)($m[1]['content'] ?? '');
+        return ['label' => 'x', 'sound' => 'x',
+            'given' => ['Jowan', 'Pasco', 'Pol', 'Elowen', 'Tamsin', 'Kit', 'Meryn', 'Zennor'],
+            'family' => ['Trevail', 'Pascoe', 'Kendall', 'Polglaze', 'Penhaligon', 'Vian'],
+            'toponyms' => ['Porthkerro', 'Zennor Cliffs', 'The Cober', 'Black Rock'],
+            'businesses' => ["Pascoe's Provisions", 'The Wheal Fortune Inn', 'Trevail & Son', 'Old Quay Stores'],
+            'church' => 'St. Piran'];
+    }];
+    // A coordinate deliberately at war with the brief.
+    $hostile = ['era' => 'the present day', 'people' => 'rust-belt Polish',
+                'place' => 'a mining camp that outlived the seam'];
+    $brief = 'A Cornish fishing village in 1890. The pilchard boats are failing.';
+
+    xeric_forge_register_invent($hostile, $stub, null, $brief);
+    $asked = $seen[0] ?? '';
+    ok('register: a premise is what the naming culture is invented FROM',
+        str_contains($asked, 'Cornish fishing village in 1890'), mb_substr($asked, 0, 120));
+    ok('register: and the coordinate that disagreed with it is not in the prompt at all',
+        !str_contains($asked, 'rust-belt Polish') && !str_contains($asked, 'outlived the seam'),
+        mb_substr($asked, 0, 200));
+
+    $seen = [];
+    xeric_forge_register_invent($hostile, $stub, null, '');
+    ok('register: with nothing written, the dice still decide — that is what they are for',
+        str_contains($seen[0] ?? '', 'rust-belt Polish'), mb_substr($seen[0] ?? '', 0, 120));
+})();
+
+// AN ENTRY THAT SHARES NO ALPHABET WITH ITS OWN BANK IS NOISE, not a name. A
+// live invention for that Cornish village came back with surnames Trevail,
+// Pascoe, Kendall, Polglaze, Penhaligon, 秉, Vian, Nance — one stray character
+// in eight good ones, non-empty and under sixty characters, which was the whole
+// test. The gates would have walked it like any other surname.
+(function (): void {
+    $mk = function (array $family): array {
+        return ['base' => 'stub://', 'stub' => function ($t, $m, $o) use ($family): array {
+            return ['label' => 'x', 'sound' => 'x',
+                'given' => ['Jowan', 'Pasco', 'Pol', 'Elowen', 'Tamsin', 'Kit', 'Meryn', 'Zennor'],
+                'family' => $family,
+                'toponyms' => ['Porthkerro', 'Zennor Cliffs', 'The Cober', 'Black Rock'],
+                'businesses' => ["Pascoe's Provisions", 'The Wheal Fortune Inn', 'Trevail & Son', 'Old Quay Stores'],
+                'church' => 'St. Piran'];
+        }];
+    };
+    $c = ['era' => '1890', 'people' => 'Cornish', 'place' => 'a fishing village'];
+    $r = xeric_forge_register_invent($c, $mk(['Trevail', 'Pascoe', 'Kendall', 'Polglaze', 'Penhaligon', '秉', 'Vian', 'Nance']));
+    ok('register: the one entry that is not in the bank\'s own alphabet is dropped',
+        is_array($r) && !in_array('秉', (array)$r['family'], true)
+        && in_array('Penhaligon', (array)$r['family'], true),
+        implode(', ', (array)($r['family'] ?? [])));
+
+    // AND THE POINT IS NOT THAT CHINESE NAMES ARE WRONG. A register FOR a Chinese
+    // place should be entirely Chinese; what was wrong was one of them among
+    // eight Cornish ones. A uniform bank is left alone whichever way it is.
+    $cn = $mk(['李', '王', '张', '刘', '陈', '杨', '黄', '赵']);
+    $r2 = xeric_forge_register_invent(['era' => '1930s', 'people' => 'Shanghainese', 'place' => 'a treaty port'], $cn);
+    ok('register: a bank that is uniformly another alphabet is left entirely alone',
+        is_array($r2) && count((array)$r2['family']) === 8, implode(', ', (array)($r2['family'] ?? [])));
+})();
+
 // AN INVENTED REGISTER IS HELD TO THE BAN LIST TOO. registers.json says a gate
 // that swaps a ban for a ban loops, and the suite holds the thirty written
 // registers to it — but nothing held the invented ones, which is a gap that only

@@ -528,11 +528,27 @@ function xeric_forge_coordinate(): array
  * Returns a register in registers.json's own shape, or null — and null is a
  * normal answer rather than an error. Every caller falls back to the table.
  */
-function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $note = null): ?array
+function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $note = null, string $brief = ''): ?array
 {
-    $where = trim(implode(', ', array_filter([
-        (string)($coord['place'] ?? ''), (string)($coord['people'] ?? ''),
-        (string)($coord['era'] ?? '')])));
+    // WHERE THE REGISTER COMES FROM, and it is not always the dice.
+    //
+    // The coordinate exists because nobody said what the world is: on Auto
+    // Generate the era, the people and the place SHOULD be rolled, and that is
+    // the whole point of four thousand of them. Somebody who typed a paragraph
+    // has already said, and rolling anyway put the two in a fight — a Cornish
+    // fishing village whose coordinate came up rust-belt Polish gets a register
+    // invented for the wrong country, and then every gate downstream enforces it
+    // AGAINST the brief. That fight is new: until the gates landed the register
+    // was a suggestion the model could drift away from, and drifting toward what
+    // somebody wrote was the right drift.
+    //
+    // So: the dice decide only what nobody has decided.
+    $brief = trim($brief);
+    $where = $brief !== ''
+        ? mb_substr($brief, 0, 1200)
+        : trim(implode(', ', array_filter([
+            (string)($coord['place'] ?? ''), (string)($coord['people'] ?? ''),
+            (string)($coord['era'] ?? '')])));
     if ($where === '') return null;
 
     $shape = '{ "label": "…", "sound": "…", "given": ["…"], "family": ["…"], '
@@ -544,7 +560,13 @@ function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $n
             . 'and what its streets and businesses are actually called. '
             . 'Reply with ONE JSON object and nothing else.'],
         ['role' => 'user', 'content' =>
-            "THE PLACE: " . $where . ".\n\n"
+            ($brief !== ''
+                ? "THE PLACE, described by the person who wants it:\n" . $where . "\n\n"
+                  . "Work out where and when this is, and invent the naming culture THAT place "
+                  . "really uses. If they named the country, the region, the decade, a town or a "
+                  . "person, those are facts and the names come from there — do not relocate them. "
+                  . "If they left something open, decide it in a way their description would allow.\n\n"
+                : "THE PLACE: " . $where . ".\n\n")
             . "Write the names this place would really use — the ones on its mailboxes, its "
             . "shopfronts and its road signs. Specific to THIS place and era, never generic "
             . "fantasy or thriller names.\n\n"
@@ -596,8 +618,33 @@ function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $n
             if ($k !== '') $banned[$k] = true;
         }
     }
+    // AN ENTRY THAT SHARES NO ALPHABET WITH ITS OWN BANK IS NOISE, not a name.
+    //
+    // A live invention for a Cornish fishing village came back with surnames
+    // Trevail, Pascoe, Kendall, Polglaze, Penhaligon, 秉, Vian, Nance — one
+    // stray CJK character in eight good ones. Nothing caught it: it is non-empty
+    // and it is under sixty characters, which was the whole test. The gates
+    // would have walked it like any other surname and hung it over a door.
+    //
+    // Judged against the bank rather than against a list of allowed scripts,
+    // because the point is not that Chinese names are wrong — a register FOR a
+    // Chinese place should be entirely Chinese. What is wrong is one of them
+    // among eight Cornish ones. The majority decides and the odd one out goes;
+    // a bank that is uniform either way is left alone.
+    $scrub = static function (array $rows): array {
+        $rows = array_values(array_filter($rows, fn($r) => preg_match('/\p{L}/u', $r) === 1));
+        if (count($rows) < 4) return $rows;
+        $latin = 0;
+        foreach ($rows as $r) if (preg_match('/\p{Latin}/u', $r) === 1) $latin++;
+        if ($latin === 0 || $latin === count($rows)) return $rows;
+        $keep = $latin * 2 >= count($rows);
+        return array_values(array_filter($rows,
+            fn($r) => (preg_match('/\p{Latin}/u', $r) === 1) === $keep));
+    };
+
     $dropped = 0;
-    $list = static function ($v, int $min) use ($banned, &$dropped): array {
+    $junk = 0;
+    $list = static function ($v, int $min) use ($banned, $scrub, &$dropped, &$junk): array {
         $out = [];
         foreach ((array)$v as $x) {
             $x = trim(preg_replace('/\s+/u', ' ', (string)$x) ?? '');
@@ -612,6 +659,9 @@ function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $n
             $out[] = $x;
         }
         $out = array_values(array_unique($out));
+        $was = count($out);
+        $out = $scrub($out);
+        $junk += $was - count($out);
         return count($out) >= $min ? $out : [];
     };
 
@@ -621,14 +671,16 @@ function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $n
     // somebody else's culture. Short banks are refused whole.
     $reg = [
         'key'        => 'invented',
-        'label'      => trim((string)($raw['label'] ?? '')) ?: $where,
+        // NOT $where any more: that was a coordinate, three or four words long,
+        // and it is now potentially a whole paragraph somebody typed.
+        'label'      => trim((string)($raw['label'] ?? '')) ?: ($brief !== '' ? 'this place' : $where),
         'sound'      => trim((string)($raw['sound'] ?? '')),
         'given'      => $list($raw['given'] ?? [], 8),
         'family'     => $list($raw['family'] ?? [], 6),
         'toponyms'   => $list($raw['toponyms'] ?? [], 4),
         'businesses' => $list($raw['businesses'] ?? [], 4),
         'church'     => trim((string)($raw['church'] ?? '')),
-        'coord'      => $coord,
+        'coord'      => $brief !== '' ? ['from' => 'brief'] : $coord,
     ];
     if ($reg['sound'] === '' || $reg['given'] === [] || $reg['family'] === []
         || $reg['toponyms'] === [] || $reg['businesses'] === []) {
@@ -636,8 +688,10 @@ function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $n
         return null;
     }
     if ($note) {
-        $note('register: ' . $reg['label'] . ' — ' . $where
-              . ($dropped > 0 ? " ({$dropped} name(s) already worn out elsewhere, dropped)" : ''));
+        $note('register: ' . $reg['label'] . ' — '
+              . ($brief !== '' ? 'read out of what you wrote' : $where)
+              . ($dropped > 0 ? " ({$dropped} name(s) already worn out elsewhere, dropped)" : '')
+              . ($junk > 0 ? " ({$junk} that were not names in this alphabet, dropped)" : ''));
     }
     return $reg;
 }
@@ -5834,8 +5888,12 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
         // written into the answers, which ride the template, so a character
         // reroll a year from now reads back the same one. Free once, fixed
         // after: you cannot put a Klingon in 1873 Ireland.
+        // A PREMISE IS AN ANSWER, so the dice do not get asked. The coordinate
+        // is still rolled — a brief that turns out to say nothing usable falls
+        // back to it inside the call rather than to no register at all.
+        $regBrief = trim((string)($answers['premise'] ?? ''));
         $coord = xeric_forge_coordinate();
-        $invented = xeric_forge_register_invent($coord, $endpoint, $note);
+        $invented = xeric_forge_register_invent($coord, $endpoint, $note, $regBrief);
         if ($invented !== null) {
             $answers['register'] = $invented;
         } else {
