@@ -754,8 +754,47 @@ WRITE ONE JSON OBJECT
     $out = [];
     foreach ((array)($raw['talk'] ?? []) as $l) {
         $l = trim(preg_replace('/\s+/u', ' ', (string)$l) ?? '');
-        if ($l !== '') $out[] = mb_substr($l, 0, 200);
+        if ($l === '') continue;
+        $l = mb_substr($l, 0, 200);
+
+        // SPEECH ONLY, AND CHECKED RATHER THAN ASKED FOR. The prompt says it in
+        // words — "no narration, no thoughts, nothing anybody could not HEAR" —
+        // and until now nothing enforced it, which is model-proposes /
+        // code-disposes inverted on a surface that writes into the player's
+        // feed. A line with nothing in quotes is not somebody talking.
+        //
+        // NOT the sweep's interiority gate, deliberately. That reads for
+        // "realised", "felt", "wondered" — right for third-person prose and
+        // wrong here, because these lines ARE quoted speech and sweeps.php's own
+        // comment on the `overheard` field says why: "I felt awful about it" is
+        // a perfectly legal thing to say out loud. The checkable form of this
+        // rule is the shape, not the vocabulary.
+        if (!preg_match('/["\x{201C}\x{201D}\x{2018}\x{2019}].*\S.*["\x{201C}\x{201D}\x{2018}\x{2019}]/u', $l)) {
+            continue;
+        }
+
+        $out[] = $l;
         if (count($out) >= 8) break;
     }
+
+    // AND THE FLOOR, over the whole night at once, the way every other
+    // generation surface in this engine does it — chat, room, duet, proactive,
+    // sweep, seed, constructs and the watch line all carry it and this one did
+    // not. Seats come from the world's own presence read with no age filter, so
+    // a child at the church-basement game is in the cast list handed to the
+    // model, and nothing looked at what came back.
+    //
+    // Refused WHOLE rather than line by line: the talk is one night's worth and
+    // half of it is not a shorter night, it is a night with a hole in it. A
+    // quiet game is already the documented failure mode here.
+    //
+    // The player's seat is dropped from the handle list first — `@you` resolves
+    // to no character, xeric_viewer() fails closed and would call the person at
+    // the centre a child, which would make this stricter than the rule it is
+    // enforcing. The floor is about the cast, whose ages the template knows.
+    $cast = array_values(array_filter(array_keys($net),
+        fn($h) => !str_starts_with((string)$h, XERIC_TABLE_YOU)));
+    if ($out !== [] && xeric_age_floor($t, $cast, $out) !== null) return [];
+
     return $out;
 }

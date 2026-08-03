@@ -461,9 +461,17 @@ $tEp = ['base' => 'stub://', 'stub' => function (string $tag, array $m) use (&$t
                        'Dot: "You said that an hour ago."', '', str_repeat('x', 400)]];
 }];
 $talk = xeric_table_talk($T, $TABLE, $sit, $tEp);
-ok('talk: it comes back as spoken lines', count($talk) === 3
+ok('talk: it comes back as spoken lines', count($talk) === 2
     && str_contains($talk[0], 'quarters'));
-ok('talk: and nothing runs away with the transcript', mb_strlen($talk[2]) <= 200);
+// SPEECH ONLY, CHECKED RATHER THAN ASKED FOR. The prompt has always said "no
+// narration, nothing anybody could not HEAR" and nothing enforced it — which is
+// model-proposes/code-disposes inverted on a surface that writes into the
+// player's feed. The stub's four-hundred-x line has nothing in quotes, so it is
+// not somebody talking and does not survive.
+ok('talk: a line with nobody speaking in it is not table talk',
+    count(array_filter($talk, fn($l) => str_contains($l, 'xxx'))) === 0, json_encode($talk));
+ok('talk: and nothing runs away with the transcript',
+    max(array_map('mb_strlen', $talk)) <= 200);
 ok('talk: the model is describing a night that is already settled',
     str_contains($tSaw, 'do not change it') && str_contains($tSaw, 'hands'));
 ok('talk: it is handed the TELLS the schema has carried all along',
@@ -473,6 +481,42 @@ ok('talk: and told a tell is something a person does, never announces',
 ok('talk: a model that will not answer leaves a quiet game, not a broken one',
     xeric_table_talk($T, $TABLE, $sit,
         ['base' => 'stub://', 'stub' => function () { throw new RuntimeException('down'); }]) === []);
+
+// AND THE FLOOR, which every other generation surface in this engine carries and
+// this one did not: chat, room, duet, proactive, sweep, seed, constructs and the
+// watch line all screen what comes back. Seats come from the world's own
+// presence read with no age filter, so a child at the church-basement game is in
+// the cast list handed to the model — and nothing looked at the answer.
+//
+// theo is fifteen in this fixture's cast.
+$floorEp = ['base' => 'stub://', 'stub' => fn(): array => ['talk' => [
+    'Harlan: "Deal them."',
+    'Dot: "He only turns up for the sex talk, never the cards."',
+]]];
+$kidSit = $sit;
+$kidSit['net'] = ['harlan' => 4, 'theo' => -4];
+ok('talk: an hour of that with a child at the table is refused whole',
+    xeric_table_talk($T, $TABLE, $kidSit, $floorEp) === []);
+// Refused WHOLE, not filtered: half a night is not a shorter night, it is a
+// night with a hole in it, and a quiet game is the documented failure here.
+//
+// AND THE CAST IN THIS FILE STATES NO AGES AT ALL, which is why the adult case
+// needs its own: xeric_is_minor() treats a missing age as a child, on purpose
+// and everywhere, so a table of ageless people is a table of children as far as
+// the floor is concerned. That is the fail-closed posture doing its job rather
+// than a fixture problem, and it is worth seeing it happen.
+$adultT = $T;
+foreach ($adultT['cast']['characters'] as $i => $c) {
+    if ((string)$c['handle'] !== 'theo') $adultT['cast']['characters'][$i]['age'] = 50;
+}
+$adultSit = $sit;
+$adultSit['net'] = ['harlan' => 4, 'dot' => -4];
+ok('talk: a table of people whose ages nobody wrote down is refused too',
+    xeric_table_talk($T, $TABLE, $adultSit, $floorEp) === []);
+ok('talk: and the same night among stated adults is nobody\'s business but theirs',
+    count(xeric_table_talk($adultT, $TABLE, $adultSit, $floorEp)) === 2);
+ok('talk: an ordinary night with the child at the table is still a night',
+    count(xeric_table_talk($T, $TABLE, $kidSit, $tEp)) === 2);
 
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 

@@ -199,7 +199,7 @@ function xeric_duet(array $t, PDO $db, string $a, string $b, array $now, array $
 
         $messages = xeric_duet_messages($t, $speaker, $partner, $system[$speaker], $lines,
             $tails[$speaker], $now, $walls[$speaker], $deaths,
-            $i === 0, $i === $turns - 1);
+            $i === 0, $i === $turns - 1, null, $db);
 
         $u  = [];
         $t0 = microtime(true);
@@ -635,8 +635,24 @@ function xeric_duet_scene(array $t, string $me, string $other, array $room, arra
  */
 function xeric_duet_messages(array $t, string $me, string $other, string $system, array $lines,
                              array $scene, array $now, array $walls, array $deaths,
-                             bool $opening, bool $closing, ?string $playerWhere = null): array
+                             bool $opening, bool $closing, ?string $playerWhere = null,
+                             ?PDO $db = null): array
 {
+    // $db IS FOR THE WEATHER, and it was being read out of thin air. The call
+    // below has always passed `$db` as xeric_prompt_now_block()'s last argument,
+    // and this function had no such parameter — so PHP handed it null.
+    //
+    // WHAT THAT ACTUALLY COST, stated precisely because the derived sky is fine
+    // without a database and it would be easy to overclaim here: the DERIVATION
+    // still ran, so a duet always had weather. What `$db` carries is the
+    // NARRATOR'S HAND — xeric_weather_told() reads a day the narrator set, and
+    // that is the one thing allowed to beat the derivation. So a narrator could
+    // put rain over the town, every chat turn and every offscreen hour would
+    // have it, and the two people standing in it having a scene would be talking
+    // about hazy heat. Verified both ways before and after.
+    //
+    // Optional so the signature stays back-compatible; both real callers have a
+    // database in hand and now pass it.
     $partner = xeric_world_name($t, $other);
 
     $coach = $scene;

@@ -478,6 +478,44 @@ ok('material: and neither speaker\'s private material crosses the table',
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// THE NARRATOR'S HAND ON THE SKY REACHES A SCENE.
+//
+// xeric_duet_messages() passed `$db` to xeric_prompt_now_block() and had no such
+// parameter, so PHP handed it null. The DERIVED sky was fine without it — a duet
+// always had weather — but `$db` is what carries xeric_weather_told(), the day
+// the narrator set, which is the one thing allowed to beat the derivation. So a
+// narrator could put rain over the town, every chat turn and every offscreen
+// hour would have it, and the two people standing in it having a scene would be
+// talking about hazy heat.
+// ---------------------------------------------------------------------------
+
+echo "\n# the sky a scene stands under\n";
+
+$wxDb = fresh_db('weather');
+xeric_state_seed($wxDb, $T);
+$wxWalls = xeric_viewer_walls($T, xeric_viewer($T, ['handle' => 'ruth']));
+$wxTold  = 'Rain since before light, and it has not let up.';
+xeric_world_state_set($wxDb, 'weather:' . substr((string)$TUE['iso'], 0, 10), $wxTold);
+
+$wxMsgs = fn(?PDO $d): string => json_encode(xeric_duet_messages(
+    $T, 'ruth', 'dot', 'SYS', [], [], $TUE, $wxWalls, [], true, false, null, $d));
+
+ok('weather: a scene given no database cannot hear the narrator',
+    !str_contains($wxMsgs(null), 'Rain since'));
+ok('weather: and one given the database stands in the rain the narrator called for',
+    str_contains($wxMsgs($wxDb), 'Rain since'));
+ok('weather: the derived sky was never the thing missing — it is there either way',
+    xeric_weather_line($T, $TUE, null) !== ''
+    && str_contains($wxMsgs(null), xeric_weather_line($T, $TUE, null)));
+// And the real caller passes it, which is the wiring rather than the function.
+ok('weather: the duet loop hands its own database down',
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/duet.php'),
+        '$i === 0, $i === $turns - 1, null, $db);'));
+ok('weather: and so does the watch surface',
+    str_contains((string)file_get_contents(dirname(__DIR__, 2) . '/forge/web/play-lib.php'),
+        "\$pw !== '' ? \$pw : null, \$db);"));
+
 foreach ($DBFILES as $f) {
     foreach ([$f, $f . '-wal', $f . '-shm'] as $p) @unlink($p);
 }
