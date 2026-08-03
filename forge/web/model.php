@@ -126,13 +126,44 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         $ok   = $b !== '' && filter_var($b, FILTER_VALIDATE_URL) !== false && $host !== '';
         if ($ok && !xeric_web_host_open($host) && !$edit) $ok = false;
         if ($ok) {
-            xeric_web_session_edit(function (array &$s) use ($b): void {
-                $s['image'] = ['base' => $b];
+            // Connect is also the harvest: the provider's dialect (the a1111
+            // family reads inline <lora:> tags; others take words only) and
+            // its LoRA inventory, each with trigger words out of its own
+            // training metadata. Everything found starts ENABLED — the person
+            // who installed those files installed them to be used — and the
+            // card is where any of them is switched off.
+            $kind  = '';
+            $pic   = xeric_model_art_who($b);
+            if (stripos((string)$pic['name'], 'ComfyUI') !== false)      $kind = 'comfy';
+            elseif ((string)$pic['name'] !== '')                          $kind = 'a1111';
+            $found = [];
+            try {
+                foreach (xeric_image_loras(['base' => $b]) as $l) {
+                    $found[(string)$l['name']] = array_values((array)$l['words']);
+                }
+            } catch (Throwable $e) { /* a machine with no loras is a machine */ }
+            xeric_web_session_edit(function (array &$s) use ($b, $kind, $found): void {
+                $s['image'] = ['base' => $b, 'kind' => $kind, 'loras' => $found];
             }, $sid);
             header('Location: model.php');
             exit;
         }
         header('Location: model.php?no=' . rawurlencode(xeric_model_no($b, $host, $edit)));
+        exit;
+    }
+    if ($act === 'lora') {
+        // One toggle: off stores false under the name (listed, declined), on
+        // restores the harvested words carried in the form.
+        $name = trim((string)($_POST['name'] ?? ''));
+        $on   = (string)($_POST['on'] ?? '') === '1';
+        $words = array_values(array_filter(array_map('trim', explode(',', (string)($_POST['words'] ?? '')))));
+        if ($name !== '') {
+            xeric_web_session_edit(function (array &$s) use ($name, $on, $words): void {
+                if (!isset($s['image']) || !is_array($s['image'])) return;
+                $s['image']['loras'][$name] = $on ? $words : false;
+            }, $sid);
+        }
+        header('Location: model.php');
         exit;
     }
     if ($act === 'imageoff') {
@@ -620,6 +651,26 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
         <?php else: ?>
         <p class="whois">Local: renders cost your own electricity and GPU time, nothing metered.
           Every render is still counted on the meter.</p>
+        <?php endif; ?>
+        <?php
+          // The style shelf: every LoRA the machine is holding, its harvested
+          // trigger words beside it, one toggle each. All of it feeds the
+          // reaper's prompts BEFORE the rating cap, never on a minor's frame.
+          $imgLoras = (array)(xeric_web_session_read($sid)['image']['loras'] ?? []);
+        ?>
+        <?php if ($imgLoras !== []): ?>
+        <p class="whois"><strong>Styles found on this machine</strong> — trigger words read out of
+          each file's own training metadata; switched-on ones season every render:</p>
+        <?php foreach ($imgLoras as $ln => $lw): $lOn = $lw !== false; ?>
+        <form method="post" action="model.php" class="whois">
+          <input type="hidden" name="act" value="lora">
+          <input type="hidden" name="name" value="<?= h((string)$ln) ?>">
+          <input type="hidden" name="words" value="<?= h(implode(', ', $lOn ? (array)$lw : [])) ?>">
+          <input type="hidden" name="on" value="<?= $lOn ? '0' : '1' ?>">
+          <button type="submit" class="btn<?= $lOn ? ' join' : '' ?>"><?= $lOn ? '✓ ' : '' ?><?= h((string)$ln) ?></button>
+          <span class="wmodel"><?= h($lOn ? implode(', ', (array)$lw) : 'off') ?></span>
+        </form>
+        <?php endforeach; ?>
         <?php endif; ?>
         <div class="mact"><form method="post" action="model.php">
           <input type="hidden" name="act" value="imageoff">

@@ -261,6 +261,21 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
     $ask = trim((string)($opts['ask'] ?? ''));
     if ($ask !== '') $bits[] = rtrim($ask, '.');
 
+    // THE LORA LAYER — aesthetic, never identity. Harvested trigger words fold
+    // in here, BEFORE the rating language, so the cap still gets the last
+    // word; and a frame with a minor in it takes no LoRA at all, outright —
+    // a style vocabulary trained on who-knows-what does not get within arm's
+    // reach of the floor, belt and braces.
+    $lorasUsed = [];
+    if (!($who !== null && $who['minor'])) {
+        foreach ((array)($opts['loras'] ?? []) as $l) {
+            $lw = array_filter(array_map('strval', (array)($l['words'] ?? [])));
+            if ($lw === [] || (string)($l['name'] ?? '') === '') continue;
+            $bits[] = implode(', ', $lw);
+            $lorasUsed[] = (string)$l['name'];
+        }
+    }
+
     // THE STRUCTURAL CAP. A minor in frame forces the floor — wholesome,
     // clothed, daylight terms appended in code, whatever the world's rating,
     // whatever the ask said, and never left to a provider's classifier.
@@ -279,6 +294,10 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
     }
 
     return ['prompt' => implode('. ', $bits) . '.', 'seeds' => $seeds, 'kind' => $kind, 'rating' => $eff,
+            // The render path needs both: which LoRAs to load (a1111 tags are
+            // its dialect, not the prompt's), and whether a minor is in frame
+            // — the rating alone cannot say, since sfw is also a world tier.
+            'loras' => $lorasUsed, 'minor' => $who !== null && $who['minor'],
             // The structured parts ride along for the caption: deriving six
             // words from prose would mean parsing our own sentence back.
             'parts' => ['who' => $who !== null ? $who['name'] : '', 'ask' => $ask, 'place' => $placeName]];
@@ -408,8 +427,20 @@ function xeric_image_render(array $endpoint, array $composed, array $opts = []):
 
     $base = rtrim((string)($endpoint['base'] ?? ''), '/');
     if ($base === '') throw new RuntimeException('photo: no image machine is configured');
+
+    // The LoRA loader tags, in the one dialect that reads them inline. Their
+    // WORDS are already in the prompt (composed before the rating cap); the
+    // tags are how an a1111-family server knows to load the weights at all.
+    // Never on a minor's frame — compose already refused the words, and the
+    // tags follow the same law.
+    $prompt = (string)$composed['prompt'];
+    if (strtolower((string)($endpoint['kind'] ?? '')) === 'a1111'
+            && empty($composed['minor']) && (array)($composed['loras'] ?? []) !== []) {
+        $tags = array_map(fn($n) => '<lora:' . $n . ':0.8>', (array)$composed['loras']);
+        $prompt = implode(' ', $tags) . ' ' . $prompt;
+    }
     $body = json_encode([
-        'prompt' => (string)$composed['prompt'],
+        'prompt' => $prompt,
         'seed'   => (int)($composed['seeds']['face'] ?? $composed['seeds']['place']['exterior'] ?? 0),
         'n'      => 1,
         'response_format' => 'b64_json',
@@ -427,6 +458,98 @@ function xeric_image_render(array $endpoint, array $composed, array $opts = []):
     $bytes = base64_decode($b64, true);
     if ($bytes === false) throw new RuntimeException('photo: the image machine answered with bad base64');
     return ['bytes' => $bytes, 'usage' => (array)($j['usage'] ?? [])];
+}
+
+/**
+ * Trigger words out of a LoRA's own training metadata.
+ *
+ * A safetensors LoRA carries `ss_tag_frequency` — the tag counts of the set
+ * it was trained on — and the top few tags ARE its effective trigger
+ * vocabulary, no guessing required. This takes that structure in any of the
+ * shapes providers hand it back (a JSON string, a dict of dataset-dirs each
+ * holding tag counts, or a flat tag => count map), merges, drops the booru
+ * boilerplate every dataset carries (1girl, masterpiece, simple background —
+ * words that describe every image and therefore none), and keeps the top
+ * five. Pure, so the harvest is testable without a server.
+ */
+function xeric_image_lora_words($freq, int $keep = 5): array
+{
+    if (is_string($freq)) $freq = json_decode($freq, true);
+    if (!is_array($freq)) return [];
+
+    // Dataset-dir nesting flattens; a flat map passes through.
+    $counts = [];
+    foreach ($freq as $k => $v) {
+        if (is_array($v)) { foreach ($v as $tag => $n) $counts[(string)$tag] = ($counts[(string)$tag] ?? 0) + (int)$n; }
+        else $counts[(string)$k] = ($counts[(string)$k] ?? 0) + (int)$v;
+    }
+
+    static $noise = ['1girl', '1boy', '2girls', 'solo', 'highres', 'absurdres', 'lowres',
+        'masterpiece', 'best quality', 'high quality', 'looking at viewer', 'simple background',
+        'white background', 'grey background', 'realistic', 'photorealistic', 'blurry',
+        'upper body', 'full body', 'portrait', 'smile', 'open mouth', 'closed mouth'];
+    $out = [];
+    foreach ($counts as $tag => $n) {
+        $tag = trim(str_replace('_', ' ', mb_strtolower((string)$tag)));
+        if ($tag === '' || in_array($tag, $noise, true)) continue;
+        $out[$tag] = ($out[$tag] ?? 0) + $n;
+    }
+    arsort($out);
+    return array_slice(array_keys($out), 0, max(1, $keep));
+}
+
+/**
+ * The LoRAs an image machine is holding, each with its harvested words.
+ *
+ * A1111 answers /sdapi/v1/loras with everything embedded; ComfyUI names its
+ * files through the object graph and hands each file's header back through
+ * /view_metadata (capped — a hoard of two hundred LoRAs is not worth two
+ * hundred requests on the one screen somebody is looking at). A file with no
+ * usable metadata still lists, with its own name as the only word, editable
+ * on the machines screen — a guess owned up to beats a file hidden.
+ *
+ * @return array<int,array{name:string,words:array<int,string>}>
+ */
+function xeric_image_loras(array $endpoint, int $cap = 25): array
+{
+    if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) {
+        return (array)($endpoint['stub'])('loras', [], []);
+    }
+    $base = rtrim((string)($endpoint['base'] ?? ''), '/');
+    if ($base === '') return [];
+    $get = function (string $url) {
+        $ctx = stream_context_create(['http' => ['timeout' => 6, 'ignore_errors' => true]]);
+        $raw = @file_get_contents($url, false, $ctx);
+        return is_string($raw) ? json_decode($raw, true) : null;
+    };
+
+    $out = [];
+
+    // A1111: one call, everything embedded.
+    $rows = $get($base . '/sdapi/v1/loras');
+    if (is_array($rows)) {
+        foreach (array_slice($rows, 0, $cap) as $r) {
+            if (!is_array($r)) continue;
+            $name  = trim((string)($r['alias'] ?? $r['name'] ?? ''));
+            if ($name === '') continue;
+            $words = xeric_image_lora_words($r['metadata']['ss_tag_frequency'] ?? null);
+            $out[] = ['name' => $name, 'words' => $words !== [] ? $words : [mb_strtolower($name)]];
+        }
+        return $out;
+    }
+
+    // ComfyUI: the graph names the files, the header endpoint yields each one.
+    $info  = $get($base . '/object_info/LoraLoader');
+    $files = (array)($info['LoraLoader']['input']['required']['lora_name'][0] ?? []);
+    foreach (array_slice($files, 0, $cap) as $f) {
+        $f = (string)$f;
+        if ($f === '') continue;
+        $meta  = $get($base . '/view_metadata/loras?filename=' . rawurlencode($f));
+        $words = xeric_image_lora_words($meta['ss_tag_frequency'] ?? null);
+        $name  = preg_replace('/\.(safetensors|pt|ckpt)$/i', '', basename($f));
+        $out[] = ['name' => $name, 'words' => $words !== [] ? $words : [mb_strtolower((string)$name)]];
+    }
+    return $out;
 }
 
 /**
@@ -509,12 +632,14 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                 $composed = xeric_photo_prompt($t, 'message', [
                     'handle' => $mh, 'ask' => (string)($job['ask'] ?? ''),
                     'place' => $at !== null ? (string)$at : '', 'now' => $now,
-                    'with_carries' => true,
+                    'with_carries' => true, 'loras' => (array)($endpoint['loras'] ?? []),
                 ]);
             } else {
                 $composed = $kind === 'place'
-                    ? xeric_photo_prompt($t, 'place', ['place' => $subj, 'now' => $now])
-                    : xeric_photo_prompt($t, 'portrait', ['handle' => $subj, 'ask' => 'a portrait']);
+                    ? xeric_photo_prompt($t, 'place', ['place' => $subj, 'now' => $now,
+                                                       'loras' => (array)($endpoint['loras'] ?? [])])
+                    : xeric_photo_prompt($t, 'portrait', ['handle' => $subj, 'ask' => 'a portrait',
+                                                          'loras' => (array)($endpoint['loras'] ?? [])]);
             }
             $img  = xeric_image_render($endpoint, $composed);
             $file = $kind . '-' . preg_replace('/[^a-z0-9_-]+/i', '_', $subj) . '.png';

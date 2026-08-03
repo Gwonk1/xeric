@@ -152,6 +152,28 @@ if ($action !== '') {
                         'note' => 'Takes effect from the next hour and the next reply.']);
     }
 
+    // -- the world's shape, changed mid-play ----------------------------------
+    // The other half of the wizard's rhythm answer, switchable from the same
+    // cog: pace is how MUCH, shape is WHEN. Architecturally free to change
+    // mid-play because a shape never reaches a prompt — it is code-side pacing
+    // (engine/shape.php), so the switch cannot bust one cached prefix. The
+    // cycle re-reads from seeded_at on the new curve, so the world simply
+    // stands wherever the new rhythm says a world this old stands.
+    if ($action === 'shape') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner shapes a xeric.'], 403);
+        $in   = xeric_web_input();
+        $want = strtolower(trim((string)($in['shape'] ?? '')));
+        if (!isset(xeric_story_shapes()[$want])) {
+            xeric_web_json(['error' => '"' . mb_substr($want, 0, 24) . '" is not a shape this engine knows'], 400);
+        }
+        $t2 = $w['template'];
+        $t2['events']['story_shape'] = $want;
+        xeric_review_save((string)$w['slug'], $t2);
+        xeric_web_json(['ok' => true, 'shape' => $want,
+                        'label' => (string)(xeric_story_shapes()[$want]['label'] ?? $want),
+                        'note' => 'Takes effect from the next hour the world lives.']);
+    }
+
     // -- the world's own pulse ------------------------------------------------
     // The shelf's pulse says which xerics move; this one says what moved INSIDE
     // the open one, so the sidebar's rooms, the chips and the clock repaint
@@ -1167,6 +1189,20 @@ echo '<style>' . xeric_play_css() . '
   var WNAME = <?= json_encode((string)$T['meta']['name']) ?>;
   var MINE = <?= $w['mine'] ? 'true' : 'false' ?>;
   var PACE = <?= json_encode((string)($T['events']['pace'] ?? 'steady')) ?>;
+  <?php
+    // The shape and where the world stands on it, for the cog's own line.
+    // A story-carrying world is paced by its story and says so instead.
+    $shapeKey  = xeric_story_shape_key($T);
+    $shapeAmb  = ($w['stories'] ?? []) === [] ? xeric_story_ambient($T, $w['db'], xeric_clock_epoch($w['db'])) : [];
+    $shapeLine = ($w['stories'] ?? []) !== []
+        ? 'paced by its story'
+        : ($shapeAmb === [] ? 'no arc — the place just runs'
+            : 'day ' . (int)floor($shapeAmb['p'] * (int)(xeric_story_shapes()[$shapeKey]['cycle_days'] ?? 0))
+              . ' of ' . (int)(xeric_story_shapes()[$shapeKey]['cycle_days'] ?? 0)
+              . ' — ' . str_replace('_', ' ', (string)$shapeAmb['stage']));
+  ?>
+  var SHAPE = <?= json_encode($shapeKey) ?>;
+  var SHAPELINE = <?= json_encode($shapeLine) ?>;
   var MEFACE = <?= json_encode(xeric_play_face([
       'handle' => '__you', 'display_name' => $userName,
       'pronouns' => (string)($T['user']['pronouns'] ?? ''),
@@ -1365,6 +1401,18 @@ echo '<style>' . xeric_play_css() . '
           }).join('') +
           '<span class="xchint">the world\'s pace, changeable mid-play: how much happens offscreen ' +
           'AND how fast anybody texts back — calm is the token brake</span></div>' +
+          '<div class="xcrow"><select class="nbtn" id="xcshape">' +
+          ['none', 'snake', 'slow_burn', 'episodic', 'tidal', 'turn'].map(function (k) {
+            var names = { none: 'no arc', snake: 'the plot snake', slow_burn: 'a slow burn',
+                          episodic: 'episodic', tidal: 'tidal', turn: 'a turn, not a fight' };
+            return '<option value="' + k + '"' + (k === SHAPE ? ' selected' : '') + '>' +
+              (names[k] || k) + '</option>';
+          }).join('') +
+          (SHAPE === 'custom' || SHAPE === 'invented'
+            ? '<option value="' + SHAPE + '" selected>invented (this world\'s own)</option>' : '') +
+          '</select>' +
+          '<span class="xchint">the story\'s shape — WHEN things build and rest. ' +
+          'Right now: ' + SHAPELINE + '</span></div>' +
           '<div class="xcrow"><a class="nbtn" href="review.php?w=' + encodeURIComponent(W) + '#repass">📖 literary repass</a>' +
           '<span class="xchint">an editor reads the whole xeric: contradictions, plotline, and the snake’s pacing</span></div>' +
           '<div class="xcrow"><a class="nbtn" href="book.php?w=' + encodeURIComponent(W) + '">📕 the book</a>' +
@@ -1383,6 +1431,23 @@ echo '<style>' . xeric_play_css() . '
         if (to) requestAnimationFrame(function () { to.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
       });
     });
+    // The shape switch: same door as the pace, felt from the next lived hour.
+    var shSel = document.getElementById('xcshape');
+    if (shSel) shSel.addEventListener('change', function () {
+      if (shSel.value === SHAPE) return;
+      shSel.disabled = true;
+      fetch('play.php?a=shape&w=' + encodeURIComponent(W), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shape: shSel.value }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          shSel.disabled = false;
+          if (d && d.ok) { SHAPE = d.shape; toast('shape: ' + (d.label || d.shape) + ' — ' + (d.note || 'saved')); }
+          else { shSel.value = SHAPE; toast((d && d.error) || 'the shape did not take'); }
+        })
+        .catch(function () { shSel.disabled = false; shSel.value = SHAPE; toast('the shape did not take'); });
+    });
+
     // The pace switch: one press, saved through the review door, felt from
     // the next hour and the next reply. The toast is the receipt.
     $$('#cmodal [data-pace]').forEach(function (b) {

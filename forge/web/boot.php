@@ -960,7 +960,16 @@ xeric_image_source(function () {
     $base = trim((string)($img['base'] ?? ''));
     if (($img['off'] ?? false) === true) return false;  // explicitly none, env ignored
     if ($base === '') return null;
-    return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: '')];
+    // The provider's dialect and the ENABLED LoRAs ride the endpoint, so the
+    // reaper composes with the same style vocabulary the machines screen shows
+    // — one source, read at call time, per session.
+    $loras = [];
+    foreach ((array)($img['loras'] ?? []) as $name => $words) {
+        if ($words === false) continue;                 // listed but switched off
+        $loras[] = ['name' => (string)$name, 'words' => array_values((array)$words)];
+    }
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: ''),
+            'kind' => (string)($img['kind'] ?? ''), 'loras' => $loras];
 });
 
 xeric_photo_meter(function (array $u, string $where = ''): void {

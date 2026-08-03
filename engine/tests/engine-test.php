@@ -2274,6 +2274,42 @@ xeric_photo_reap($phT, $rpDb, $rpDir, $mpStub, 50);
 ok('message photo: a claim gone stale is reclaimed — a dead reaper wedges nothing',
     (string)(xeric_photo_thread($rpDb, $mpConv)[$mpMid2]['status'] ?? '') === 'done');
 
+// LORAS: the trigger words are already in the files. The harvest reads
+// ss_tag_frequency in whatever shape a provider hands it back, drops the
+// booru boilerplate that describes every image and therefore none, and keeps
+// the top few. Aesthetic layer only — never near a minor's frame.
+echo "\n# loras\n";
+
+$loFreq = ['/data/img' => ['1girl' => 900, 'masterpiece' => 800, 'grain' => 120,
+                           'kodachrome' => 300, 'faded photo' => 200, 'sun flare' => 40]];
+ok('lora: the top real tags survive and the boilerplate does not',
+    xeric_image_lora_words($loFreq, 3) === ['kodachrome', 'faded photo', 'grain'],
+    json_encode(xeric_image_lora_words($loFreq, 3)));
+ok('lora: a JSON string is the same answer as the array — providers differ, we do not',
+    xeric_image_lora_words(json_encode($loFreq), 3) === xeric_image_lora_words($loFreq, 3));
+ok('lora: two dataset dirs merge rather than fight',
+    in_array('kodachrome', xeric_image_lora_words(
+        ['a' => ['kodachrome' => 10], 'b' => ['kodachrome' => 90, 'grain' => 20]], 2), true));
+ok('lora: underscores read as words, because that is how they were typed',
+    xeric_image_lora_words(['sun_flare' => 50], 1) === ['sun flare']);
+ok('lora: nothing usable is nothing claimed', xeric_image_lora_words(null) === []
+    && xeric_image_lora_words(['1girl' => 10]) === []);
+
+$loStub = ['stub' => fn() => [['name' => 'kodachrome70', 'words' => ['kodachrome', 'faded photo']]]];
+ok('lora: an endpoint hands its shelf back through the same seam',
+    xeric_image_loras($loStub)[0]['name'] === 'kodachrome70');
+
+$loOn = [['name' => 'kodachrome70', 'words' => ['kodachrome', 'faded photo']]];
+$loP  = xeric_photo_prompt($phT, 'portrait', ['handle' => 'ruth', 'loras' => $loOn]);
+ok('lora: the words season the prompt, and the rating cap still lands after them',
+    str_contains($loP['prompt'], 'kodachrome')
+    && strpos($loP['prompt'], 'kodachrome') < strpos($loP['prompt'], 'wholesome')
+    && $loP['loras'] === ['kodachrome70'], $loP['prompt']);
+$loKid = xeric_photo_prompt($phT, 'portrait', ['handle' => 'theo', 'loras' => $loOn]);
+ok('lora: a frame with a child in it takes NO style at all — not capped, excluded',
+    !str_contains($loKid['prompt'], 'kodachrome') && $loKid['loras'] === []
+    && $loKid['minor'] === true, $loKid['prompt']);
+
 // The machines-screen seam: the web layer registers a resolver and the engine
 // asks it at call time. A base is an endpoint; false is EXPLICITLY none (even
 // an environment address is ignored); null falls through to the environment.
