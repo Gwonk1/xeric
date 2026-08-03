@@ -1247,7 +1247,7 @@ $denied = function (string $uri) use ($patterns): bool {
 // patterns are anchored (^|/) and closed (/|$) for exactly those two shapes.
 $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/state.php',
              '/worker.php', '/tick-worker.php', '/reroll-worker.php', '/addchar-worker.php',
-             '/photo-worker.php', '/forge/worker.php',
+             '/photo-worker.php', '/story-worker.php', '/forge/worker.php',
              '/heart.php', '/router.php',
              '/worker.php/extra', '/boot.php', '/ui.php', '/play-lib.php', '/review-lib.php',
              '/why-lib.php', '/session.php', '/limits.php', '/queue.php',

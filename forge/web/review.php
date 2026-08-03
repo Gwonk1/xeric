@@ -556,6 +556,54 @@ if ($action !== '') {
         xeric_web_json(['ok' => true, 'url' => $url]);
     }
 
+    // -- inject a story ------------------------------------------------------
+    // The overlay door: somebody's own paragraph becomes a mystery laid over a
+    // town that keeps running underneath it. An overlay edits nothing, so this
+    // is safe on a world somebody has lived in for a week — and closing the
+    // story later leaves the template byte-for-byte the one that was always
+    // there. One model call, detached, watched through progress.php.
+    if ($action === 'story') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner writes into a xeric.'], 403);
+        $ask = trim((string)($in['ask'] ?? ''));
+        if (mb_strlen($ask) > 2000) $ask = mb_substr($ask, 0, 2000);
+
+        xeric_limit_guard(xeric_limit_check('reroll', ['sid' => $sid]));
+
+        $endpoint = xeric_review_pick_endpoint((array)($in['model'] ?? []));
+        if ($endpoint['kind'] !== 'local' && trim((string)$endpoint['key']) === '') {
+            xeric_web_json(['error' => 'That machine is an API and needs a key.', 'kind' => 'needs_key'], 400);
+        }
+        if (!xeric_llm_up($endpoint, 8)) {
+            xeric_web_json(['error' => 'The model at ' . $endpoint['base'] . ' is not answering, so there '
+                . 'is nothing to write the story with. Your xeric is exactly as you left it.',
+                'kind' => 'model_down'], 503);
+        }
+        if (xeric_queue_drained()) {
+            $r = xeric_queue_drained_no();
+            xeric_web_json(['error' => (string)$r['message'], 'kind' => 'drained', 'retry_after' => 120], 503);
+        }
+        $why    = null;
+        $ticket = xeric_queue_join('reroll', $sid, $why);
+        if ($ticket === '') {
+            $r = is_array($why) ? $why : xeric_queue_no('full', 'reroll');
+            xeric_web_json(['error' => (string)$r['message'], 'kind' => (string)($r['kind'] ?? 'full'),
+                            'retry_after' => (int)($r['retry_after'] ?? 60)],
+                           ($r['kind'] ?? '') === 'yours' ? 429 : 503);
+        }
+
+        $job = xeric_web_job_new();
+        xeric_web_job_sweep();
+        try {
+            xeric_web_spawn($job, ['slug' => $slug, 'ask' => $ask, 'sid' => $sid,
+                                   'ticket' => $ticket, 'endpoint' => $endpoint], 'story-worker.php');
+        } catch (Throwable $e) {
+            xeric_queue_leave($ticket);
+            xeric_web_json(['error' => 'that story could not be started: ' . $e->getMessage()], 500);
+        }
+        xeric_limit_note('reroll', ['sid' => $sid]);
+        xeric_web_json(['ok' => true, 'job' => $job]);
+    }
+
     if ($action === 'reroll') {
         $what = (string)($in['what'] ?? '');
         // 'draft' is the whole book again — every section in one job. Not in
@@ -822,6 +870,25 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
     <ul class="rfind" id="rfind" hidden></ul>
   </div>
 
+  <?php if ($w['mine']): ?>
+  <!-- THE STORY DOOR. An overlay is laid OVER a world and edits nothing in it,
+       which is why this is safe on a town somebody has been living in for a
+       week: close the story later and the template is byte-for-byte the one
+       that was always there. The box takes a paragraph, not a genre — "the
+       pastor's brother turns up owing money to the wrong person" is a story;
+       "a murder" is a category. -->
+  <div class="repassbar">
+    <label class="st" for="storyask">Lay a story over this xeric</label>
+    <textarea id="storyask" rows="3" placeholder="What happens? Whose fault is it, and who must never find out? A paragraph in your own words — or leave it empty and let the model find the story this town is already holding."></textarea>
+    <div>
+      <button class="greenbtn" type="button" id="storygo"
+              title="One model call. Writes story-KEY.json beside this world; the next open finds it and lays it on. It edits nothing — closing the story later leaves the world exactly as it is now.">🔎 Write the story</button>
+      <span class="st" id="storyst"></span>
+    </div>
+    <ul class="rfind" id="storyout" hidden></ul>
+  </div>
+  <?php endif; ?>
+
   <?php if (!$w['launched'] && $w['mine'] && $machines !== []): ?>
     <!-- THE SAME CHOOSER AS THE FORGE, in the same markup, because it is the
          same decision: which machine does this piece of work. It replaced three
@@ -945,6 +1012,61 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
     });
   }
   bindDice(document);
+
+  // -- the story door --------------------------------------------------------
+  // One press, one detached call, the stream's own notes underneath. The
+  // overlay lands on disk; the next open finds it. Nothing here edits the
+  // world, so there is nothing to undo and nothing to reload.
+  (function () {
+    var go = document.getElementById('storygo');
+    if (!go) return;
+    var st = document.getElementById('storyst');
+    var out = document.getElementById('storyout');
+    var say = function (msg, bad) {
+      out.hidden = false;
+      var li = document.createElement('li');
+      li.textContent = msg;
+      if (bad) li.className = 'bad';
+      out.appendChild(li);
+    };
+    go.addEventListener('click', function () {
+      go.disabled = true;
+      out.hidden = true; out.innerHTML = '';
+      st.textContent = 'writing…';
+      fetch('review.php?a=story&w=' + encodeURIComponent(W), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ask: (document.getElementById('storyask').value || '').trim(),
+                               model: rerollModel() })
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.d.ok) {
+            go.disabled = false; st.textContent = '';
+            say((res.d && res.d.error) || 'that did not start', true);
+            return;
+          }
+          var es = new EventSource('progress.php?job=' + encodeURIComponent(res.d.job));
+          es.addEventListener('hello', function (m) { st.textContent = JSON.parse(m.data).text || 'working'; });
+          es.addEventListener('queue', function (m) { st.textContent = JSON.parse(m.data).text || 'waiting'; });
+          es.addEventListener('note',  function (m) { say(JSON.parse(m.data).text || ''); });
+          es.addEventListener('done',  function (m) {
+            es.close(); go.disabled = false; st.textContent = '';
+            var d = JSON.parse(m.data);
+            say(d.text || 'written');
+            if (d.story) {
+              say('“' + d.story.title + '” — ' + d.story.logline);
+              say('It is laid over this xeric now. Open it and start asking.');
+            }
+          });
+          es.addEventListener('error', function (m) {
+            es.close(); go.disabled = false; st.textContent = '';
+            var t = 'the story fell over';
+            try { t = JSON.parse(m.data).text || t; } catch (e) {}
+            say(t, true);
+          });
+        })
+        .catch(function (e) { go.disabled = false; st.textContent = ''; say('could not reach the forge', true); });
+    });
+  })();
 
   // -- the literary repass ---------------------------------------------------
   // Findings land under the button. "show" scrolls to the field a finding is

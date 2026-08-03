@@ -1737,5 +1737,83 @@ ok('homes: everyone the model forgot is housed solo, and the set validates',
 ok('homes: the pass is idempotent — a housed world gets no second roofs',
     xeric_forge_pass_homes($hT, $hStub) === []);
 
+// ---------------------------------------------------------------------------
+// THE STORY DOOR. The engine has had a mystery in it for days and no way in;
+// this is the way in, and it is the shape-builder's lesson at full size — the
+// model proposes the STORY and code assembles the SCHEMA, so a model that
+// writes a wonderful story and a malformed file still produces a world that
+// runs. Every assertion here drives a spec that is wrong on purpose.
+// ---------------------------------------------------------------------------
+
+echo "\n# the story door\n";
+
+require_once __DIR__ . '/../story-forge.php';
+$stT = xeric_world_load(__DIR__ . '/../../engine/fixtures/milldale.json');
+
+// A spec that breaks four rules at once: a CHILD as culprit, the culprit also
+// listed as protected, a red herring pointing at the culprit, and half the
+// required fields simply missing.
+$stBad = [
+    'title' => 'The Mill Gate', 'logline' => 'Somebody has been in the mill at night.',
+    'truth' => 'Harlan has been letting himself in since the spring.',
+    'culprit' => 'theo',
+    'protect' => [['character' => 'theo', 'must_not_know' => 'who has the key'],
+                  ['character' => 'harlan']],
+    'beats' => [['title' => 'a light in the office', 'holder' => 'dot'],
+                ['title' => 'the chain was cut', 'place' => 'mill'],
+                ['title' => 'the key on his ring', 'holder' => 'ruth']],
+    'red_herrings' => [['believer' => 'pastor_dale', 'belief' => 'Kids from the county',
+                        'because' => 'He saw bikes', 'actually' => 'They were fishing']],
+];
+$stS = xeric_forge_story_build($stBad, $stT, 'the_mill_gate');
+
+ok('story: a child named as the culprit is quietly replaced by an adult',
+    $stS['cast']['culprit'] !== 'theo'
+    && !xeric_is_minor(xeric_world_character($stT, $stS['cast']['culprit'])), $stS['cast']['culprit']);
+ok('story: nobody is protected from their own guilt',
+    !in_array($stS['cast']['culprit'], array_column($stS['cast']['protect'], 'character'), true));
+ok('story: every protected head gets a namespaced wall that actually exists',
+    count($stS['walls']) === count($stS['cast']['protect'])
+    && (bool)array_filter($stS['walls'], fn($w) => str_starts_with((string)$w['key'], 'story.the_mill_gate.')));
+ok('story: the beats are ordered, spaced, and chained so each waits for the last',
+    count($stS['beats']) === 3
+    && $stS['beats'][0]['at'] < $stS['beats'][1]['at'] && $stS['beats'][1]['at'] < $stS['beats'][2]['at']
+    && ($stS['beats'][1]['opens_when']['after'] ?? []) === [$stS['beats'][0]['key']]);
+ok('story: a held beat gets all four fields it needs, defaulted where the model was silent',
+    ($stS['beats'][0]['piece'] ?? '') !== '' && ($stS['beats'][0]['while_locked'] ?? '') !== ''
+    && ($stS['beats'][0]['when_open'] ?? '') !== '' && ($stS['beats'][0]['spilled_as'] ?? '') !== '');
+ok('story: an unheld beat becomes an hour the world writes instead',
+    isset($stS['beats'][1]['as_event']) && !isset($stS['beats'][1]['holder']));
+ok('story: a wrong lead never points at the answer, and is disposed of exactly once',
+    ($stS['red_herrings'][0]['points_at'] ?? '') !== $stS['cast']['culprit']
+    && ($stS['red_herrings'][0]['collapses_on'] ?? '') !== '');
+ok('story: the snake is OMITTED — the world\'s own shape paces it',
+    !isset($stS['snake']));
+ok('story: and a wrong accusation is never an ending',
+    ($stS['resolution']['on_wrong']['closes'] ?? true) === false
+    && $stS['resolution']['answer'] === $stS['cast']['culprit']);
+
+// THE ASSERTION THAT MATTERS: it loads. Validated exactly the way
+// xeric_story_for() will validate it, world shape filled in.
+$stErr = err(fn() => xeric_story_validate(xeric_forge_story_probe($stS, $stT), $stT, 'built'));
+ok('story: the built overlay validates the way the loader will load it', $stErr === '', $stErr);
+
+// An empty spec is a story with no answer in it, and says so rather than
+// writing an overlay nobody can solve.
+ok('story: nothing to find out is refused outright',
+    err(fn() => xeric_forge_story_build([], $stT, 'x')) !== '');
+
+// And the round trip: written where the loader looks, read back, composed.
+$stDir = sys_get_temp_dir() . '/xeric-story-door-' . getmypid();
+@mkdir($stDir, 0775, true);
+@copy(__DIR__ . '/../../engine/fixtures/milldale.json', $stDir . '/world-template.json');
+xeric_forge_story_save($stS, $stDir);
+$stLoaded = xeric_story_for($stDir, $stT);
+ok('story: it lands where the loader looks and comes back whole',
+    count($stLoaded) === 1 && (string)$stLoaded[0]['key'] === 'the_mill_gate'
+    && !empty($stLoaded[0]['snake']['inherited']));
+foreach (glob($stDir . '/*') ?: [] as $f) @unlink($f);
+@rmdir($stDir);
+
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";
 exit($FAILED === 0 ? 0 : 1);
