@@ -633,6 +633,120 @@ if ($action !== '') {
         xeric_web_json(['ok' => true, 'text' => $line]);
     }
 
+    // Saying something into a room.
+    //
+    // The line lands whatever happens next — it is what the person said, and a
+    // model that will not answer does not un-say it. Then the room is asked for
+    // a short answer at the busy rate, because somebody standing there talking
+    // is the definition of a busy room (chatter.php).
+    if ($action === 'roomsay') {
+        require_once XERIC_WEB_LIB . '/engine/chatter.php';
+        $in2   = xeric_web_input();
+        $place = trim((string)($in2['place'] ?? ''));
+        $text  = trim((string)($in2['text'] ?? ''));
+        if ($text === '') xeric_web_json(['error' => 'nothing to say'], 400);
+        if (!xeric_chatter_public($w['template'], $place)) {
+            xeric_web_json(['error' => 'that is not a room in this xeric'], 400);
+        }
+        xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
+
+        $T2 = $w['template'];
+        $db2 = $w['db'];
+        $now2 = xeric_clock_now($db2, $T2);
+        $here = xeric_chatter_present($T2, $db2, $place, $now2);
+        if (count($here) < XERIC_CHATTER_MIN) {
+            xeric_web_json(['error' => 'There is nobody in there to hear it.', 'kind' => 'empty'], 409);
+        }
+
+        $conv = xeric_chatter_conversation($T2, $db2, $place);
+        xeric_message_append($db2, $conv, 'user', null, $text, (int)($now2['epoch'] ?? 0));
+
+        try { $endpoint = xeric_play_endpoint($sid); }
+        catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
+
+        $hold = xeric_queue_take('say', 6.0, 'room:' . $slug);
+        if (($hold['ok'] ?? false) !== true) {
+            // The line is already in. Saying "busy" here is honest about the
+            // answer, not about the sentence — which is why it is not a 500.
+            xeric_web_json(['ok' => true, 'lines' => [],
+                            'note' => 'the model is busy; they will pick it up on the beat']);
+        }
+        try {
+            $r = xeric_chatter_run($T2, $db2, $place, $endpoint,
+                ['force' => true, 'user_here' => true, 'now' => $now2, 'max_lines' => 3]);
+        } catch (Throwable $e) {
+            xeric_queue_release($hold);
+            xeric_web_json(['error' => $e->getMessage(), 'kind' => 'model'], 502);
+        }
+        xeric_queue_release($hold);
+        xeric_web_json(['ok' => true, 'lines' => array_map(
+            fn($l) => ['name' => (string)$l['name'], 'text' => (string)$l['text']],
+            (array)($r['lines'] ?? []))]);
+    }
+
+    // -- a room, as a channel ------------------------------------------------
+    //
+    // The same screen a person's thread uses, opened on a PLACE instead. It
+    // reads whether or not anybody is standing in it, because that is the whole
+    // point of a channel: you walk in and find out what was said while you were
+    // gone. Whether you may SAY anything is a different question, answered by
+    // whether there is anybody there to hear it.
+    if ($action === 'room') {
+        require_once XERIC_WEB_LIB . '/engine/chatter.php';
+        $place = trim((string)($_GET['p'] ?? ''));
+        if (!xeric_chatter_public($w['template'], $place)) {
+            xeric_web_json(['error' => 'That is not a room in this xeric — somebody\'s home is theirs.'], 400);
+        }
+        $T2  = $w['template'];
+        $db2 = $w['db'];
+        $now2 = xeric_clock_now($db2, $T2);
+        $conv = xeric_conversation_find($db2, $place, 'room');
+        $here = xeric_chatter_present($T2, $db2, $place, $now2);
+        $hrs  = [];
+        foreach ((array)($T2['places'] ?? []) as $pp) {
+            if ((string)($pp['key'] ?? '') === $place) { $hrs = (array)($pp['hours'] ?? []); break; }
+        }
+        $open = $hrs === [] || xeric_sweep_place_open($hrs,
+            (int)(xeric_world_minutes((string)($now2['hhmm'] ?? '00:00')) ?? 0), (int)($now2['dow'] ?? 0));
+
+        $msgs = [];
+        if ($conv !== null) {
+            foreach (xeric_messages_recent($db2, (int)$conv['id'], 60) as $m) {
+                $role = (string)$m['role'];
+                $h    = (string)($m['handle'] ?? '');
+                $msgs[] = [
+                    'role'   => $role,
+                    'handle' => $h,
+                    'name'   => $role === 'user' ? (trim((string)($T2['user']['name'] ?? '')) ?: 'you')
+                                                 : ($h !== '' ? xeric_world_name($T2, $h) : ''),
+                    'text'   => (string)$m['content'],
+                    'when'   => '',
+                ];
+            }
+            // Read is read: the dot goes out the moment the scrollback is on screen.
+            xeric_conversation_touch($db2, (int)$conv['id'], 0);
+        }
+
+        // WHY IT IS SHUT, in the world's own words rather than a disabled box.
+        // Three different silences — closed, empty, one person — and a composer
+        // that just refuses tells you none of them apart.
+        $why = '';
+        if (!$open)                     $why = xeric_world_place_name($T2, $place) . ' is shut at this hour.';
+        elseif ($here === [])           $why = 'Nobody is in here right now.';
+        elseif (count($here) < XERIC_CHATTER_MIN) $why = 'Only ' . xeric_world_name($T2, $here[0]) . ' is in here.';
+
+        xeric_web_json([
+            'ok'    => true,
+            'place' => $place,
+            'name'  => xeric_world_place_name($T2, $place),
+            'open'  => $open,
+            'who'   => array_map(fn($h) => ['h' => $h, 'name' => xeric_world_name($T2, $h)], $here),
+            'why'   => $why,
+            'can_say' => $why === '',
+            'messages' => $msgs,
+        ]);
+    }
+
     if ($action === 'thread') {
         $handle = trim((string)($_GET['h'] ?? ''));
         if (xeric_world_character($w['template'], $handle) === null) {
@@ -2281,9 +2395,129 @@ echo '<style>' . xeric_play_css() . '
     });
   }
 
+  // Saying something in a room.
+  //
+  // Not say.php: that path is one person answering one person, with their own
+  // cooldown and their own thread. Here the line goes into the channel and the
+  // ROOM answers — whoever the floor lands on, which may be nobody in
+  // particular and is never "the person you are talking to", because there
+  // isn't one.
+  function sendRoom(retryText) {
+    var box = $('#composer'), text = retryText || box.value.trim();
+    if (!text || busy || !openPlace) return;
+    busy = true;
+    $('#send').disabled = true;
+    $('#sayerr').hidden = true;
+    if (!retryText) { addMsg('me', text, ''); box.value = ''; box.style.height = ''; }
+    $('#thinkwhat').textContent = '';
+    $('#thinking').hidden = false;
+
+    fetch('play.php?a=roomsay&w=' + encodeURIComponent(W), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ place: openPlace, text: text }) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        busy = false;
+        $('#send').disabled = false;
+        $('#thinking').hidden = true;
+        if (!res.ok || !res.d.ok) {
+          $('#sayerr').textContent = (res.d && res.d.error) || 'the room did not answer';
+          $('#sayerr').hidden = false;
+          return;
+        }
+        (res.d.lines || []).forEach(function (l) { addMsg('them', l.text, '', null, l.name); });
+        // A room that heard you and said nothing is a real answer, and silence
+        // with no explanation reads as a broken page.
+        if (!(res.d.lines || []).length) addMsg('narr', 'Nobody picks it up.', '');
+      })
+      .catch(function () {
+        busy = false;
+        $('#send').disabled = false;
+        $('#thinking').hidden = true;
+        $('#sayerr').textContent = 'that did not reach the room';
+        $('#sayerr').hidden = false;
+      });
+  }
+
+  // DELEGATED, because the sidebar repaints itself every twelve seconds and a
+  // listener bound to a row dies with the row it was bound to.
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('[data-room]');
+    if (!b) return;
+    ev.preventDefault();
+    openRoom(b.dataset.room);
+  });
+
+  // -- a room ----------------------------------------------------------------
+  //
+  // The same screen a person's thread uses, opened on a PLACE. Everything about
+  // it that differs is a consequence of one fact: a channel has more than one
+  // other voice in it, and it goes on whether or not anybody is reading.
+  var openPlace = null;
+  var ROOMFACE = {};            // display name -> handle, so a bubble finds its disc
+
+  function openRoom(place) {
+    openHandle = null;
+    openPlace  = place;
+    ROOMFACE   = {};
+    $('#msgs').innerHTML = '';
+    pending = null;
+    $('#sayerr').hidden = true;
+    busy = false;
+    $('#thinking').hidden = true;
+    $('#tname').textContent = '';
+    $('#tone').textContent = '';
+    show('thread');
+
+    fetch('play.php?a=room&w=' + encodeURIComponent(W) + '&p=' + encodeURIComponent(place))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) {
+          $('#sayerr').textContent = d.error || 'that room will not open';
+          $('#sayerr').hidden = false;
+          return;
+        }
+        $('#tname').textContent = d.name;
+        (d.who || []).forEach(function (p) { ROOMFACE[p.name] = p.h; });
+
+        // WHO IS STANDING IN IT, where a person's thread puts their one line.
+        // The header answers the question a channel actually raises — is there
+        // anybody in here — and does it before the scrollback, which is history.
+        $('#tone').textContent = (d.who && d.who.length)
+          ? d.who.map(function (p) { return p.name; }).join(', ') + ' — in here now'
+          : (d.why || 'Nobody is in here.');
+
+        (d.messages || []).forEach(function (m) {
+          addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'),
+                 m.text, m.when, null, m.name);
+        });
+        if (!(d.messages || []).length) {
+          addMsg('narr', 'Nothing has been said in here yet.', '');
+        }
+
+        // THREE DIFFERENT SILENCES and the composer says which. A box that just
+        // refuses tells you the room is shut, empty and one-person-deep in
+        // exactly the same voice, which is no voice at all.
+        var can = !!d.can_say;
+        $('#send').disabled = !can;
+        $('#composer').disabled = !can;
+        $('#composer').value = '';
+        $('#composer').placeholder = can ? 'say something to the room…' : (d.why || 'nobody to say it to');
+        $('#thinkwho').textContent = 'the room';
+
+        refreshState();
+        if (can && window.innerWidth > 720) $('#composer').focus();
+      })
+      .catch(function () {
+        $('#sayerr').textContent = 'that room will not open';
+        $('#sayerr').hidden = false;
+      });
+  }
+
   // -- a thread ------------------------------------------------------------
   function openThread(handle) {
     openHandle = handle;
+    openPlace  = null;
     $('#msgs').innerHTML = '';
     pending = null;                                   // whatever was on screen went with the innerHTML
     $('#sayerr').hidden = true;
@@ -2332,6 +2566,12 @@ echo '<style>' . xeric_play_css() . '
   function faceOf(name) {
     if (name === ME && MEFACE) return { text: MEFACE.txt, hue: MEFACE.hue };
     var row = openHandle && $('#cast .person[data-h="' + openHandle + '"]');
+    // In a room there is no openHandle, so the speaker is found by the name on
+    // the bubble — otherwise every voice falls through to the hash below and the
+    // same person wears one colour in the sidebar and another in the channel.
+    if (!row && openPlace && ROOMFACE[name]) {
+      row = $('#cast .person[data-h="' + ROOMFACE[name] + '"]');
+    }
     if (row && row.dataset.av && name !== ME) {
       return { text: row.dataset.av, hue: parseInt(row.dataset.hue || '0', 10) };
     }
@@ -2342,13 +2582,16 @@ echo '<style>' . xeric_play_css() . '
     return { text: (initials || '?').toUpperCase(), hue: h };
   }
 
-  function addMsg(who, text, when, photo) {
+  // `name` is the fifth argument and only a ROOM passes it: a one-to-one thread
+  // has exactly one "them" and its name is already in the header, but a channel
+  // has four of them and an unlabelled bubble in a group chat belongs to nobody.
+  function addMsg(who, text, when, photo, name) {
     var li = document.createElement('li');
-    li.className = who;
+    li.className = who + (name ? ' named' : '');
 
     var face = '';
     if (who !== 'narr') {
-      var f = faceOf(who === 'me' ? (ME || 'you') : ($('#tname').textContent || '?'));
+      var f = faceOf(who === 'me' ? (ME || 'you') : (name || $('#tname').textContent || '?'));
       face = '<span class="av" style="--hue:' + f.hue + '" aria-hidden="true">' + esc(f.text) + '</span>';
     }
 
@@ -2364,7 +2607,9 @@ echo '<style>' . xeric_play_css() . '
            + '<span class="mcap">' + esc(photo.caption || text) + '</span>';
     }
 
-    li.innerHTML = face + '<span class="b">' + body
+    li.innerHTML = face + '<span class="b">'
+                 + (name && who === 'them' ? '<span class="spk">' + esc(name) + '</span>' : '')
+                 + body
                  + (when ? '<span class="st">' + esc(when) + '</span>' : '') + '</span>';
     // BOUND, NOT WRITTEN AS AN ATTRIBUTE. An inline `onerror=` is inline script,
     // and the Content-Security-Policy grants no 'unsafe-inline' — so as an
@@ -2497,6 +2742,7 @@ echo '<style>' . xeric_play_css() . '
 
   function send(retryText, tries) {
     var box = $('#composer'), text = retryText || box.value.trim();
+    if (openPlace) { sendRoom(retryText); return; }
     if (!text || (busy && !retryText) || !openHandle) {
       // A queued turn re-sends itself on a timer. If the visitor closed the
       // thread in the meantime this is where that timer lands, and returning

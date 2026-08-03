@@ -1441,11 +1441,9 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         // $rowsFor was called for 'chat' and 'event' only, so a channel the
         // heartbeat had been filling for an hour rendered as nothing at all.
         //
-        // Not a button yet. The row shows the place, the last thing said in it
-        // and whether it is unread, which is the whole point of a channel you
-        // were not in — but there is nowhere for it to open TO until the room
-        // view exists, and a button that does nothing is the lie this file
-        // already refuses to tell about links.
+        // The place, the last thing said in it, and whether it is unread — which
+        // is the whole point of a channel you were not standing in. It opens the
+        // room view, which is the person-thread screen pointed at a place.
         $roomRows = '';
         foreach ($threads as $tr) {
             if ((string)($tr['kind'] ?? '') !== 'room') continue;
@@ -1455,11 +1453,11 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
             $snip = trim(preg_replace('/\s+/u', ' ', (string)($tr['last'] ?? '')) ?? '');
             if (mb_strlen($snip) > 64) $snip = rtrim(mb_substr($snip, 0, 64)) . '…';
             $roomRows .= '<li class="thr thrroom' . ((int)($tr['unread'] ?? 0) > 0 ? ' unread' : '') . '">'
-                       . '<span class="wperson thrb">'
+                       . '<button type="button" class="wperson thrb" data-room="' . h($k) . '">'
                        . '<span class="rdisc" aria-hidden="true">◻</span>'
                        . '<span><span class="wn">' . h($name) . '</span>'
                        . ($snip !== '' ? '<span class="thrl">' . h($snip) . '</span>' : '')
-                       . '</span></span></li>';
+                       . '</span></button></li>';
         }
 
         $chats  = $rowsFor('chat');
@@ -4234,9 +4232,13 @@ summary.sh:focus-visible{outline:1px solid var(--accent);outline-offset:2px;bord
 body.skipping .wplace{opacity:.45;pointer-events:none}
 body.skipping .wplace .wgo2{visibility:hidden}
 .wperson.gone{cursor:default;opacity:.55}
-/* A room thread. Not a person, so not a portrait disc — a doorway mark, and no
-   pointer, because there is nowhere for it to open to yet. */
-.thrroom .wperson{cursor:default}
+/* A room thread. Not a person, so not a portrait disc — a doorway mark. */
+/* WHO SAID IT, in a channel. A one-to-one thread names its counterpart once in
+   the header; a room has four of them and an unlabelled bubble belongs to
+   nobody. Small and dim: the name is a label on the line, not a headline over
+   it, and a room where every bubble shouts a name reads as a log file. */
+.msgs li.named .spk{display:block;font-size:.7rem;font-weight:600;letter-spacing:.02em;
+  color:var(--accent-dim);margin:0 0 .15rem}
 .rdisc{flex:0 0 auto;width:1.6rem;height:1.6rem;display:flex;align-items:center;justify-content:center;
   border:1px solid var(--line-2);border-radius:.4rem;color:var(--fg-far);font-size:.7rem}
 .thrroom.unread .rdisc{border-color:var(--accent-dim);color:var(--accent)}

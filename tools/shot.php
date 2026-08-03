@@ -34,11 +34,12 @@ $WEB  = $ROOT . '/forge/web';
 
 // -- arguments ---------------------------------------------------------------
 $o = ['out' => '', 'page' => 'play.php', 'sel' => '', 'file' => '', 'w' => 1280, 'h' => 900,
-      'wait' => 2200, 'world' => 'shotworld', 'keep' => false, 'chatty' => false];
+      'wait' => 2200, 'world' => 'shotworld', 'keep' => false, 'chatty' => false, 'pending' => false];
 for ($i = 1; $i < $argc; $i++) {
     $a = $argv[$i];
     if ($a === '--keep') { $o['keep'] = true; continue; }
     if ($a === '--chatty') { $o['chatty'] = true; continue; }
+    if ($a === '--pending') { $o['pending'] = true; continue; }
     if (str_starts_with($a, '--') && isset($argv[$i + 1])) { $o[substr($a, 2)] = $argv[++$i]; continue; }
 }
 if ($o['out'] === '') { fwrite(STDERR, "shot: --out <file.png> is required\n"); exit(1); }
@@ -109,12 +110,12 @@ file_put_contents($mk, "<?php\n"
     . '$t = xeric_world_load(' . var_export($ROOT . '/engine/fixtures/milldale.json', true) . ");\n"
     . '$d = ' . var_export($tmp . '/data/worlds/' . $slug, true) . ";\n"
     . '$j = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;' . "\n"
-    // UNLAUNCHED, so the review page shows the half of itself that only exists
-    // before a world goes live: the launch button, the undo, and the engine
-    // picker. Shot against a launched world those simply are not in the markup,
-    // and the photograph comes back proving nothing about a control it could
-    // not render.
-    . '$t["forge"]["review_pending"] = true;' . "\n"
+    // --pending: UNLAUNCHED, so review.php shows the half of itself that only
+    // exists before a world goes live — the launch button, the undo, the engine
+    // picker. Opt-in, because the same flag makes play.php show its pre-launch
+    // screen instead of the world, so a default of "pending" would trade one
+    // unphotographable page for another.
+    . ($o['pending'] ? '$t["forge"]["review_pending"] = true;' . "\n" : '')
     . 'file_put_contents($d . "/world-template.json", json_encode($t, $j));' . "\n"
     . 'file_put_contents($d . "/seed.json", json_encode(xeric_forge_default_seed($t), $j));' . "\n");
 shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($mk) . ' 2>&1');
@@ -144,6 +145,26 @@ if (!empty($o['chatty'])) {
         . '  xeric_message_append($db, $cv, "assistant", $h, $said[$i]);' . "\n"
         . '  if ($i === 0) xeric_conversation_touch($db, $cv, 1);' . "\n"
         . '  $i++;' . "\n"
+        . '}' . "\n"
+        // AND A ROOM WITH SOMETHING IN IT. The room view is a channel with
+        // scrollback, so on a world nobody has spoken in it is an empty box —
+        // which is the one state that proves nothing about how it looks.
+        . '$pub = null;' . "\n"
+        . 'foreach ((array)($t["places"] ?? []) as $p) {' . "\n"
+        . '  if (($p["kind"] ?? "") !== "home") { $pub = (string)$p["key"]; break; }' . "\n"
+        . '}' . "\n"
+        . 'if ($pub !== null) {' . "\n"
+        . '  $rv = xeric_conversation_for($db, $pub, "room", (string)$pub);' . "\n"
+        . '  $cast = array_values((array)($t["cast"]["characters"] ?? []));' . "\n"
+        . '  $room = [[0, "Wind is getting into the frames again."],' . "\n"
+        . '           [1, "It has been doing that since the spring."],' . "\n"
+        . '           [0, "I keep saying I will see to it."],' . "\n"
+        . '           [2, "You have been saying that since the spring too."]];' . "\n"
+        . '  foreach ($room as $r) {' . "\n"
+        . '    if (!isset($cast[$r[0]])) continue;' . "\n"
+        . '    xeric_message_append($db, $rv, "character", (string)$cast[$r[0]]["handle"], $r[1]);' . "\n"
+        . '  }' . "\n"
+        . '  xeric_conversation_touch($db, $rv, 1);' . "\n"
         . '}' . "\n");
     shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($seed) . ' 2>&1');
 }
