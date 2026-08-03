@@ -842,11 +842,80 @@ function xeric_web_session_path(?string $sid = null): string
     return xeric_web_sessions_dir() . '/' . $sid . '.json';
 }
 
+/**
+ * Read a record that somebody else rewrites in place.
+ *
+ * WHY THIS EXISTS. Every record in this directory — the session, the queue, the
+ * limit buckets — is rewritten by ftruncate(0) + rewind + fwrite under LOCK_EX.
+ * That makes two WRITERS safe and does nothing at all for a reader, because a
+ * plain file_get_contents takes no lock and is free to land in the window
+ * between the truncate and the write. What it reads then is not stale data, it
+ * is an EMPTY FILE, and every caller here treats unparseable as "a fresh one".
+ *
+ * So the failure is never a wrong value, it is a blank one, and each of them
+ * fails in the most alarming direction available:
+ *
+ *   session   →  no machine attached. The forge answers 409 and refuses to
+ *                build, four seconds after the visitor attached one. This is
+ *                the one that was actually seen: the forge page saves answers
+ *                and posts the build in the same instant, so the save's rewrite
+ *                and the build's read are the two halves of the race.
+ *   queue     →  the line looks empty, and whoever read it walks to the front.
+ *   limits    →  nothing has been spent today. A limit that fails open.
+ *
+ * A shared lock is the whole fix: it cannot be taken while the exclusive one is
+ * held, so a reader either sees the file before the truncate or after the
+ * write, and never between them. Missing file is not an error — that is the
+ * genuine "nothing here yet" case every caller already handles.
+ */
+function xeric_web_read_locked(string $path): ?string
+{
+    // ALREADY OURS. flock is held per open file description, not per process, so
+    // a second handle on a file this process is mid-edit on blocks against its
+    // own exclusive lock and waits forever. That is not hypothetical: the
+    // wizard's save reads the session from inside session_edit's callback, and
+    // the suite has an assertion for it by name — "the wizard's own save
+    // completes with the record's lock already held". Reading unlocked there is
+    // not a compromise, it is correct: the callback runs BEFORE the truncate, so
+    // there is no torn window to land in, and no other process can be writing
+    // while we hold the exclusive lock.
+    if (!xeric_web_lock_held($path)) {
+        $fh = @fopen($path, 'rb');
+        if ($fh === false) return null;
+        if (!@flock($fh, LOCK_SH)) { fclose($fh); return null; }
+        $raw = stream_get_contents($fh);
+        @flock($fh, LOCK_UN);
+        fclose($fh);
+        return $raw === false ? null : $raw;
+    }
+    $raw = @file_get_contents($path);
+    return $raw === false ? null : $raw;
+}
+
+/**
+ * Which records this process is already holding exclusively.
+ *
+ * Refcounted, because an edit can nest inside another edit and the inner one
+ * must not hand the lock back on the way out. `$on` null asks; true takes;
+ * false gives back.
+ */
+function xeric_web_lock_held(string $path, ?bool $on = null): bool
+{
+    static $held = [];
+    if ($on === null) return ($held[$path] ?? 0) > 0;
+    if ($on) { $held[$path] = ($held[$path] ?? 0) + 1; }
+    else {
+        $held[$path] = ($held[$path] ?? 1) - 1;
+        if ($held[$path] <= 0) unset($held[$path]);
+    }
+    return ($held[$path] ?? 0) > 0;
+}
+
 /** Read the session. Missing, unreadable or corrupt all mean "a fresh one". */
 function xeric_web_session_read(?string $sid = null): array
 {
-    $raw = @file_get_contents(xeric_web_session_path($sid));
-    $s = $raw === false ? null : json_decode($raw, true);
+    $raw = xeric_web_read_locked(xeric_web_session_path($sid));
+    $s = $raw === null ? null : json_decode($raw, true);
     if (!is_array($s)) $s = [];
     $s['answers'] = (array)($s['answers'] ?? []);
     $s['model']   = (array)($s['model'] ?? []);
@@ -883,7 +952,12 @@ function xeric_web_session_edit(callable $fn, ?string $sid = null)
     $s['answers'] = (array)($s['answers'] ?? []);
     $s['model']   = (array)($s['model'] ?? []);
 
-    $ret = $fn($s);
+    // Noted across the callback ONLY. Anything it reads is reading what we are
+    // holding, and try/finally because a callback that throws must not leave the
+    // record marked as ours for the rest of the request.
+    xeric_web_lock_held($path, true);
+    try { $ret = $fn($s); }
+    finally { xeric_web_lock_held($path, false); }
 
     unset($s['model']['key']);
     $s['at'] = time();

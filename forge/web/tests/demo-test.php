@@ -292,6 +292,61 @@ echo "\n# limits\n";
     putenv('XERIC_CAPS=1');
 })();
 
+// -- a record being rewritten is never a record that is GONE ------------------
+//
+// Every record in the data dir is rewritten in place: ftruncate(0), rewind,
+// fwrite, all under LOCK_EX. That makes two writers safe and does nothing for a
+// reader, because a plain file_get_contents takes no lock and can land in the
+// window between the truncate and the write. What it reads there is not stale,
+// it is EMPTY — and every caller treats unparseable as "a fresh one".
+//
+// The owner hit the session half of this on the first forge after a blank: the
+// forge page saves the answers and posts the build in the same instant, and the
+// build read the session mid-rewrite, found no machine attached and answered
+// 409 four seconds after a machine had been attached. Measured before the fix:
+// eight thousand blank reads in six hundred thousand. It is a coin that comes
+// up eventually, and every screen in the app flips it.
+(function (): void {
+    $dir = sys_get_temp_dir() . '/xeric-race-' . getmypid();
+    @shell_exec('rm -rf ' . escapeshellarg($dir));
+    @mkdir($dir . '/worlds', 0775, true);
+    $sid = 'racetest0000000000000000000000ab';
+
+    $env = 'XERIC_DATA_DIR=' . escapeshellarg($dir) . ' XERIC_WORLDS_DIR=' . escapeshellarg($dir . '/worlds');
+    $lib = var_export(dirname(__DIR__) . '/play-lib.php', true);
+
+    // A machine, attached, exactly as the machines screen attaches one.
+    shell_exec($env . ' php -r ' . escapeshellarg(
+        'require ' . $lib . ';'
+        . 'xeric_web_session_edit(function(array &$s){ $s["model"] = ["kind"=>"local","base"=>"","model"=>""]; },'
+        . ' ' . var_export($sid, true) . ');'
+    ));
+
+    // The writer: what POST /forge.php?a=save does, on a loop, in its own process.
+    $w = $env . ' php -r ' . escapeshellarg(
+        'require ' . $lib . ';'
+        . 'for ($i = 0; $i < 2000; $i++) xeric_web_session_edit(function(array &$s) use ($i) {'
+        . ' $s["answers"] = ["rating"=>"sfw","job"=>str_repeat("x", 200 + $i % 400)]; },'
+        . ' ' . var_export($sid, true) . ');'
+    ) . ' > /dev/null 2>&1 & echo $!';
+    $pid = (int)trim((string)shell_exec($w));
+
+    // The reader: what POST /build.php does before it will build anything.
+    $blank = shell_exec($env . ' php -r ' . escapeshellarg(
+        'require ' . $lib . ';'
+        . '$n = 0; $t = microtime(true);'
+        . 'while (microtime(true) - $t < 1.5) {'
+        . ' if (!xeric_web_connected(xeric_web_model(' . var_export($sid, true) . '))) $n++; }'
+        . 'echo $n;'
+    ));
+    if ($pid > 0) @shell_exec('kill ' . $pid . ' 2>/dev/null');
+    @shell_exec('rm -rf ' . escapeshellarg($dir));
+
+    ok('a session read while it is being written still has the machine in it',
+        trim((string)$blank) === '0',
+        trim((string)$blank) . ' reads found no machine attached');
+})();
+
 // -- and one identity per machine, unless a host wants visitors --------------
 // A cookie is how a server tells strangers apart. On somebody's own computer it
 // is a way to lose everything by clearing a browser, which people do for

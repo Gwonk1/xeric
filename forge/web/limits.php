@@ -138,8 +138,10 @@ function xeric_limit_path(string $bucket): string
  */
 function xeric_limit_hits(string $bucket, int $window, int $now): array
 {
-    $raw = @file_get_contents(xeric_limit_path($bucket));
-    $d = $raw === false ? null : json_decode($raw, true);
+    // Locked: a torn read of a bucket mid-rewrite is an EMPTY bucket, and an
+    // empty bucket means nothing has been spent today. A limit must not fail open.
+    $raw = xeric_web_read_locked(xeric_limit_path($bucket));
+    $d = $raw === null ? null : json_decode($raw, true);
     $hits = is_array($d) ? array_map('intval', (array)($d['hits'] ?? [])) : [];
 
     $cut = $now - $window;
@@ -415,7 +417,10 @@ function xeric_limit_ip(?string $raw = null): string
     static $salt = null;
     if ($salt === null) {
         $p = (string)xeric_web_config()['data_dir'] . '/ip-salt';
-        $salt = (string)@file_get_contents($p);
+        // Locked for the same reason, and this one does not merely misread: a
+        // short read REGENERATES the salt and writes it back, so one unlucky
+        // moment rotates it for good and every IP on file becomes a stranger.
+        $salt = (string)xeric_web_read_locked($p);
         if (strlen($salt) < 32) {
             $salt = bin2hex(random_bytes(32));
             xeric_web_dir((string)xeric_web_config()['data_dir']);

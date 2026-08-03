@@ -28,6 +28,21 @@
 
 declare(strict_types=1);
 
+// THE DATA DIR IS OURS BEFORE ANYTHING READS IT. xeric_forge_shelf() below
+// pins what the naming gates READ; this pins where anything WRITES. The repass
+// section builds a world on the shelf on purpose — the save it exercises
+// resolves by slug under the worlds dir — and with no pin here that shelf was
+// the owner's own install, so running the suite left a phantom world in it.
+// Found the honest way: blanking the install for a fresh forge, and watching
+// dev-lens-grown come back on its own.
+$XERIC_TEST_DATA = sys_get_temp_dir() . '/xeric-forge-test-data-' . getmypid();
+@mkdir($XERIC_TEST_DATA . '/worlds', 0775, true);
+putenv('XERIC_DATA_DIR=' . $XERIC_TEST_DATA);
+putenv('XERIC_WORLDS_DIR=' . $XERIC_TEST_DATA . '/worlds');
+register_shutdown_function(function () use ($XERIC_TEST_DATA): void {
+    @shell_exec('rm -rf ' . escapeshellarg($XERIC_TEST_DATA));
+});
+
 require_once __DIR__ . '/../forge.php';
 require_once __DIR__ . '/../../engine/renderers/bible.php';   // the walls check below renders one
 

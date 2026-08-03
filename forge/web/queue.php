@@ -171,7 +171,9 @@ function xeric_queue_edit(callable $fn, ?int $now = null)
     if (!is_array($state)) $state = xeric_queue_blank();
     $state = xeric_queue_reap($state, $now);
 
-    $ret = $fn($state, $now);
+    xeric_web_lock_held(xeric_queue_path(), true);
+    try { $ret = $fn($state, $now); }
+    finally { xeric_web_lock_held(xeric_queue_path(), false); }
 
     ftruncate($fh, 0);
     rewind($fh);
@@ -190,8 +192,11 @@ function xeric_queue_blank(): array
 /** The line, read only. */
 function xeric_queue_state(?int $now = null): array
 {
-    $raw = @file_get_contents(xeric_queue_path());
-    $s = $raw === false ? null : json_decode($raw, true);
+    // Locked: an unlocked read can land between a writer's ftruncate and its
+    // fwrite, and a blank queue file reads as an EMPTY LINE — whoever caught it
+    // walks straight to the front past everybody waiting.
+    $raw = xeric_web_read_locked(xeric_queue_path());
+    $s = $raw === null ? null : json_decode($raw, true);
     if (!is_array($s)) $s = xeric_queue_blank();
     return xeric_queue_reap($s, $now ?? time());
 }
