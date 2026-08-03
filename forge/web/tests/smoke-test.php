@@ -268,6 +268,43 @@ foreach ([
         'neither the control nor its builder is on the page');
 }
 
+// WHERE IT STANDS, THEN WHAT YOU CAN DO (owner, 2026-08-03). Three readings
+// about right now — the hour, the sky, what this has cost — above the four
+// things a person does to a xeric. They used to be scattered either side of the
+// buttons, with the weather further down still, opening the sidebar body under
+// the rooms it hangs over: one question, three separate notes to answer it.
+//
+// Asserted on the RENDERED PAGE and by POSITION, because that is the whole of
+// the change — every one of these already existed and each was somewhere else.
+$posStatus  = strpos($playDom, 'class="sstatus"');
+$posQuick   = strpos($playDom, 'class="quickrow"');
+$posWeather = strpos($playDom, 'id="sweather"');
+$posMeter   = strpos($playDom, 'class="smeter"');
+$posClock   = strpos($playDom, 'id="sclock"');
+
+ok('the sidebar opens on where the world stands, not on the buttons',
+    $posStatus !== false && $posQuick !== false && $posStatus < $posQuick,
+    'the status strip is not above the quick row');
+foreach (['the clock' => $posClock, 'the weather' => $posWeather,
+          'the meter' => $posMeter] as $what => $pos) {
+    ok("and $what reads above them too",
+        $pos !== false && $posQuick !== false && $pos < $posQuick,
+        "$what is below the buttons, or absent");
+}
+// All four, still, and still in the order the row was designed in.
+$quickTail = $posQuick !== false ? substr($playDom, $posQuick, 1400) : '';
+ok('the four things you can do are all still there',
+    str_contains($quickTail, 'qadd') && str_contains($quickTail, 'qwhere')
+    && str_contains($quickTail, 'qwatch') && str_contains($quickTail, 'qbook'),
+    substr($quickTail, 0, 200));
+
+// ONE SKY, NOT TWO. The weather moved rather than being copied — a second copy
+// left behind in the sidebar body would repaint on a different pulse and the
+// two would disagree with each other in front of the reader.
+ok('and the sky is printed exactly once',
+    substr_count($playDom, 'class="swx"') <= 1,
+    substr_count($playDom, 'class="swx"') . ' copies of the weather line');
+
 // -- and down -----------------------------------------------------------------
 if ($pid > 0) { @shell_exec('kill ' . $pid . ' 2>/dev/null'); }
 usleep(300000);

@@ -930,6 +930,46 @@ function xeric_play_relations(array $t, PDO $db): string
  *                position: five people in the roster and two threads open means
  *                three of them are still strangers.
  */
+/**
+ * What it is like here today: the sky, and the town's own word for itself.
+ *
+ * THE SAME DERIVED LINE EVERY PROMPT READS (engine/weather.php) — day-coarse
+ * world state, so a skip that crosses midnight changes the weather the same
+ * moment it changes everything else.
+ *
+ * AND THE TOWN'S MOOD BESIDE IT, because they are the same kind of fact: what
+ * it is like here today, one line, no numbers. The sky is derived and the mood
+ * is lived — hours move the needle (engine/mood.php) — but a person reading the
+ * panel is asking one question, so they answer as one sentence. The motif
+ * carries it when the world wrote one: "a little reckless · a truck parked
+ * where no truck should be".
+ *
+ * BOTH HALVES ESCAPED. The motif always was; the word was not, and it was the
+ * one string on this page that reached a browser raw. It comes off
+ * `world_mood.axis.positive|negative`, which the forge writes straight from
+ * model output through xeric_forge_str() — trim, collapse, cap length, and no
+ * HTML filtering anywhere in that path — so that was model-written script
+ * running in the browser of somebody who merely opened the world from the
+ * shelf. Nobody typed it, and the person it fired at had never met whoever
+ * forged it.
+ */
+function xeric_play_weather_html(array $t, PDO $db, ?array $now = null): string
+{
+    $now ??= xeric_clock_now($db, $t);
+    $wx   = xeric_weather_line($t, $now, $db);
+    $mood = xeric_mood_read($db, $t);
+
+    $moodLine = $mood === [] || ($mood['side'] ?? '') === 'ordinary'
+        ? ''
+        : h((string)$mood['word']) . ((string)($mood['motif'] ?? '') !== ''
+            ? ' <i>· ' . h((string)$mood['motif']) . '</i>' : '');
+
+    if ($wx === '' && $moodLine === '') return '';
+    return '<p class="swx">' . h($wx)
+         . ($moodLine !== '' ? ($wx !== '' ? '<br>' : '') . '<b>' . $moodLine . '</b>' : '')
+         . '</p>';
+}
+
 function xeric_play_compass_html(array $t, PDO $db, ?array $now = null): string
 {
     $now ??= xeric_clock_now($db, $t);
@@ -1362,39 +1402,14 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     $standing = 0;
     foreach ((array)($map['places'] ?? []) as $pl) $standing += count((array)($pl['who'] ?? []));
 
-    // THE DAY'S SKY, above the rooms it hangs over. The same derived line every
-    // prompt reads (engine/weather.php): day-coarse world state that repaints
-    // with the sidebar, so a skip that crosses midnight changes the weather the
-    // same moment it changes everything else.
-    //
-    // AND THE TOWN'S MOOD BESIDE IT, because they are the same kind of fact:
-    // what it is like here today, one line, no numbers. The sky is derived
-    // and the mood is lived — hours move the needle (engine/mood.php) — but a
-    // person reading the panel is asking one question, so they answer as one
-    // sentence. The motif carries it when the world wrote one: "a little
-    // reckless · a truck parked where no truck should be".
-    $wx   = xeric_weather_line($t, $now, $db);
-    $mood = xeric_mood_read($db, $t);
-    // BOTH HALVES ESCAPED. The motif always was; the word was not, and it is the
-    // one string on this page that reached a browser raw. It comes off
-    // `world_mood.axis.positive|negative`, which the forge writes straight from
-    // model output through xeric_forge_str() — trim, collapse, cap length, and
-    // no HTML filtering anywhere in that path — so this was model-written script
-    // running in the browser of somebody who merely opened the world from the
-    // shelf. Nobody typed it, and the person it fired at had never met whoever
-    // forged it. The compass block renders the same value correctly at
-    // xeric_play_compass_html(); this was one missed call, not a pattern.
-    $moodLine = $mood === [] || ($mood['side'] ?? '') === 'ordinary'
-        ? ''
-        : h((string)$mood['word']) . ((string)($mood['motif'] ?? '') !== ''
-            ? ' <i>· ' . h((string)$mood['motif']) . '</i>' : '');
-
+    // THE DAY'S SKY MOVED UP AND OUT — see xeric_play_weather_html, which the
+    // page now prints in the status strip above the buttons, beside the clock
+    // and the meter. It used to open the sidebar BODY, which put it below the
+    // four things you can do and above the rooms it hangs over; what it is
+    // actually like here today is the same kind of fact as what time it is and
+    // what this has cost, and those three read as one glance or as three
+    // scattered notes.
     $out = '';
-    if ($wx !== '' || $moodLine !== '') {
-        $out = '<p class="swx">' . h($wx)
-             . ($moodLine !== '' ? ($wx !== '' ? '<br>' : '') . '<b>' . $moodLine . '</b>' : '')
-             . '</p>';
-    }
 
     // WHO IS AT THE CENTRE, AND THE WAY IN. Above the rooms, because it is a
     // fact about the table rather than about the town — and because the door
@@ -4120,7 +4135,16 @@ function xeric_play_css(): string
           calc(.9rem + env(safe-area-inset-left));
   background:var(--bg-2);border-right:1px solid var(--line)}
 .sbrand{display:flex;align-items:baseline;gap:.5rem}
-.sstatus{font-size:.8rem}
+/* WHERE IT STANDS, ABOVE WHAT YOU CAN DO. Three facts about right now — the
+   hour, the sky, what this has cost — that used to sit in three places: the
+   clock and the meter BELOW the buttons, and the weather further down again,
+   opening the sidebar body under the rooms it hangs over. One strip, ruled off
+   from the row beneath it, because you read it before you decide anything. */
+.sstatus{font-size:.8rem;margin:.15rem 0 .6rem;padding:0 0 .6rem;
+  border-bottom:1px solid var(--line)}
+/* The date and the hour on one line: they are the same reading. */
+.sstatus .sdate{display:inline}
+.sstatus .clock{margin-left:.5rem}
 /* the world's name, under the brand and over its calendar */
 .sname{margin:.15rem 0 .3rem;font-size:1.2rem;line-height:1.25}
 
@@ -4160,6 +4184,9 @@ function xeric_play_css(): string
 /* the world's own calendar, at the top of the sidebar */
 .sdate{margin:0 0 .35rem;font-size:.92rem;font-weight:600;color:var(--fg)}
 .smeter{margin:.4rem 0 0;font-size:.76rem;color:var(--fg-dim)}
+/* The sky came up here from the sidebar body, so it drops the bottom margin it
+   wore as a lead-in to the rooms and takes a small one as a middle line. */
+.sstatus .swx{margin:.3rem 0 0}
 /* a room's hours, on its name */
 .phrs{margin-left:.45rem;font-size:.7rem;font-weight:400;color:var(--fg-dim)}
 .sfoot{margin-top:auto}

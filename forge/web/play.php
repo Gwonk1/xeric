@@ -429,6 +429,11 @@ if ($action !== '') {
             // The compass reads live numbers and lives above the sidebar's body,
             // so it repaints on its own or it is a photograph of the first hour.
             'compass'   => xeric_play_compass_html($w['template'], $w['db'], $nowW),
+            // And the weather, for exactly the same reason and since exactly the
+            // same move: it used to ride inside `side`, and lifting it into the
+            // status strip took it out of the one payload that was repainting
+            // it. A sky frozen at the hour the tab opened is worse than none.
+            'weather'   => xeric_play_weather_html($w['template'], $w['db'], $nowW),
             'cast_html' => xeric_play_cast_html(
                 xeric_play_cast($w['template'], $w['db'], $nowW),
                 (string)$w['slug'], (bool)$w['mine']),
@@ -1154,6 +1159,28 @@ echo '<style>' . xeric_play_css() . '
          talk without you, read it as a book, and find out where everybody is.
          The first is accent-filled the way the clean room fills its primary,
          and it is the one that only an owner has. -->
+    <!-- WHERE IT STANDS, THEN WHAT YOU CAN DO — in that order, because the
+         readings are what you consult before you decide, and a row of buttons
+         above them puts the decision first. Three facts about right now: what
+         the clock says, what it is like out there, and what this has cost. They
+         were scattered — clock and meter BELOW the buttons, the weather buried
+         further down still, opening the sidebar body under the rooms it hangs
+         over — and a person asking "what is going on" was reading three
+         separate notes to answer one question. -->
+    <div class="sstatus">
+      <!-- The world's own calendar. The year is the era's (a 1990s town never
+           prints 2026 on itself); day, month and weekday flow from the clock. -->
+      <p class="sdate" id="sdate"><?= h(xeric_play_date_line($T, $now)) ?></p>
+      <span class="clock<?= $state['clock']['paused'] ? ' stopped' : '' ?>" id="sclock"><span class="ph"></span><span
+        id="sclocktext" class="ckhm"><?= h((string)$now['hhmm']) ?></span></span>
+      <!-- The sky and the town's own word for itself, on their own line: it is
+           a sentence, not a reading, and it will not sit in a row. -->
+      <div id="sweather"><?= xeric_play_weather_html($T, $w['db'], $now) ?></div>
+      <!-- The meter keeps the clock company: time passing and tokens burning
+           are the same fact about this machine, read in one glance. -->
+      <div class="smeter"><?= xeric_web_meter_html() ?></div>
+    </div>
+
     <div class="quickrow" role="group" aria-label="what you can do here">
       <?php if ($w['mine']): ?>
       <button type="button" class="qbtn qprime" id="qadd"
@@ -1170,17 +1197,6 @@ echo '<style>' . xeric_play_css() . '
     <!-- The compass: three readings that move, so the sidebar says where this
          story stands and not only what it was called. -->
     <div id="scompass"><?= xeric_play_compass_html($T, $w['db']) ?></div>
-    <!-- The quick buttons moved into the ⚙ above; what lives here now is the
-         world's own calendar. The year is the era's (a 1990s town never
-         prints 2026 on itself); day, month and weekday flow from the clock. -->
-    <div class="sstatus">
-      <p class="sdate" id="sdate"><?= h(xeric_play_date_line($T, $now)) ?></p>
-      <span class="clock<?= $state['clock']['paused'] ? ' stopped' : '' ?>" id="sclock"><span class="ph"></span><span
-        id="sclocktext" class="ckhm"><?= h((string)$now['hhmm']) ?></span></span>
-      <!-- The meter keeps the clock company: time passing and tokens burning
-           are the same fact about this machine, read in one glance. -->
-      <div class="smeter"><?= xeric_web_meter_html() ?></div>
-    </div>
     <div id="sidebody"><?= xeric_play_side_html($T, $w['db'], $now, (string)$w['slug'], (bool)$w['mine']) ?></div>
     <div class="sfoot">
       <button type="button" class="person narrator" id="asknarr2">
@@ -3686,6 +3702,10 @@ echo '<style>' . xeric_play_css() . '
         if (typeof d.compass === 'string' && $('#scompass')
             && $('#scompass').innerHTML !== d.compass) {
           $('#scompass').innerHTML = d.compass;
+        }
+        if (typeof d.weather === 'string' && $('#sweather')
+            && $('#sweather').innerHTML !== d.weather) {
+          $('#sweather').innerHTML = d.weather;
         }
       })
       .catch(function () {});
