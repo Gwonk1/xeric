@@ -4132,9 +4132,18 @@ body.skipping .wplace .wgo2{visibility:hidden}
 /* The place name is a walk. The affordance only surfaces on hover and focus:
    a list where every line shouts "go" reads as a menu, not a town. */
 /* color explicit: buttons take ButtonText, not the theme's ink */
+/* A ROOM YOU CAN WALK INTO HAS TO LOOK LIKE ONE, AT REST.
+   `.wgo2` used to sit at opacity:0 and appear on hover — so a place you could
+   enter and a place you could not were pixel-identical until the mouse was over
+   them, and the panel's whole job is to be read at a glance. On a touch screen
+   there is no hover at all, which made the only way into a room permanently
+   invisible on a phone. The owner's report was "there was not even a way to
+   enter a room on the sidebar", and there wasn't one you could SEE.
+   Quiet at rest, bright when reached for: the affordance is there, and it still
+   does not shout over the names, which are what the panel is actually for. */
 .wplace{font:inherit;color:var(--fg);background:none;border:0;padding:.2rem 0;cursor:pointer;width:100%;text-align:left}
 .wplace:hover,.wplace:focus-visible{color:var(--accent);outline:none}
-.wplace .wgo2{margin-left:.45rem;font-size:.68rem;color:var(--accent-dim);opacity:0}
+.wplace .wgo2{margin-left:.45rem;font-size:.68rem;color:var(--accent-dim);opacity:.7}
 .wplace:hover .wgo2,.wplace:focus-visible .wgo2{opacity:1}
 .wplace:disabled{cursor:default;color:var(--fg-dim)}
 
