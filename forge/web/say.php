@@ -77,6 +77,31 @@ if (xeric_world_character($T, $handle) === null) {
           . 'open, reload it, the cast has changed under you. Nothing you typed was lost.'], 400);
 }
 
+// -- the world's own pace, felt in the thread ---------------------------------
+// The wizard's pace answer (eventful | steady | calm) finally reaches the
+// conversation: a floor between replies, stretched while she is on shift.
+// Texture and a spend governor in one — the same knob that makes a world feel
+// calm keeps a rapid-fire evening from burning a metered key at machine speed.
+// The canary is exempt: the license detector answers whoever asks, instantly,
+// and costs nothing anyway. 429 with the wait, so the composer can count down
+// instead of erroring.
+if (xeric_chat_canary(trim((string)($in['text'] ?? ''))) === null) {
+    $paceConv = xeric_conversation_find($db, $handle, 'chat');
+    $paceLast = 0;
+    if ($paceConv !== null) {
+        foreach (array_reverse(xeric_messages_recent($db, (int)$paceConv['id'], 6)) as $pm) {
+            if ((string)$pm['role'] === 'character') { $paceLast = (int)$pm['created_at']; break; }
+        }
+    }
+    $paceRow  = xeric_world_who_is_where($T, xeric_clock_now($db, $T))[$handle] ?? null;
+    $paceGate = xeric_chat_pace_gate($T, $handle, $paceRow, $paceLast, xeric_state_time());
+    if ($paceGate['wait'] > 0) {
+        if (!headers_sent()) header('Retry-After: ' . (int)$paceGate['wait']);
+        xeric_web_json(['error' => $paceGate['why'], 'kind' => 'pace',
+                        'retry_after' => (int)$paceGate['wait']], 429);
+    }
+}
+
 // -- has this visitor an hour's worth of talking left? -----------------------
 xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 

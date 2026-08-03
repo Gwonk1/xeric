@@ -126,6 +126,32 @@ if ($action !== '') {
                         'note' => 'Takes effect from the next thing anybody says.']);
     }
 
+    // -- the world's pace, changed mid-play -----------------------------------
+    // The wizard's answer, re-answerable from the cog beside the xeric's name:
+    // pace governs how much happens offscreen AND how fast anybody texts back
+    // (xeric_chat_cooldown), so switching a world to calm mid-play is the
+    // owner's one-press token brake. The offscreen half is re-derived through
+    // the same arithmetic the forge used (xeric_forge_pace, with the world's
+    // own stored `around` answer), because events.sweep_chance is a number
+    // computed FROM pace and a pace switch that left it standing would change
+    // the texting and not the world.
+    if ($action === 'pace') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner paces a xeric.'], 403);
+        $in   = xeric_web_input();
+        $want = strtolower(trim((string)($in['pace'] ?? '')));
+        if (!in_array($want, ['eventful', 'steady', 'calm'], true)) {
+            xeric_web_json(['error' => '"' . mb_substr($want, 0, 20) . '" is not a pace this engine knows'], 400);
+        }
+        $t2 = $w['template'];
+        $derived = xeric_forge_pace($want, (string)($t2['forge']['answers']['around'] ?? ''));
+        $t2['events']['pace']               = $derived['pace'];
+        $t2['events']['sweep_chance']       = $derived['chance'];
+        $t2['events']['expected_gap_hours'] = $derived['gap_hours'];
+        xeric_review_save((string)$w['slug'], $t2);
+        xeric_web_json(['ok' => true, 'pace' => $want,
+                        'note' => 'Takes effect from the next hour and the next reply.']);
+    }
+
     // -- the world's own pulse ------------------------------------------------
     // The shelf's pulse says which xerics move; this one says what moved INSIDE
     // the open one, so the sidebar's rooms, the chips and the clock repaint
@@ -1140,6 +1166,7 @@ echo '<style>' . xeric_play_css() . '
   var ME = <?= json_encode($userName) ?>;
   var WNAME = <?= json_encode((string)$T['meta']['name']) ?>;
   var MINE = <?= $w['mine'] ? 'true' : 'false' ?>;
+  var PACE = <?= json_encode((string)($T['events']['pace'] ?? 'steady')) ?>;
   var MEFACE = <?= json_encode(xeric_play_face([
       'handle' => '__you', 'display_name' => $userName,
       'pronouns' => (string)($T['user']['pronouns'] ?? ''),
@@ -1331,7 +1358,14 @@ echo '<style>' . xeric_play_css() . '
       '<div class="xcrow"><button type="button" class="nbtn" id="xcoff">⏻ shut down</button>' +
         '<span class="xchint">stops the local xeric server itself — close the tab after</span></div>' +
       (MINE
-        ? '<div class="xcrow"><a class="nbtn" href="review.php?w=' + encodeURIComponent(W) + '#repass">📖 literary repass</a>' +
+        ? '<div class="xcrow">' +
+          ['eventful', 'steady', 'calm'].map(function (p) {
+            return '<button type="button" class="nbtn' + (p === PACE ? ' on' : '') + '" data-pace="' + p + '">' +
+              (p === 'eventful' ? '🔥 busy' : p === 'steady' ? '〰 steady' : '🌙 calm') + '</button>';
+          }).join('') +
+          '<span class="xchint">the world\'s pace, changeable mid-play: how much happens offscreen ' +
+          'AND how fast anybody texts back — calm is the token brake</span></div>' +
+          '<div class="xcrow"><a class="nbtn" href="review.php?w=' + encodeURIComponent(W) + '#repass">📖 literary repass</a>' +
           '<span class="xchint">an editor reads the whole xeric: contradictions, plotline, and the snake’s pacing</span></div>' +
           '<div class="xcrow"><a class="nbtn" href="book.php?w=' + encodeURIComponent(W) + '">📕 the book</a>' +
           '<span class="xchint">the xeric’s own story, day by day — events, scenes and dreams, fit to print</span></div>' +
@@ -1349,6 +1383,35 @@ echo '<style>' . xeric_play_css() . '
         if (to) requestAnimationFrame(function () { to.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
       });
     });
+    // The pace switch: one press, saved through the review door, felt from
+    // the next hour and the next reply. The toast is the receipt.
+    $$('#cmodal [data-pace]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (b.dataset.pace === PACE) return;
+        $$('#cmodal [data-pace]').forEach(function (x) { x.disabled = true; });
+        fetch('play.php?a=pace&w=' + encodeURIComponent(W), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pace: b.dataset.pace }) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.ok) {
+              PACE = d.pace;
+              toast('pace: ' + d.pace + ' — ' + (d.note || 'saved'));
+            } else {
+              toast((d && d.error) || 'the pace did not take');
+            }
+            $$('#cmodal [data-pace]').forEach(function (x) {
+              x.disabled = false;
+              x.classList.toggle('on', x.dataset.pace === PACE);
+            });
+          })
+          .catch(function () {
+            toast('the pace did not take');
+            $$('#cmodal [data-pace]').forEach(function (x) { x.disabled = false; });
+          });
+      });
+    });
+
     $('#xcclock').addEventListener('click', function () {
       this.disabled = true;
       fetch('power.php', { method: 'POST', headers: { 'Content-Type': 'application/json' },

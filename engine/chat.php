@@ -1098,6 +1098,66 @@ function xeric_chat_say(array $endpoint, array $messages, array $opts = [], ?arr
 }
 
 /**
+ * How long a reply should honestly take — the world's pace, felt in a thread.
+ *
+ * THE PACE OPTION FINALLY REACHES THE CONVERSATION. The wizard's pace answer
+ * (eventful | steady | calm) has always governed how much happens OFFSCREEN;
+ * on screen, every character answered every message instantly, forever, which
+ * reads as a machine and spends like one. So pace now sets a floor between
+ * replies — a calm world does not answer that fast, and an eventful one
+ * barely pauses — and a character who is ON SHIFT is busier than one at home:
+ * mid-shift the floor stretches, because she is at the register, not at her
+ * phone. This is texture and a spend governor in one motion: the same knob
+ * that makes a world feel calm stops a rapid-fire evening from burning a
+ * metered key at machine speed.
+ *
+ * REAL seconds, deliberately: the wait is the PLAYER's experience of being
+ * answered, and a paused world would otherwise gate forever.
+ */
+function xeric_chat_cooldown(array $t, ?array $presenceRow = null): int
+{
+    $base = match (mb_strtolower(trim((string)($t['events']['pace'] ?? 'steady')))) {
+        'eventful' => 6,
+        'calm'     => 40,
+        default    => 18,      // steady
+    };
+    // On shift somewhere that is not their own roof: busy. The multiplier is
+    // felt most in a calm world, which is the point — calm plus busy is a
+    // person who genuinely gets back to you when they get back to you.
+    if ($presenceRow !== null && ($presenceRow['where'] ?? null) !== null
+            && empty($presenceRow['at_home'])) {
+        $base = (int)round($base * 2.5);
+    }
+    return $base;
+}
+
+/**
+ * May this send go through yet? {wait: 0} when it may; {wait: N, why: …} when
+ * the thread needs N more real seconds, with the reason said in the world's
+ * own voice. Pure — the caller supplies when the character last spoke and what
+ * the clock says now — so the whole gate is testable without a page.
+ */
+function xeric_chat_pace_gate(array $t, string $speaker, ?array $presenceRow,
+                              int $lastCharAt, int $realNow): array
+{
+    if ($lastCharAt <= 0) return ['wait' => 0, 'why' => ''];
+    $cool  = xeric_chat_cooldown($t, $presenceRow);
+    $since = $realNow - $lastCharAt;
+    if ($since >= $cool) return ['wait' => 0, 'why' => ''];
+
+    $name = xeric_chat_speaker_name($t, $speaker) ?? 'She';
+    $busy = $presenceRow !== null && ($presenceRow['where'] ?? null) !== null
+            && empty($presenceRow['at_home']);
+    return [
+        'wait' => $cool - $since,
+        'why'  => $busy
+            ? $name . ' is mid-shift and not looking at a phone. Give it a moment.'
+            : 'Nothing in ' . (string)($t['meta']['name'] ?? 'this xeric')
+                . ' answers that fast. Give it a moment.',
+    ];
+}
+
+/**
  * The provenance canary. A LICENSE-VIOLATION DETECTION SYSTEM — read this
  * whole comment before you touch it.
  *

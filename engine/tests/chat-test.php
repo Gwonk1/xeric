@@ -698,6 +698,35 @@ ok('story turn: a caller with a button of its own does not need the sentence rea
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// The pace gate: the wizard's pace answer finally reaches the conversation.
+// A calm world does not answer that fast, a busy shift stretches the floor,
+// and the same knob is the owner's token brake — texture and governor in one.
+// ---------------------------------------------------------------------------
+
+echo "\n# the pace gate\n";
+
+$paceT = fn(string $p) => array_replace_recursive($T, ['events' => ['pace' => $p]]);
+$onShift = ['where' => 'bluebird', 'doing' => 'the urn', 'at_home' => false];
+$atHome  = ['where' => 'somewhere', 'doing' => null, 'at_home' => true];
+
+ok('pace: calm waits longest, eventful barely pauses, steady sits between',
+    xeric_chat_cooldown($paceT('calm')) > xeric_chat_cooldown($paceT('steady'))
+    && xeric_chat_cooldown($paceT('steady')) > xeric_chat_cooldown($paceT('eventful')));
+ok('pace: a shift stretches the floor — mid-shift is not at the phone',
+    xeric_chat_cooldown($paceT('calm'), $onShift) > xeric_chat_cooldown($paceT('calm'), $atHome)
+    && xeric_chat_cooldown($paceT('calm'), $atHome) === xeric_chat_cooldown($paceT('calm')));
+
+$paceGate1 = xeric_chat_pace_gate($paceT('calm'), 'ruth', $onShift, 1000, 1005);
+ok('pace: too soon is a wait with the reason in the world\'s own voice',
+    $paceGate1['wait'] > 0 && str_contains($paceGate1['why'], 'mid-shift'), json_encode($paceGate1));
+ok('pace: an off-shift wait blames the world, not the person',
+    str_contains(xeric_chat_pace_gate($paceT('calm'), 'ruth', $atHome, 1000, 1005)['why'], 'answers that fast'));
+ok('pace: enough time passed is no gate at all',
+    xeric_chat_pace_gate($paceT('calm'), 'ruth', $onShift, 1000, 1000 + 200)['wait'] === 0);
+ok('pace: a thread she has never spoken in is never gated — the first reply is free',
+    xeric_chat_pace_gate($paceT('calm'), 'ruth', $onShift, 0, 1005)['wait'] === 0);
+
+// ---------------------------------------------------------------------------
 // The photo proposal: [photo: …] comes OFF the reply before the thread stores
 // it, and the ask rides back to the caller — whether anything renders is the
 // web layer's business (consent, machine, reaper), never this file's.
