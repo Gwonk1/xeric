@@ -3202,6 +3202,63 @@ ok('panel: the flag reaches the builder rather than stopping at the page',
     && str_contains((string)file_get_contents(dirname(__DIR__) . '/worker.php'), 'xeric_forge_panel('));
 
 // ---------------------------------------------------------------------------
+// NOBODY LEAVES THE ROOM HOLDING THE MODEL.
+//
+// PHP does not run a `finally` on `exit()`. Every detached worker takes the one
+// model slot and hands it back in a finally, so an `exit()` anywhere between
+// those two points leaves the queue pointing at a process that is already gone
+// — and the next person waits out the whole hold for a GPU that is free.
+//
+// This is structural, so it is checked structurally: from the line that takes
+// the hold to the `finally` that gives it back, there may be no exit. The way
+// out is `$done()`, which releases first. Found by reading, not by a test:
+// panel-worker.php was leaking on ALL THREE of its outcomes, including both of
+// the ones that succeed.
+//
+// Through token_get_all() and T_EXIT rather than a search for the word, because
+// the first version of this check flagged addchar-worker.php's own COMMENT
+// warning against early exits. A grep over source is a test of prose; the
+// tokeniser sees code and nothing else.
+// ---------------------------------------------------------------------------
+
+$heldRegion = static function (string $src): ?array {
+    $take = null;
+    $toks = token_get_all($src);
+    foreach ($toks as $i => $t) {
+        if (!is_array($t) || $t[0] !== T_VARIABLE || $t[1] !== '$got') continue;
+        // `$lock = $got['hold']` — the moment the slot becomes ours.
+        $tail = '';
+        for ($j = $i; $j < min($i + 4, count($toks)); $j++) {
+            $tail .= is_array($toks[$j]) ? $toks[$j][1] : $toks[$j];
+        }
+        if (str_starts_with($tail, "\$got['hold']")) { $take = $t[2]; break; }
+    }
+    if ($take === null) return null;
+    foreach ($toks as $t) {
+        if (is_array($t) && $t[0] === T_FINALLY && $t[2] > $take) return [$take, $t[2]];
+    }
+    return [$take, PHP_INT_MAX];
+};
+
+foreach (['worker', 'addchar-worker', 'reroll-worker', 'panel-worker', 'tick-worker',
+          'story-worker', 'table-worker'] as $wk) {
+    $src  = (string)file_get_contents(dirname(__DIR__) . '/' . $wk . '.php');
+    $span = $heldRegion($src);
+    if ($span === null) {                        // takes no hold; nothing to leak
+        ok("slot: $wk holds no model slot, so it cannot strand one", true);
+        continue;
+    }
+    [$take, $give] = $span;
+    ok("slot: $wk hands the slot back in a finally", $give !== PHP_INT_MAX);
+    $stranding = [];
+    foreach (token_get_all($src) as $t) {
+        if (is_array($t) && $t[0] === T_EXIT && $t[2] > $take && $t[2] < $give) $stranding[] = $t[2];
+    }
+    ok("slot: and $wk never exits while holding it — that finally would not run",
+        $stranding === [], 'line(s) ' . implode(', ', $stranding));
+}
+
+// ---------------------------------------------------------------------------
 // WHO THIS MACHINE IS, WHEN FOUR REQUESTS ASK AT ONCE.
 //
 // The first multi-process race in these suites, and it is here because the

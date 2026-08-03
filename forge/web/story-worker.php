@@ -41,6 +41,19 @@ if (preg_match('/^[a-f0-9]{32}$/', $sid)) xeric_session_use($sid);
 $ticket = (string)($payload['ticket'] ?? '');
 $lock   = null;
 
+/**
+ * STOP, AND HAND THE MODEL BACK FIRST. PHP does not run a `finally` on
+ * `exit()`, so the exit in the catch below stranded the queue on a process that
+ * was already gone — and the next person in line waited out the whole hold for
+ * a GPU that was free. The `finally` stays as the backstop; this cannot
+ * double-release.
+ */
+$done = function (int $code) use (&$lock, &$ticket): void {
+    if ($lock !== null)     { xeric_queue_release($lock); $lock = null; }
+    elseif ($ticket !== '') { xeric_queue_leave($ticket); $ticket = ''; }
+    exit($code);
+};
+
 try {
     $slug = xeric_web_slug((string)($payload['slug'] ?? ''));
     $w    = xeric_play_open($slug);
@@ -76,7 +89,7 @@ try {
                                             'beats' => count($story['beats'])]]);
 } catch (Throwable $e) {
     xeric_web_job_append($job, ['k' => 'error', 'message' => xeric_review_plain($e->getMessage())]);
-    exit(1);
+    $done(1);
 } finally {
     if ($lock !== null) xeric_queue_release($lock);
     elseif ($ticket !== '') xeric_queue_leave($ticket);

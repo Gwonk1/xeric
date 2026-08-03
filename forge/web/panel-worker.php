@@ -44,6 +44,26 @@ if (preg_match('/^[a-f0-9]{32}$/', $sid)) xeric_session_use($sid);
 $ticket = (string)($payload['ticket'] ?? '');
 $lock   = null;
 
+/**
+ * STOP, AND HAND THE MODEL BACK FIRST.
+ *
+ * PHP does not run a `finally` on `exit()`, and every way out of the block
+ * below was an exit — both the ones that succeed and the one in the catch. So
+ * the finally that returns the model slot ran on none of them, and a panel held
+ * the GPU after it had finished with it until the queue timed the hold out.
+ * That is the worst possible thing to leak: the slot is the one resource the
+ * whole app queues on, and the pressure is highest exactly when a worker is
+ * bailing out early.
+ *
+ * Everything here is idempotent — the finally is still the backstop for a path
+ * that forgets, and this cannot double-release.
+ */
+$done = function (int $code) use (&$lock, &$ticket): void {
+    if ($lock !== null)      { xeric_queue_release($lock); $lock = null; }
+    elseif ($ticket !== '')  { xeric_queue_leave($ticket); $ticket = ''; }
+    exit($code);
+};
+
 try {
     $slug = xeric_web_slug((string)($payload['slug'] ?? ''));
     $w    = xeric_play_open($slug);
@@ -67,10 +87,10 @@ try {
                                         'text' => ucfirst($phrase)]);
         });
     if (!$got['ok']) {
-        xeric_queue_leave($ticket);
+        // (the ticket is given up by $done; $lock is not taken yet)
         xeric_web_job_append($job, ['k' => 'error', 'kind' => (string)($got['kind'] ?? 'queued'),
                                     'message' => (string)$got['message']]);
-        exit(0);
+        $done(0);
     }
     $lock   = $got['hold'];
     $ticket = '';
@@ -87,7 +107,7 @@ try {
         xeric_web_job_append($job, ['k' => 'done', 'message' => 'written: ' . (string)$made['title'],
                                     'artifact' => ['title' => (string)$made['title'],
                                                    'kind' => (string)$made['kind']]]);
-        exit(0);
+        $done(0);
     }
 
     // LET THEM ARGUE. The room seats every expert and runs beats, which is what
@@ -112,7 +132,7 @@ try {
         xeric_web_job_append($job, ['k' => 'done',
             'message' => 'they talked for ' . count((array)$r['lines']) . ' turns',
             'round' => ['lines' => count((array)$r['lines'])]]);
-        exit(0);
+        $done(0);
     }
 
     // ONE SHORT CALL PER PERSON, each about their own sentence and nothing
@@ -131,7 +151,7 @@ try {
                       'tensions' => count($v['tensions'])]]);
 } catch (Throwable $e) {
     xeric_web_job_append($job, ['k' => 'error', 'message' => $e->getMessage()]);
-    exit(1);
+    $done(1);
 } finally {
     if ($lock !== null) xeric_queue_release($lock);
     elseif ($ticket !== '') xeric_queue_leave($ticket);

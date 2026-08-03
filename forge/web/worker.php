@@ -65,6 +65,19 @@ if (preg_match('/^[a-f0-9]{32}$/', $sid)) xeric_session_use($sid);
 const XERIC_WEB_BUILD_CALL_TIMEOUT = 240;
 
 $lock = null;
+
+/**
+ * STOP, AND HAND THE MODEL BACK FIRST. PHP does not run a `finally` on
+ * `exit()`, so an early exit taken after the hold was granted left the queue
+ * pointing at a dead worker until the hold timed out. The paths that do this
+ * are the refusals — the drained machine, the missing input — which is exactly
+ * when the slot is under most pressure. The `finally` stays as the backstop;
+ * this cannot double-release.
+ */
+$done = function (int $code) use (&$lock): void {
+    if (is_array($lock)) { xeric_queue_release($lock); $lock = null; }
+    exit($code);
+};
 $stopped = false;
 
 try {
@@ -139,7 +152,7 @@ try {
         if ($problem === '') {
             xeric_web_job_append($job, ['k' => 'error',
                 'message' => 'there is no problem written down to put in the room']);
-            exit(0);
+            $done(0);
         }
         $onNote('casting a room that will not agree with itself');
         $template = xeric_forge_panel($problem, $endpoint,

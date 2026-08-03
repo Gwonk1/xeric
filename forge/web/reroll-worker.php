@@ -45,6 +45,19 @@ if (preg_match('/^[a-f0-9]{32}$/', $sid)) xeric_session_use($sid);
 
 $lock = null;
 
+/**
+ * STOP, AND HAND THE MODEL BACK FIRST. PHP does not run a `finally` on
+ * `exit()`, so an early exit taken after the hold was granted left the queue
+ * pointing at a dead worker until the hold timed out. The paths that do this
+ * are the refusals — the drained machine, the missing input — which is exactly
+ * when the slot is under most pressure. The `finally` stays as the backstop;
+ * this cannot double-release.
+ */
+$done = function (int $code) use (&$lock): void {
+    if (is_array($lock)) { xeric_queue_release($lock); $lock = null; }
+    exit($code);
+};
+
 try {
     $slug = xeric_web_slug((string)($payload['slug'] ?? ''));
     $what = (string)($payload['what'] ?? '');
@@ -92,7 +105,7 @@ try {
         xeric_web_job_append($job, ['k' => 'error', 't' => $el(), 'kind' => 'drained',
             'message' => ucfirst(xeric_queue_stop_reason($lock))
                 . '. Your xeric is exactly as you left it, press it again in a few minutes.']);
-        exit(0);
+        $done(0);
     }
 
     // A per-call ceiling on the endpoint, matching the skip's. llm.php otherwise
