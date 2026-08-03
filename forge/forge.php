@@ -573,11 +573,43 @@ function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $n
         return null;
     }
 
-    $list = static function ($v, int $min): array {
+    // A BANNED NAME IN A BANK IS A GATE THAT SWAPS A BAN FOR A BAN. registers.json
+    // says that in as many words, and the suite holds the thirty written
+    // registers to it — but nothing held the INVENTED ones, which is a gap that
+    // only opened when registers started being written per world.
+    //
+    // Seen in the wild: an East Anglian register whose surnames were Marsh, Reed,
+    // Fenner, Thatcher, Sedge — and Holloway, which is on the family ban list.
+    // The cast gate caught it, because that gate checks the ban. The PLACE gate
+    // does not: it tests a shopfront against the world-word bans, not the surname
+    // ones, so a rename could have hung "Holloway's Bakery" over a door in a
+    // world where nobody may be called Holloway.
+    //
+    // Dropped rather than refused, because one bad entry in ten is a bank with
+    // nine good ones in it; the minimums below decide whether what is left is
+    // still a register.
+    $bans = xeric_forge_registers()['banned'];
+    $banned = [];
+    foreach ([($bans['given'] ?? []), ($bans['family'] ?? [])] as $set) {
+        foreach ((array)$set as $b) {
+            $k = xeric_forge_name_norm((string)$b);
+            if ($k !== '') $banned[$k] = true;
+        }
+    }
+    $dropped = 0;
+    $list = static function ($v, int $min) use ($banned, &$dropped): array {
         $out = [];
         foreach ((array)$v as $x) {
             $x = trim(preg_replace('/\s+/u', ' ', (string)$x) ?? '');
-            if ($x !== '' && mb_strlen($x) <= 60) $out[] = $x;
+            if ($x === '' || mb_strlen($x) > 60) continue;
+            // Whole entry AND word by word: "Holloway" is a banned surname and so
+            // is "Holloway & Sons" over a door.
+            $bad = isset($banned[xeric_forge_name_norm($x)]);
+            if (!$bad) {
+                foreach (xeric_forge_name_words($x) as $w) if (isset($banned[$w])) { $bad = true; break; }
+            }
+            if ($bad) { $dropped++; continue; }
+            $out[] = $x;
         }
         $out = array_values(array_unique($out));
         return count($out) >= $min ? $out : [];
@@ -603,7 +635,10 @@ function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $n
         if ($note) $note('register: what came back was too thin to name a world from, using a written one');
         return null;
     }
-    if ($note) $note('register: ' . $reg['label'] . ' — ' . $where);
+    if ($note) {
+        $note('register: ' . $reg['label'] . ' — ' . $where
+              . ($dropped > 0 ? " ({$dropped} name(s) already worn out elsewhere, dropped)" : ''));
+    }
     return $reg;
 }
 

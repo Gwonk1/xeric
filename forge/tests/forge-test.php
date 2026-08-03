@@ -1484,6 +1484,65 @@ ok('axes: the observed repeat offenders are still gated, invented register or no
     in_array('vane', $bannedFam, true) && in_array('thorne', $bannedFam, true));
 
 $regs = xeric_forge_registers()['registers'];
+// AN INVENTED REGISTER IS HELD TO THE BAN LIST TOO. registers.json says a gate
+// that swaps a ban for a ban loops, and the suite holds the thirty written
+// registers to it — but nothing held the invented ones, which is a gap that only
+// opened when registers started being written per world.
+//
+// Seen in the wild on 2026-08-03: an East Anglian register with Marsh, Reed,
+// Fenner, Thatcher, Sedge — and Holloway, which is a banned surname. The CAST
+// gate caught it, because that gate checks the ban. The PLACE gate does not: it
+// tests a shopfront against the world-word bans, not the surname ones, so a
+// rename could have hung "Holloway's Bakery" over a door in a world where
+// nobody may be called Holloway.
+(function (): void {
+    $bans = xeric_forge_registers()['banned'];
+    $badGiven  = (array)($bans['given'] ?? []);
+    $badFamily = (array)($bans['family'] ?? []);
+    $stub = ['base' => 'stub://', 'stub' => function (string $tag, array $m, array $o) use ($badGiven, $badFamily): array {
+        return [
+            'label' => 'a register that answers with the ban list',
+            'sound' => 'plain',
+            // Banned entries deliberately outnumbered by good ones: the rule is
+            // DROP the bad, not refuse the bank, and a bank refused whole would
+            // pass a test that only asks whether banned names survive.
+            'given' => array_merge(array_slice($badGiven, 0, 3),
+                ['Beryl', 'Arthur', 'Aldous', 'Hester', 'Enid', 'Bertram', 'Neddy', 'Giles', 'Wilfred', 'Alf', 'Ruth']),
+            'family' => array_merge(array_slice($badFamily, 0, 2),
+                ['Marsh', 'Reed', 'Fenner', 'Thatcher', 'Sedge', 'Wick', 'Gedge', 'Hobb']),
+            'toponyms' => ['Sedgefield Lane', 'The Reaches', 'Marsh End', 'The Causeway', 'Salt-Meadow Road'],
+            // A banned surname over a door is the same ban. Word by word, not
+            // just whole-entry: "<banned> & Sons" is not the bare surname.
+            'businesses' => [($badFamily[0] ?? 'Thorne') . ' & Sons', 'Fenner & Co.', 'The Reaches Arms',
+                             'Marsh End Grocers', "Thatcher's Bakery"],
+            'church' => 'The Meeting Hall',
+        ];
+    }];
+    $r = xeric_forge_register_invent(['era' => '1970s', 'people' => 'fen English', 'place' => 'East Anglia'], $stub);
+    ok('register: an invented one still comes back usable after the ban list is applied', is_array($r));
+    if (!is_array($r)) return;
+
+    $ban = [];
+    foreach (array_merge($badGiven, $badFamily) as $b) {
+        $k = xeric_forge_name_norm((string)$b);
+        if ($k !== '') $ban[$k] = true;
+    }
+    $left = [];
+    foreach (['given', 'family', 'toponyms', 'businesses'] as $bank) {
+        foreach ((array)$r[$bank] as $v) {
+            foreach (xeric_forge_name_words((string)$v) as $w) {
+                if (isset($ban[$w])) $left[] = $bank . ': ' . $v;
+            }
+        }
+    }
+    ok('register: and no banned name survives in any of its banks — a gate that swaps a ban for a ban loops',
+        $left === [], implode(', ', $left));
+    ok('register: a banned surname over a door goes too, not only the bare surname',
+        !in_array(($badFamily[0] ?? 'Thorne') . ' & Sons', (array)$r['businesses'], true));
+    ok('register: the good names are kept — one bad entry does not cost the bank',
+        in_array('Fenner', (array)$r['family'], true) && in_array('Beryl', (array)$r['given'], true));
+})();
+
 ok('register: a pin is honoured, whatever the answers around it say',
     xeric_forge_naming(ANSWERS + ['register' => 'rustbelt_polish'])['key'] === 'rustbelt_polish'
     && xeric_forge_naming(ANSWERS + ['register' => 'cajun_bayou'])['key'] === 'cajun_bayou');
