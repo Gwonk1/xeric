@@ -640,7 +640,8 @@ if ($action !== '') {
         // the world. Never for an empty thread — a tap that opened nothing says
         // nothing (learn.php).
         if ($th['conversation_id'] !== null) {
-            xeric_learn_read($w['db'], $handle, $unread, xeric_clock_epoch($w['db']));
+            xeric_learn_read($w['db'], $handle, $unread, xeric_clock_epoch($w['db']),
+                xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST);
         }
 
         $c    = xeric_world_character($w['template'], $handle);

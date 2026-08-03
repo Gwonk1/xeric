@@ -65,7 +65,8 @@
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/chat.php';      // the model seam, and the deduper
-require_once __DIR__ . '/trust.php';     // what these same crumbs mean to the person in them
+require_once __DIR__ . '/trust.php';    // what these same crumbs mean to the person in them
+require_once __DIR__ . '/players.php';  // and whose reply, whose silence it was
 
 /** How many lessons one bucket (the world, or one character) may hold. */
 const XERIC_LEARN_MAX_LESSONS = 6;
@@ -200,8 +201,8 @@ function xeric_signal_add(PDO $db, string $kind, array $data): int
     $note = trim(preg_replace('/\s+/u', ' ', (string)($data['note'] ?? '')) ?? '');
 
     try {
-        $st = $db->prepare('INSERT INTO signals (kind, handle, subject, n, lag, note, processed, created_at, world_epoch)
-                            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)');
+        $st = $db->prepare('INSERT INTO signals (kind, handle, subject, n, lag, note, processed, created_at, world_epoch, player)
+                            VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)');
         $st->execute([
             $kind,
             mb_substr((string)($data['handle'] ?? ''), 0, 80),
@@ -211,6 +212,10 @@ function xeric_signal_add(PDO $db, string $kind, array $data): int
             mb_substr($note, 0, 400),
             $at,
             isset($data['world_epoch']) ? (int)$data['world_epoch'] : null,
+            // NULL rather than 1 when nobody said: a null is "this predates
+            // anybody asking", which reads as the first player everywhere and
+            // needs no backfill.
+            isset($data['p']) ? (int)$data['p'] : null,
         ]);
         return (int)$db->lastInsertId();
     } catch (Throwable $e) {
@@ -370,7 +375,16 @@ function xeric_learn_settle(PDO $db, ?int $epoch = null): array
     $h    = (string)($ping['handle'] ?? '');
     $mid  = (int)($ping['message_id'] ?? 0);
     if ($h !== '' && $mid > 0 && xeric_learn_said_since($db, $h, $mid) === 0) {
+        // WHOSE SILENCE. A ping goes out to the world rather than to a named
+        // person, so with one person at the centre it is unambiguously theirs
+        // and with two it is nobody's — charging the owner for a message a
+        // guest also saw and also did not answer would be inventing a fact.
+        // `p => 0` means "somebody did not answer", and xeric_trust_contact
+        // reads 0 as the first player, so the count is written and the WARMTH
+        // is deliberately withheld below.
+        $centre = count(xeric_players($db));
         xeric_signal_add($db, 'ignored', ['handle' => $h, 'world_epoch' => $epoch,
+            'p' => $centre > 1 ? -1 : XERIC_PLAYER_FIRST,
             'note' => 'texted first and was still waiting when the world moved on']);
         $out['ignored']++;
     }
@@ -396,10 +410,11 @@ function xeric_learn_said_since(PDO $db, string $handle, int $afterId): int
 }
 
 /** A thread opened and read. The cheapest thing a person does that means anything. */
-function xeric_learn_read(PDO $db, string $handle, int $unread = 0, ?int $epoch = null, ?int $at = null): int
+function xeric_learn_read(PDO $db, string $handle, int $unread = 0, ?int $epoch = null,
+                          int $player = XERIC_PLAYER_FIRST, ?int $at = null): int
 {
     return xeric_signal_add($db, 'dwell', ['handle' => $handle, 'n' => $unread,
-        'world_epoch' => $epoch, 'at' => $at]);
+        'p' => max(XERIC_PLAYER_FIRST, $player), 'world_epoch' => $epoch, 'at' => $at]);
 }
 
 // ---------------------------------------------------------------------------
@@ -438,21 +453,32 @@ function xeric_learn_tally_apply(PDO $db, array $rows, ?int $at = null): array
                 xeric_arc_bump($db, $h, 'learn.replies', 1, $at);
                 xeric_arc_bump($db, $h, 'learn.reply_chars', max(0, (int)($r['n'] ?? 0)), $at);
                 xeric_arc_bump($db, $h, 'learn.reply_lag', max(0, (int)($r['lag'] ?? 0)), $at);
-                xeric_trust_contact($db, $h, xeric_trust_signal('reply'), $at);
+                // To the person who actually answered. One in every world until
+                // somebody is invited; the crumb carries it because by the time
+                // this folds, the request that knew is long gone.
+                xeric_trust_contact($db, $h, xeric_trust_signal('reply'), $at,
+                                    max(XERIC_PLAYER_FIRST, (int)($r['player'] ?? XERIC_PLAYER_FIRST)));
                 $chars[$h] = ($chars[$h] ?? 0) + 1;
                 break;
 
             case 'ignored':
                 if ($h === '') break;
                 xeric_arc_bump($db, $h, 'learn.ignored', 1, $at);
-                xeric_trust_contact($db, $h, xeric_trust_signal('ignored'), $at);
+                // -1 is a silence nobody can be blamed for: the count still
+                // teaches the world what gets walked past, and nobody's
+                // standing moves on a fact about a room rather than a person.
+                $ip = (int)($r['player'] ?? XERIC_PLAYER_FIRST);
+                if ($ip >= XERIC_PLAYER_FIRST) {
+                    xeric_trust_contact($db, $h, xeric_trust_signal('ignored'), $at, $ip);
+                }
                 $chars[$h] = ($chars[$h] ?? 0) + 1;
                 break;
 
             case 'dwell':
                 if ($h !== '') {
                     xeric_arc_bump($db, $h, 'learn.reads', 1, $at);
-                    xeric_trust_contact($db, $h, xeric_trust_signal('dwell'), $at);
+                    xeric_trust_contact($db, $h, xeric_trust_signal('dwell'), $at,
+                                        max(XERIC_PLAYER_FIRST, (int)($r['player'] ?? XERIC_PLAYER_FIRST)));
                     $chars[$h] = ($chars[$h] ?? 0) + 1;
                 }
                 // A dwell that names an event kind came from the settle pass and

@@ -5432,7 +5432,8 @@ function xeric_watch_line(array $w, array &$s, array $endpoint, string $sid = ''
  *
  * @throws RuntimeException a refusal in the duet's words; nothing appended
  */
-function xeric_watch_say(array $w, array &$s, string $text): array
+function xeric_watch_say(array $w, array &$s, string $text,
+                         int $player = XERIC_PLAYER_FIRST): array
 {
     $t  = $w['template'];
     $db = $w['db'];
@@ -5454,7 +5455,13 @@ function xeric_watch_say(array $w, array &$s, string $text): array
         }
     }
 
-    $me    = trim((string)($t['user']['name'] ?? '')) ?: 'you';
+    // WHOEVER ACTUALLY WALKED IN. The template's user is the person the world
+    // was forged around; with two people in a house it is not necessarily the
+    // one who typed this line, and a scene that labels a guest's words with the
+    // owner's name puts words in somebody's mouth in the transcript itself.
+    $me = $player > XERIC_PLAYER_FIRST
+        ? xeric_player_name($db, $player, $t)
+        : (trim((string)($t['user']['name'] ?? '')) ?: 'you');
     $where = xeric_player_where($t, $db);
 
     $s['lines'][] = ['handle' => XERIC_WATCH_PLAYER, 'name' => $me, 'text' => $text];

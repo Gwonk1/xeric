@@ -249,7 +249,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             return;
         }
         try {
-            $out = xeric_watch_say($w, $s, (string)($in['text'] ?? ''));
+            $out = xeric_watch_say($w, $s, (string)($in['text'] ?? ''),
+                xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST);
         } catch (Throwable $e) {
             $m = $e->getMessage();
             if (str_contains($m, 'next to the thing they must not know')) {

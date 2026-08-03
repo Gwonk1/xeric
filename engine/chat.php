@@ -222,6 +222,11 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
         xeric_signal_add($db, 'reply', [
             'handle' => $speaker, 'subject' => 'chat',
             'n' => mb_strlen($userText), 'lag' => $lag,
+            // WHOSE reply. The crumb is the only place this is still known —
+            // learn.php folds it later, long after the request that carried it
+            // is gone — and warmth charged to the wrong person is a character
+            // warming to somebody who never spoke to them.
+            'p' => $player,
             'world_epoch' => $epoch, 'at' => $at,
         ]);
     }

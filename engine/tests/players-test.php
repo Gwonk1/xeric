@@ -284,6 +284,76 @@ ok('name: talking to the guest, the room is told the owner is about too',
 ok('name: and talking to the owner, it is told about the guest',
     str_contains(xeric_guest_block($np, $Tp, 1), 'Corey'));
 
+// ---------------------------------------------------------------------------
+// 6. WARMTH GOES TO WHOEVER EARNED IT. Ordinary contact was the one path that
+// could move trust without a promise, and it was charging every reply to the
+// first person however many people were talking.
+// ---------------------------------------------------------------------------
+
+echo "\n# warmth goes to whoever earned it\n";
+
+require_once dirname(__DIR__) . '/learn.php';
+
+/** Fold every crumb that is waiting, the way the engine does between skips. */
+$fold = function (PDO $db): void {
+    $rows = xeric_signals_unprocessed($db, 500);
+    xeric_learn_tally_apply($db, $rows);
+    xeric_signals_mark($db, array_map(fn($r) => (int)$r['id'], $rows));
+};
+
+$w = fresh('warm');
+xeric_player_add($w, $Tp, 'Corey');
+for ($i = 0; $i < 8; $i++) {
+    xeric_signal_add($w, 'reply', ['handle' => 'ruth', 'subject' => 'chat',
+        'n' => 40, 'lag' => 60, 'p' => 2, 'world_epoch' => 100 + $i]);
+}
+$fold($w);
+ok('warm: eight replies from a guest warm Ruth toward the GUEST',
+    xeric_trust_of($w, 'ruth', null, 2) > 0, (string)xeric_trust_of($w, 'ruth', null, 2));
+ok('warm: and toward the owner, who said nothing, not at all',
+    xeric_trust_of($w, 'ruth', null, 1) === 0);
+
+// A crumb with no person on it is the first player's, so every signal already
+// on disk keeps meaning what it meant.
+$old = fresh('warm-old');
+for ($i = 0; $i < 8; $i++) {
+    xeric_signal_add($old, 'reply', ['handle' => 'ruth', 'subject' => 'chat',
+        'n' => 40, 'lag' => 60, 'world_epoch' => 100 + $i]);
+}
+$fold($old);
+ok('warm: a crumb written before any of this is still the first person\'s',
+    xeric_trust_of($old, 'ruth', null, 1) > 0);
+
+// AND A SILENCE WITH TWO PEOPLE IN THE ROOM IS NOBODY'S. A ping goes out to the
+// world rather than to a named person; charging the owner for a message a guest
+// also saw and also did not answer would be inventing a fact.
+$sil = fresh('silence');
+xeric_player_add($sil, $Tp, 'Corey');
+for ($i = 0; $i < 8; $i++) {
+    xeric_signal_add($sil, 'ignored', ['handle' => 'ruth', 'p' => -1, 'world_epoch' => 100 + $i]);
+}
+$fold($sil);
+ok('silence: nobody\'s standing moves on a silence nobody can be blamed for',
+    xeric_trust_of($sil, 'ruth', null, 1) === 0 && xeric_trust_of($sil, 'ruth', null, 2) === 0);
+ok('silence: but the world still learns that it was walked past',
+    xeric_arc_int($sil, 'ruth', 'learn.ignored', 0) === 8);
+
+// THE MIGRATION THAT DOES NOT NEED RUNNING. A world written before any of this
+// existed has no `player` column until it is opened, gains one on the next
+// open, and every row in it keeps meaning what it meant — because NULL reads as
+// the first person everywhere.
+$mig = fresh('migrate');
+ok('migrate: the column is there after an ordinary open',
+    in_array('player', xeric_state_columns($mig, 'signals'), true));
+$mig->exec("INSERT INTO signals (kind, handle, subject, n, lag, note, processed, created_at)
+            VALUES ('reply', 'ruth', 'chat', 40, 60, '', 0, 1)");
+$row = $mig->query('SELECT player FROM signals')->fetchAll()[0];
+ok('migrate: a row written without one carries nothing, not a wrong number',
+    $row['player'] === null);
+xeric_state_migrate($mig);
+ok('migrate: and migrating twice is not an error',
+    count(array_filter(xeric_state_columns($mig, 'signals'), fn($c) => $c === 'player')) === 1);
+
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

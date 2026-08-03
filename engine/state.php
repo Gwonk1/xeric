@@ -293,6 +293,12 @@ function xeric_state_alters(): array
         // the reaper runs behind the conversation and needs both.
         ['photo_jobs', 'ask',  "TEXT NOT NULL DEFAULT ''"],
         ['photo_jobs', 'conv', 'INTEGER'],
+        // WHICH person at the centre a crumb is about. NULL on every row that
+        // predates two people ever being in a world, and NULL reads as the
+        // first player — so nothing already on disk changes meaning and no
+        // backfill is needed. -1 is a deliberate third answer: a silence with
+        // two people in the room that nobody in particular can be blamed for.
+        ['signals', 'player', 'INTEGER'],
     ];
 }
 
