@@ -1449,13 +1449,22 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
             head = 'Stopped at the limit (' + calls + ' model calls) with ' + left + ' left. '
                  + (bits.length ? bits.join(', ') + '. ' : '')
                  + 'Press it again to keep going, or fix them below by hand.';
+        } else if (stop === 'rounds') {
+            // NOT THE SAME FAILURE AS RUNNING OUT OF CALLS, and it must not read
+            // like one. This is a pass that was still making progress when the
+            // round ceiling came down — the useful thing to say is that pressing
+            // again carries on, and that the token budget was never the problem.
+            head = 'Stopped after ' + ROUNDS + ' rounds with ' + left + ' left — still moving, '
+                 + 'just not finished (' + calls + ' model calls, the ceiling is ' + CALL_CAP + '). '
+                 + (bits.length ? bits.join(', ') + '. ' : '')
+                 + 'Press it again to carry on from here, or fix them below by hand.';
         } else {
             head = 'As clear as it gets: ' + (bits.length ? bits.join(', ') + ', ' : '')
                  + left + ' the editor could not settle. Each one below has a fix it.';
         }
         st.textContent = head + (extra ? '  ' + extra : '');
         // A spiral is a fault, not a result: it says so where a fault is said.
-        if (stop === 'thrash' || stop === 'budget') st.classList.add('bad');
+        if (stop === 'thrash' || stop === 'budget' || stop === 'rounds') st.classList.add('bad');
         else st.classList.remove('bad');
         if (anyFixed) writeCover(true);
       }
@@ -1520,7 +1529,17 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         // that "until clear" cannot mean "forever" on a machine somebody is
         // paying for by the token.
         if (round > ROUNDS || calls >= CALL_CAP) {
-            stop = (BOUNDED && calls < CALL_CAP) ? '' : 'budget';
+            // WHICH CEILING, NAMED HONESTLY. This collapsed both into 'budget',
+            // so a pass that ran out of ROUNDS was told it had run out of MODEL
+            // CALLS — a sentence quoting a number that was nowhere near its
+            // limit. Caught on a live run sitting at round 15 with 107 calls
+            // against a cap of 240: it was going to trip the round ceiling and
+            // blame the token budget, at exactly the moment somebody was
+            // watching to see whether this button finally worked.
+            //
+            // BOUNDED is still not a failure at all: a caller that asks for one
+            // round and gets one round did what it meant to.
+            stop = calls >= CALL_CAP ? 'budget' : (BOUNDED ? '' : 'rounds');
             finish(); return;
         }
         st.textContent = 'round ' + round + ': the editor is reading…'

@@ -417,7 +417,7 @@ ok('clear-all: a stubborn line does not get a fresh pair of tries every round',
     str_contains($rv, 'if (e.tries === undefined)') && str_contains($rv, 'e.tries >= 3'));
 // And a caller that asks for one round is not "out of budget" when it uses it.
 ok('clear-all: a deliberately bounded pass is not reported as a failure',
-    str_contains($rv, 'BOUNDED && calls < CALL_CAP'));
+    str_contains($rv, "(BOUNDED ? '' : 'rounds')"));
 
 ok('contradictions: a flagged finding offers a way to fix it',
     str_contains($rv, "go.textContent = 'fix it';"));
@@ -435,6 +435,15 @@ ok('contradictions: and the line under the button says why it is locked',
 ok('contradictions: and a running clock beside it, so a wedged pass is visibly wedged',
     str_contains($rv, "className = 'lsclock'")
     && preg_match('/if \(on\)[^}]*?appendChild\(runClock\(\)\)/s', $rv) === 1);
+// TWO CEILINGS, TWO SENTENCES. These collapsed into one, so a pass that ran out
+// of ROUNDS was told it had run out of MODEL CALLS — quoting a number nowhere
+// near its limit. Caught on a live run at round 15 with 107 calls against a cap
+// of 240.
+ok('contradictions: running out of rounds is not reported as running out of calls',
+    preg_match("/stop = calls >= CALL_CAP \\? 'budget' : \\(BOUNDED \\? '' : 'rounds'\\)/", $rv) === 1);
+ok('contradictions: and the round ceiling says pressing again carries on',
+    str_contains($rv, "stop === 'rounds'") && str_contains($rv, 'still moving')
+    && str_contains($rv, 'carry on from here'));
 ok('contradictions: the clock is stopped when the lock comes off',
     preg_match('/stopClock\(\);\s*_ls\.textContent = _ls\.dataset\.was/s', $rv) === 1);
 
