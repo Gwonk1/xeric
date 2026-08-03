@@ -65,6 +65,7 @@
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/chat.php';      // the model seam, and the deduper
+require_once __DIR__ . '/trust.php';     // what these same crumbs mean to the person in them
 
 /** How many lessons one bucket (the world, or one character) may hold. */
 const XERIC_LEARN_MAX_LESSONS = 6;
@@ -426,23 +427,32 @@ function xeric_learn_tally_apply(PDO $db, array $rows, ?int $at = null): array
         $sub  = (string)($r['subject'] ?? '');
 
         switch ($kind) {
+            // THE SAME CRUMBS, READ TWICE. learn.php has always read these as
+            // evidence about what the PLAYER engages with, which is what
+            // re-weights the kinds. They are also evidence about how somebody
+            // is being treated, and that half was never collected: trust moved
+            // only through promises, so a hundred good conversations moved it
+            // nothing (engine/trust.php). One fold, two meanings.
             case 'reply':
                 if ($h === '') break;
                 xeric_arc_bump($db, $h, 'learn.replies', 1, $at);
                 xeric_arc_bump($db, $h, 'learn.reply_chars', max(0, (int)($r['n'] ?? 0)), $at);
                 xeric_arc_bump($db, $h, 'learn.reply_lag', max(0, (int)($r['lag'] ?? 0)), $at);
+                xeric_trust_contact($db, $h, xeric_trust_signal('reply'), $at);
                 $chars[$h] = ($chars[$h] ?? 0) + 1;
                 break;
 
             case 'ignored':
                 if ($h === '') break;
                 xeric_arc_bump($db, $h, 'learn.ignored', 1, $at);
+                xeric_trust_contact($db, $h, xeric_trust_signal('ignored'), $at);
                 $chars[$h] = ($chars[$h] ?? 0) + 1;
                 break;
 
             case 'dwell':
                 if ($h !== '') {
                     xeric_arc_bump($db, $h, 'learn.reads', 1, $at);
+                    xeric_trust_contact($db, $h, xeric_trust_signal('dwell'), $at);
                     $chars[$h] = ($chars[$h] ?? 0) + 1;
                 }
                 // A dwell that names an event kind came from the settle pass and

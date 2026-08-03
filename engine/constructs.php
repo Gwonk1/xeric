@@ -96,6 +96,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/death.php';   // the dead wait for nothing, and tell nobody anything
+require_once __DIR__ . '/trust.php';   // a promise broken, and a promise explained
 
 /** Grace past the promised hour before a wait becomes a miss, world seconds. */
 const XERIC_EXPECT_GRACE = 4 * 3600;
@@ -392,7 +393,10 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
                         . '. Left later than usual, and did not say why.');
                     xeric_memory_add($db, $h, $user . ' said "' . $e['quote'] . '" and did not come.',
                         'construct', ['expect' => $e['key']], $e['due']);
-                    xeric_arc_bump($db, $h, 'trust', -1);
+                    // Through the earned path, which is bounded at the far
+                    // ends: a broken promise is one of the things ordinary
+                    // conversation cannot undo (engine/trust.php).
+                    xeric_trust_earn($db, $h, -1);
                     $e['state'] = 'missed'; $e['missed_at'] = $epoch;
                     $row = $e; unset($row['key']);
                     xeric_arc_set($db, $h, $e['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
@@ -468,7 +472,7 @@ function xeric_expect_repair(array $t, PDO $db, string $handle, array $now, ?cal
     $best['state'] = 'repaired'; $best['explained_at'] = (int)($now['epoch'] ?? 0);
     $key = $best['key']; $row = $best; unset($row['key']);
     xeric_arc_set($db, $handle, $key, json_encode($row, JSON_UNESCAPED_UNICODE));
-    xeric_arc_bump($db, $handle, 'trust', +1);
+    xeric_trust_earn($db, $handle, +1);
     xeric_memory_add($db, $handle, $user . ' told ' . $name . ' why they missed ' . $best['what'] . '.',
         'construct', ['expect' => $key], (int)($now['epoch'] ?? 0));
     $note('expectations: ' . $user . ' explained ' . $best['what'] . ' — repaired');

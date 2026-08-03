@@ -41,6 +41,7 @@ require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/sweeps.php';   // the kind names a thumb may push on
 require_once __DIR__ . '/shape.php';    // the curve, which a world has with or without a story
 require_once __DIR__ . '/death.php';    // a victim who is somebody you know
+require_once __DIR__ . '/trust.php';    // telling somebody is trusting them
 
 // ---------------------------------------------------------------------------
 // Discovery + load
@@ -839,6 +840,13 @@ function xeric_story_spill(array $s, PDO $db, string $beat, int $epoch, ?int $at
             'beat'  => $beat,
             'to'    => 'user',
         ], $epoch, $at);
+
+        // TELLING SOMEBODY IS TRUSTING THEM. A beat is the thing this person
+        // has been holding, and they have just handed it over — which is the
+        // half of trust ordinary conversation cannot reach (engine/trust.php),
+        // so it EARNS rather than warms. They also now know they told you,
+        // which is the reveal mechanic, and this is what it costs them.
+        xeric_trust_earn($db, (string)$holder, 1, $at);
     }
 
     foreach ((array)($b['kills_herring'] ?? []) as $hk) {

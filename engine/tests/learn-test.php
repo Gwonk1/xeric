@@ -803,5 +803,63 @@ $dbS = $dbSP = $dbSD = $dbSE = $dbS1 = $dbSB = $dbSF = $dbO = null;
 $dbClamp = $dbDead = $dbThin = $dbThin2 = $dbTx = null;
 foreach ($DBFILES as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
+// ---------------------------------------------------------------------------
+// TRUST, from ordinary contact. It has only ever moved through promises — a
+// hundred good conversations moved it nothing — and the fix must not turn it
+// into a chat counter, which is the failure mode of every approval meter
+// ever shipped. Two rules stop that: contact converts SLOWLY, and it has a
+// CEILING that only the things which cost something pass.
+// ---------------------------------------------------------------------------
+
+echo "\n# trust, and what ordinary contact is worth\n";
+
+$trDb = fresh_db('trust');
+
+ok('trust: a stranger starts at nothing', xeric_trust_of($trDb, 'ruth') === 0);
+ok('trust: one exchange is not a friendship',
+    xeric_trust_contact($trDb, 'ruth', 1) === 0 && xeric_trust_contact($trDb, 'ruth', 1) === 0);
+ok('trust: a few of them are worth a point',
+    xeric_trust_contact($trDb, 'ruth', 1) === 0 && xeric_trust_contact($trDb, 'ruth', 1) === 1);
+
+// THE CEILING. Contact carries somebody to warm and stops — the far end of
+// trust is not for sale at any volume of conversation.
+for ($i = 0; $i < 200; $i++) xeric_trust_contact($trDb, 'ruth', 1);
+ok('trust: no amount of talking passes the band contact is allowed to reach',
+    xeric_trust_of($trDb, 'ruth') === XERIC_TRUST_BAND, (string)xeric_trust_of($trDb, 'ruth'));
+ok('trust: and warmth does not hoard — a year of small talk cannot cash out later',
+    abs(xeric_arc_int($trDb, 'ruth', 'trust.warmth', 0)) <= 2 * XERIC_TRUST_STEP);
+
+// But the things that cost something go past it.
+ok('trust: a secret told, or a promise kept, reaches where talking cannot',
+    xeric_trust_earn($trDb, 'ruth', 4) === XERIC_TRUST_BAND + 4);
+ok('trust: and the far ends are still ends',
+    xeric_trust_earn($trDb, 'ruth', 99) === XERIC_TRUST_MAX);
+
+// Being ignored costs more than being answered earns, and cools back through
+// the band rather than sticking at the top because somebody once liked you.
+$trCool = fresh_db('trust-cool');
+for ($i = 0; $i < 12; $i++) xeric_trust_contact($trCool, 'dot', 1);
+$trWarm = xeric_trust_of($trCool, 'dot');
+for ($i = 0; $i < 12; $i++) xeric_trust_contact($trCool, 'dot', xeric_trust_signal('ignored'));
+ok('trust: being ignored cools somebody who was warm', xeric_trust_of($trCool, 'dot') < $trWarm,
+    $trWarm . ' -> ' . xeric_trust_of($trCool, 'dot'));
+ok('trust: and contact alone cannot drive somebody past the far side either',
+    xeric_trust_of($trCool, 'dot') >= -XERIC_TRUST_BAND);
+ok('trust: a ping that went nowhere stings more than a reply soothes',
+    xeric_trust_signal('ignored') < 0 && abs(xeric_trust_signal('ignored')) > xeric_trust_signal('reply'));
+
+// AND THE CRUMBS THEMSELVES MOVE IT — the wiring, not the function. learn.php
+// has always folded these as evidence about the player; they are also
+// evidence about how somebody is being treated.
+$trLive = fresh_db('trust-live');
+for ($i = 0; $i < 8; $i++) {
+    xeric_signal_add($trLive, 'reply', ['handle' => 'ruth', 'subject' => 'chat', 'n' => 40, 'lag' => 30]);
+}
+count_them($trLive);
+ok('trust: ordinary replies, folded, actually move her',
+    xeric_trust_of($trLive, 'ruth') > 0, (string)xeric_trust_of($trLive, 'ruth'));
+ok('trust: and it is asymmetric — somebody else is untouched',
+    xeric_trust_of($trLive, 'dot') === 0);
+
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";
 exit($FAILED === 0 ? 0 : 1);
