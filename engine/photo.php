@@ -43,6 +43,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/weather.php';
+require_once __DIR__ . '/state.php';    // the queue is rows; clock.php rides in with it
+require_once __DIR__ . '/clock.php';    // render-time prompts read the world's own now
 
 /**
  * The image machine, if this install has one. Null is dormant, and dormant
@@ -303,4 +305,220 @@ function xeric_photo_caption(array $composed): string
     if ($words === []) $words = ['a', 'photograph'];
 
     return implode(' ', array_slice($words, 0, 8));
+}
+
+// ---------------------------------------------------------------------------
+// The queue, and the reaper that drains it
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything this world owes itself a picture of, enqueued. IDEMPOTENT: the
+ * unique (kind, subject) index means every open may offer the whole cast and
+ * every place, and the table keeps one row each — which is also the whole
+ * backfill story for worlds forged before photos existed: opening them is
+ * enqueuing them. Captions are written at enqueue time so every job has its
+ * stand-in line from the first moment anything renders a gallery.
+ *
+ * @return array{portraits:int,places:int} rows actually added (not offered)
+ */
+function xeric_photo_backfill(array $t, PDO $db, ?int $at = null): array
+{
+    $at  = $at ?? xeric_state_time();
+    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, created_at)
+                         VALUES (?, ?, ?, ?)');
+    $n   = ['portraits' => 0, 'places' => 0];
+
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        $cap = xeric_photo_caption(xeric_photo_prompt($t, 'portrait', ['handle' => $h, 'ask' => 'a portrait']));
+        $ins->execute(['portrait', $h, $cap, $at]);
+        $n['portraits'] += $ins->rowCount();
+    }
+    foreach ((array)($t['places'] ?? []) as $p) {
+        $k = (string)($p['key'] ?? '');
+        if ($k === '') continue;
+        $cap = xeric_photo_caption(xeric_photo_prompt($t, 'place', ['place' => $k]));
+        $ins->execute(['place', $k, $cap, $at]);
+        $n['places'] += $ins->rowCount();
+    }
+    return $n;
+}
+
+/** The jobs, newest last; $status narrows, null is everything. */
+function xeric_photo_jobs(PDO $db, ?string $status = null): array
+{
+    $st = $status === null
+        ? $db->query('SELECT * FROM photo_jobs ORDER BY id')
+        : $db->prepare('SELECT * FROM photo_jobs WHERE status = ? ORDER BY id');
+    if ($status !== null) $st->execute([$status]);
+    $rows = $st->fetchAll();
+    $st->closeCursor();
+    return $rows;
+}
+
+/** One subject's finished pictures — what a cog page's gallery reads. */
+function xeric_photo_of(PDO $db, string $kind, string $subject): ?array
+{
+    $st = $db->prepare('SELECT * FROM photo_jobs WHERE kind = ? AND subject = ? LIMIT 1');
+    $st->execute([$kind, $subject]);
+    $rows = $st->fetchAll();
+    $st->closeCursor();
+    return $rows ? $rows[0] : null;
+}
+
+/**
+ * Render one image. The ADAPTER — the one function that will ever speak to an
+ * image provider, llm.php's discipline applied to pictures. A stub endpoint
+ * returns its own bytes (the tests' seam, and the only path exercised until a
+ * real machine exists); the live path speaks the common images-API shape and
+ * takes the first base64 answer it is given. Throws on nothing usable — the
+ * reaper counts that as a try, not a catastrophe.
+ *
+ * @return array{bytes:string,usage:array}
+ */
+function xeric_image_render(array $endpoint, array $composed, array $opts = []): array
+{
+    if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) {
+        $out = ($endpoint['stub'])('image', $composed, $opts);
+        if (!is_array($out) || !isset($out['bytes'])) {
+            throw new RuntimeException('photo: the stub returned no image');
+        }
+        return ['bytes' => (string)$out['bytes'], 'usage' => (array)($out['usage'] ?? [])];
+    }
+
+    $base = rtrim((string)($endpoint['base'] ?? ''), '/');
+    if ($base === '') throw new RuntimeException('photo: no image machine is configured');
+    $body = json_encode([
+        'prompt' => (string)$composed['prompt'],
+        'seed'   => (int)($composed['seeds']['face'] ?? $composed['seeds']['place']['exterior'] ?? 0),
+        'n'      => 1,
+        'response_format' => 'b64_json',
+    ], JSON_UNESCAPED_UNICODE);
+    $headers = ['Content-Type: application/json'];
+    if ((string)($endpoint['key'] ?? '') !== '') $headers[] = 'Authorization: Bearer ' . $endpoint['key'];
+    $ctx = stream_context_create(['http' => [
+        'method' => 'POST', 'header' => implode("\r\n", $headers), 'content' => $body,
+        'timeout' => (int)($opts['timeout'] ?? 120), 'ignore_errors' => true,
+    ]]);
+    $raw = @file_get_contents($base . '/v1/images/generations', false, $ctx);
+    $j   = is_string($raw) ? json_decode($raw, true) : null;
+    $b64 = (string)($j['data'][0]['b64_json'] ?? '');
+    if ($b64 === '') throw new RuntimeException('photo: the image machine answered with no image');
+    $bytes = base64_decode($b64, true);
+    if ($bytes === false) throw new RuntimeException('photo: the image machine answered with bad base64');
+    return ['bytes' => $bytes, 'usage' => (array)($j['usage'] ?? [])];
+}
+
+/**
+ * The image spend's sink, llm.php's meter discipline: photo.php counts
+ * nothing itself, it hands each render to whoever registered — and the web
+ * layer registers the "wasted tokens" ledger, so a render-happy afternoon is
+ * as legible as a chatty one. A reaper that spent quietly would be the one
+ * unattended cost the terms page promises does not exist.
+ */
+function xeric_photo_meter($sink = null): ?callable
+{
+    static $fn = null;
+    if ($sink !== null) $fn = $sink;
+    return $fn;
+}
+
+/**
+ * Drain up to $limit jobs — the REAPER's one working function.
+ *
+ * The gate is threefold and checked in the cheap order: somebody registered
+ * consent ('photos.approved' in world_state — the first-hookup offer's yes),
+ * jobs are pending, and the machine actually answers (xeric_image_up — the
+ * expensive check goes last). Prompts are composed AT RENDER TIME, not
+ * enqueue time: the seeds make late rendering safe, and a coat edited in the
+ * review between forge and render photographs as edited. Files land under
+ * $photosDir as kind-subject.png — beside whichever db this is, so a fork's
+ * photos are the fork's. A job that throws burns a try and goes failed at
+ * three; a failed world is a world of captions, which still works.
+ *
+ * @return array{done:int,failed:int,notes:string[]}
+ */
+function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint = null, int $limit = 1): array
+{
+    $out = ['done' => 0, 'failed' => 0, 'notes' => []];
+
+    if ((string)(xeric_world_state_get($db, 'photos.approved') ?? '') !== '1') {
+        $out['notes'][] = 'photos are not approved for this world yet';
+        return $out;
+    }
+    $pending = xeric_photo_jobs($db, 'pending');
+    if ($pending === []) return $out;
+
+    $endpoint ??= xeric_image_endpoint();
+    if (!xeric_image_up($endpoint)) { $out['notes'][] = 'no image machine is answering'; return $out; }
+
+    if (!is_dir($photosDir) && !@mkdir($photosDir, 0775, true) && !is_dir($photosDir)) {
+        $out['notes'][] = 'the photos directory cannot be created';
+        return $out;
+    }
+
+    $now = xeric_clock_now($db, $t);
+    foreach (array_slice($pending, 0, max(1, $limit)) as $job) {
+        $kind = (string)$job['kind'];
+        $subj = (string)$job['subject'];
+        try {
+            $composed = $kind === 'place'
+                ? xeric_photo_prompt($t, 'place', ['place' => $subj, 'now' => $now])
+                : xeric_photo_prompt($t, 'portrait', ['handle' => $subj, 'ask' => 'a portrait']);
+            $img  = xeric_image_render($endpoint, $composed);
+            $file = $kind . '-' . preg_replace('/[^a-z0-9_-]+/i', '_', $subj) . '.png';
+            if (@file_put_contents($photosDir . '/' . $file, $img['bytes']) === false) {
+                throw new RuntimeException('the photo could not be written to disk');
+            }
+            $st = $db->prepare('UPDATE photo_jobs SET status = ?, file = ?, tries = tries + 1, done_at = ?
+                                WHERE id = ?');
+            $st->execute(['done', $file, xeric_state_time(), (int)$job['id']]);
+            $out['done']++;
+            if (($fn = xeric_photo_meter()) !== null) {
+                $fn(['images' => 1] + $img['usage'], (string)($endpoint['base'] ?? 'stub'));
+            }
+        } catch (Throwable $e) {
+            $tries = (int)$job['tries'] + 1;
+            $st = $db->prepare('UPDATE photo_jobs SET status = ?, tries = ? WHERE id = ?');
+            $st->execute([$tries >= 3 ? 'failed' : 'pending', $tries, (int)$job['id']]);
+            if ($tries >= 3) $out['failed']++;
+            $out['notes'][] = $kind . ' of ' . $subj . ': ' . $e->getMessage();
+        }
+    }
+    return $out;
+}
+
+/**
+ * Which place's photograph becomes the world's cover art. DETERMINISTIC — the
+ * shelf must not reshuffle per visit — and the pick is the room the player's
+ * life actually happens in: the workplace, else the first place declared.
+ */
+function xeric_photo_tile_place(array $t): ?string
+{
+    $wk = (string)($t['user']['occupation']['workplace_key'] ?? '');
+    if ($wk !== '' && xeric_world_place($t, $wk) !== null) return $wk;
+    foreach ((array)($t['places'] ?? []) as $p) {
+        if (!empty($p['user_workplace']) && (string)($p['key'] ?? '') !== '') return (string)$p['key'];
+    }
+    foreach ((array)($t['places'] ?? []) as $p) {
+        if ((string)($p['key'] ?? '') !== '') return (string)$p['key'];
+    }
+    return null;
+}
+
+/**
+ * Should the app ask "generate photos now?" — the FIRST-HOOKUP offer.
+ *
+ * True exactly once per world: an image machine is answering, jobs are
+ * waiting, and nobody has been asked before ('photos.asked'). The caller
+ * that shows the question stamps photos.asked whatever the answer, and a yes
+ * stamps photos.approved — asking is not consent, and silence is not either.
+ */
+function xeric_photo_offer(PDO $db, ?array $endpoint = null): bool
+{
+    if ((string)(xeric_world_state_get($db, 'photos.asked') ?? '') === '1') return false;
+    if ((string)(xeric_world_state_get($db, 'photos.approved') ?? '') === '1') return false;
+    if (xeric_photo_jobs($db, 'pending') === []) return false;
+    return xeric_image_up($endpoint ?? xeric_image_endpoint());
 }

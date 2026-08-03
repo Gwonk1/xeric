@@ -43,6 +43,7 @@ require_once XERIC_WEB_LIB . '/engine/sweeps.php';
 require_once XERIC_WEB_LIB . '/engine/proactive.php';
 require_once XERIC_WEB_LIB . '/engine/learn.php';
 require_once XERIC_WEB_LIB . '/engine/story.php';       // the overlays beside a world, if it has any
+require_once XERIC_WEB_LIB . '/engine/photo.php';       // the pictures a world owes itself
 
 /**
  * How many events one press of the time control may produce.
@@ -242,6 +243,13 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
     $now   = xeric_clock_now($db, $t);
     xeric_state_seed($db, $t, xeric_state_time());
     $seeded = xeric_seed_apply($db, $t, xeric_seed_load($dir), $now['epoch']);
+
+    // The pictures this world owes itself, enqueued on every open — idempotent
+    // (one row per subject, however many opens), which is also the whole
+    // backfill story for worlds forged before photos existed: opening them IS
+    // enqueuing them. Rows only; nothing renders until an image machine
+    // answers AND the owner said yes (xeric_photo_reap's gates).
+    try { xeric_photo_backfill($t, $db); } catch (Throwable $e) { /* photos owe the world nothing */ }
 
     // xeric_story_for() rather than xeric_story_load(): an overlay rated above
     // what this session may be shown is DROPPED with a note, not refused. A world

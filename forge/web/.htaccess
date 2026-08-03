@@ -32,9 +32,10 @@ Options -Indexes
 # worker.php is the build itself, started by build.php over a pipe with the
 # user's API key on its stdin. tick-worker.php is the same shape for the play
 # view's time control. reroll-worker.php is the review step's re-run of one forge
-# pass, and addchar-worker.php writes one new person into a running world. All
-# four are CLI programs that happen to live here.
-<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|heart|router)\.php(/|$)#">
+# pass, addchar-worker.php writes one new person into a running world, and
+# photo-worker.php is the reaper that develops a world's photographs. All
+# five are CLI programs that happen to live here.
+<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|photo-worker|heart|router)\.php(/|$)#">
   Require all denied
 </If>
 

@@ -937,6 +937,29 @@ xeric_llm_meter(function (array $u, string $where = ''): void {
     }
 });
 
+// THE IMAGE SPEND LANDS ON THE SAME LEDGER. The reaper hands every render to
+// this sink (engine/photo.php's meter discipline, llm.php's shape), and the
+// count rides the same per-machine rows the tokens do — so the wasted-tokens
+// surface shows a render-happy afternoon beside a chatty one, and no
+// unattended photo job ever spends quietly. Images are counted as images,
+// never disguised as tokens: a picture is not a thousand words on this meter.
+require_once $XERIC_LIB . '/engine/photo.php';
+xeric_photo_meter(function (array $u, string $where = ''): void {
+    $key = xeric_web_meter_key($where);
+    try {
+        xeric_web_session_edit(function (array &$s) use ($u, $key): void {
+            $by  = (array)($s['tokens']['by'] ?? []);
+            $row = (array)($by[$key] ?? []);
+            $row['images'] = (int)($row['images'] ?? 0) + max(1, (int)($u['images'] ?? 1));
+            $row['calls']  = (int)($row['calls'] ?? 0) + 1;
+            $by[$key] = $row;
+            $s['tokens'] = ['by' => $by] + (array)($s['tokens'] ?? []);
+        });
+    } catch (Throwable $e) {
+        // No session to write to. The picture still exists.
+    }
+});
+
 /**
  * Where this visitor's notifications go, and what they are for.
  *
@@ -973,14 +996,15 @@ function xeric_web_meter_key(string $base): string
 function xeric_web_tokens(?string $sid = null, string $at = ''): array
 {
     $by  = (array)(xeric_web_session_read($sid)['tokens']['by'] ?? []);
-    $out = ['in' => 0, 'out' => 0, 'calls' => 0];
+    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0];
 
     $want = $at === '' ? null : xeric_web_meter_key($at);
     foreach ($by as $key => $row) {
         if ($want !== null && (string)$key !== $want) continue;
-        $out['in']    += (int)($row['in'] ?? 0);
-        $out['out']   += (int)($row['out'] ?? 0);
-        $out['calls'] += (int)($row['calls'] ?? 0);
+        $out['in']     += (int)($row['in'] ?? 0);
+        $out['out']    += (int)($row['out'] ?? 0);
+        $out['calls']  += (int)($row['calls'] ?? 0);
+        $out['images'] += (int)($row['images'] ?? 0);
     }
     return $out;
 }

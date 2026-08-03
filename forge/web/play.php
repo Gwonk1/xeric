@@ -255,6 +255,9 @@ if ($action !== '') {
             // prefix cache makes this cheaper than it sounds, because a
             // character pinned to a machine keeps their prefix warm THERE.
             'voice'  => xeric_voice_choices($w['db'], $h, $sid),
+            // The portrait's stand-in words, straight off the job row: the alt
+            // text for a developed photo, the whole photo for a pending one.
+            'photo_caption' => (string)((xeric_photo_of($w['db'], 'portrait', $h)['caption'] ?? '')),
             'fields' => $fields]);
     }
 
@@ -633,6 +636,9 @@ echo '<style>' . xeric_play_css() . '
              font-size:.78rem; color:var(--fg-dim); }
 .sbrand .sxall:hover { color:var(--fg); }
 .xcnav { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px; }
+/* the portrait at the top of a cog, when the reaper has developed one */
+.cportrait { margin:0 0 12px; }
+.cportrait img { max-width:100%; max-height:240px; border-radius:8px; display:block; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
 </style>';
@@ -859,6 +865,25 @@ echo '<style>' . xeric_play_css() . '
     </div>
     <?php endif; ?>
 
+    <?php if ($w['mine'] && xeric_photo_offer($w['db'])): ?>
+    <!-- THE FIRST-HOOKUP OFFER. An image machine just answered for the first
+         time and this world's photo jobs are waiting. Asked ONCE — either
+         button stamps photos.asked, and only yes stamps photos.approved,
+         because asking is not consent. Renders cost real compute and the count
+         is printed before the question, so the yes is an informed one. -->
+    <div class="note" id="photobanner">
+      <p>An image machine is answering. This xeric has
+        <strong><?= count(xeric_photo_jobs($w['db'], 'pending')) ?></strong> photographs waiting —
+        the cast's portraits and the places. Develop them now?</p>
+      <div class="ratebtns">
+        <button type="button" class="nbtn" id="photoyes">Develop the film</button>
+        <button type="button" class="nbtn ghost" id="photono">Not for this xeric</button>
+      </div>
+      <p class="why">Renders spend real compute, counted on the meter like everything else.
+        Faces and places keep their seeds, so the same person is the same person in every frame.</p>
+    </div>
+    <?php endif; ?>
+
     <!-- the centrepiece -->
     <div class="timecard">
       <h2>move the xeric</h2>
@@ -1041,6 +1066,33 @@ echo '<style>' . xeric_play_css() . '
           err.hidden = false;
         });
     });
+  })();
+
+  // -- the first-hookup photo offer ------------------------------------------
+  // Either press is the answer and the banner never returns: photo.php stamps
+  // photos.asked on both paths and photos.approved only on yes. The yes spawns
+  // the reaper detached and the banner says so — the photos land over the next
+  // minutes, cog by cog, and the cover art follows.
+  (function () {
+    var pb = document.getElementById('photobanner');
+    if (!pb) return;
+    function answer(a) {
+      pb.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+      fetch('photo.php?w=' + encodeURIComponent(W), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ w: W, a: a })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        if (a === 'approve' && d && d.ok) {
+          pb.innerHTML = '<p>Developing ' + (d.pending || 'the') + ' photographs in the background. '
+            + 'They arrive over the next minutes — portraits in each cog, the cover art after.</p>';
+          setTimeout(function () { pb.hidden = true; }, 12000);
+        } else {
+          pb.hidden = true;
+        }
+      }).catch(function () { pb.hidden = true; });
+    }
+    document.getElementById('photoyes').addEventListener('click', function () { answer('approve'); });
+    document.getElementById('photono').addEventListener('click', function () { answer('decline'); });
   })();
 
   // -- the one-time rating confirmation --------------------------------------
@@ -2170,10 +2222,19 @@ echo '<style>' . xeric_play_css() . '
           + '<div class="cline"><select id="cvoice" class="cvsel">' + vopts + '</select></div>'
           + '<p class="cerr" id="cvnote" hidden></p></div>' : '';
 
+        // THE PORTRAIT, when the reaper has developed one. The <img> simply
+        // tries: photo.php answers bytes for a done job and 404 for everything
+        // else, and onerror folds the frame away — so a world with no image
+        // machine shows exactly what it showed yesterday, and a world with one
+        // opens the cog onto a face. The caption rides as alt text, which is
+        // what it always secretly was.
+        var pline = '<div class="cportrait"><img src="photo.php?w=' + encodeURIComponent(W)
+          + '&k=portrait&s=' + encodeURIComponent(h) + '" alt="' + escA(d.photo_caption || '')
+          + '" onerror="this.closest(\'.cportrait\').hidden=true"></div>';
         $('#cmodal').innerHTML =
             '<h2><span class="av" style="--hue:' + (d.face ? d.face.hue : 0) + '">'
           + esc(d.face ? d.face.txt : '?') + '</span>' + esc(d.name) + '</h2>'
-          + rows + vrow
+          + pline + rows + vrow
           + '<div class="cbtns"><button type="button" id="csave">Save</button>'
           + '<button type="button" id="ccancel">Cancel</button><span class="grow"></span>'
           + '<a class="workbench" href="review.php?w=' + encodeURIComponent(W) + '#sec-cast">the full workbench →</a></div>';

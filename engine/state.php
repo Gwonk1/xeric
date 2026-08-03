@@ -183,6 +183,30 @@ function xeric_state_migrate(PDO $db): void
     SQL);
     $db->exec('CREATE INDEX IF NOT EXISTS idx_deaths_when ON deaths(world_epoch)');
 
+    // photo_jobs: pictures the world owes itself. A forge (and every open, via
+    // the idempotent backfill) enqueues the cast's portraits and the places'
+    // establishing shots as ROWS, not files — rows the reaper drains when an
+    // image machine answers, and rows the rewind and fork disciplines can
+    // reason about. `caption` is the 6-8 words that stand where the image
+    // would until it exists (engine/photo.php).
+    $db->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS photo_jobs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind       TEXT    NOT NULL,                  -- portrait | place
+            subject    TEXT    NOT NULL,                  -- a handle, or a place key
+            status     TEXT    NOT NULL DEFAULT 'pending',-- pending | done | failed
+            tries      INTEGER NOT NULL DEFAULT 0,
+            file       TEXT    NOT NULL DEFAULT '',       -- relative to the world's photos dir
+            caption    TEXT    NOT NULL DEFAULT '',       -- the 6-8 words that stand in meanwhile
+            created_at INTEGER NOT NULL,
+            done_at    INTEGER
+        )
+    SQL);
+    // One job per (kind, subject), which is what makes the backfill idempotent:
+    // every open may offer the whole cast and every place, and the table keeps
+    // exactly one row each however many times they are offered.
+    $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_photo_jobs_one ON photo_jobs(kind, subject)');
+
     // reminders: the one thing in this database that runs on REAL time. A world
     // keeps its own clock and everything else here is stamped with it — but
     // somebody who asked to be reminded on Thursday meant the Thursday they are

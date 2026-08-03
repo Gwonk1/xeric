@@ -74,10 +74,17 @@ function xeric_web_meter_html(?string $sid = null, string $at = ''): string
         ? ' data-all="1" data-by="' . h((string)json_encode(xeric_web_tokens_by($sid))) . '"'
         : ' data-key="' . h(xeric_web_meter_key($at)) . '"';
 
+    // Photos ride the same surface, counted as images and never disguised as
+    // tokens — a picture is not a thousand words on this meter. Absent when
+    // zero, because most installs have no image machine and a permanent "0
+    // photos" would advertise a feature this box cannot feel.
+    $img = (int)($t['images'] ?? 0);
     return '<span class="meter"' . $extra . ' data-n="' . $n . '" title="'
         . h(number_format($t['in']) . ' in · ' . number_format($t['out']) . ' out · '
-            . number_format($t['calls']) . ' calls this session') . '">'
-        . 'Tokens wasted: <b>' . h(xeric_web_tokens_short($n)) . '</b></span>';
+            . number_format($t['calls']) . ' calls this session'
+            . ($img > 0 ? ' · ' . number_format($img) . ' photos' : '')) . '">'
+        . 'Tokens wasted: <b>' . h(xeric_web_tokens_short($n)) . '</b>'
+        . ($img > 0 ? ' <i class="mimg">+' . $img . ' 📷</i>' : '') . '</span>';
 }
 
 /**

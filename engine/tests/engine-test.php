@@ -2167,6 +2167,78 @@ ok('photo: even an empty composition captions as something',
     xeric_photo_caption(['parts' => []]) === 'a photograph');
 
 // ---------------------------------------------------------------------------
+// The reaper — jobs as rows, drained only with consent, an answering machine,
+// and prompts composed at render time. A world of captions still works.
+// ---------------------------------------------------------------------------
+
+echo "\n# the reaper\n";
+
+$rpDir = sys_get_temp_dir() . '/xeric-reaper-' . getmypid();
+$rpDbP = $rpDir . '-db.sqlite';
+foreach ([$rpDbP, $rpDbP . '-wal', $rpDbP . '-shm'] as $f) @unlink($f);
+$rpDb = xeric_state_open($rpDbP);
+xeric_state_migrate($rpDb);
+xeric_clock_begin($rpDb, $phT);
+
+$rpN = xeric_photo_backfill($phT, $rpDb);
+ok('reaper: a backfill enqueues the whole cast and every place, with captions ready',
+    $rpN['portraits'] === count($phT['cast']['characters']) && $rpN['places'] === count($phT['places'])
+    && (string)(xeric_photo_jobs($rpDb, 'pending')[0]['caption'] ?? '') !== '', json_encode($rpN));
+$rpAgain = xeric_photo_backfill($phT, $rpDb);
+ok('reaper: and a second backfill adds nothing — the offer is idempotent',
+    $rpAgain === ['portraits' => 0, 'places' => 0]);
+
+// The gates, in order: consent first, then the machine.
+$rpStub = ['stub' => fn(string $tag, array $c, array $o) => ['bytes' => 'PNGBYTES-' . md5($c['prompt']),
+                                                            'usage' => ['cost_units' => 1]]];
+$rpTry = xeric_photo_reap($phT, $rpDb, $rpDir, $rpStub, 3);
+ok('reaper: without consent it drains NOTHING, whatever machine is answering',
+    $rpTry['done'] === 0 && str_contains(implode(' ', $rpTry['notes']), 'not approved'));
+
+xeric_world_state_set($rpDb, 'photos.approved', '1');
+$rpNoMachine = xeric_photo_reap($phT, $rpDb, $rpDir, null, 1);
+ok('reaper: with consent but no machine it waits, and says so',
+    $rpNoMachine['done'] === 0 && str_contains(implode(' ', $rpNoMachine['notes']), 'no image machine'));
+
+$rpMeter = [];
+xeric_photo_meter(function (array $u, string $where) use (&$rpMeter): void { $rpMeter[] = [$u, $where]; });
+$rpRun = xeric_photo_reap($phT, $rpDb, $rpDir, $rpStub, 2);
+ok('reaper: consent plus a machine drains jobs, writes files, and marks them done',
+    $rpRun['done'] === 2
+    && is_file($rpDir . '/' . (string)(xeric_photo_jobs($rpDb, 'done')[0]['file'] ?? '')));
+ok('reaper: every render lands on the meter — nothing spends quietly',
+    count($rpMeter) === 2 && ($rpMeter[0][0]['images'] ?? 0) === 1);
+ok('reaper: a finished subject answers its gallery read',
+    ($rpOf = xeric_photo_of($rpDb, 'portrait', 'ruth')) !== null
+    && in_array($rpOf['status'], ['done', 'pending'], true));
+
+// A machine that throws burns tries, not the world: three strikes to failed.
+$rpDead = ['stub' => function () { throw new RuntimeException('the film jammed'); }];
+for ($i = 0; $i < 3; $i++) xeric_photo_reap($phT, $rpDb, $rpDir, $rpDead, 1);
+ok('reaper: three failed tries is a failed job, and the caption still stands',
+    count(xeric_photo_jobs($rpDb, 'failed')) === 1
+    && (string)(xeric_photo_jobs($rpDb, 'failed')[0]['caption'] ?? '') !== '');
+
+// The first-hookup offer: once, and asking is not consent.
+$rpDb2P = $rpDir . '-db2.sqlite';
+foreach ([$rpDb2P, $rpDb2P . '-wal', $rpDb2P . '-shm'] as $f) @unlink($f);
+$rpDb2 = xeric_state_open($rpDb2P);
+xeric_state_migrate($rpDb2);
+xeric_photo_backfill($phT, $rpDb2);
+ok('offer: a machine answering plus waiting jobs means the app should ask',
+    xeric_photo_offer($rpDb2, $rpStub));
+xeric_world_state_set($rpDb2, 'photos.asked', '1');
+ok('offer: asked is asked — the question never comes twice, and asking was not consent',
+    !xeric_photo_offer($rpDb2, $rpStub)
+    && (string)(xeric_world_state_get($rpDb2, 'photos.approved') ?? '') !== '1');
+ok('offer: and with no machine answering there is nothing to ask about',
+    !xeric_photo_offer($rpDb, null));
+
+$rpDb = $rpDb2 = null;
+foreach ([$rpDbP, $rpDb2P] as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
+if (is_dir($rpDir)) { foreach (glob($rpDir . '/*') ?: [] as $f) @unlink($f); @rmdir($rpDir); }
+
+// ---------------------------------------------------------------------------
 // The inventory — worn and carried, as data. Commons by rule (a bystander
 // sees both), validated like a room's interior, and rendered byte-stable in
 // the wearer's own identity because it is template data like the voice.
