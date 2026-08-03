@@ -98,12 +98,29 @@ function xeric_tables(array $t): array
     return $out;
 }
 
-/** Is tonight one of this table's nights? A table with no nights sits every night. */
+/**
+ * Is tonight one of this table's nights?
+ *
+ * THE ENGINE HAS TWO DAY CONVENTIONS and this function was written against the
+ * wrong one. xeric_world_now() puts `dow` in PHP's `w` form — SUNDAY IS ZERO —
+ * while engine/work.php computes its own rosters in ISO `N` form, where MONDAY
+ * IS ONE. Both are internally consistent and they disagree by a day and a
+ * half-week, so a table read through the wrong one either never sits or sits on
+ * the wrong night, silently, forever. Read here explicitly, from `w`, with the
+ * mapping written out rather than arithmetic, and a name accepted too because a
+ * caller holding "Thursday" should not have to know any of this.
+ *
+ * A table with no nights sits every night.
+ */
 function xeric_table_tonight(array $table, array $now): bool
 {
-    if ($table['nights'] === []) return true;
-    $dow = strtolower(substr((string)($now['dow'] ?? ''), 0, 3));
-    return in_array($dow, $table['nights'], true);
+    if (($table['nights'] ?? []) === []) return true;
+    $w = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];   // PHP 'w': Sunday is 0
+    $raw = $now['dow'] ?? '';
+    $dow = is_int($raw) || (is_string($raw) && ctype_digit($raw))
+        ? ($w[((int)$raw) % 7] ?? '')
+        : strtolower(substr((string)$raw, 0, 3));
+    return $dow !== '' && in_array($dow, $table['nights'], true);
 }
 
 // ---------------------------------------------------------------------------
@@ -304,18 +321,20 @@ function xeric_table_hand(array $t, array $seats, array $stacks, int $bet, int $
 }
 
 /**
- * A whole night, and what it did to the world.
+ * A WHOLE NIGHT, PLAYED AND NOT WRITTEN. Pure: no database, no model.
  *
- * The only function here that writes. Everything above is arithmetic, so this
- * is small on purpose — the whole night lands in one transaction or none of it
- * does, and a night that dies halfway leaves nobody mysteriously richer.
+ * Split from the writing on purpose. The sweep needs the RESULT before it
+ * calls a model — the hour it composes is about a night that already happened,
+ * and a model told "write a poker night" invents a winner — but it must not
+ * move any money until its own event lands in its own transaction. So this
+ * plays and reports, and xeric_table_write() does the writing wherever the
+ * caller already has a transaction open.
  *
- * @return array{hands:int,net:array<string,int>,log:array,stacks:array,owed:array}
+ * @return array{hands:int,net:array<string,int>,log:array,stacks:array,buy_in:int}
  */
-function xeric_table_settle(array $t, PDO $db, array $table, array $seats, int $hands,
-                            int $seed, ?int $at = null, int $epoch = 0): array
+function xeric_table_play(array $t, array $table, array $seats, int $hands, int $seed): array
 {
-    $seats  = array_values($seats);
+    $seats = array_values($seats);
     if (count($seats) < XERIC_TABLE_MIN) {
         throw new RuntimeException('table: ' . count($seats) . ' is not a game');
     }
@@ -323,7 +342,6 @@ function xeric_table_settle(array $t, PDO $db, array $table, array $seats, int $
         throw new RuntimeException('table: ' . count($seats) . ' at one table is a tournament');
     }
 
-    $at     = $at ?? xeric_state_time();
     $buy    = (int)$table['buy_in'];
     $stacks = array_fill_keys($seats, $buy);
     $log    = [];
@@ -344,65 +362,96 @@ function xeric_table_settle(array $t, PDO $db, array $table, array $seats, int $
     $net = [];
     foreach ($seats as $h) $net[$h] = $stacks[$h] - $buy;
 
+    return ['hands' => $played, 'net' => $net, 'log' => $log, 'stacks' => $stacks, 'buy_in' => $buy];
+}
+
+/**
+ * WHAT A PLAYED NIGHT DID TO THE WORLD. Writes; opens no transaction.
+ *
+ * Deliberately transaction-free so it can be called inside somebody else's —
+ * the sweep settles a Thursday game inside the same transaction its event
+ * lands in, and a night that rolls back leaves nobody mysteriously richer.
+ * xeric_table_settle() is the standalone door that wraps this in one.
+ *
+ * @return array{owed:array<string,int>}
+ */
+function xeric_table_write(array $t, PDO $db, array $table, array $played, ?int $at = null,
+                           int $epoch = 0): array
+{
+    $at  = $at ?? xeric_state_time();
+    $net = (array)$played['net'];
+
+    // THE LEDGER, if this table pays one. A hand won is reported as a FACT —
+    // which is exactly the gap the prose matcher refuses to fill, because
+    // "hand_won" reduces to "hand" and every hour has hands in it.
+    $eco   = (string)($table['economy'] ?? '');
+    $short = [];
+    if ($eco !== '') {
+        foreach ($net as $h => $n) {
+            if ($n === 0) continue;
+            $was = xeric_ledger_of($db, $eco, (string)$h);
+            // WHAT SOMEBODY CANNOT COVER IS NOT ROUNDED AWAY. Clamping a losing
+            // night at zero looks harmless and is not: a person at nothing who
+            // loses five and wins five back is up five, and a season of
+            // Thursdays quietly mints money. What they could not pay becomes
+            // what they OWE — the constructs-beat-counters argument arriving
+            // exactly where the design predicted it would.
+            if ($was + $n < 0) $short[(string)$h] = -($was + $n);
+            xeric_arc_set($db, (string)$h, 'economy.' . $eco, (string)max(0, $was + $n), $at);
+        }
+    }
+
+    // AND WHAT IT DID BETWEEN THEM. Taking money off somebody is not a number
+    // going down, it is a thing that happened between two people — so the
+    // winner cools very slightly with whoever paid for it. Warmth, not trust,
+    // so a night costs a fraction of a point and a season of Thursdays costs
+    // one: a faint thumb, not a punishment for playing well.
+    $winners = array_keys(array_filter($net, fn($n) => $n > 0));
+    $losers  = array_keys(array_filter($net, fn($n) => $n < 0));
+    foreach ($losers as $l) {
+        foreach ($winners as $w) {
+            if ($l === $w) continue;
+            xeric_trust_rub($db, (string)$l, (string)$w, -1, $at);
+        }
+    }
+
+    // And what they could not cover, owed to whoever took it — a row that knows
+    // what it was for, settled by a favour going the other way, faded if it is
+    // carried long enough. Owed to the biggest winner, which is not arbitrary:
+    // at a real table the person you are into is the person holding your markers.
+    if ($short !== [] && $winners !== []) {
+        $top = $winners[0];
+        foreach ($winners as $w) if ($net[$w] > $net[$top]) $top = $w;
+        foreach ($short as $l => $owed) {
+            if ((string)$l === (string)$top) continue;
+            xeric_debt_form($t, $db, (string)$l, (string)$top,
+                'what he could not cover at ' . (string)($table['name'] ?? 'the game'),
+                ['epoch' => $epoch], null);
+        }
+    }
+
+    return ['owed' => $short];
+}
+
+/**
+ * Play a night and write it, in one transaction. The standalone door.
+ *
+ * @return array{hands:int,net:array<string,int>,log:array,stacks:array,owed:array}
+ */
+function xeric_table_settle(array $t, PDO $db, array $table, array $seats, int $hands,
+                            int $seed, ?int $at = null, int $epoch = 0): array
+{
+    $played = xeric_table_play($t, $table, $seats, $hands, $seed);
+
     $db->beginTransaction();
     try {
-        // THE LEDGER, if this table pays one. A hand won is reported as a FACT
-        // — which is exactly the gap the prose matcher refuses to fill, because
-        // "hand_won" reduces to "hand" and every hour has hands in it.
-        $eco = (string)$table['economy'];
-        $short = [];
-        if ($eco !== '') {
-            foreach ($net as $h => $n) {
-                if ($n === 0) continue;
-                $was = xeric_ledger_of($db, $eco, $h);
-                // WHAT SOMEBODY CANNOT COVER IS NOT ROUNDED AWAY. Clamping a
-                // losing night at zero looks harmless and is not: a person at
-                // nothing who loses five and wins five back is up five, and a
-                // season of Thursdays quietly mints money. What they could not
-                // pay becomes what they OWE, which is the constructs-beat-
-                // counters argument arriving exactly where it was predicted to.
-                if ($was + $n < 0) $short[$h] = -($was + $n);
-                xeric_arc_set($db, $h, 'economy.' . $eco, (string)max(0, $was + $n), $at);
-            }
-        }
-
-        // AND WHAT IT DID BETWEEN THEM. Taking money off somebody is not a
-        // number going down, it is a thing that happened between two people —
-        // so the winner cools very slightly with whoever paid for it. Warmth,
-        // not trust, so a night costs a fraction of a point and a season of
-        // Thursdays costs one: this is a faint thumb, not a punishment for
-        // playing well.
-        $winners = array_keys(array_filter($net, fn($n) => $n > 0));
-        $losers  = array_keys(array_filter($net, fn($n) => $n < 0));
-        foreach ($losers as $l) {
-            foreach ($winners as $w) {
-                if ($l === $w) continue;
-                xeric_trust_rub($db, (string)$l, (string)$w, -1, $at);
-            }
-        }
-
-        // AND WHAT THEY COULD NOT COVER, owed to whoever took it — a row that
-        // knows what it was for, settled by a favour going the other way, and
-        // faded if it is carried long enough. Owed to the biggest winner, which
-        // is not arbitrary: at a real table the person you are into is the
-        // person holding your markers.
-        if ($short !== [] && $winners !== []) {
-            $top = $winners[0];
-            foreach ($winners as $w) if ($net[$w] > $net[$top]) $top = $w;
-            foreach ($short as $l => $owed) {
-                if ((string)$l === (string)$top) continue;
-                xeric_debt_form($t, $db, (string)$l, (string)$top,
-                    'what he could not cover at ' . (string)$table['name'], ['epoch' => $epoch], null);
-            }
-        }
+        $w = xeric_table_write($t, $db, $table, $played, $at, $epoch);
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
         throw new RuntimeException('table: the night could not be settled, ' . $e->getMessage(), 0, $e);
     }
-
-    return ['hands' => $played, 'net' => $net, 'log' => $log, 'stacks' => $stacks,
-            'owed' => $short];
+    return $played + ['owed' => $w['owed']];
 }
 
 /** How the night went, in a sentence somebody would say about it. */

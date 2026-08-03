@@ -86,6 +86,7 @@ require_once __DIR__ . '/shape.php';
 require_once __DIR__ . '/weather.php'; // the day's sky, derived, never stored
 require_once __DIR__ . '/mood.php';    // and the town's own needle, which its hours move
 require_once __DIR__ . '/ledger.php';  // and the ledgers those hours earn
+require_once __DIR__ . '/table.php';   // and the hours that are a game
 require_once __DIR__ . '/constructs.php'; // the debts a favour hour leaves behind
 require_once __DIR__ . '/trust.php';   // and what an hour did to what they think of each other
 
@@ -761,6 +762,37 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
                                      'why' => 'this world armed mortality'];
     }
 
+    // -- IS THIS HOUR A GAME? ------------------------------------------------
+    // If the chosen place holds a table and tonight is its night, the hour that
+    // happened there IS the game, and the cards are dealt BEFORE the model is
+    // asked anything. That ordering is the whole point: a model told "write a
+    // poker night" invents a winner, and the winner it invents is whoever it
+    // has been writing sympathetically. Told "Harlan is up nine and Dot is
+    // cleaned out, write the hour", it writes the hour.
+    //
+    // Played here, WRITTEN below inside the event's own transaction, so a night
+    // that rolls back leaves nobody mysteriously richer (engine/table.php's
+    // play/write split exists for exactly this).
+    $game = null;
+    $tables = xeric_tables($t);
+    $where  = (string)($chosen['where'] ?? '');
+    if ($where !== '' && isset($tables[$where]) && xeric_table_tonight($tables[$where], $now)
+        && count($chosen['handles']) >= XERIC_TABLE_MIN
+        && count($chosen['handles']) <= XERIC_TABLE_MAX) {
+        try {
+            $game = xeric_table_play($t, $tables[$where], $chosen['handles'],
+                6, $epoch + (int)crc32($where));
+            $chosen['game'] = ['table' => $tables[$where], 'result' => $game];
+            $chosen['trail']['game'] = [
+                'table' => (string)$tables[$where]['name'],
+                'net'   => $game['net'],
+                'why'   => 'the place holds a table and tonight is its night',
+            ];
+        } catch (Throwable $e) {
+            $game = null;              // not a game tonight; it is just an hour
+        }
+    }
+
     // -- the one model call ------------------------------------------------
     // The live overlays ride along so the room can carry what the people in it
     // are sure of. They are the filtered set — a closed story composes nothing.
@@ -825,6 +857,13 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
         // Tuesday moves nothing.
         xeric_trust_hour_apply($db, (string)$chosen['kind']['key'],
             array_keys($written['memories']), $written['favor'] ?? null, $at);
+
+        // AND THE NIGHT'S MONEY, if the hour was a game. Inside the event's
+        // transaction on purpose: the pot and the hour that describes it land
+        // together or neither does.
+        if ($game !== null) {
+            xeric_table_write($t, $db, $chosen['game']['table'], $game, $at, $epoch);
+        }
 
         foreach ($written['memories'] as $handle => $text) {
             xeric_memory_add($db, $handle, $text, 'event', [
@@ -1701,6 +1740,30 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     $lines[] = 'WHAT KIND OF THING HAPPENED';
     $lines[] = (string)$chosen['kind']['shape'] . '.';
     $lines[] = 'They were together because ' . (string)$chosen['why'] . '.';
+
+    // THE NIGHT'S RESULT, AS SOMETHING ALREADY TRUE. Not a question, not a
+    // choice — the cards were dealt in code before this prompt existed
+    // (engine/table.php), and the hour is about a night that already happened.
+    // Asked to write a poker night from nothing, a model picks the winner it
+    // has been writing sympathetically; handed the numbers, it writes the hour.
+    if (isset($chosen['game']['result'])) {
+        $g = $chosen['game']['result'];
+        $lines[] = '';
+        $lines[] = 'THE GAME, WHICH ALREADY HAPPENED';
+        $lines[] = 'They played ' . (string)$chosen['game']['table']['name'] . '. '
+                 . (int)$g['hands'] . ' hands. This is settled — write what it looked like, '
+                 . 'do not change who won.';
+        $net = (array)$g['net'];
+        arsort($net);
+        foreach ($net as $h => $n) {
+            $lines[] = '- ' . (xeric_world_name($t, (string)$h) ?: (string)$h) . ': '
+                     . ($n > 0 ? 'up ' . $n : ($n < 0 ? 'down ' . abs($n) : 'level'));
+        }
+        // Two real moments from the table, so the prose has something specific
+        // to be about. The whole log would be a transcript; the point is an hour.
+        $log = (array)$g['log'];
+        foreach (array_slice($log, -3) as $l) $lines[] = '  (' . (string)$l . ')';
+    }
 
     // WHO DIED, named, as something already true. Not a question and not a
     // choice: the engine picked (xeric_sweep_lethal) and the hour is about the

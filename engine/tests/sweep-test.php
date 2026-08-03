@@ -2277,6 +2277,101 @@ $dbEdge = $dbHour = $dbSpine = $dbOrd = $dbDefer = $dbKill = $dbSex = null;
 $dA = $dW = $dM = $dS = $dL = $dL2 = $dOne = $dEv = $dNag = $dCap = $dSec = $dKid = null;
 $hour = $hourX = null;
 // ---------------------------------------------------------------------------
+// AN HOUR THAT IS A GAME. If the place holds a table and tonight is its night,
+// the cards are dealt in CODE before the model is asked anything — because a
+// model told "write a poker night" invents a winner, and the winner it invents
+// is whoever it has been writing sympathetically.
+// ---------------------------------------------------------------------------
+
+echo "\n# the hour that is a game\n";
+
+$gT = world(['gossip', 'shared_meals'], [], null, [
+    'economies' => [['key' => 'thursday_pot', 'counter' => 'per-character']],
+]);
+// The fixture already puts the pastor in the basement on Thursday evening with
+// the door closed — which IS the Thursday game — and its thursday_pot names
+// three people. Only the pastor is actually scheduled there, though, and four
+// assertions elsewhere depend on that being true of the fixture, so the other
+// two are seated HERE rather than in the shared world.
+foreach ($gT['cast']['characters'] as $i => $c) {
+    if (in_array((string)($c['handle'] ?? ''), ['harlan', 'dot'], true)) {
+        $gT['cast']['characters'][$i]['week'][] = ['days' => [4], 'from' => '19:00',
+            'to' => '22:00', 'where' => 'first_lutheran', 'doing' => 'the basement'];
+    }
+}
+
+$gSaw = '';
+$gStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $o) use (&$gSaw) {
+    $gSaw = (string)($msgs[1]['content'] ?? '');
+    $h = stub_handles($msgs);
+    $mem = [];
+    foreach ($h as $x) $mem[$x] = ucfirst(str_replace('_', ' ', $x)) . ' ' . stub_half() . '.';
+    return ['title' => 'the chairs went back wrong', 'memories' => $mem,
+            'prose' => 'They put the chairs back and somebody counted the coffee can twice.'];
+}];
+
+// `force` is a boolean — it skips the once-per-window guard, it does not pick a
+// place. So this walks seeds until the chooser puts an hour in the church on a
+// Thursday, which is exactly the situation the wiring is about. Bounded, and it
+// fails loudly rather than passing vacuously if it never lands there.
+$gTrail = null; $gDb = null;
+for ($gs = 1; $gs <= 40 && $gTrail === null; $gs++) {
+    $gDb = fresh_db('game' . $gs);
+    xeric_state_seed($gDb, $gT);
+    try {
+        $gRun = xeric_sweep_run($gT, $gDb, $gStub,
+            xeric_world_now($gT, ep('2026-07-30 20:00')),      // a Thursday evening
+            ['chance' => 1.0, 'seed' => $gs, 'force' => true]);
+    } catch (Throwable $e) { continue; }
+    $gTrail = $gRun['events'][0]['trail']['game'] ?? null;
+}
+
+ok('game: an hour at a table on its night is a game, and the trail says so',
+    $gTrail !== null);
+ok('game: the cards were dealt before the model was asked anything',
+    $gSaw !== '' && str_contains($gSaw, 'THE GAME, WHICH ALREADY HAPPENED'));
+ok('game: and the model is handed the result rather than asked for one',
+    str_contains($gSaw, 'do not change who won')
+    && (str_contains($gSaw, 'up ') || str_contains($gSaw, 'down ')));
+ok('game: what everybody won and lost is one pot, so it adds to nothing',
+    $gTrail !== null && array_sum((array)$gTrail['net']) === 0,
+    json_encode($gTrail['net'] ?? null));
+ok('game: and the money landed in the world\'s own ledger, as a fact',
+    $gTrail !== null && array_sum(array_map(
+        fn($h) => xeric_ledger_of($gDb, 'thursday_pot', (string)$h),
+        array_keys((array)$gTrail['net']))) > 0);
+
+// The same place on the wrong night is just a place.
+$gDb2 = fresh_db('game-tue');
+xeric_state_seed($gDb2, $gT);
+$gTue = xeric_sweep_run($gT, $gDb2, $gStub,
+    xeric_world_now($gT, ep('2026-07-28 20:00')),      // a Tuesday
+    ['chance' => 1.0, 'seed' => 5, 'force' => 'first_lutheran']);
+$tueGame = isset($gTue['events'][0]['trail']['game']);
+ok('game: the same room on a Tuesday is just a room', !$tueGame);
+
+// A world with no table anywhere never pays for any of this.
+// The fixture SHIPS a table now (the church basement, Thursdays), so a
+// table-less world has to be built on purpose rather than assumed.
+$gDb3 = fresh_db('game-none');
+$plainT = world(['gossip', 'shared_meals']);
+foreach ($plainT['places'] as $i => $p) unset($plainT['places'][$i]['table']);
+$plainT['places'] = array_values($plainT['places']);
+xeric_state_seed($gDb3, $plainT);
+$anyGame = false;
+for ($ps = 1; $ps <= 12 && !$anyGame; $ps++) {
+    $d = fresh_db('game-none' . $ps);
+    xeric_state_seed($d, $plainT);
+    try {
+        $r = xeric_sweep_run($plainT, $d, $gStub,
+            xeric_world_now($plainT, ep('2026-07-30 20:00')),
+            ['chance' => 1.0, 'seed' => $ps, 'force' => true]);
+    } catch (Throwable $e) { continue; }
+    if (isset($r['events'][0]['trail']['game'])) $anyGame = true;
+}
+ok('game: and a world with no table anywhere never has one', !$anyGame);
+
+// ---------------------------------------------------------------------------
 // THE LEDGERS THAT MOVE ON THEIR OWN. `daily_system: true` has been in the
 // schema, the docs, and every affected system prompt since economies existed,
 // rendered as "It moves every day whether or not anyone touches it" — and the

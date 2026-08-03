@@ -72,6 +72,19 @@ ok('night: and not on a Tuesday',
     !xeric_table_tonight($tables['basement'], ['dow' => 'Tuesday']));
 ok('night: a table that names no nights sits every night',
     xeric_table_tonight(['nights' => []], ['dow' => 'Monday']));
+// THE ONE THAT BIT. xeric_world_now() puts `dow` in PHP's `w` form — an INT,
+// Sunday is zero — and engine/work.php computes rosters in ISO `N`, Monday is
+// one. Read through the wrong convention a table never sits, or sits on the
+// wrong night, silently and forever.
+ok('night: the engine\'s own numeric dow is what a real caller passes',
+    xeric_table_tonight($tables['basement'], ['dow' => 4])
+    && !xeric_table_tonight($tables['basement'], ['dow' => 2]));
+ok('night: and it is the `w` convention, where Sunday is nothing and not seven',
+    xeric_table_tonight(['nights' => ['sun']], ['dow' => 0])
+    && !xeric_table_tonight(['nights' => ['sun']], ['dow' => 7 % 7 + 1]));
+ok('night: a garbled day sits at no table rather than at every one',
+    !xeric_table_tonight($tables['basement'], ['dow' => 'whenever'])
+    && !xeric_table_tonight($tables['basement'], []));
 
 // ---------------------------------------------------------------------------
 // 2. WHO IS SITTING THERE. Nerve comes off the psyche the forge already wrote —
