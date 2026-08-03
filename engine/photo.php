@@ -54,9 +54,28 @@ require_once __DIR__ . '/clock.php';    // render-time prompts read the world's 
  */
 function xeric_image_endpoint(): ?array
 {
+    // The web layer may register a resolver (the machines screen's stored
+    // address, read at CALL time so a worker under a forced session sees that
+    // session's choice). The engine's own answer stays the environment, so a
+    // headless install needs nothing but two variables — and the engine never
+    // reads a session, because that would be the layering running backwards.
+    $fn = xeric_image_source();
+    if ($fn !== null) {
+        $ep = $fn();
+        if (is_array($ep) && trim((string)($ep['base'] ?? '')) !== '') return $ep;
+        if ($ep === false) return null;   // the resolver says: explicitly none
+    }
     $base = trim((string)(getenv('XERIC_IMAGE_BASE') ?: ''));
     if ($base === '') return null;
     return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: '')];
+}
+
+/** The resolver seam, meter-discipline shaped: set once by the web layer. */
+function xeric_image_source($fn = null): ?callable
+{
+    static $src = null;
+    if ($fn !== null) $src = $fn;
+    return $src;
 }
 
 /**

@@ -944,6 +944,25 @@ xeric_llm_meter(function (array $u, string $where = ''): void {
 // unattended photo job ever spends quietly. Images are counted as images,
 // never disguised as tokens: a picture is not a thousand words on this meter.
 require_once $XERIC_LIB . '/engine/photo.php';
+
+// WHERE THE IMAGE MACHINE IS, resolved at call time: the machines screen's
+// stored address first (the visitor's own session, which is also the session
+// a detached reaper is forced into), the environment as the engine's own
+// fallback. The KEY is never stored: a remote image machine takes its key
+// from XERIC_IMAGE_KEY only, the same never-in-a-session discipline the model
+// machines keep.
+xeric_image_source(function () {
+    try {
+        $img = (array)(xeric_web_session_read()['image'] ?? []);
+    } catch (Throwable $e) {
+        return null;                                   // no session: fall to env
+    }
+    $base = trim((string)($img['base'] ?? ''));
+    if (($img['off'] ?? false) === true) return false;  // explicitly none, env ignored
+    if ($base === '') return null;
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: '')];
+});
+
 xeric_photo_meter(function (array $u, string $where = ''): void {
     $key = xeric_web_meter_key($where);
     try {

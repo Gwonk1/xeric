@@ -92,6 +92,14 @@ if ((string)($_GET['a'] ?? '') === 'probe') {
     xeric_web_json(['up' => $up, 'found' => $found, 'who' => $who]);
 }
 
+// -- is the image machine answering ------------------------------------------
+// The configured one only, never an arbitrary base: a probe endpoint that took
+// an address would be a port scanner with this server's return address on it.
+if ((string)($_GET['a'] ?? '') === 'iprobe') {
+    $ep = xeric_image_endpoint();
+    xeric_web_json(['up' => $ep !== null && xeric_image_up($ep, 4)]);
+}
+
 // -- what else is on this machine --------------------------------------------
 // ASKED BY THE BROWSER, AFTER THE PAGE IS UP, for the same reason the lamps are:
 // a dozen ports checked before the first byte is sent is a screen that appears
@@ -104,6 +112,37 @@ if ((string)($_GET['a'] ?? '') === 'scan') {
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     $act = (string)($_POST['act'] ?? '');
     $i   = (int)($_POST['i'] ?? -1);
+
+    // -- the image machine ---------------------------------------------------
+    // One address, session-stored like the model machines, read at call time
+    // by the engine's resolver (boot.php). The KEY is never stored: a remote
+    // image machine takes XERIC_IMAGE_KEY from the environment only — the
+    // same never-in-a-session discipline every machine on this page keeps.
+    if ($act === 'image') {
+        $b = trim((string)($_POST['base'] ?? ''));
+        if ($b !== '' && !preg_match('#^https?://#i', $b)) $b = 'http://' . $b;
+        $b    = rtrim($b, '/');
+        $host = strtolower((string)(parse_url($b, PHP_URL_HOST) ?? ''));
+        $ok   = $b !== '' && filter_var($b, FILTER_VALIDATE_URL) !== false && $host !== '';
+        if ($ok && !xeric_web_host_open($host) && !$edit) $ok = false;
+        if ($ok) {
+            xeric_web_session_edit(function (array &$s) use ($b): void {
+                $s['image'] = ['base' => $b];
+            }, $sid);
+            header('Location: model.php');
+            exit;
+        }
+        header('Location: model.php?no=' . rawurlencode(xeric_model_no($b, $host, $edit)));
+        exit;
+    }
+    if ($act === 'imageoff') {
+        // Explicitly none — the resolver returns false and even an environment
+        // XERIC_IMAGE_BASE is ignored for this session. Worlds fall back to
+        // captions, which is the photo's own graceful floor.
+        xeric_web_session_edit(function (array &$s): void { $s['image'] = ['off' => true]; }, $sid);
+        header('Location: model.php');
+        exit;
+    }
 
     if ($act === 'add') {
         $b = trim((string)($_POST['base'] ?? ''));
@@ -558,14 +597,37 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
     <ul class="mlist" id="foundlist"></ul>
   </section>
 
-  <!-- PICTURES. Nothing in the engine draws anything yet, and this says so
-       rather than implying otherwise by sitting here looking like a setting. It
-       is here because the machines screen is where somebody sets up what Xeric
-       can reach, and an image server is the same kind of thing as a model
-       server — an address on your own machine that something answers at. Found
-       now means that the day the engine can use one, the setup already exists. -->
-  <section class="found" id="art" hidden>
+  <!-- PICTURES. The engine draws now: portraits, places, and the photos
+       characters send in conversation, all through one address the reaper
+       reads. Chosen here because the machines screen is where somebody sets
+       up what Xeric can reach — and the whole photo feature stays dormant,
+       costing nothing, until an address is set AND each world's owner says
+       yes to its own cost-warned offer. -->
+  <?php $imgEp = xeric_image_endpoint(); ?>
+  <section class="found" id="art" <?= $imgEp === null ? 'hidden' : '' ?>>
     <h2 class="fh">Imaging model</h2>
+    <?php if ($imgEp !== null): ?>
+    <ul class="mlist">
+      <li><div class="opt fopt">
+        <span class="thead"><span class="t"><?= h(preg_replace('#^https?://#', '', (string)$imgEp['base'])) ?></span></span>
+        <p class="whois"><span class="wname">the image machine</span>
+          <span class="wmodel" id="artlamp">checking…</span></p>
+        <?php if (xeric_image_costly($imgEp)): ?>
+        <p class="whois"><strong>This address is not on this computer: every render bills an API
+          key</strong> (XERIC_IMAGE_KEY, environment only — keys are never stored here), including
+          photos characters decide to send while you are away. The meter counts every one, but the
+          meter is a receipt, not a limit — set spending caps with your provider.</p>
+        <?php else: ?>
+        <p class="whois">Local: renders cost your own electricity and GPU time, nothing metered.
+          Every render is still counted on the meter.</p>
+        <?php endif; ?>
+        <div class="mact"><form method="post" action="model.php">
+          <input type="hidden" name="act" value="imageoff">
+          <button type="submit" class="btn">Disconnect</button>
+        </form></div>
+      </div></li>
+    </ul>
+    <?php endif; ?>
     <ul class="mlist" id="artlist"></ul>
   </section>
 
@@ -652,6 +714,19 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
     })
     .catch(function () {});
 
+  // The image machine's lamp: asked after the page is up, like every other
+  // light on this screen, and honest about the one thing worth being sure of.
+  var artlamp = document.getElementById('artlamp');
+  if (artlamp) {
+    fetch('model.php?a=iprobe').then(function (r) { return r.json(); })
+      .then(function (d) {
+        artlamp.textContent = d && d.up
+          ? 'answering — each world offers to develop its photos from its own play screen'
+          : 'not answering right now — worlds fall back to captions, which still works';
+      })
+      .catch(function () { artlamp.textContent = 'not answering right now'; });
+  }
+
   function paintFound(sectionId, listId, rows, addable) {
     if (!rows.length) return;
     var ul = document.getElementById(listId);
@@ -671,19 +746,17 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
       li.querySelector('.wmodel').textContent = row.who.model || '';
 
       if (!addable) {
-        // A BUTTON THAT ANSWERS. The imaging card had a paragraph under the list
-        // explaining that nothing is wired up yet — which is a thing to read
-        // before you have asked a question. The question is "can I use this",
-        // it is asked by pressing Connect, and this is where the answer belongs.
-        var soon = document.createElement('div');
-        soon.className = 'mact';
-        soon.innerHTML = '<button type="button" class="btn join">Connect</button>' +
-                         '<span class="soon" hidden>Imaging model support coming soon.</span>';
-        soon.querySelector('button').addEventListener('click', function () {
-          soon.querySelector('.soon').hidden = false;
-          soon.querySelector('button').hidden = true;
-        });
-        li.querySelector('.opt').appendChild(soon);
+        // CONNECT MEANS CONNECT NOW. This button used to answer "coming soon";
+        // the engine draws today, so it wires the address as the image machine
+        // through the same one-press shape the model rows use. Each world still
+        // asks its own cost-warned question before anything renders.
+        var f2 = document.createElement('form');
+        f2.method = 'post'; f2.action = 'model.php'; f2.className = 'mact';
+        f2.innerHTML = '<input type="hidden" name="act" value="image">' +
+                       '<input type="hidden" name="base">' +
+                       '<button type="submit" class="btn join">Connect</button>';
+        f2.querySelector('input[name=base]').value = row.base;
+        li.querySelector('.opt').appendChild(f2);
       }
 
       if (addable) {

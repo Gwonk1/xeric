@@ -2274,6 +2274,23 @@ xeric_photo_reap($phT, $rpDb, $rpDir, $mpStub, 50);
 ok('message photo: a claim gone stale is reclaimed — a dead reaper wedges nothing',
     (string)(xeric_photo_thread($rpDb, $mpConv)[$mpMid2]['status'] ?? '') === 'done');
 
+// The machines-screen seam: the web layer registers a resolver and the engine
+// asks it at call time. A base is an endpoint; false is EXPLICITLY none (even
+// an environment address is ignored); null falls through to the environment.
+xeric_image_source(fn() => ['base' => 'http://127.0.0.1:7860', 'key' => '']);
+ok('image source: a registered resolver is the answer',
+    (string)(xeric_image_endpoint()['base'] ?? '') === 'http://127.0.0.1:7860');
+ok('image source: and a local base is not costly — no key billed, no warning owed',
+    !xeric_image_costly(xeric_image_endpoint()));
+ok('image source: a remote base IS costly, and every warning branches on that',
+    xeric_image_costly(['base' => 'https://api.example.com', 'key' => 'k']));
+xeric_image_source(fn() => false);
+ok('image source: explicitly none beats everything — disconnect means disconnected',
+    xeric_image_endpoint() === null);
+xeric_image_source(fn() => null);
+ok('image source: and null falls through to the environment, which is unset here',
+    xeric_image_endpoint() === null);
+
 $rpDb = $rpDb2 = null;
 foreach ([$rpDbP, $rpDb2P] as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
 if (is_dir($rpDir)) { foreach (glob($rpDir . '/*') ?: [] as $f) @unlink($f); @rmdir($rpDir); }
