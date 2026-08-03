@@ -845,6 +845,14 @@ footer{margin:2.5rem 0 0;padding-top:1rem;border-top:1px solid var(--line);font-
 .fgrepass{margin:.4rem 0 1rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
 .fgrepass .redbtn{margin-left:auto}
 .fgrepass .st{flex:1 1 100%;font-size:.85rem;color:var(--fg-dim)}
+/* THE RUNNING CLOCK beside "not while the editor is still rewriting it". Tabular
+   figures so a ticking number does not shuffle the sentence beside it one pixel
+   left and right every second, which is the kind of motion the eye reads as a
+   fault. Accent because it is the one thing on the screen that is PROVING
+   something — round numbers and call counts stand still for minutes at a time,
+   and a number that has stopped is how a wedged page looks. */
+.lsclock{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;
+  color:var(--accent);font-weight:600;letter-spacing:.02em}
 .fgrepass .rfind{flex:1 1 100%}
 .greenbtn{min-height:2.6rem;padding:.5rem 1.2rem;font:inherit;font-weight:700;cursor:pointer;
   color:#fff;background:var(--good);border:1px solid var(--good);border-radius:.6rem}

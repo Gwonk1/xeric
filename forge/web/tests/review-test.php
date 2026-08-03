@@ -429,6 +429,14 @@ ok('contradictions: launching is locked while the editor is still rewriting',
     preg_match('/function lock\(on\)[^}]*?\$\(.#launch.\)/s', $rv) === 1);
 ok('contradictions: and the line under the button says why it is locked',
     str_contains($rv, 'not while the editor is still rewriting it.'));
+// A clock is the only thing on that screen guaranteed to keep moving. Round
+// numbers and call counts stand still for minutes while one finding is judged,
+// so a stalled page and a thinking one looked identical until this.
+ok('contradictions: and a running clock beside it, so a wedged pass is visibly wedged',
+    str_contains($rv, "className = 'lsclock'")
+    && preg_match('/if \(on\)[^}]*?appendChild\(runClock\(\)\)/s', $rv) === 1);
+ok('contradictions: the clock is stopped when the lock comes off',
+    preg_match('/stopClock\(\);\s*_ls\.textContent = _ls\.dataset\.was/s', $rv) === 1);
 
 rmtree($tmp);
 

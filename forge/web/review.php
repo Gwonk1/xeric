@@ -1206,6 +1206,42 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
       box.hidden = (d.findings || []).length === 0;
     }
 
+    // HOW LONG IT HAS BEEN GOING (owner, 2026-08-03).
+    //
+    // Clearing a stubborn xeric can run for minutes, and everything on screen
+    // until now was a round number and a call count — both of which stand still
+    // for long stretches while one finding is being judged. A number that has
+    // not moved in ninety seconds looks identical whether the editor is thinking
+    // or wedged, and the only way to tell was to watch the network tab.
+    //
+    // A clock is the cheapest possible proof of life: it is the one thing on the
+    // screen that is guaranteed to keep moving, so if it stops, the page did.
+    var CLK = null, CLK_EL = null, CLK_T0 = 0;
+
+    function runClock() {
+      // Kept running across a re-lock rather than restarted, so the number on
+      // screen is how long the WORK has taken and not how long since the last
+      // internal state change — which is the whole question being asked.
+      if (!CLK) CLK_T0 = Date.now();
+      CLK_EL = document.createElement('span');
+      CLK_EL.className = 'lsclock';
+      var paint = function () {
+        if (!CLK_EL || !CLK_EL.isConnected) return;
+        var s = Math.max(0, Math.round((Date.now() - CLK_T0) / 1000));
+        CLK_EL.textContent = Math.floor(s / 60) + ':' + (s % 60 < 10 ? '0' : '') + (s % 60);
+      };
+      CLK_EL.textContent = '0:00';
+      if (CLK) clearInterval(CLK);
+      CLK = setInterval(paint, 1000);
+      paint();
+      return CLK_EL;
+    }
+
+    function stopClock() {
+      if (CLK) clearInterval(CLK);
+      CLK = null; CLK_EL = null;
+    }
+
     function lock(on) {
       b.disabled = on;
       if (b2) b2.disabled = on;
@@ -1225,8 +1261,10 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
       if (_ls) {
         if (on) {
           if (!_ls.dataset.was) _ls.dataset.was = _ls.textContent;
-          _ls.textContent = 'not while the editor is still rewriting it.';
+          _ls.textContent = 'not while the editor is still rewriting it. ';
+          _ls.appendChild(runClock());
         } else if (_ls.dataset.was) {
+          stopClock();
           _ls.textContent = _ls.dataset.was;
           delete _ls.dataset.was;
         }
