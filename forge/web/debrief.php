@@ -214,6 +214,75 @@ $experts   = $P['experts'];
   </ol>
 <?php endif; ?>
 
+<?php if (!empty($w['mine'])): ?>
+  <!-- THE TWO THINGS YOU CAN DO TO A ROOM, on the page that shows you what it
+       has done so far — which is where you actually decide to do them. A
+       proposal costs one short model call per person; the build costs one long
+       one. Both are said out loud, because this mode can spend real money on a
+       hosted machine and a box that quietly bills you is not a box. -->
+  <h2 class="sec">Put something to them</h2>
+  <div class="doer">
+    <textarea id="ptext" rows="3" placeholder="Nobody goes, and we borrow against next year."></textarea>
+    <div class="drow">
+      <button type="button" class="nbtn" id="pput">put it to the room</button>
+      <button type="button" class="nbtn" id="pbuild">have them write it</button>
+    </div>
+    <p class="note">“Put it to the room” asks each of them, separately, whether it crosses their
+      own line — one short call per person, and none of them sees the tally. “Have them write it”
+      is one longer call that produces the actual thing, with every refusal in front of it.
+      <b>Both spend tokens.</b> On a hosted machine that is real money.</p>
+    <p class="pst" id="pst" hidden></p>
+  </div>
+  <script>
+  (function () {
+    var W = <?= json_encode($w['slug']) ?>;
+    var st = document.getElementById('pst'), box = document.getElementById('ptext');
+    function go(mode, btn) {
+      var text = (box.value || '').trim();
+      if (!text) { box.focus(); return; }
+      [document.getElementById('pput'), document.getElementById('pbuild')].forEach(function (b) { b.disabled = true; });
+      st.hidden = false; st.textContent = mode === 'build' ? 'writing it…' : 'putting it to them…';
+      fetch('play.php?a=' + mode + '&w=' + encodeURIComponent(W), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d || !d.job) { fail((d && d.error) || 'that did not go anywhere'); return; }
+          watch(d.job);
+        })
+        .catch(function () { fail('that did not go anywhere'); });
+    }
+    function fail(m) {
+      st.textContent = m;
+      [document.getElementById('pput'), document.getElementById('pbuild')].forEach(function (b) { b.disabled = false; });
+    }
+    // The room refusing in real time beats a spinner and a verdict: each note
+    // is one person answering about their own line.
+    function watch(job) {
+      var es = new EventSource('progress.php?job=' + encodeURIComponent(job));
+      ['note', 'queue'].forEach(function (k) {
+        es.addEventListener(k, function (m) {
+          try { var d = JSON.parse(m.data); st.textContent = d.message || d.text || st.textContent; } catch (e) {}
+        });
+      });
+      es.addEventListener('done', function (m) {
+        es.close();
+        try { st.textContent = (JSON.parse(m.data).message || 'done') + ' — reloading the report'; } catch (e) {}
+        setTimeout(function () { location.reload(); }, 900);
+      });
+      es.addEventListener('error', function (m) {
+        es.close();
+        var why = 'that did not finish';
+        try { why = JSON.parse(m.data).message || why; } catch (e) {}
+        fail(why);
+      });
+    }
+    document.getElementById('pput').addEventListener('click', function () { go('propose', this); });
+    document.getElementById('pbuild').addEventListener('click', function () { go('build', this); });
+  })();
+  </script>
+<?php endif; ?>
+
   <p class="foot"><a href="play.php?w=<?= h(rawurlencode($w['slug'])) ?>">back to the room</a>
     · <a href="watch.php?w=<?= h(rawurlencode($w['slug'])) ?>">watch them talk</a></p>
 </main>
@@ -264,6 +333,12 @@ h2.sec{margin:2.2rem 0 .6rem;font-size:1.05rem;letter-spacing:.02em;text-transfo
 .turns li{margin:.6rem 0}
 .turns .said{margin:0;line-height:1.5}
 .turns .why,.thread .why{opacity:.62;font-size:.86rem;margin:.15rem 0 0;font-style:italic}
+.doer{border:1px solid;border-radius:.5rem;padding:.8rem;margin:.5rem 0}
+.doer textarea{width:100%;box-sizing:border-box;font:inherit;padding:.5rem;border-radius:.4rem;
+  border:1px solid;background:transparent;color:inherit;resize:vertical}
+.drow{display:flex;gap:.5rem;flex-wrap:wrap;margin:.6rem 0 .2rem}
+.doer .note{font-size:.85rem;opacity:.72;margin:.5rem 0 0;line-height:1.5}
+.pst{margin:.6rem 0 0;font-size:.9rem;opacity:.85}
 .foot{margin:2.5rem 0 1rem;opacity:.75}
 CSS;
 }

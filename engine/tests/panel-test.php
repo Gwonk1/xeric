@@ -294,6 +294,46 @@ ok('made: a kind that is not a kind falls back rather than reaching a page raw',
     && xeric_panel_artifacts($made)[2]['kind'] === 'text');
 ok('made: and nothing is not something', xeric_panel_made($made, 'x', '   ') === -1);
 
+// ---------------------------------------------------------------------------
+// 7. THE ROOM ACTUALLY BUILDING IT. The argument is not always the deliverable:
+// somebody who came here with "write me the script" wants the script, and the
+// disagreement was the method rather than the product.
+// ---------------------------------------------------------------------------
+
+echo "\n# the room writing the thing\n";
+
+$bDb = fresh('build');
+xeric_panel_think($bDb, 'ada_reyes', 'The lease is the whole gap.', 'nobody has read the break clause');
+
+$saw = null;
+$bEp = ['base' => 'stub://', 'stub' => function (string $tag, array $m) use (&$saw) {
+    $saw = (string)$m[1]['content'];
+    return ['title' => 'the exit plan', 'kind' => 'markdown',
+            'body' => "1. serve notice on the lease\n2. nobody goes",
+            'breaks' => "Tom's solvency line, because the break fee lands in Q1"];
+}];
+$bi = xeric_panel_build($T, $bDb, 'write the plan', $bEp);
+ok('build: the room produces the thing somebody came for',
+    $bi === 0 && xeric_panel_artifacts($bDb)[0]['kind'] === 'markdown'
+    && str_contains(xeric_panel_artifacts($bDb)[0]['body'], 'serve notice'));
+
+// THE HONEST FOOTNOTE RIDES WITH THE WORK. A deliverable that quietly picks a
+// side is worse than none, because it looks like an answer — so what it broke
+// is IN the artifact, not in a note beside it a reader can scroll past.
+ok('build: and says which refusal it had to break, inside the thing itself',
+    str_contains(xeric_panel_artifacts($bDb)[0]['body'], "WHAT THIS BREAKS")
+    && str_contains(xeric_panel_artifacts($bDb)[0]['body'], 'solvency line'));
+
+ok('build: it writes with every refusal and the open record in front of it',
+    str_contains((string)$saw, 'insolvent by spring')
+    && str_contains((string)$saw, 'nobody has read the break clause'));
+ok('build: an empty ask builds nothing', xeric_panel_build($T, $bDb, '  ', $bEp) === -1);
+ok('build: and a model that answers with nothing usable writes nothing',
+    xeric_panel_build($T, $bDb, 'write it', ['base' => 'stub://', 'stub' => fn() => ['title' => 'x']]) === -1
+    && count(xeric_panel_artifacts($bDb)) === 1);
+ok('build: an ordinary world has no room to ask',
+    xeric_panel_build(['cast' => ['characters' => []]], $bDb, 'write it', $bEp) === -1);
+
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

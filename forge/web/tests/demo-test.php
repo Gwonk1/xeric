@@ -3093,6 +3093,20 @@ ok('debrief: a stranger is shown none of it',
     str_contains($run('debrief.php', $B, ['w' => 'argument']), 'not yours to read'));
 ok('debrief: and an ordinary xeric is told to read its book instead',
     str_contains($run('debrief.php', $A, ['w' => 'lived-in']), 'not a discussion'));
+ok('debrief: the owner gets the box that puts things to them',
+    str_contains($deb, 'put it to the room') && str_contains($deb, 'have them write it'));
+ok('debrief: and is told plainly that both of those spend tokens',
+    str_contains($deb, 'spend tokens') && str_contains($deb, 'real money'));
+ok('debrief: a stranger is offered no box to spend anybody\'s money with',
+    !str_contains($run('debrief.php', $B, ['w' => 'argument']), 'put it to the room'));
+
+// The endpoints behind those two buttons: owner-only, and refusing an ordinary
+// world rather than spawning a worker that would find no room to talk to.
+$prop = $run('play.php', $B, ['a' => 'propose', 'w' => 'argument']);
+ok('panel: a stranger cannot put anything to somebody else\'s room',
+    str_contains($prop, 'Only the owner') || str_contains($prop, 'not yours'));
+ok('panel: and an ordinary xeric is not a room with a question in it',
+    str_contains($run('play.php', $A, ['a' => 'propose', 'w' => 'lived-in']), 'place to live in'));
 
 echo "\n# the discussion door\n";
 

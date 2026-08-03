@@ -176,6 +176,29 @@ if ($action !== '') {
                                 : 'The hours pay, the ones you skip do not, and enough of those cost you the job.')]);
     }
 
+    // -- putting something to a discussion room (EXPERIMENTAL) ----------------
+    // Detached, because a proposal is one short model call PER EXPERT and the
+    // room holds five of them: worst case is five timeouts back to back, which
+    // is past the edge's cut long before it is past the model's.
+    if ($action === 'propose' || $action === 'build') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner puts things to the room.'], 403);
+        require_once XERIC_WEB_LIB . '/engine/panel.php';
+        if (xeric_panel($w['template']) === null) {
+            xeric_web_json(['error' => 'This xeric is a place to live in, not a room with a question in it.'], 409);
+        }
+        $in   = xeric_web_input();
+        $text = trim((string)($in['text'] ?? ''));
+        if ($text === '') xeric_web_json(['error' => 'There is nothing here to put to them.'], 400);
+
+        try { xeric_play_endpoint(); }
+        catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
+
+        $job = xeric_web_job_new();
+        xeric_web_spawn($job, ['slug' => (string)$w['slug'], 'sid' => $sid,
+                               'text' => $text, 'mode' => $action], 'panel-worker.php');
+        xeric_web_json(['ok' => 1, 'job' => $job, 'mode' => $action]);
+    }
+
     // -- the narrator's hand on the ambient world -----------------------------
     // The two dials nobody in the world can touch: the sky and the mood. Both
     // are ordinarily the world's own business — weather derives from the date,

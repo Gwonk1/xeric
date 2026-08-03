@@ -553,3 +553,78 @@ function xeric_panel_made(PDO $db, string $title, string $body, string $kind = '
                           $at ?? xeric_state_time());
     return count($all) - 1;
 }
+
+/**
+ * ASK THE ROOM TO ACTUALLY BUILD IT.
+ *
+ * The argument is not always the deliverable. Somebody who came here with "we
+ * need a rota that nobody hates" or "write me the script that does this" wants
+ * the rota and the script — the disagreement was the method, not the product.
+ * So this is one call that reads the whole open record and writes the thing.
+ *
+ * WRITTEN BY THE ROOM, NOT BY A NARRATOR. The prompt carries every refusal and
+ * every piece of reasoning, and says so: what comes back has to be something
+ * that survives this particular set of constraints, and where it cannot, it
+ * says which constraint it broke rather than quietly picking a side. A
+ * deliverable that pretends the disagreement was resolved is worse than no
+ * deliverable, because it looks like an answer.
+ *
+ * Returns the artifact index, or -1 if nothing usable came back.
+ */
+function xeric_panel_build(array $t, PDO $db, string $ask, array $endpoint, array $opts = []): int
+{
+    $p = xeric_panel($t);
+    if ($p === null) return -1;
+    $ask = trim($ask);
+    if ($ask === '') return -1;
+
+    $lines = [];
+    foreach ($p['experts'] as $e) {
+        $lines[] = '- ' . $e['name'] . ' will not accept: ' . $e['red_line']
+                 . ($e['stake'] !== '' ? ' (protecting: ' . $e['stake'] . ')' : '');
+    }
+    $record = xeric_panel_thinking($db, '', 20);
+    $threads = xeric_panel_threads($db);
+    $loose = [];
+    foreach (array_slice($threads, 0, 5) as $th) $loose[] = '- ' . $th['who'] . ': ' . $th['said'];
+
+    $sys = 'You write the thing a room full of people who disagree was asked for. You are not '
+         . 'summarising their argument and you are not picking a winner: you are producing the '
+         . 'work. Reply with ONE JSON object and nothing else.';
+
+    $user = "THE QUESTION IN THE ROOM\n" . $p['question'] . "\n\n"
+          . "WHAT EACH OF THEM WILL NOT ACCEPT\n" . implode("\n", $lines) . "\n\n"
+          . ($record !== '' ? $record . "\n\n" : '')
+          . ($loose !== [] ? "RAISED AND NEVER PICKED UP\n" . implode("\n", $loose) . "\n\n" : '')
+          . "WHAT IS WANTED\n" . mb_substr($ask, 0, 2000) . "\n\n"
+          . "Write it. Real and complete enough to use — if it is code it runs, if it is a plan it\n"
+          . "has steps somebody could follow tomorrow, if it is a draft it is finished.\n\n"
+          . "DO NOT PRETEND THE DISAGREEMENT IS RESOLVED. Where the refusals above genuinely\n"
+          . "cannot all be honoured, say WHICH ONE this breaks and why you had to. A deliverable\n"
+          . "that quietly picks a side is worse than none, because it looks like an answer.\n\n"
+          . "WRITE ONE JSON OBJECT\n"
+          . '{ "title": "four words", "kind": "text|python|php|js|sql|markdown|…", '
+          . '"body": "the whole thing", "breaks": "which refusal this breaks, or \"\" if none" }';
+
+    try {
+        $raw = xeric_chat_json($endpoint, 'panel-build', [
+            ['role' => 'system', 'content' => $sys],
+            ['role' => 'user',   'content' => $user],
+        ], ['temperature' => 0.6, 'timeout' => (int)($opts['timeout'] ?? 240)] + $opts);
+    } catch (Throwable $e) {
+        return -1;
+    }
+    if (!is_array($raw)) return -1;
+
+    $body = trim((string)($raw['body'] ?? ''));
+    if ($body === '') return -1;
+
+    // The honest footnote rides WITH the work, in the artifact, not in a note
+    // beside it that a reader can scroll past.
+    $breaks = trim((string)($raw['breaks'] ?? ''));
+    if ($breaks !== '') {
+        $body .= "\n\n---\nWHAT THIS BREAKS: " . mb_substr($breaks, 0, 400);
+    }
+    return xeric_panel_made($db, (string)($raw['title'] ?? $ask), $body,
+        (string)($raw['kind'] ?? 'text'), '');
+}
