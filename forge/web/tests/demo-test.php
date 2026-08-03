@@ -2782,7 +2782,11 @@ ok('Theo\'s homework booth is placed too, five days a week or not — two hours 
 
 $m = $pmarks($PT, '2026-08-04 14:00');
 ok('ninety minutes before his booth, Theo is a plan with a start time',
-    $m['theo']['state'] === 'soon' && $m['theo']['glyph'] === '→'
+    // A CLOCK, NOT AN ARROW. Every other mark here is a pictograph — 💼 at
+    // work, 🏠 home, 💤 asleep, 📍 out somewhere — and in a row of buttons a
+    // bare arrow reads as chrome: a "next", a link, something to press. The
+    // owner's report was "some weird arrow on his name for no apparent reason".
+    $m['theo']['state'] === 'soon' && $m['theo']['glyph'] === '🕘'
     && $m['theo']['pw'] === 'the Bluebird Diner at 15:30'
     && str_contains($m['theo']['say'], 'by 15:30'), json_encode($m['theo']));
 ok('and at noon he was not — two hours is the whole window',

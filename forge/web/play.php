@@ -955,12 +955,25 @@ echo '<style>' . xeric_play_css() . '
      twelve of them — the number this is built for — had two thirds of the screen
      to fit in. It is the app's primary navigation, so it gets the app's width:
      above the shell, sticky at the top, with the sidebar hanging below it.
-     The burger is the drawer on a phone and carries the unread count; the + and
-     the narrator are pinned at the far right, always in the same place. -->
+     The burger is the drawer on a phone and carries the unread count.
+
+     THE + TRAILS THE NAMES, and this is a correction. It used to be pinned at
+     the far right beside the narrator, on the argument that a control which
+     never moves is a control you can find — and the opposite happened: with the
+     whole width between it and the last chip it stopped reading as "add a
+     person" and started reading as a toolbar button about nothing. The owner
+     logged in and could not find a way to add a character at all.
+
+     It belongs at the end of the people, because that is what it adds to. The
+     narrator stays pinned right: it is the one chip that is not a person, so
+     being apart from them is the point. -->
 <div class="chipbar" id="chipbar">
   <button type="button" class="burger" id="burger" aria-label="who is where"><span></span><span></span><span></span><b class="bbadge" id="bbadge" hidden>0</b></button>
   <div class="chips" id="chips"></div>
   <?php if ($w['mine']): ?>
+  <!-- OUTSIDE #chips on purpose: paintChips() clears that box on every repaint,
+       so a button living in it would vanish the first time anybody's presence
+       moved. It trails the names by LAYOUT instead — see .chips in the CSS. -->
   <button type="button" class="chip addchip" id="addchar1" title="write somebody new into this xeric">+</button>
   <?php endif; ?>
   <button type="button" class="chip narrchip" id="asknarr3" title="the narrator">?</button>

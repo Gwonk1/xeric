@@ -1141,7 +1141,14 @@ function xeric_play_presence_mark(array $t, array $c, ?array $row, array $now): 
     if ($soon !== null) {
         $hh   = sprintf('%02d:%02d', intdiv($soon[0], 60), $soon[0] % 60);
         $name = xeric_world_place_name($t, $soon[1]);
-        return ['state' => 'soon', 'glyph' => '→',
+        // A CLOCK, NOT AN ARROW. Every other mark in this vocabulary is a
+        // pictograph — 💼 at work, 🏠 home, 💤 asleep, 📍 out somewhere — and
+        // this one was a bare arrow, which in a row of buttons reads as chrome:
+        // a "next", a link, something to press. The owner's report was "some
+        // weird arrow on his name for no apparent reason", and that is exactly
+        // what an arrow means when everything beside it is a picture of a place.
+        // It says DUE SOMEWHERE SOON, so it gets a clock.
+        return ['state' => 'soon', 'glyph' => '🕘',
                 'say'   => 'due at ' . $name . ' by ' . $hh . ($soon[2] !== '' ? ' — ' . $soon[2] : ''),
                 'pw'    => $name . ' at ' . $hh, 'slow' => $slow];
     }
@@ -4116,8 +4123,16 @@ body.skipping .wplace .wgo2{visibility:hidden}
   background:var(--bg);border-bottom:1px solid var(--line-2)}
 /* .chipbar-scoped: the runs panel also owns a `.chips`, and its flex-wrap
    would stack this bar two rows deep on a phone. */
-.chipbar .chips{flex:1 1 auto;min-width:0;display:flex;flex-wrap:nowrap;gap:.35rem;overflow-x:auto;
+/* `0 1 auto`, NOT `1 1 auto`. Growing to fill pushed the + all the way to the
+   far edge with the whole window between it and the last name — at which point
+   it stopped reading as "add a person" and read as a toolbar button about
+   nothing. It shrinks and scrolls when there are more people than fit, which is
+   what the overflow is for, and the + trails the names at every width. */
+.chipbar .chips{flex:0 1 auto;min-width:0;display:flex;flex-wrap:nowrap;gap:.35rem;overflow-x:auto;
   overscroll-behavior-x:contain;scrollbar-width:none;scroll-behavior:smooth}
+/* The narrator is the one chip that is not a person, so it keeps the far edge —
+   being apart from them is what it means. */
+.chipbar .narrchip{margin-left:auto}
 .chips::-webkit-scrollbar{display:none}
 /* DRAGGABLE. A touch screen already flicks this; a mouse had a scroll strip with
    no scrollbar, which is a bar you cannot reach the end of. Grab and pull. The
