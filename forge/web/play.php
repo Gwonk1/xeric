@@ -2322,13 +2322,21 @@ echo '<style>' . xeric_play_css() . '
     if (photo && photo.k && photo.s) {
       body = '<img class="mphoto" src="photo.php?w=' + encodeURIComponent(W)
            + '&k=' + encodeURIComponent(photo.k) + '&s=' + encodeURIComponent(photo.s)
-           + '" alt="' + escA(photo.caption || text) + '" loading="lazy"'
-           + ' onerror="var b=this.parentNode;this.remove();">'
+           + '" alt="' + escA(photo.caption || text) + '" loading="lazy">'
            + '<span class="mcap">' + esc(photo.caption || text) + '</span>';
     }
 
     li.innerHTML = face + '<span class="b">' + body
                  + (when ? '<span class="st">' + esc(when) + '</span>' : '') + '</span>';
+    // BOUND, NOT WRITTEN AS AN ATTRIBUTE. An inline `onerror=` is inline script,
+    // and the Content-Security-Policy grants no 'unsafe-inline' — so as an
+    // attribute this would silently never fire, and a photo that failed to load
+    // would sit there as a broken-image icon instead of taking itself away.
+    // This is the exact failure mode a nonce policy has: not an error, an
+    // absence.
+    var mph = li.querySelector('.mphoto');
+    if (mph) mph.addEventListener('error', function () { this.remove(); });
+
     $('#msgs').appendChild(li);
     stickDown(li);
     return li;
@@ -2971,7 +2979,7 @@ echo '<style>' . xeric_play_css() . '
         // what it always secretly was.
         var pline = '<div class="cportrait"><img src="photo.php?w=' + encodeURIComponent(W)
           + '&k=portrait&s=' + encodeURIComponent(h) + '" alt="' + escA(d.photo_caption || '')
-          + '" onerror="this.closest(\'.cportrait\').hidden=true"></div>';
+          + '"></div>';
         $('#cmodal').innerHTML =
             '<h2><span class="av" style="--hue:' + (d.face ? d.face.hue : 0) + '">'
           + esc(d.face ? d.face.txt : '?') + '</span>' + esc(d.name) + '</h2>'
@@ -2980,6 +2988,14 @@ echo '<style>' . xeric_play_css() . '
           + '<button type="button" id="ccancel">Cancel</button><span class="grow"></span>'
           + '<a class="workbench" href="review.php?w=' + encodeURIComponent(W) + '#sec-cast">the full workbench →</a></div>';
         $('#coverlay').classList.add('open');
+        // Same reason as the message photo: an inline onerror is inline script
+        // and the policy refuses it, so a portrait that will not load has to be
+        // hidden from here rather than from an attribute.
+        var cimg = $('#cmodal .cportrait img');
+        if (cimg) cimg.addEventListener('error', function () {
+            var box = this.closest('.cportrait');
+            if (box) box.hidden = true;
+        });
         bindPronounSelects();
 
         $$('#cmodal .cdice').forEach(function (b) {
