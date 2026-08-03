@@ -652,7 +652,7 @@ function xeric_duet_messages(array $t, string $me, string $other, string $system
         $coach[] = 'A third voice in the transcript is the person standing here with you both — '
                  . 'answer whoever the moment calls for.';
     }
-    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, $playerWhere, $deaths, 0);
+    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, $playerWhere, $deaths, 0, $db);
 
     $messages = [['role' => 'system', 'content' => $system]];
     foreach ($lines as $l) {

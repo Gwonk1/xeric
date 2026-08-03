@@ -1266,7 +1266,7 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     // person reading the panel is asking one question, so they answer as one
     // sentence. The motif carries it when the world wrote one: "a little
     // reckless · a truck parked where no truck should be".
-    $wx   = xeric_weather_line($t, $now);
+    $wx   = xeric_weather_line($t, $now, $db);
     $mood = xeric_mood_read($db, $t);
     $moodLine = $mood === [] || ($mood['side'] ?? '') === 'ordinary'
         ? ''

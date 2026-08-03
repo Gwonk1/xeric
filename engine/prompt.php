@@ -123,7 +123,7 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
 
     $volatile = xeric_prompt_now_block($t, $speakerHandle, $now, (string)($opts['tail'] ?? ''), $walls,
         array_key_exists('player_where', $opts) ? $opts['player_where'] : xeric_player_where($t, $db),
-        xeric_deaths($db), $lastSpoke);
+        xeric_deaths($db), $lastSpoke, $db);
 
     // The camera, offered only where the world consented to photographs
     // (opts['photos'], the web layer's read of photos.approved). It rides the
@@ -555,7 +555,7 @@ function xeric_prompt_turn(array $m): array
  */
 function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, string $tail = '',
                                 ?array $walls = null, ?string $playerWhere = null, ?array $deaths = null,
-                                int $lastSpoke = 0): string
+                                int $lastSpoke = 0, ?PDO $db = null): string
 {
     $walls ??= xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $speakerHandle]));
 
@@ -573,7 +573,7 @@ function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, str
     // the identical sentence. It rides RIGHT NOW because it is the one block
     // allowed to change, and it may never move above this line into anything
     // byte-stable.
-    $wx = xeric_weather_line($t, $now);
+    $wx = xeric_weather_line($t, $now, $db);
     if ($wx !== '') $lines[] = $wx;
 
     // HOW LONG IT HAS BEEN, said only when it has actually been a while. The

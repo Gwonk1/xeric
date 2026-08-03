@@ -1615,7 +1615,7 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     // The day's sky, the same byte string every prompt derives for this date
     // (engine/weather.php). Scene-setting only — the still-life rule four
     // lines down still says weather may dress the hour and never carry it.
-    $wx = xeric_weather_line($t, $now);
+    $wx = xeric_weather_line($t, $now, $db);
     if ($wx !== '') $lines[] = 'The weather, which is scenery and not the subject: ' . $wx;
     // And the room's own furniture, when the forge furnished it: the same list
     // the arrival beat reads, so an hour at the diner and a walk into the

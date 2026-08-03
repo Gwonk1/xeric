@@ -152,6 +152,43 @@ if ($action !== '') {
                         'note' => 'Takes effect from the next hour and the next reply.']);
     }
 
+    // -- the narrator's hand on the ambient world -----------------------------
+    // The two dials nobody in the world can touch: the sky and the mood. Both
+    // are ordinarily the world's own business — weather derives from the date,
+    // the needle moves on the hours — and both are exactly what a storyteller
+    // reaches for. Rain on the day of the funeral is the oldest tool there is.
+    //
+    // The weather override is PER DAY and clears itself tomorrow: the narrator
+    // sets a day, not a climate. The mood push is capped and scaled by the
+    // schema's own invariant — it pushes harder on a quiet town than on one
+    // already at the end of its range, so nobody ratchets a world to its stop
+    // by asking twice.
+    if ($action === 'narrate') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner narrates a xeric.'], 403);
+        $in  = xeric_web_input();
+        $nowN = xeric_clock_now($w['db'], $w['template']);
+        $said = [];
+
+        if (array_key_exists('weather', $in)) {
+            $line = trim((string)$in['weather']);
+            xeric_weather_set($w['db'], $nowN, $line);
+            $said[] = $line === ''
+                ? 'the sky is the world\'s own again'
+                : 'today: ' . mb_substr($line, 0, 80);
+        }
+        if (array_key_exists('mood', $in) && (int)$in['mood'] !== 0) {
+            $before = xeric_mood_now($w['db'], $w['template']);
+            $after  = xeric_mood_hand($w['db'], $w['template'], (int)$in['mood']);
+            $read   = xeric_mood_read($w['db'], $w['template']);
+            $said[] = $after === $before
+                ? 'the town would not go any further that way'
+                : 'the town is ' . ((string)($read['word'] ?? 'different')) . ' now';
+        }
+        if ($said === []) xeric_web_json(['error' => 'nothing to narrate'], 400);
+        xeric_web_json(['ok' => true, 'note' => implode(' · ', $said),
+                        'weather' => xeric_weather_line($w['template'], $nowN, $w['db'])]);
+    }
+
     // -- the stories over this world -----------------------------------------
     // The player's own view of them, which is deliberately thin: the logline
     // and how far along, never the truth and never which beat is next
@@ -756,6 +793,11 @@ echo '<style>' . xeric_play_css() . '
              font-size:.78rem; color:var(--fg-dim); }
 .sbrand .sxall:hover { color:var(--fg); }
 .xcnav { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px; }
+/* the hand on the ambient world: the sky, and a nudge on the town */
+.xcnarr{flex-direction:column;align-items:stretch;gap:.4rem}
+.xcnarr input{font:inherit;font-size:.85rem;color:var(--fg);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:.4rem;padding:.35rem .5rem;width:100%}
+.xcmood{display:flex;gap:.4rem;align-items:center;font-size:.8rem;color:var(--fg-dim)}
 /* the stories over this world, in the cog */
 .xcstories{flex-direction:column;align-items:stretch}
 .xcstory{padding:.4rem 0;border-bottom:1px solid var(--line-2)}
@@ -1486,6 +1528,15 @@ echo '<style>' . xeric_play_css() . '
           '<span class="xchint">a story sits OVER this xeric and changes nothing in it — ' +
           'take one back and the world underneath is exactly as it was</span></div>'
         : '') +
+      (MINE
+        ? '<div class="xcrow xcnarr">' +
+          '<input type="text" id="xcwx" placeholder="the sky today, in your words — blank to give it back">' +
+          '<span class="xcmood">the town: ' +
+            '<button type="button" class="nbtn" data-mood="-2">calmer</button>' +
+            '<button type="button" class="nbtn" data-mood="2">worse</button></span>' +
+          '<span class="xchint">the narrator\'s hand: weather is set for TODAY and derives again ' +
+          'tomorrow; the mood push is capped, and pushes harder on a quiet town than a wound-up one</span></div>'
+        : '') +
       '<div class="xcrow"><button type="button" class="nbtn" id="xcqr">📱 open on my phone</button>' +
         '<span class="xchint">a code to scan from the same wifi</span></div>' +
       '<div class="xcqrbox" id="xcqrbox" hidden></div>' +
@@ -1529,6 +1580,36 @@ echo '<style>' . xeric_play_css() . '
         if (to) requestAnimationFrame(function () { to.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
       });
     });
+    // The narrator's hand. The weather commits on Enter or on leaving the box;
+    // the mood buttons commit on the press. Both reload, because the sky and
+    // the mood are printed in three places and a stale panel would argue with
+    // the one that repainted.
+    var wxBox = document.getElementById('xcwx');
+    if (wxBox) {
+      var sendWx = function () {
+        fetch('play.php?a=narrate&w=' + encodeURIComponent(W), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ weather: wxBox.value }) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) { if (d && d.ok) { toast(d.note || 'said'); location.reload(); }
+                               else toast((d && d.error) || 'that did not take'); })
+          .catch(function () { toast('that did not take'); });
+      };
+      wxBox.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendWx(); } });
+    }
+    $$('#cmodal [data-mood]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        b.disabled = true;
+        fetch('play.php?a=narrate&w=' + encodeURIComponent(W), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mood: parseInt(b.dataset.mood, 10) }) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) { if (d && d.ok) { toast(d.note || 'said'); location.reload(); }
+                               else { b.disabled = false; toast((d && d.error) || 'that did not take'); } })
+          .catch(function () { b.disabled = false; toast('that did not take'); });
+      });
+    });
+
     // Taking a story back. Confirmed once, because it is the one control here
     // that ends something somebody is in the middle of.
     $$('#cmodal .xcdrop').forEach(function (b) {

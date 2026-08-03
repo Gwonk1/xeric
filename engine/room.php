@@ -791,7 +791,7 @@ function xeric_room_messages(array $t, string $me, array $others, string $system
                  . ' else. A line or three, out loud. It is a conversation, not a speech.';
     }
 
-    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, null, $deaths, 0);
+    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, null, $deaths, 0, $db);
 
     $messages = [['role' => 'system', 'content' => $system]];
     $pending  = [];

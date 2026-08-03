@@ -35,6 +35,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/state.php';   // the narrator's hand on the sky is one row
+
 /**
  * Which sky this world lives under.
  *
@@ -153,8 +155,51 @@ function xeric_weather_lines(): array
  * stored and nothing can disagree — two prompts, the sidebar and a sweep all
  * derive the identical byte string for the identical day.
  */
-function xeric_weather_line(array $t, array $now): string
+/**
+ * The narrator's hand on the sky.
+ *
+ * The derivation below is the world's default weather and stays exactly that
+ * — but the narrator is the one voice allowed to say what a day is like, and
+ * a storyteller who cannot call for rain on the day of the funeral is missing
+ * the oldest tool there is. So: an override, PER DAY, keyed by the world's
+ * own date.
+ *
+ * Per day and not per hour, because everything downstream assumes the sky
+ * holds still for a day — the prompts, the sweeps and the sidebar all derive
+ * the same line for the same date, and an override that could change at noon
+ * would put two different skies in one afternoon's memories.
+ *
+ * Cleared by passing ''. Tomorrow derives again by itself: the narrator sets
+ * a day, not a climate.
+ */
+function xeric_weather_set(PDO $db, array $now, string $line): void
 {
+    $iso = (string)($now['iso'] ?? '');
+    if (strlen($iso) < 10) return;
+    $key  = 'weather:' . substr($iso, 0, 10);
+    $line = trim((string)preg_replace('/\s+/u', ' ', $line));
+    if ($line === '') { xeric_world_state_delete($db, $key); return; }
+    xeric_world_state_set($db, $key, mb_substr($line, 0, 200));
+}
+
+/** What the narrator said today's sky is, or '' for the world's own. */
+function xeric_weather_told(?PDO $db, array $now): string
+{
+    if ($db === null) return '';
+    $iso = (string)($now['iso'] ?? '');
+    if (strlen($iso) < 10) return '';
+    return trim((string)(xeric_world_state_get($db, 'weather:' . substr($iso, 0, 10)) ?? ''));
+}
+
+function xeric_weather_line(array $t, array $now, ?PDO $db = null): string
+{
+    // The narrator's day beats the derivation, and nothing else does. $db is
+    // optional so every existing caller keeps working and simply gets the
+    // world's own sky — a weather line has never needed a database and the
+    // ones that do not have one still do not.
+    $told = xeric_weather_told($db, $now);
+    if ($told !== '') return $told;
+
     $iso = (string)($now['iso'] ?? '');
     if (strlen($iso) < 10) return '';
     $date  = substr($iso, 0, 10);                    // day-coarse, the whole point

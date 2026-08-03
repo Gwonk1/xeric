@@ -122,6 +122,50 @@ function xeric_mood_step(PDO $db, array $t, string $kind, ?int $at = null): int
 }
 
 /**
+ * The narrator's hand on the needle — the one part of world_mood that was
+ * designed before it was built, and it was designed with a limp in it.
+ *
+ * `narrator_hand: {enabled, cap: 2, invariant: "pushes harder when ordinary
+ * than extreme"}`. The cap is how far one push may move it. The invariant is
+ * the interesting half: a storyteller leaning on a town that is already at
+ * the end of its range should get less for the effort than one leaning on a
+ * quiet Tuesday, because the first is pushing something that is already
+ * falling and the second is starting weather.
+ *
+ * So the push is scaled by how far from ordinary the needle already sits:
+ * full strength at ordinary, half strength at the far end. A narrator cannot
+ * ratchet a town to its stop by asking twice.
+ *
+ * @return int the needle after the push
+ */
+function xeric_mood_hand(PDO $db, array $t, int $push, ?int $at = null): int
+{
+    $hand = (array)($t['world_mood']['narrator_hand'] ?? []);
+    if (($hand['enabled'] ?? true) === false || $push === 0) return xeric_mood_now($db, $t);
+
+    $cap = max(1, (int)($hand['cap'] ?? 2));
+    $push = max(-$cap, min($cap, $push));
+
+    [$lo, $hi] = xeric_mood_range($t);
+    $ord = xeric_mood_ordinary($t);
+    $was = xeric_mood_now($db, $t);
+
+    // How far along its own range the needle already is, 0 at ordinary and 1
+    // at either stop — and the push loses half its strength across that.
+    $reach = $push > 0 ? max(1, $hi - $ord) : max(1, $ord - $lo);
+    $out   = abs($was - $ord) / $reach;
+    $scale = 1.0 - 0.5 * min(1.0, $out);
+
+    $moved = (int)($push > 0 ? floor($push * $scale) : ceil($push * $scale));
+    // A push that scaled to nothing still counts for one: the narrator asked.
+    if ($moved === 0) $moved = $push > 0 ? 1 : -1;
+
+    $now = max($lo, min($hi, $was + $moved));
+    if ($now !== $was) xeric_arc_set($db, xeric_arc_world(), 'needle', (string)$now, $at);
+    return $now;
+}
+
+/**
  * The needle in the world's own words, for anything that shows a person the
  * mood. '' when this world declared no axis — a world with no vocabulary for
  * its mood is a world that should be shown no mood, rather than a number.

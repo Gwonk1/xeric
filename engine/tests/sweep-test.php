@@ -1761,6 +1761,54 @@ ok('proactive: a live overlay does not stop the phone from ringing',
     $ping !== null && ($ping['text'] ?? '') !== '', json_encode($notesPing));
 
 // ---------------------------------------------------------------------------
+// THE NARRATOR'S HAND on the two ambient dials — the sky and the mood. Both
+// are ordinarily the world's own business, and both are exactly what a
+// storyteller reaches for: rain on the day of the funeral is the oldest tool
+// there is.
+// ---------------------------------------------------------------------------
+
+echo "\n# the narrator's hand\n";
+
+$nhT  = world(['danger', 'shared_meals']);
+$nhDb = fresh_db('narrator-hand');
+xeric_state_seed($nhDb, $nhT);
+$nhNow = xeric_world_now($nhT, ep('2026-08-02 10:00'));
+$nhTom = xeric_world_now($nhT, ep('2026-08-03 10:00'));
+
+$nhDerived = xeric_weather_line($nhT, $nhNow);
+xeric_weather_set($nhDb, $nhNow, 'Rain since before anybody was up, and it has not let go.');
+ok('sky: what the narrator says beats what the world would have said',
+    xeric_weather_line($nhT, $nhNow, $nhDb) === 'Rain since before anybody was up, and it has not let go.');
+ok('sky: and every reader sees the same told day — a prompt cannot disagree with the panel',
+    str_contains(xeric_prompt_now_block($nhT, 'ruth', $nhNow, '', null, null, null, 0, $nhDb),
+        'Rain since before anybody'));
+ok('sky: TOMORROW derives again by itself — the narrator sets a day, not a climate',
+    xeric_weather_line($nhT, $nhTom, $nhDb) === xeric_weather_line($nhT, $nhTom));
+xeric_weather_set($nhDb, $nhNow, '');
+ok('sky: and giving it back restores the world\'s own',
+    xeric_weather_line($nhT, $nhNow, $nhDb) === $nhDerived);
+ok('sky: a caller with no database still gets the world\'s own, as it always did',
+    xeric_weather_line($nhT, $nhNow) === $nhDerived);
+
+// The schema's own invariant, finally built: pushes harder when ordinary
+// than extreme, so nobody ratchets a town to its stop by asking twice.
+$nhFirst = xeric_mood_hand($nhDb, $nhT, 2) - xeric_mood_ordinary($nhT);
+$nhPrev  = xeric_mood_now($nhDb, $nhT);
+for ($i = 0; $i < 4; $i++) { $nhStep = xeric_mood_hand($nhDb, $nhT, 2) - $nhPrev; $nhPrev = xeric_mood_now($nhDb, $nhT); }
+ok('mood: the hand pushes harder on a quiet town than on a wound-up one',
+    $nhFirst > $nhStep, $nhFirst . ' then ' . $nhStep);
+ok('mood: it is capped — one push is never a whole range',
+    xeric_mood_hand($nhDb, $nhT, 99) - $nhPrev <= (int)($nhT['world_mood']['narrator_hand']['cap'] ?? 2));
+for ($i = 0; $i < 40; $i++) xeric_mood_hand($nhDb, $nhT, 2);
+ok('mood: and it still cannot leave the world\'s own range',
+    xeric_mood_now($nhDb, $nhT) <= xeric_mood_range($nhT)[1]);
+$nhOff = $nhT;
+$nhOff['world_mood']['narrator_hand']['enabled'] = false;
+$nhWas = xeric_mood_now($nhDb, $nhOff);
+ok('mood: a world that switched the hand off does not have one',
+    xeric_mood_hand($nhDb, $nhOff, -2) === $nhWas);
+
+// ---------------------------------------------------------------------------
 // THE LEDGERS. `economies` is the most completely specified dead thing in the
 // schema — earned_by, a board, a podium, ground truth, rules, framing — and
 // nothing ever wrote a counter, so every board in every world has been empty
