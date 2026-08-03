@@ -847,8 +847,68 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
            whatever that is — this page hands the server nothing and the server
            uses xeric_play_endpoint(). Somebody whose engine is an API was being
            told their rerolls were local. -->
+      <span class="rpickwrap">
       <button class="linkbtn" type="button" id="usekey" aria-expanded="false" aria-controls="rpick"
               title="Choose which machine rewrites these sections">⚙ change engine for rerolls</button>
+
+      <!-- THE PANEL LIVES WITH ITS BUTTON. It used to be declared four hundred
+           lines down the document, past the repass bar and the story door, so
+           pressing "change engine for rerolls" opened something the length of a
+           screen away from the thing that was pressed — the control and its
+           panel reading as two unrelated pieces of furniture. Nothing was wrong
+           with the wiring; aria-controls pointed at it the whole time. It was
+           simply nowhere near.
+
+           Now it hangs off the button, and it opens by sliding out of it. -->
+  <?php if (!$w['launched'] && $w['mine'] && $machines !== []): ?>
+      <!-- THE SAME CHOOSER AS THE FORGE, in the same markup, because it is the
+         same decision: which machine does this piece of work. It replaced three
+         browser prompts asking for an API kind, a key and a model name, typed
+         from memory, with no way to see whether any of it was reachable.
+
+         Closed until asked for: a reroll normally goes to the engine and this
+         panel is for the times it should not. -->
+      <div class="rpick" id="rpick" hidden>
+      <ul class="mlist forgeat" id="rlist">
+        <?php foreach ($machines as $i => $row):
+            $mk = xeric_model_kind((string)$row['base']);
+            $on = $i === $engineAt; ?>
+          <li>
+            <div class="opt<?= $on ? ' on' : '' ?>" data-i="<?= $i ?>" data-kind="<?= h($mk) ?>">
+              <button type="button" class="mpick" aria-label="reroll with this machine"
+                      aria-pressed="<?= $on ? 'true' : 'false' ?>"></button>
+              <span class="thead">
+                <span class="t"><?= h((string)preg_replace('#^https?://#', '', $row['base'])) ?></span>
+                <?= xeric_web_meter_html($sid, (string)$row['base']) ?>
+              </span>
+              <p class="whois" data-i="<?= $i ?>" hidden>
+                <span class="wsig" aria-hidden="true"></span><span class="wname"></span> <span class="wmodel"></span>
+              </p>
+              <span class="status">
+                <span class="dot" data-i="<?= $i ?>"></span><span class="said" data-i="<?= $i ?>"
+                  data-up="<?= $mk === 'local' ? 'Local AI Available' : 'Available' ?>"><?=
+                  $mk === 'local' ? 'asking…' : 'needs a key' ?></span>
+                <span class="wired<?= $on ? ' on' : ' no' ?>">
+                  <span class="dot"></span><?= $on ? 'rerolling with this' : 'Not selected' ?></span>
+              </span>
+            </div>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+      <!-- NO PROSE IN HERE. What each thing is belongs in its tooltip; a panel
+           that explains itself in paragraphs is a panel nobody reads twice. -->
+      <div class="byo" id="rbyo">
+        <div class="row">
+          <label class="field" for="r-key">api key</label>
+          <input type="password" id="r-key" autocomplete="off" autocapitalize="off" autocorrect="off"
+                 spellcheck="false" placeholder="sk-…"
+                 title="Used for the rerolls on this page and nothing else. Never written to disk, never put in a URL, gone when you leave.">
+        </div>
+      </div>
+      <p class="rmore"><a href="model.php" title="Add a machine, or connect one you already have">machines</a></p>
+    </div>
+      <?php endif; ?>
+      </span>
       <span class="st" id="launchst">It is not playable until you do.</span>
     <?php else: ?>
       <a class="btn" href="play.php?w=<?= h(rawurlencode($w['slug'])) ?>">▶ go in</a>
@@ -892,54 +952,6 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
   </div>
   <?php endif; ?>
 
-  <?php if (!$w['launched'] && $w['mine'] && $machines !== []): ?>
-    <!-- THE SAME CHOOSER AS THE FORGE, in the same markup, because it is the
-         same decision: which machine does this piece of work. It replaced three
-         browser prompts asking for an API kind, a key and a model name, typed
-         from memory, with no way to see whether any of it was reachable.
-
-         Closed until asked for: a reroll normally goes to the engine and this
-         panel is for the times it should not. -->
-    <div class="rpick" id="rpick" hidden>
-      <ul class="mlist forgeat" id="rlist">
-        <?php foreach ($machines as $i => $row):
-            $mk = xeric_model_kind((string)$row['base']);
-            $on = $i === $engineAt; ?>
-          <li>
-            <div class="opt<?= $on ? ' on' : '' ?>" data-i="<?= $i ?>" data-kind="<?= h($mk) ?>">
-              <button type="button" class="mpick" aria-label="reroll with this machine"
-                      aria-pressed="<?= $on ? 'true' : 'false' ?>"></button>
-              <span class="thead">
-                <span class="t"><?= h((string)preg_replace('#^https?://#', '', $row['base'])) ?></span>
-                <?= xeric_web_meter_html($sid, (string)$row['base']) ?>
-              </span>
-              <p class="whois" data-i="<?= $i ?>" hidden>
-                <span class="wsig" aria-hidden="true"></span><span class="wname"></span> <span class="wmodel"></span>
-              </p>
-              <span class="status">
-                <span class="dot" data-i="<?= $i ?>"></span><span class="said" data-i="<?= $i ?>"
-                  data-up="<?= $mk === 'local' ? 'Local AI Available' : 'Available' ?>"><?=
-                  $mk === 'local' ? 'asking…' : 'needs a key' ?></span>
-                <span class="wired<?= $on ? ' on' : ' no' ?>">
-                  <span class="dot"></span><?= $on ? 'rerolling with this' : 'Not selected' ?></span>
-              </span>
-            </div>
-          </li>
-        <?php endforeach; ?>
-      </ul>
-      <!-- NO PROSE IN HERE. What each thing is belongs in its tooltip; a panel
-           that explains itself in paragraphs is a panel nobody reads twice. -->
-      <div class="byo" id="rbyo">
-        <div class="row">
-          <label class="field" for="r-key">api key</label>
-          <input type="password" id="r-key" autocomplete="off" autocapitalize="off" autocorrect="off"
-                 spellcheck="false" placeholder="sk-…"
-                 title="Used for the rerolls on this page and nothing else. Never written to disk, never put in a URL, gone when you leave.">
-        </div>
-      </div>
-      <p class="rmore"><a href="model.php" title="Add a machine, or connect one you already have">machines</a></p>
-    </div>
-  <?php endif; ?>
 
   <p class="jump">
     <a href="#sec-concept">the xeric</a> <a href="#sec-places">places</a> <a href="#sec-cast">cast</a>

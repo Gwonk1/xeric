@@ -425,6 +425,17 @@ ok('contradictions: which takes you to the line and puts the cursor in it',
     preg_match('/rfgo.*?findField\(e\.path\).*?scrollIntoView.*?focus/s', $rv) === 1);
 ok('contradictions: and the reason is on the row, not in a tooltip a phone cannot show',
     str_contains($rv, "wy.className = 'rfwhy'"));
+// THE PANEL LIVES WITH ITS BUTTON. It used to be declared four hundred lines
+// down the document, past the repass bar and the story door, so pressing
+// "change engine for rerolls" opened something a screenful away from the thing
+// that was pressed. The wiring was never wrong — aria-controls pointed at it the
+// whole time — it was simply nowhere near, which is how a control and its panel
+// become two pieces of furniture.
+ok('engine picker: the panel is inside the same wrapper as the button that opens it',
+    preg_match('/rpickwrap.*?id="usekey".*?id="rpick"/s', $rv) === 1);
+ok('engine picker: and nothing else has crept in between them',
+    preg_match('/id="usekey".{0,1400}?id="rpick"/s', $rv) === 1,
+    (string)(preg_match('/id="usekey"(.*?)id="rpick"/s', $rv, $m) ? strlen($m[1]) : -1) . ' chars apart');
 ok('contradictions: launching is locked while the editor is still rewriting',
     preg_match('/function lock\(on\)[^}]*?\$\(.#launch.\)/s', $rv) === 1);
 ok('contradictions: and the line under the button says why it is locked',

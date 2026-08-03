@@ -2319,11 +2319,40 @@ function xeric_review_css(): string
 @keyframes roll{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion: reduce){ .dice.rolling{animation:none;opacity:.5} }
 
-.rpick{scroll-margin-top:5rem;margin:.6rem 0 1.1rem;padding:.85rem;border:1px solid var(--line);border-radius:.7rem;
-  background:var(--bg-2);box-shadow:var(--shadow);animation:rpickin .16s ease-out}
-@keyframes rpickin{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+/* THE ENGINE PICKER HANGS OFF ITS OWN BUTTON.
+   It used to be a block in the document flow, declared four hundred lines below
+   the control that opens it — past the repass bar and the story door — so
+   pressing "change engine for rerolls" made something appear a screen away from
+   the thing that was pressed. The wiring was never wrong; aria-controls pointed
+   at it the whole time. It was simply nowhere near, and a panel that is nowhere
+   near its button is two pieces of furniture rather than one control.
+
+   Anchored to the launchbar and slid out of the button beneath it, so where it
+   comes FROM is the answer to what opened it. Positioned rather than in flow
+   because the launchbar is sticky: in flow it would push the whole page down by
+   its own height every time it opened. */
+/* Anchored to the BUTTON, not to the bar: sliding out of the left edge of a
+   sticky row when the control sits three-quarters of the way along it is the
+   same disconnection in a smaller room. The wrapper is exactly the button's box
+   and does nothing else. */
+.rpickwrap{position:relative;display:inline-flex}
+.rpick{position:absolute;z-index:30;top:calc(100% + .45rem);right:0;
+  width:min(30rem,calc(100vw - 2rem));max-height:min(28rem,70vh);overflow:auto;
+  margin:0;padding:.85rem;border:1px solid var(--line);border-radius:.7rem;
+  background:var(--bg-2);box-shadow:var(--shadow-lift);
+  transform-origin:top right;animation:rpickin .18s cubic-bezier(.2,.8,.3,1)}
+/* Out of the button: short, up, and slightly folded shut, so the motion reads as
+   the panel coming from that control rather than as a card fading in nearby. */
+@keyframes rpickin{
+  from{opacity:0;transform:translateY(-.5rem) scaleY(.86)}
+  to{opacity:1;transform:none}
+}
+.rpick[hidden]{display:none}
 .rpick .forgeat{margin:0 0 .5rem}
 .rmore{margin:0;text-align:right;font-size:.8rem}
+/* Narrow: the bar has wrapped and the button is no longer near the right edge,
+   so hanging leftward off it would go off the screen. */
+@media (max-width:38rem){ .rpick{right:auto;left:0;transform-origin:top left} }
 @media (prefers-reduced-motion: reduce){ .rpick{animation:none} }
 
 .sec{margin:0 0 2.2rem;scroll-margin-top:4rem}

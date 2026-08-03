@@ -109,6 +109,12 @@ file_put_contents($mk, "<?php\n"
     . '$t = xeric_world_load(' . var_export($ROOT . '/engine/fixtures/milldale.json', true) . ");\n"
     . '$d = ' . var_export($tmp . '/data/worlds/' . $slug, true) . ";\n"
     . '$j = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;' . "\n"
+    // UNLAUNCHED, so the review page shows the half of itself that only exists
+    // before a world goes live: the launch button, the undo, and the engine
+    // picker. Shot against a launched world those simply are not in the markup,
+    // and the photograph comes back proving nothing about a control it could
+    // not render.
+    . '$t["forge"]["review_pending"] = true;' . "\n"
     . 'file_put_contents($d . "/world-template.json", json_encode($t, $j));' . "\n"
     . 'file_put_contents($d . "/seed.json", json_encode(xeric_forge_default_seed($t), $j));' . "\n");
 shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($mk) . ' 2>&1');
