@@ -879,6 +879,219 @@ function xeric_forge_place_name_ok(string $name, array $naming): bool
     return true;
 }
 
+/** Pure grammar: joins two words together and belongs to no language's naming. */
+function xeric_forge_name_grammar(): array
+{
+    static $set = null;
+    if ($set !== null) return $set;
+    $set = [];
+    foreach (explode(' ', 'the a an and of at on in by for to old new little big') as $w) $set[$w] = true;
+    return $set;
+}
+
+/**
+ * The words that say what a place DOES.
+ *
+ * These are the load-bearing half of a name and the half that carries no
+ * culture at all: half the shops on earth end in Hardware or Bakery, so a word
+ * every town shares is evidence of none. Two jobs, both of them here. The
+ * register test below ignores these words, because a name is only from
+ * somewhere else if what is LEFT is from somewhere else. And the rename
+ * refuses to touch a name unless one of them survives — "the Old Schoolhouse"
+ * with the schoolhouse taken out of it is not a corrected name, it is a
+ * deleted one.
+ *
+ * Long on purpose, and cheaper to be long: a word missing from this list turns
+ * a fine name into a renamed one, which is the failure that is actually
+ * expensive. A word wrongly on it only means the gate stays quiet.
+ */
+function xeric_forge_name_trade(): array
+{
+    static $set = null;
+    if ($set !== null) return $set;
+    $words = 'co company brothers bros sons son daughters family associates partners '
+        . 'cafe coffee diner restaurant grill bar tavern saloon pub alehouse inn lodge hotel motel '
+        . 'room rooms boarding boardinghouse guesthouse house hall club union social community civic '
+        . 'shop store storehouse warehouse market grocery groceries mercantile provisions goods '
+        . 'supply supplies general dry variety notions sundries five dime hardware feed seed '
+        . 'bakery bread butcher meats meat fish fishery dairy creamery cannery packing icehouse ice '
+        . 'barber salon laundry cleaners bathhouse garage motors auto service filling pump gas fuel '
+        . 'oil coal station depot terminal yard works mill lumber timber sawmill foundry refinery '
+        . 'forge smithy blacksmith stable stables livery granary silo elevator shed '
+        . 'office offices bank registry records record land deeds title court courthouse jail '
+        . 'firehouse armory post mail library museum school schoolhouse academy college institute '
+        . 'church chapel parish mission temple synagogue mosque clinic hospital infirmary surgery '
+        . 'pharmacy apothecary drug dentist funeral mortuary cemetery graveyard '
+        . 'gym park green common commons field orchard grove landing dock wharf quay pier ferry '
+        . 'bridge crossing square plaza arcade lot memorial veterans athletic '
+        . 'town township village city county district municipal public parish central main stop '
+        // Where a thing is, rather than whose it is. "Main Street Diner" says
+        // nothing about the people who built it; only "Wharfside" would.
+        . 'street road lane avenue ave row alley way drive boulevard terrace walk path quarter '
+        . 'block corner side front back north south east west upper lower first second third '
+        // Rooms rather than businesses — the offline worlds are furnished out
+        // of these, and a room renamed out of what it is for is a room lost.
+        . 'press news newsroom print printing paper telegraph radio lounge waiting reading '
+        . 'meeting dining drinking sitting garden gardens gate gates water waterworks well '
+        . 'embassy consulate customs harbor harbour port dockyard boatyard shipyard '
+        . 'storeroom cellar attic loft porch barn barns coop stall stalls kitchen bakehouse '
+        . 'washhouse outhouse pen pens';
+    $set = [];
+    foreach (explode(' ', $words) as $w) $set[$w] = true;
+    return $set;
+}
+
+/** Everything a name can be made of that says nothing about where it is. */
+function xeric_forge_name_generic(): array
+{
+    static $set = null;
+    if ($set === null) $set = xeric_forge_name_grammar() + xeric_forge_name_trade();
+    return $set;
+}
+
+/**
+ * A name broken into the words that actually say where it is from — folded
+ * flat, the possessive taken off, the generics dropped. "Lowell's Bread &
+ * Provisions" is one word: lowell.
+ */
+function xeric_forge_name_words(string $name): array
+{
+    $generic = xeric_forge_name_generic();
+    $out = [];
+    foreach (preg_split('/\s+/', xeric_forge_name_norm($name)) ?: [] as $w) {
+        if ($w === '' || isset($generic[$w])) continue;
+        // The slug already ate the apostrophe, so the possessive arrives welded
+        // on: leblancs. Both halves go in, and whichever one the bank knows wins.
+        $out[$w] = true;
+        if (mb_strlen($w) >= 5 && str_ends_with($w, 's')) $out[substr($w, 0, -1)] = true;
+    }
+    return array_keys($out);
+}
+
+/** Every word a register answers to: its people, its ground, its own shopfronts. */
+function xeric_forge_register_words(array $naming): array
+{
+    $out = [];
+    foreach (['given', 'family', 'toponyms', 'businesses'] as $bank) {
+        foreach ((array)($naming[$bank] ?? []) as $v) {
+            foreach (xeric_forge_name_words((string)$v) as $w) $out[$w] = true;
+        }
+    }
+    foreach (xeric_forge_name_words((string)($naming['church'] ?? '')) as $w) $out[$w] = true;
+    return $out;
+}
+
+/**
+ * Does this name sound like it came from this world?
+ *
+ * WHY THIS EXISTS. The cast has been gated since the registers landed — a
+ * surname that does not belong gets replaced from the bank. The places were
+ * only asked nicely, in a prompt, and the difference showed: a world whose
+ * people were Boudreaux, Thibodeaux and Fontenot had its shopping done at
+ * Caldwell's Hardware and the Stone Fleet Tavern. Perfectly good names. Wrong
+ * town. registers.json says the rule out loud — a prompt ban alone is a hope,
+ * not a gate — and this is the missing gate.
+ *
+ * Two ways to pass. Either a word in the name is a word the register knows, or
+ * the name has no cultural words left in it at all: "the post office" belongs
+ * to everywhere, and replacing it would be inventing a problem. Only a name
+ * that is confidently from SOMEWHERE ELSE fails.
+ *
+ * Fails open on a register too thin to have an opinion.
+ */
+function xeric_forge_place_fits_register(string $name, array $naming): bool
+{
+    $words = xeric_forge_register_words($naming);
+    if (count($words) < 8) return true;
+    $own = xeric_forge_name_words($name);
+    if ($own === []) return true;
+    foreach ($own as $w) if (isset($words[$w])) return true;
+    return false;
+}
+
+/**
+ * The same door with a local name over it.
+ *
+ * Swapping in a bank entry whole would fix the culture and break everything
+ * else: the model already wrote a kind, a description and a room full of
+ * furniture for a hardware store, and handing that back as a boucherie is two
+ * problems where there was one. So only the distinctive word moves. The first
+ * one becomes a surname if it was possessive and a piece of local ground if it
+ * was not, the rest are dropped, and every word that says what the place DOES
+ * stays exactly where the model put it:
+ *
+ *     Caldwell's Hardware       → Boudreaux's Hardware
+ *     Wharfside Post Office     → Terrebonne Post Office
+ *     The Stone Fleet Tavern    → The Vermilion Tavern
+ *
+ * Returns '' when there is nothing to swap or nothing left to swap it into,
+ * and the caller falls through to the bank.
+ */
+function xeric_forge_place_reface(string $name, array $naming, int $i, array &$used): string
+{
+    $generic = xeric_forge_name_generic();
+    $trade   = xeric_forge_name_trade();
+    $parts = preg_split('/\s+/', trim($name)) ?: [];
+    if (count($parts) < 2) return '';
+
+    $first = -1;
+    $drop = [];
+    $poss = false;
+    $keepsTrade = false;
+    foreach ($parts as $k => $p) {
+        $core = xeric_forge_name_norm($p);
+        if ($core === '' || isset($generic[$core])) {
+            if (isset($trade[$core])) $keepsTrade = true;
+            continue;
+        }
+        if ($first < 0) {
+            $first = $k;
+            $poss = preg_match('/[\x{2018}\x{2019}\']s$/u', $p) === 1;
+        } else {
+            $drop[$k] = true;
+        }
+    }
+    if ($first < 0) return '';
+    // Nothing left that says what the place is. Swapping the only real word out
+    // would leave a map label where a door used to be — hand it to the caller,
+    // which builds from the model's own `kind` and cannot lose the trade.
+    if (!$keepsTrade) return '';
+
+    $bank = [];
+    if ($poss) {
+        foreach ((array)$naming['family'] as $v) $bank[] = (string)$v;
+    } else {
+        foreach ((array)$naming['toponyms'] as $v) $bank[] = (string)$v;
+        foreach ((array)$naming['family'] as $v) $bank[] = (string)$v;
+    }
+    if ($bank === []) return '';
+
+    // "the Anchor" + a bank entry called "The Tallow Fens" is "the The Tallow
+    // Fens". Whichever article was already standing there keeps its place.
+    $article = $first > 0
+        && in_array(xeric_forge_name_norm((string)$parts[$first - 1]), ['the', 'a', 'an'], true);
+
+    for ($k = 0; $k < count($bank); $k++) {
+        $pick = trim((string)$bank[($i + $k) % count($bank)]);
+        if ($article) $pick = trim((string)preg_replace('/^(the|a|an)\s+/i', '', $pick));
+        if ($pick === '') continue;
+        $out = [];
+        foreach ($parts as $j => $p) {
+            if (isset($drop[$j])) continue;
+            $out[] = $j === $first ? ($poss ? $pick . "'s" : $pick) : $p;
+        }
+        $cand = trim(implode(' ', $out));
+        // A lone toponym is a map label, not a shopfront.
+        if (count(preg_split('/\s+/', $cand) ?: []) < 2) continue;
+        $cn = xeric_forge_name_norm($cand);
+        if ($cn !== '' && xeric_forge_place_name_ok($cand, $naming) && !isset($used[$cn])) {
+            $used[$cn] = true;
+            return $cand;
+        }
+    }
+    return '';
+}
+
 /**
  * A place's name, kept or replaced. `$used` is this world's own ledger, by
  * reference, so six replacements in one pass cannot all be the same bakery.
@@ -886,13 +1099,28 @@ function xeric_forge_place_name_ok(string $name, array $naming): bool
  * business bank; and the last resort is BUILT rather than picked — a surname
  * over the door and the kind under it — because a fallback that can run out
  * is two failures for the price of one.
+ *
+ * `$brief` is what the person actually wrote. A place they named themselves is
+ * kept whatever the shelf or the register thinks, for the same reason their
+ * world's name is: somebody who typed "the diner is called Shelly's" has
+ * already decided, and overruling them is the premise promise broken sideways.
  */
-function xeric_forge_fresh_place_name(string $name, string $kind, array $naming, int $i, array &$used): string
+function xeric_forge_fresh_place_name(string $name, string $kind, array $naming, int $i, array &$used, string $brief = ''): string
 {
     $norm = xeric_forge_name_norm($name);
-    if ($name !== '' && xeric_forge_place_name_ok($name, $naming) && !isset($used[$norm])) {
+    if ($name !== '' && $brief !== '' && !isset($used[$norm]) && mb_stripos($brief, $name) !== false) {
         $used[$norm] = true;
         return $name;
+    }
+    if ($name !== '' && xeric_forge_place_name_ok($name, $naming) && !isset($used[$norm])) {
+        // A good name from the wrong town. Keep the door, change the sign.
+        if (!xeric_forge_place_fits_register($name, $naming)) {
+            $re = xeric_forge_place_reface($name, $naming, $i, $used);
+            if ($re !== '') return $re;
+        } else {
+            $used[$norm] = true;
+            return $name;
+        }
     }
     // A church gets the register's congregation before anything else — the
     // walk below starts at $i, and a bakery is a poor stand-in for a parish.
@@ -1261,19 +1489,43 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
     $name  = xeric_forge_str($concept['meta']['name'] ?? '', 'the town', 60);
     $locale = xeric_forge_str($concept['setting']['locale'] ?? '', '', 200);
     $texture = xeric_forge_list($concept['setting']['texture'] ?? [], 4, 120);
+    // Everything the person told us in their own words. A room they named is
+    // theirs; the gate below reads this before it overrules anybody.
+    $brief = trim(xeric_forge_str($answers['premise'] ?? '', '', 2000) . ' ' . $job);
 
     xeric_forge_note($onNote, "places: building $count rooms for $name");
 
+    // WHAT THE PROMPT IS FOR. The gate downstream can fix a name, but it cannot
+    // invent one with any wit in it — a refaced door is correct, not good. This
+    // block is the half that makes the model write them right the first time,
+    // and it says the same thing the cast prompt says, at the same volume: here
+    // are the surnames, here is the ground, this is where the names come from.
+    // Showing two shopfronts and calling them "the sound, not the copy" was too
+    // quiet by half, and the model heard the permission and not the instruction.
     $naming = xeric_forge_naming($answers);
     $bizLine = '';
     if ($naming['key'] !== '') {
-        $bizLine = 'Business names come off the same shelf as the people\'s — '
-            . xeric_forge_naming_examples($naming, 'businesses', 2)
-            . " is the sound, not the copy. Never 'the Rusty <anything>' and never a St. Jude's: "
-            . "every other town already has both.\n";
+        $rot = (int)(crc32(xeric_forge_name_norm($name)) & 0x7fff);
+        $bizLine = "The people here are named out of {$naming['sound']}, and so are the doors — "
+            . "the name over a shopfront is somebody's surname, or the local word for the water "
+            . "or the ground it stands on.\n"
+            . 'Surnames here: ' . xeric_forge_naming_examples($naming, 'family', 5, $rot) . ".\n"
+            . 'Ground and water here: ' . xeric_forge_naming_examples($naming, 'toponyms', 4, $rot) . ".\n"
+            . 'Doors already standing: ' . xeric_forge_naming_examples($naming, 'businesses', 3, $rot) . ".\n"
+            . 'Do not copy those three, and do not lift the surnames verbatim either — take the sound '
+            . 'and make new ones. At least four of the places must carry a name from THIS world. '
+            . 'A name that would pass unnoticed on an ordinary English-speaking main street is the '
+            . "wrong answer unless this world is one.\n"
+            // The other direction is a failure too. Told hard enough that the
+            // names must be local, a model will make every door a postcard —
+            // and a town where the hardware store, the post office and the
+            // bench by the water all announce their heritage is a theme park.
+            . "The other two should be plain — the post office is just the post office. "
+            . "A real town is mostly ordinary with its own names in it, not a heritage display.\n"
+            . "Never 'the Rusty <anything>' and never a St. Jude's: every other town already has both.\n";
     }
 
-    $places = xeric_forge_attempt('places', function () use ($endpoint, $count, $job, $name, $locale, $texture, $answers, $concept, $naming, $bizLine, $onNote) {
+    $places = xeric_forge_attempt('places', function () use ($endpoint, $count, $job, $name, $locale, $texture, $answers, $concept, $naming, $bizLine, $brief, $onNote) {
         $msgs = [
             ['role' => 'system', 'content' =>
                 'You invent places for a story world. Ordinary, specific, walkable. '
@@ -1321,11 +1573,13 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
         // it actually ships with.
         $fresh = [];
         $renamed = 0;
-        $gate = function (array $p, int $i) use ($naming, &$fresh, &$renamed): array {
+        $offkey = 0;
+        $gate = function (array $p, int $i) use ($naming, $brief, &$fresh, &$renamed, &$offkey): array {
             $was = (string)($p['name'] ?? '');
             if ($was === '') return $p;
-            $p['name'] = xeric_forge_fresh_place_name($was, (string)($p['kind'] ?? ''), $naming, $i, $fresh);
-            if ($p['name'] !== $was) $renamed++;
+            $fit = xeric_forge_place_fits_register($was, $naming);
+            $p['name'] = xeric_forge_fresh_place_name($was, (string)($p['kind'] ?? ''), $naming, $i, $fresh, $brief);
+            if ($p['name'] !== $was) { $fit ? $renamed++ : $offkey++; }
             return $p;
         };
         if (is_array($raw['workplace'] ?? null)) $raw['workplace'] = $gate($raw['workplace'], 0);
@@ -1334,6 +1588,10 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
         }
         if ($renamed > 0) {
             xeric_forge_note($onNote, "naming: {$renamed} place name(s) were worn out or already on another world's street — renamed from the register");
+        }
+        if ($offkey > 0) {
+            $lbl = $naming['label'] !== '' ? $naming['label'] : 'this world';
+            xeric_forge_note($onNote, "naming: {$offkey} place name(s) came from the wrong town for {$lbl} — resigned from the register");
         }
 
         $out = [];
@@ -5943,10 +6201,46 @@ function xeric_forge_key(string $s, array $taken = []): string
 }
 
 /** Lowercase, ascii-ish, separator-joined. */
+/**
+ * An accented letter flattened to the letter it is.
+ *
+ * WHY. Everything downstream of a name — the slug, the dedupe ledger, the ban
+ * list, the register test below — runs on [a-z0-9], and the strip that gets it
+ * there used to delete accents rather than fold them. "Dupré" came out "dupr"
+ * and "Théophile" came out as TWO words, "th" and "ophile", which meant the
+ * shelf-reuse check and the banned-name check both quietly stopped working the
+ * moment a world was named in French, Polish or Vietnamese. Registers are
+ * invented per world now, so that is no longer a rare corner — it is Tuesday.
+ */
+function xeric_forge_fold(string $s): string
+{
+    static $map = [
+        'à'=>'a','á'=>'a','â'=>'a','ã'=>'a','ä'=>'a','å'=>'a','ā'=>'a','ă'=>'a','ą'=>'a','æ'=>'ae',
+        'ç'=>'c','ć'=>'c','č'=>'c','ĉ'=>'c','ċ'=>'c',
+        'ď'=>'d','đ'=>'d','ð'=>'d',
+        'è'=>'e','é'=>'e','ê'=>'e','ë'=>'e','ē'=>'e','ĕ'=>'e','ė'=>'e','ę'=>'e','ě'=>'e',
+        'ĝ'=>'g','ğ'=>'g','ġ'=>'g','ģ'=>'g',
+        'ĥ'=>'h','ħ'=>'h',
+        'ì'=>'i','í'=>'i','î'=>'i','ï'=>'i','ĩ'=>'i','ī'=>'i','į'=>'i','ı'=>'i',
+        'ĵ'=>'j','ķ'=>'k',
+        'ĺ'=>'l','ļ'=>'l','ľ'=>'l','ł'=>'l',
+        'ñ'=>'n','ń'=>'n','ņ'=>'n','ň'=>'n','ŋ'=>'n',
+        'ò'=>'o','ó'=>'o','ô'=>'o','õ'=>'o','ö'=>'o','ø'=>'o','ō'=>'o','ŏ'=>'o','ő'=>'o','œ'=>'oe',
+        'ŕ'=>'r','ŗ'=>'r','ř'=>'r',
+        'ś'=>'s','ŝ'=>'s','ş'=>'s','ș'=>'s','š'=>'s','ß'=>'ss',
+        'ţ'=>'t','ț'=>'t','ť'=>'t','ŧ'=>'t','þ'=>'th',
+        'ù'=>'u','ú'=>'u','û'=>'u','ü'=>'u','ũ'=>'u','ū'=>'u','ŭ'=>'u','ů'=>'u','ű'=>'u','ų'=>'u',
+        'ŵ'=>'w','ý'=>'y','ÿ'=>'y','ŷ'=>'y',
+        'ź'=>'z','ż'=>'z','ž'=>'z',
+    ];
+    return strtr($s, $map);
+}
+
 function xeric_forge_slug(string $s, string $sep = '-'): string
 {
-    $s = strtolower(trim($s));
+    $s = mb_strtolower(trim($s));
     $s = preg_replace('/[\x{2018}\x{2019}\x{201C}\x{201D}\']/u', '', $s) ?? $s;
+    $s = xeric_forge_fold($s);
     $s = preg_replace('/[^a-z0-9]+/u', $sep, $s) ?? $s;
     return trim((string)$s, $sep);
 }

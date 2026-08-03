@@ -96,7 +96,7 @@ function stub_good(): array
                     'workplace' => ['name' => 'the Ostrander Ledger', 'kind' => 'office', 'open' => '09:00',
                                     'close' => '18:00', 'description' => 'Two floors of desks and one working lift.'],
                     'places' => [
-                        ['name' => 'the Anchor', 'kind' => 'bar', 'open' => '4pm', 'close' => '2am', 'late' => true, 'alcohol' => true, 'description' => 'Dark, loud, forgiving.'],
+                        ['name' => 'the Tavern', 'kind' => 'bar', 'open' => '4pm', 'close' => '2am', 'late' => true, 'alcohol' => true, 'description' => 'Dark, loud, forgiving.'],
                         ['name' => 'Verna\'s', 'kind' => 'diner', 'open' => '05:00', 'close' => '15:00', 'description' => 'Eggs and opinions.'],
                         ['name' => 'the depot', 'kind' => 'station', 'open' => '05:00', 'close' => '23:00', 'description' => 'Concrete and wind.'],
                         ['name' => 'St Brigid', 'kind' => 'church', 'open' => '07:00', 'close' => '19:00', 'description' => 'Cold stone, warm basement.'],
@@ -115,18 +115,18 @@ function stub_good(): array
                     'tells' => ['taps a pen', 'answers before you finish', 'leaves coats on chairs'],
                     'pull' => 'to be the one who knew first',
                     // Small models answer this with a place key rather than prose.
-                    'solace' => 'anchor',
+                    'solace' => 'tavern',
                     // A place key nobody declared: the pass must correct this, not ship it.
                     'work_place' => $n === 2 ? 'a_place_that_does_not_exist' : 'ostrander_ledger',
                     'work_days' => 'weekdays', 'work_from' => '9am', 'work_to' => '18:00',
                     'work_doing' => 'copy, coffee, complaining',
-                    'hangout_place' => 'anchor', 'hangout_days' => 'weekends',
+                    'hangout_place' => 'tavern', 'hangout_days' => 'weekends',
                     'hangout_from' => '20:00', 'hangout_to' => '01:00', 'hangout_doing' => 'the usual',
                 ];
             case 'seed_events':
                 return ['events' => [
                     // `who` as a display name, which is what models actually send.
-                    ['title' => 'the retraction nobody printed', 'days_ago' => 9, 'place' => 'anchor',
+                    ['title' => 'the retraction nobody printed', 'days_ago' => 9, 'place' => 'tavern',
                      'who' => ['Person 1 Quill'], 'prose' => 'It got argued about and then it got dropped.'],
                     ['title' => 'the late shift that went long', 'days_ago' => 3, 'place' => 'not_a_place',
                      'who' => ['nobody_at_all'], 'prose' => 'Two people and a machine that would not stop.'],
@@ -339,8 +339,18 @@ ok('seed history never references anything that does not exist', $badRefs === []
 ok('a participant named in prose is resolved to a handle, not dropped',
     ($seed['events'][0]['participants'][0] ?? '') === 'person_1_quill',
     implode(',', (array)($seed['events'][0]['participants'] ?? [])));
+// The stub answers "tavern" — a place KEY — where a sentence was wanted, and
+// the build has to turn that back into something a person would say. What the
+// bar is CALLED is not the point and is not asserted: the register gate renames
+// a room whose name came from the wrong town, so the literal moves with the
+// register. The point is that the answer is the room's prose name and not its key.
+$solace = (string)$t['cast']['characters'][0]['solace'];
+$barName = '';
+foreach ($t['places'] as $p) {
+    if ((string)$p['key'] === 'tavern' || (string)($p['kind'] ?? '') === 'bar') { $barName = (string)$p['name']; break; }
+}
 ok('a place key answered where prose was asked for reads as prose',
-    (string)$t['cast']['characters'][0]['solace'] === 'the Anchor', (string)$t['cast']['characters'][0]['solace']);
+    $solace !== '' && $solace === $barName && $solace !== 'tavern', $solace . ' / ' . $barName);
 ok('seed history is NOT inside the template', !isset($t['seed']) && !isset($t['events']['history']));
 
 // ---------------------------------------------------------------------------
@@ -1490,6 +1500,96 @@ ok('St. Jude finally retires, apostrophe and all', stripos($jude, 'jude') === fa
 ok('and the parish that replaces him is the register\'s own', $jude === $nm['church'], "$jude vs {$nm['church']}");
 ok('two replaced places in one world are two different places',
     !in_array($rusty, [$jude], true) && count($usedP) >= 2);
+
+// ---- the register gate on the doors ---------------------------------------
+//
+// The cast has been gated since the registers landed; the places were only
+// asked nicely, and a world whose people were Boudreaux, Thibodeaux and
+// Fontenot did its shopping at Caldwell's Hardware and the Stone Fleet Tavern.
+// Every name below is one the model actually produced in that build.
+
+$cajun = [
+    'key' => 'delta_silt', 'label' => 'Delta Silt and Sawdust Kin', 'sound' => 'Louisiana French',
+    'given'  => ['Théophile', 'Odelia', 'Clovis', 'Remy', 'Alphonse', 'Eustace', 'Gideon', 'Odile'],
+    'family' => ['Boudreaux', 'Broussard', 'Thibodeaux', 'Fontenot', 'LeBlanc', 'Gautreau', 'Dupré', 'Lejeune'],
+    'toponyms'   => ['Bayou Petit', 'Terrebonne', 'Vermilion', 'Grand Chenier', 'Anse la Butte', 'Pointe Noire'],
+    'businesses' => ['Boudreaux Feed & Seed', 'Ti-Frère Boucherie', 'LeBlanc Ice House', 'Fontenot Dry Goods'],
+    'church' => 'Sainte-Rita de Vermilion',
+    'over' => ['given' => [], 'family' => [], 'toponyms' => [], 'businesses' => []],
+    'banned_given' => [], 'banned_family' => [], 'banned_world' => [], 'banned_suffix' => [],
+    'used' => ['worlds' => [], 'places' => [], 'given' => [], 'family' => []],
+];
+
+$offkey = ['River Valley Land Registry', "Lowell's Bread & Provisions", 'The Stone Fleet Tavern',
+           "Caldwell's Hardware", 'Wharfside Post Office', 'High Ridge Orchard'];
+$bad = [];
+foreach ($offkey as $n) if (xeric_forge_place_fits_register($n, $cajun)) $bad[] = $n;
+ok('a shopfront from the wrong town does not pass for a local one', $bad === [], implode(', ', $bad));
+
+$fits = ['Boudreaux Feed & Seed', "Thibodeaux's Garage", 'Bayou Petit Landing', 'Dupré Ice House',
+         'Sainte-Rita de Vermilion'];
+$bad = [];
+foreach ($fits as $n) if (!xeric_forge_place_fits_register($n, $cajun)) $bad[] = $n;
+ok('a name already out of the register is left alone', $bad === [], implode(', ', $bad));
+
+ok('a name with nothing cultural in it belongs everywhere and is not touched',
+    xeric_forge_place_fits_register('the Post Office', $cajun)
+    && xeric_forge_place_fits_register('the Tavern', $cajun));
+
+// Both of these were renamed by the first cut of the gate, and both were made
+// worse by it: "the Old Schoolhouse" came back as "the Old Pointe Noire" with
+// the school taken out of it, and "Main Street Diner" as "Main Fontenot Diner".
+// A name built entirely out of what a place DOES and where it sits says nothing
+// about who built it, and there is nothing there to correct.
+$plain = ['The Old Schoolhouse', 'Parish Records Office', 'The Union Hall', 'Main Street Diner',
+          'North Market', 'the Ferry Landing'];
+$bad = [];
+foreach ($plain as $n) if (!xeric_forge_place_fits_register($n, $cajun)) $bad[] = $n;
+ok('a name made only of trade and address is nobody\'s and stays', $bad === [], implode(', ', $bad));
+
+$usedT = [];
+ok('and a rename can never cost a place what it IS',
+    xeric_forge_fresh_place_name('The Old Schoolhouse', 'school', $cajun, 0, $usedT) === 'The Old Schoolhouse');
+
+// A register too thin to have an opinion must not get one.
+$thin = $cajun;
+$thin['given'] = $thin['family'] = $thin['toponyms'] = $thin['businesses'] = [];
+$thin['church'] = '';
+ok('a register with no banks has no opinion', xeric_forge_place_fits_register('Caldwell\'s Hardware', $thin));
+
+// The repair keeps the door and changes the sign: whatever says what the place
+// DOES stays where the model put it, and only the wrong-town word moves.
+$usedR = [];
+$refaced = [];
+foreach ($offkey as $i => $n) $refaced[$n] = xeric_forge_fresh_place_name($n, 'shop', $cajun, $i, $usedR);
+ok('every wrong-town door gets a local name',
+    count(array_filter($refaced, fn($v, $k) => $v !== $k, ARRAY_FILTER_USE_BOTH)) === count($offkey),
+    implode(' | ', $refaced));
+ok('and the new names all sound like they came from here',
+    array_filter($refaced, fn($v) => !xeric_forge_place_fits_register($v, $cajun)) === [],
+    implode(' | ', $refaced));
+ok('the possessive stays a possessive and the trade survives the rename',
+    str_ends_with($refaced["Caldwell's Hardware"], "'s Hardware")
+    && str_ends_with($refaced["Lowell's Bread & Provisions"], "'s Bread & Provisions"),
+    $refaced["Caldwell's Hardware"] . ' | ' . $refaced["Lowell's Bread & Provisions"]);
+ok('an article the name already had is not doubled',
+    stripos($refaced['The Stone Fleet Tavern'], 'the the') === false
+    && str_ends_with($refaced['The Stone Fleet Tavern'], ' Tavern'),
+    $refaced['The Stone Fleet Tavern']);
+ok('six refaced doors are six different doors', count(array_unique($refaced)) === count($offkey),
+    implode(' | ', $refaced));
+$usedNamed = [];
+ok('a room the person named themselves is theirs, wrong town or not',
+    xeric_forge_fresh_place_name("Caldwell's Hardware", 'shop', $cajun, 0, $usedNamed,
+        'my uncle ran Caldwell\'s Hardware until the water came') === "Caldwell's Hardware");
+
+// The accented half of the world has to survive the trip through the slug, or
+// the ban list and the shelf ledger both stop working the moment a register
+// stops being English.
+ok('an accent folds to its letter instead of being deleted',
+    xeric_forge_name_norm('Dupré') === 'dupre' && xeric_forge_name_norm('Théophile') === 'theophile'
+    && xeric_forge_name_norm('Łucja Wiśniewska') === 'lucja wisniewska',
+    xeric_forge_name_norm('Théophile'));
 
 // ---- cross-world memory: the shelf itself is the ban list ------------------
 
