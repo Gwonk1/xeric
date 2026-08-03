@@ -44,6 +44,7 @@ require_once XERIC_WEB_LIB . '/engine/proactive.php';
 require_once XERIC_WEB_LIB . '/engine/learn.php';
 require_once XERIC_WEB_LIB . '/engine/story.php';       // the overlays beside a world, if it has any
 require_once XERIC_WEB_LIB . '/engine/photo.php';       // the pictures a world owes itself
+require_once XERIC_WEB_LIB . '/engine/qr.php';          // this xeric, on the phone in your pocket
 
 /**
  * How many events one press of the time control may produce.
@@ -4131,6 +4132,34 @@ body.skipping .wplace .wgo2{visibility:hidden}
    handled by the script in play.php pinning --app-h. Either way the
    home-indicator padding goes, because the keyboard is covering that zone. */
 body.kb-open .composer{padding-bottom:.6rem}
+
+/* ------------------------------------------------- the phone, specifically */
+/* THE CODE YOU SCAN, and the address under it for anybody whose camera is
+   being difficult. The SVG is engine-built and sized here, never inline. */
+.xcqrbox{margin:0 0 12px;text-align:center}
+.xcqrbox svg{width:min(240px,60vw);height:auto;border-radius:.5rem}
+.xcqrurl{display:block;margin:.4rem 0 0;font-size:.76rem;word-break:break-all;color:var(--accent)}
+
+/* Every SELECT on a touch screen is 16px for the same reason the composer is:
+   below that, iOS zooms the whole page on focus and never zooms back. The cog
+   is where the model picker, the shape and the pace all live, so this is the
+   difference between a settings press and a page somebody has to pinch out of. */
+@media (max-width:760px){
+  select,.cvsel,#xcshape{font-size:16px}
+  /* The cog is a full-height sheet on a phone: a 38rem card centred in a
+     420px window with a dozen rows in it scrolls the PAGE behind the overlay,
+     which is how a modal ends up with its Save button unreachable. */
+  #coverlay{align-items:stretch}
+  #cmodal{max-height:100dvh;overflow-y:auto;border-radius:0;margin:0;
+    padding-bottom:calc(1rem + env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch}
+  /* Cog rows stack rather than squeeze: a button plus a sentence of hint on
+     one line at 390px leaves four characters for the sentence. */
+  .xcrow{flex-direction:column;align-items:flex-start;gap:.35rem}
+  .xchint{flex:1 1 auto}
+  /* Photos never push the bubble past the window. */
+  .mphoto{max-height:220px}
+  .cportrait img{max-height:180px}
+}
 /* The pin the script sets, with the ordinary full height as the fallback for
    every browser and every moment where no keyboard is covering anything. */
 body{min-height:var(--app-h,100dvh)}

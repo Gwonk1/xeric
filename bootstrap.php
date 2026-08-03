@@ -35,6 +35,11 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 $dialect = '';
 $port    = (int)(getenv('XERIC_PORT') ?: 8787);
 $data    = (string)(getenv('XERIC_DATA_DIR') ?: '');
+// LOOPBACK UNLESS ASKED, and asked in words. --lan binds every interface so a
+// phone on the same wifi can reach this xeric — which also means everything
+// else on that network can. There is no password on this app; the guard is
+// the bind address, and that is exactly why it is opt-in per run.
+$host    = (string)(getenv('XERIC_HOST') ?: '127.0.0.1');
 
 for ($i = 1; $i < $argc; $i++) {
     switch ($argv[$i]) {
@@ -52,6 +57,7 @@ for ($i = 1; $i < $argc; $i++) {
             $data = (string)($argv[++$i] ?? '');
             if ($data === '') { fwrite(STDERR, "xeric: --data needs a directory\n"); exit(1); }
             break;
+        case '--lan': $host = '0.0.0.0'; break;
         default:
             fwrite(STDERR, "xeric: unknown option {$argv[$i]}\n");
             exit(1);
@@ -115,8 +121,11 @@ $out = [
     // anybody passing it along.
     'XERIC_PHP'        => PHP_BINARY,
     'XERIC_PORT'       => (string)$port,
+    'XERIC_HOST'       => $host,
     'XERIC_DATA_DIR'   => $data,
     'XERIC_WORLDS_DIR' => $data . '/worlds',
+    // The browser is opened on loopback whatever the bind: this machine can
+    // always reach itself, and 0.0.0.0 is a bind address rather than a place.
     'XERIC_URL'        => 'http://127.0.0.1:' . $port . '/play.php',
     // The machine is yours, so its address is yours to change.
     'XERIC_LOCAL_EDIT' => (string)(getenv('XERIC_LOCAL_EDIT') ?: 'true'),

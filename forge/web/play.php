@@ -152,6 +152,53 @@ if ($action !== '') {
                         'note' => 'Takes effect from the next hour and the next reply.']);
     }
 
+    // -- this xeric, on the phone in your pocket ------------------------------
+    // The QR is drawn from the address a phone would actually dial: this
+    // machine's LAN IP, this port, this world. When the server is bound to
+    // loopback there is nothing to encode and saying so plainly beats a code
+    // that scans to a page no phone can open.
+    if ($action === 'qr') {
+        $host = (string)(getenv('XERIC_HOST') ?: '127.0.0.1');
+        $port = (string)(getenv('XERIC_PORT') ?: '8787');
+        if ($host === '127.0.0.1' || $host === 'localhost') {
+            xeric_web_json(['ok' => true, 'lan' => false,
+                'note' => 'This xeric is only listening to this computer. Start it with '
+                        . './xeric --lan and it will answer your phone on the same wifi — '
+                        . 'which also means anybody else on that wifi, so do it on a network you know.']);
+        }
+        // The address of this machine ON the network, asked of the routing
+        // table rather than guessed: a UDP socket to a public address picks
+        // the interface a phone would come back through, and connects to
+        // nothing (UDP has no handshake, and no packet is ever sent).
+        $ip = '';
+        if (function_exists('socket_create')) {
+            $sock = @socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+            if ($sock !== false) {
+                if (@socket_connect($sock, '203.0.113.1', 9)) {   // TEST-NET-3, routed nowhere
+                    @socket_getsockname($sock, $ip);
+                }
+                @socket_close($sock);
+            }
+        }
+        // No sockets extension (a stripped PHP): the host header is the address
+        // the browser itself dialled, which on a LAN-bound server IS the answer.
+        if ($ip === '') {
+            $h = (string)($_SERVER['HTTP_HOST'] ?? '');
+            $h = (string)preg_replace('/:\d+$/', '', $h);
+            if (filter_var($h, FILTER_VALIDATE_IP) && !in_array($h, ['127.0.0.1', '::1'], true)) $ip = $h;
+        }
+        if ($ip === '' || $ip === '0.0.0.0') {
+            xeric_web_json(['ok' => true, 'lan' => false,
+                'note' => 'This xeric is listening to the network, but this machine could not '
+                        . 'work out its own address on it. Find it with `ip addr` and open '
+                        . 'http://THAT-ADDRESS:' . $port . '/play.php?w=' . rawurlencode((string)$w['slug'])
+                        . ' on your phone.']);
+        }
+        $url = 'http://' . $ip . ':' . $port . '/play.php?w=' . rawurlencode((string)$w['slug']);
+        xeric_web_json(['ok' => true, 'lan' => true, 'url' => $url,
+                        'svg' => xeric_qr_svg($url, 4)]);
+    }
+
     // -- the world's shape, changed mid-play ----------------------------------
     // The other half of the wizard's rhythm answer, switchable from the same
     // cog: pace is how MUCH, shape is WHEN. Architecturally free to change
@@ -1391,6 +1438,9 @@ echo '<style>' . xeric_play_css() . '
         '<span class="xchint">' + (stopped
           ? 'the clock is stopped — nothing moves and nobody texts until you start it'
           : 'stops the clock: nothing moves and nobody texts until you start it again') + '</span></div>' +
+      '<div class="xcrow"><button type="button" class="nbtn" id="xcqr">📱 open on my phone</button>' +
+        '<span class="xchint">a code to scan from the same wifi</span></div>' +
+      '<div class="xcqrbox" id="xcqrbox" hidden></div>' +
       '<div class="xcrow"><button type="button" class="nbtn" id="xcoff">⏻ shut down</button>' +
         '<span class="xchint">stops the local xeric server itself — close the tab after</span></div>' +
       (MINE
@@ -1485,6 +1535,30 @@ echo '<style>' . xeric_play_css() . '
         .then(function () { location.reload(); })   // the next paint reads the real state back out
         .catch(function () { location.reload(); });
     });
+    // The phone: asked when pressed, never on every cog open — it costs a
+    // socket and most opens are not about the phone.
+    $('#xcqr').addEventListener('click', function () {
+      var box = $('#xcqrbox');
+      box.hidden = false;
+      box.textContent = 'looking up this machine…';
+      fetch('play.php?a=qr&w=' + encodeURIComponent(W))
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.ok && d.lan) {
+            box.innerHTML = '';
+            var wrap = document.createElement('div');
+            wrap.innerHTML = d.svg;                       // engine-built, no markup from anywhere else
+            box.appendChild(wrap);
+            var a = document.createElement('a');
+            a.className = 'xcqrurl'; a.href = d.url; a.textContent = d.url;
+            box.appendChild(a);
+          } else {
+            box.textContent = (d && d.note) || 'this xeric is not on the network';
+          }
+        })
+        .catch(function () { box.textContent = 'that did not work'; });
+    });
+
     $('#xcoff').addEventListener('click', function () {
       if (!confirm('Shut the local xeric server down?')) return;
       this.disabled = true;

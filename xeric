@@ -4,6 +4,7 @@
 #
 #   ./xeric                    start it, and open a browser
 #   ./xeric --port 9000        somewhere else
+#   ./xeric --lan              reachable from your phone on the same wifi
 #   ./xeric --data ~/worlds    keep xerics somewhere else
 #   ./xeric --no-open          do not touch the browser
 #
@@ -39,6 +40,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --port)    ARGS+=(--port "${2:?--port needs a number}"); shift 2 ;;
     --data)    ARGS+=(--data "${2:?--data needs a directory}"); shift 2 ;;
+    --lan)     ARGS+=(--lan); shift ;;
     --no-open) OPEN=0; shift ;;
     -h|--help) sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "xeric: unknown option $1" >&2; exit 2 ;;
@@ -107,4 +109,10 @@ if [ "${XERIC_HEART:-1}" = "1" ]; then
   echo
 fi
 
-"$XERIC_PHP" -S "127.0.0.1:$XERIC_PORT" -t "$XERIC_WEB" "$XERIC_WEB/router.php"
+if [ "${XERIC_HOST:-127.0.0.1}" != "127.0.0.1" ]; then
+  echo "  ON THE NETWORK: anybody who can reach this machine can open your xerics."
+  echo "  There is no password on this app — the bind address is the whole guard."
+  echo
+fi
+
+"$XERIC_PHP" -S "${XERIC_HOST:-127.0.0.1}:$XERIC_PORT" -t "$XERIC_WEB" "$XERIC_WEB/router.php"
