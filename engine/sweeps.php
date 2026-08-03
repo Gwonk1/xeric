@@ -87,6 +87,7 @@ require_once __DIR__ . '/weather.php'; // the day's sky, derived, never stored
 require_once __DIR__ . '/mood.php';    // and the town's own needle, which its hours move
 require_once __DIR__ . '/ledger.php';  // and the ledgers those hours earn
 require_once __DIR__ . '/table.php';   // and the hours that are a game
+require_once __DIR__ . '/confide.php'; // and the confidences an hour lets out
 require_once __DIR__ . '/constructs.php'; // the debts a favour hour leaves behind
 require_once __DIR__ . '/trust.php';   // and what an hour did to what they think of each other
 
@@ -857,6 +858,15 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
         // Tuesday moves nothing.
         xeric_trust_hour_apply($db, (string)$chosen['kind']['key'],
             array_keys($written['memories']), $written['favor'] ?? null, $at);
+
+        // AND WHAT GOT OUT. A confidence is broken by being SAID, and the
+        // gossip ripple already spreads only what a bystander could have heard
+        // — so the town repeating the words of something somebody was trusted
+        // with is the betrayal, detected rather than declared.
+        try {
+            xeric_confide_sweep($t, $db, [$written['title'], $written['prose'],
+                (string)($written['overheard'] ?? '')], $now, $at);
+        } catch (Throwable $e) { /* a kept secret is not worth losing an hour over */ }
 
         // AND THE NIGHT'S MONEY, if the hour was a game. Inside the event's
         // transaction on purpose: the pot and the hour that describes it land
