@@ -1,0 +1,103 @@
+{
+    "events": [
+        {
+            "title": "The Cracked Porcelain Plate",
+            "days_ago": 41,
+            "place": "dustbowl_diner",
+            "participants": [
+                "maren_voss"
+            ],
+            "prose": "Maren left a single, chipped saucer on the counter without saying a word. She watched Vera scrub the grease from it for ten minutes before walking out into the heat."
+        },
+        {
+            "title": "A Broken Circuit Board",
+            "days_ago": 28,
+            "place": "ozone_station",
+            "participants": [
+                "silas_vane"
+            ],
+            "prose": "Silas pulled a blackened transistor from the machine and tossed it into the sand. He looked at the horizon as if waiting for a signal that never came."
+        },
+        {
+            "title": "Unfinished Debt at Midnight",
+            "days_ago": 15,
+            "place": "mirage_market",
+            "participants": [
+                "elias_thorne",
+                "bastian_kroll"
+            ],
+            "prose": "Elias counted a stack of crumpled credits and shoved them toward Bastian. Neither man met the other's eyes, leaving the true cost of the transaction hanging in the air."
+        },
+        {
+            "title": "The Unspoken Apology",
+            "days_ago": 4,
+            "place": "neon_rest_motel",
+            "participants": [
+                "maren_voss"
+            ],
+            "prose": "Maren sat in the corner booth of the lounge, nursing a lukewarm coffee. She opened her mouth to speak to Vera, but the words dissolved into the hum of the neon signs."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "elias_thorne",
+            "text": "Elias watched Vera trace the patterns of the dust on the motel windowsill.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He kept a small, polished stone in his pocket to remind him of the coast.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He owed Bastian Kroll more than just the credits sitting on the table.",
+            "days_ago": 21
+        },
+        {
+            "handle": "silas_vane",
+            "text": "Silas wiped the oily residue of a faulty junction box onto his trousers after Vera walked past him.",
+            "days_ago": 3
+        },
+        {
+            "handle": "silas_vane",
+            "text": "He watched the blue sparks dance across the copper coil before the machine finally went quiet.",
+            "days_ago": 12
+        },
+        {
+            "handle": "silas_vane",
+            "text": "He owed Vera three more canisters of pressurized coolant from the last raid on the Ozone Station.",
+            "days_ago": 21
+        },
+        {
+            "handle": "maren_voss",
+            "text": "Maren watched Vera scrub the grease from a chipped saucer for ten minutes.",
+            "days_ago": 3
+        },
+        {
+            "handle": "maren_voss",
+            "text": "Maren left a single piece of broken porcelain on the diner counter.",
+            "days_ago": 12
+        },
+        {
+            "handle": "maren_voss",
+            "text": "Maren walked out into the heat without saying a word to anyone.",
+            "days_ago": 21
+        },
+        {
+            "handle": "bastian_kroll",
+            "text": "Bastian watched Vera polish the brass rails until her knuckles went white.",
+            "days_ago": 3
+        },
+        {
+            "handle": "bastian_kroll",
+            "text": "He tucked the heavy envelope of credits into his vest pocket after the meeting with Elias.",
+            "days_ago": 12
+        },
+        {
+            "handle": "bastian_kroll",
+            "text": "He bowed low to the empty lounge as if the shadows were applauding him.",
+            "days_ago": 21
+        }
+    ]
+}

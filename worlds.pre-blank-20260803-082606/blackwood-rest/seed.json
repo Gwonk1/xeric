@@ -1,0 +1,104 @@
+{
+    "events": [
+        {
+            "title": "A spilled jar of ink",
+            "days_ago": 34,
+            "place": "blackwood_general_store",
+            "participants": [
+                "elias_thorne"
+            ],
+            "prose": "Elias knocked a jar of black ink across the counter while reaching for a tin of tea. He spent twenty minutes scrubbing the wood, but the stain remained a dark, bruised shape."
+        },
+        {
+            "title": "Unfinished letter in the rain",
+            "days_ago": 21,
+            "place": "driftwood_inn",
+            "participants": [
+                "julian_vane",
+                "bastien_leclair"
+            ],
+            "prose": "Julian sat by the hearth with a half-written letter resting on his knee. Bastien stood in the doorway for several minutes, his apology hovering in the air like heavy smoke, before he finally turned away without saying a word."
+        },
+        {
+            "title": "The copper scent lingers",
+            "days_ago": 14,
+            "place": "marlowes_morning_catch",
+            "participants": [
+                "cora_vance"
+            ],
+            "prose": "Cora dropped a heavy crate of silver scales onto the floorboards. The sharp scent of brine and old copper clung to the walls long after she had departed for the docks."
+        },
+        {
+            "title": "A debt left unspoken",
+            "days_ago": 5,
+            "place": "rusty_anchor",
+            "participants": [
+                "elias_thorne",
+                "cora_vance"
+            ],
+            "prose": "Elias leaned over his drink, eyes fixed on the condensation on the glass. He opened his mouth to mention the silver coins he still owed Cora, but the words died in his throat before they could reach her."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "elias_thorne",
+            "text": "Elias watched Odile mend a torn sail by the light of a single, sputtering lantern.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He handed over the last of his silver to settle a debt he owed for the broken tea tin.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He felt the phantom weight of the ink-stained rag in his trembling hand.",
+            "days_ago": 21
+        },
+        {
+            "handle": "julian_vane",
+            "text": "Julian watched Odile trace the rim of her tea cup in silence.",
+            "days_ago": 3
+        },
+        {
+            "handle": "julian_vane",
+            "text": "He left a heavy brass key on the corner of the scarred wooden table.",
+            "days_ago": 12
+        },
+        {
+            "handle": "julian_vane",
+            "text": "He burned the edges of a small, unaddressed note in the hearth.",
+            "days_ago": 21
+        },
+        {
+            "handle": "cora_vance",
+            "text": "Cora watched Odile mend a torn net by the dim light of the pier.",
+            "days_ago": 3
+        },
+        {
+            "handle": "cora_vance",
+            "text": "She left a heavy crate of silver scales to rattle against the floorboards.",
+            "days_ago": 12
+        },
+        {
+            "handle": "cora_vance",
+            "text": "She owed Odile three silver coins for the salt-crusted twine.",
+            "days_ago": 21
+        },
+        {
+            "handle": "bastien_leclair",
+            "text": "Bastien watched Odile trace the rim of her glass in silence while the rain lashed against the windows of the Driftwood Inn.",
+            "days_ago": 3
+        },
+        {
+            "handle": "bastien_leclair",
+            "text": "He rehearsed the same apology a dozen times in the mirror before he ever reached her doorstep.",
+            "days_ago": 12
+        },
+        {
+            "handle": "bastien_leclair",
+            "text": "He owed Odile a debt that no amount of grand, tragic gestures could ever truly settle.",
+            "days_ago": 21
+        }
+    ]
+}

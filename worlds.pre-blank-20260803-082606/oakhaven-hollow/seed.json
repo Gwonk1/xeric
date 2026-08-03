@@ -1,0 +1,102 @@
+{
+    "events": [
+        {
+            "title": "The Broken Grain Sifter",
+            "days_ago": 34,
+            "place": "millers_grain_grit",
+            "participants": [
+                "elias_thorne"
+            ],
+            "prose": "Elias spent three days hunched over the heavy iron sifter. He left a handful of replacement gears on Ruth's doorstep without a note, though he wouldn't admit to the repair."
+        },
+        {
+            "title": "A Quiet Shared Joke",
+            "days_ago": 22,
+            "place": "red_clay_diner",
+            "participants": [
+                "silas_vane"
+            ],
+            "prose": "Silas leaned across the counter to whisper something that made Ruth's shoulders shake with laughter. The laughter died quickly, leaving a heavy silence that neither of them knew how to break."
+        },
+        {
+            "title": "Unclaimed Winter Correspondence",
+            "days_ago": 14,
+            "place": "oakhaven_post_office",
+            "participants": [
+                "mabel_finch"
+            ],
+            "prose": "Mabel sorted through a stack of undelivered letters and found one addressed to Ruth's late father. She tucked it into her apron pocket, intending to find the right moment to mention it."
+        },
+        {
+            "title": "Storm Clouds Over Cicada",
+            "days_ago": 5,
+            "place": "cicada_creek_park",
+            "participants": [
+                "caleb_vance"
+            ],
+            "prose": "Caleb attempted to fix the boardwalk railing as the sky turned a bruised purple. He looked at Ruth as she walked past, his mouth opening as if to say something important, before he simply went back to his hammer."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "elias_thorne",
+            "text": "Elias spent three days hunched over the heavy iron sifter until the gears finally meshed.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He left a small pile of replacement parts on Ruth's doorstep in the early morning light.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He avoided looking at Ruth when she thanked the wind for the sudden repair.",
+            "days_ago": 21
+        },
+        {
+            "handle": "silas_vane",
+            "text": "Silas leaned across the diner counter to whisper a joke that made Ruth shake with laughter.",
+            "days_ago": 3
+        },
+        {
+            "handle": "silas_vane",
+            "text": "He felt the weight of the sudden silence that followed their shared moment.",
+            "days_ago": 12
+        },
+        {
+            "handle": "silas_vane",
+            "text": "He owed Ruth a real explanation for why he couldn't look her in the eye after the laughter died.",
+            "days_ago": 21
+        },
+        {
+            "handle": "mabel_finch",
+            "text": "Mabel watched Ruth pause for a long second in front of the post office window.",
+            "days_ago": 3
+        },
+        {
+            "handle": "mabel_finch",
+            "text": "She tucked a yellowed letter addressed to Ruth's father deep into her apron pocket.",
+            "days_ago": 12
+        },
+        {
+            "handle": "mabel_finch",
+            "text": "She left a small basket of rosemary bread on the doorstep of the woman who had lost her husband.",
+            "days_ago": 21
+        },
+        {
+            "handle": "caleb_vance",
+            "text": "Caleb watched Ruth mend her apron by the light of a single lamp.",
+            "days_ago": 3
+        },
+        {
+            "handle": "caleb_vance",
+            "text": "He carried a heavy crate of cider from the mill to the Rusty Spoke.",
+            "days_ago": 12
+        },
+        {
+            "handle": "caleb_vance",
+            "text": "He owed Silas three silver coins from their last poker game.",
+            "days_ago": 21
+        }
+    ]
+}

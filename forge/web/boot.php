@@ -95,10 +95,7 @@ function xeric_web_config(): array
     if ($c['data_dir'] === '') $c['data_dir'] = xeric_web_home_dir();
 
     $c['worlds_dir'] = (string)(getenv('XERIC_WORLDS_DIR') ?: '') ?: (string)($c['worlds_dir'] ?? '');
-    if ($c['worlds_dir'] === '') {
-        $repo = XERIC_WEB_LIB . '/worlds';
-        $c['worlds_dir'] = is_dir($repo) && is_writable($repo) ? $repo : $c['data_dir'] . '/worlds';
-    }
+    if ($c['worlds_dir'] === '') $c['worlds_dir'] = xeric_web_worlds_default($c['data_dir']);
 
     // The same two, for a launcher that has no file to write.
     $c['php'] = (string)(getenv('XERIC_PHP') ?: '') ?: (string)($c['php'] ?? '');
@@ -119,6 +116,35 @@ function xeric_web_config(): array
  * place a program may write without asking and expect to find it again. The
  * temp directory is the last resort, not the default.
  */
+/**
+ * Where xerics live, given where the data lives. ONE ANSWER, TWO CALLERS.
+ *
+ * This used to be decided twice and the two did not agree. bootstrap.php set
+ * `XERIC_WORLDS_DIR` to `<data>/worlds` unconditionally and the launchers `eval`
+ * that, while the config above preferred the repository's OWN `worlds/` whenever
+ * one existed and was writable — so the answer depended on how you started the
+ * app, and the environment variable always won. A machine with a `worlds/` in
+ * its checkout kept its xerics there when somebody ran `php -S` by hand, and the
+ * launcher then showed an empty shelf. Nothing was lost and everything looked
+ * lost, which is the worst version of this.
+ *
+ * The repository branch is gone rather than shared, for three reasons. It never
+ * fired on a fresh clone at all — `worlds/` is not tracked (see .gitignore), so
+ * whether it applied to you came down to whether a directory happened to exist.
+ * `forge/web/deploy.sh` writes `worlds_dir => $DATA/worlds` when it configures a
+ * host, so that was already the deliberate answer wherever anybody had stated
+ * one. And a world inside the install directory is a world that a reinstall, an
+ * update or a stray `git clean` takes with it — the same argument the data_dir
+ * comment above makes about the temp directory.
+ *
+ * An explicit `XERIC_WORLDS_DIR` or a `worlds_dir` in config.local.php still
+ * beats this; it is the default, not a rule.
+ */
+function xeric_web_worlds_default(string $dataDir): string
+{
+    return rtrim(str_replace('\\', '/', $dataDir), '/') . '/worlds';
+}
+
 function xeric_web_home_dir(): string
 {
     if (PHP_OS_FAMILY === 'Windows') {

@@ -124,11 +124,18 @@ ok('an uneditable path gets none either',
 // quiet on the anvil, one honest sentence once it is live.
 // ---------------------------------------------------------------------------
 
-$srcWorld = '';
-foreach (glob(dirname(__DIR__, 3) . '/worlds/*/world-template.json') ?: [] as $p) {
-    if (is_file(dirname($p) . '/seed.json')) { $srcWorld = dirname($p); break; }
-}
-ok('a world template to test against was found in the repo', $srcWorld !== '');
+// FROM THE TRACKED FIXTURE, not off the developer's own shelf. This used to
+// glob `<repo>/worlds/*` for whatever happened to be there: different on every
+// machine, absent on a fresh clone, and it assumed xerics live inside the
+// checkout, which they do not (see xeric_web_worlds_default).
+$srcWorld = $tmp . '/fixture-world';
+@mkdir($srcWorld, 0775, true);
+$fixT = xeric_world_load(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json');
+$jopt = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+file_put_contents($srcWorld . '/world-template.json', json_encode($fixT, $jopt));
+file_put_contents($srcWorld . '/seed.json', json_encode(xeric_forge_default_seed($fixT), $jopt));
+ok('a world template to test against was built from the tracked fixture',
+    is_file($srcWorld . '/world-template.json') && is_file($srcWorld . '/seed.json'));
 
 $R = bin2hex(random_bytes(16));
 xeric_session_use($R);

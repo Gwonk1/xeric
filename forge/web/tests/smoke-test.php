@@ -60,16 +60,26 @@ $tmp = sys_get_temp_dir() . '/xeric-smoke-' . getmypid();
 @mkdir($tmp . '/data/worlds/smoke-town', 0775, true);
 @mkdir($tmp . '/profile', 0775, true);
 
-// A real world off the repo's own shelf: the pages are being tested, not the
-// forge, so the fastest honest way to have something to look at is to copy one.
-$src = '';
-foreach (glob($ROOT . '/worlds/*/world-template.json') ?: [] as $p) {
-    if (is_file(dirname($p) . '/seed.json')) { $src = dirname($p); break; }
-}
-ok('a world to look at was found in the repo', $src !== '');
-if ($src === '') { echo "\n1 failed\n"; exit(1); }
-@copy($src . '/world-template.json', $tmp . '/data/worlds/smoke-town/world-template.json');
-@copy($src . '/seed.json',           $tmp . '/data/worlds/smoke-town/seed.json');
+// A REAL WORLD, BUILT FROM THE TRACKED FIXTURE. The pages are being tested, not
+// the forge, so this needs something real to look at — and it used to take
+// whatever the developer running the suite happened to have forged in
+// `<repo>/worlds/`. That is a coincidence, not a fixture: it differs per
+// machine, it is absent on a fresh clone, and it assumed xerics live inside the
+// checkout, which they do not (see xeric_web_worlds_default). Generated in a
+// subprocess so this file stays a browser driver and loads no app code.
+$mkPath = $tmp . '/make-world.php';
+file_put_contents($mkPath, "<?php\n"
+    . 'require ' . var_export($ROOT . '/forge/forge.php', true) . ";\n"
+    . '$t = xeric_world_load(' . var_export($ROOT . '/engine/fixtures/milldale.json', true) . ");\n"
+    . '$d = ' . var_export($tmp . '/data/worlds/smoke-town', true) . ";\n"
+    . '$j = JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;' . "\n"
+    . 'file_put_contents($d . "/world-template.json", json_encode($t, $j));' . "\n"
+    . 'file_put_contents($d . "/seed.json", json_encode(xeric_forge_default_seed($t), $j));' . "\n");
+shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($mkPath) . ' 2>&1');
+ok('a world to look at was built from the tracked fixture',
+    is_file($tmp . '/data/worlds/smoke-town/world-template.json')
+    && is_file($tmp . '/data/worlds/smoke-town/seed.json'));
+if (!is_file($tmp . '/data/worlds/smoke-town/seed.json')) { echo "\n1 failed\n"; exit(1); }
 
 // AND CLAIMED, or every page answers "that xeric is gone" — a world nobody
 // owns is not a world anybody may open, which is the demo layer working

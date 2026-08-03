@@ -1,0 +1,102 @@
+{
+    "events": [
+        {
+            "title": "The Broken Circuit Debt",
+            "days_ago": 38,
+            "place": "circuit_street_market",
+            "participants": [
+                "leo_moretti"
+            ],
+            "prose": "Leo handed Rosa a cracked data-shard that looked far too expensive for her budget. He smiled when she pointed out the fractures, but he still hasn't delivered the decryption key she paid for."
+        },
+        {
+            "title": "A Bitter Morning Toast",
+            "days_ago": 25,
+            "place": "ozone_breakfast_club",
+            "participants": [
+                "mikael_vane"
+            ],
+            "prose": "Mikael sat across from Rosa in a corner booth, his eyes darting toward the door. He left half a plate of synthetic eggs and a heavy, unspoken apology sitting between them."
+        },
+        {
+            "title": "The Hum of Static",
+            "days_ago": 14,
+            "place": "static_station",
+            "participants": [
+                "kaelen_voss"
+            ],
+            "prose": "Kaelen spent the night whispering apologies to a malfunctioning signal relay. He handed Rosa a small, salvaged component, though his hands were still shaking from the voltage."
+        },
+        {
+            "title": "Old Tales in Rain",
+            "days_ago": 5,
+            "place": "rain_slicked_plaza",
+            "participants": [
+                "elias_thorne"
+            ],
+            "prose": "Elias pointed toward the skyline, describing how the clouds used to look before the neon glare. He stopped mid-sentence when a patrol drone hummed overhead, leaving his memory unfinished."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "elias_thorne",
+            "text": "Elias watched the sun set over the skyline before the neon lights drowned out the horizon.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He handed Rosa a faded photograph of a garden that no longer existed.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He owed the city a debt of silence for the things he saw in the old streets.",
+            "days_ago": 21
+        },
+        {
+            "handle": "mikael_vane",
+            "text": "Mikael left a plate of synthetic eggs untouched while he watched the door at the Ozone Breakfast Club.",
+            "days_ago": 3
+        },
+        {
+            "handle": "mikael_vane",
+            "text": "He offered Rosa a heavy, unspoken apology that never quite reached his lips.",
+            "days_ago": 12
+        },
+        {
+            "handle": "mikael_vane",
+            "text": "He flashed a grin that promised trouble even when his heart felt the weight of his debts.",
+            "days_ago": 21
+        },
+        {
+            "handle": "kaelen_voss",
+            "text": "Kaelen whispered apologies to the malfunctioning signal relay for hours.",
+            "days_ago": 3
+        },
+        {
+            "handle": "kaelen_voss",
+            "text": "He handed a small, salvaged component to Rosa.",
+            "days_ago": 12
+        },
+        {
+            "handle": "kaelen_voss",
+            "text": "His hands shook from the lingering voltage after the repair.",
+            "days_ago": 21
+        },
+        {
+            "handle": "leo_moretti",
+            "text": "Leo handed Rosa a cracked data-shard that cost more than she could afford.",
+            "days_ago": 3
+        },
+        {
+            "handle": "leo_moretti",
+            "text": "He smiled when Rosa pointed out the fractures in the glass.",
+            "days_ago": 12
+        },
+        {
+            "handle": "leo_moretti",
+            "text": "He kept the decryption key she paid him for.",
+            "days_ago": 21
+        }
+    ]
+}

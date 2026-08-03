@@ -1,0 +1,223 @@
+{
+    "events": [
+        {
+            "title": "The Broken Salt Shaker",
+            "days_ago": 38,
+            "place": "nguyen_do_house",
+            "participants": [
+                "phan_nguyen_do"
+            ],
+            "prose": "Phan polished the brass shaker until it finally snapped in his grip. He left the jagged pieces on the kitchen table and didn't bother to sweep them up."
+        },
+        {
+            "title": "Midnight Cargo Sightings",
+            "days_ago": 24,
+            "place": "cypress_landing",
+            "participants": [
+                "lien_dang_vu"
+            ],
+            "prose": "Lien watched the unmarked crates slide off the skiffs under the cover of the new moon. She caught Ruth's eye from the shadows, but neither woman spoke a word."
+        },
+        {
+            "title": "A Heavy Envelope",
+            "days_ago": 15,
+            "place": "kim_son_grocery",
+            "participants": [
+                "thi_nguyen_phan"
+            ],
+            "prose": "Thi sat at the corner table, counting her savings by the dim light of the overhead bulb. She tucked the thick envelope back into her coat, though her eyes lingered on the bus schedule pinned to the wall."
+        },
+        {
+            "title": "The Unpaid Debt",
+            "days_ago": 5,
+            "place": "salt_silt",
+            "participants": [
+                "linh_pham_nguyen",
+                "hieu_doan"
+            ],
+            "prose": "Linh scribbled a new name into her ledger after Hieu offered her a favor instead of coin. The ink was still wet when Hieu walked out into the humid night."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "linh_pham_nguyen",
+            "text": "Linh recorded the exact date Ruth requested that favor at the docks.",
+            "days_ago": 3
+        },
+        {
+            "handle": "linh_pham_nguyen",
+            "text": "She wrote Ruth's name in the back of her ledger in heavy black ink.",
+            "days_ago": 12
+        },
+        {
+            "handle": "linh_pham_nguyen",
+            "text": "Linh waited for the moon to turn before she finally opened the book.",
+            "days_ago": 21
+        },
+        {
+            "handle": "trinh_nguyen_vo",
+            "text": "Trinh watched Ruth's silhouette flicker against the shadows near the skiffs during the midnight loading.",
+            "days_ago": 3
+        },
+        {
+            "handle": "trinh_nguyen_vo",
+            "text": "Trinh sat by the docks and peeled back the secrets of a passing merchant.",
+            "days_ago": 12
+        },
+        {
+            "handle": "trinh_nguyen_vo",
+            "text": "Trinh owed Linh a debt that she kept hidden behind a neutral expression.",
+            "days_ago": 21
+        },
+        {
+            "handle": "phan_nguyen_do",
+            "text": "He polished the tarnished brass salt shaker until it snapped in his hands.",
+            "days_ago": 3
+        },
+        {
+            "handle": "phan_nguyen_do",
+            "text": "He left the jagged metal pieces scattered on the kitchen table.",
+            "days_ago": 12
+        },
+        {
+            "handle": "phan_nguyen_do",
+            "text": "He watched Ruth's shadow pass the window while he gripped the broken brass.",
+            "days_ago": 21
+        },
+        {
+            "handle": "minh_tran_vo",
+            "text": "Minh watched the moon rise high over the marsh and insisted the shrimp were moving early.",
+            "days_ago": 3
+        },
+        {
+            "handle": "minh_tran_vo",
+            "text": "He sat on the edge of the pier and shared a quiet nod with Ruth.",
+            "days_ago": 12
+        },
+        {
+            "handle": "minh_tran_vo",
+            "text": "He spent the evening mending his father's old nets by the light of a single lantern.",
+            "days_ago": 21
+        },
+        {
+            "handle": "vinh_nguyen_le",
+            "text": "He sat at his small corner table and watched the salt spray crust over the windows.",
+            "days_ago": 3
+        },
+        {
+            "handle": "vinh_nguyen_le",
+            "text": "He remembered the sound of the engines dying during the last great storm.",
+            "days_ago": 12
+        },
+        {
+            "handle": "vinh_nguyen_le",
+            "text": "He shared a silent nod with Ruth when she passed his table in the quiet hours.",
+            "days_ago": 21
+        },
+        {
+            "handle": "hieu_doan",
+            "text": "Hieu Doan handed over his entire final haul to cover the repair costs after the Great Surge.",
+            "days_ago": 3
+        },
+        {
+            "handle": "hieu_doan",
+            "text": "He watched Ruth move silently through the shadows near the docks during the midnight unloading.",
+            "days_ago": 12
+        },
+        {
+            "handle": "hieu_doan",
+            "text": "He felt the weight of the debt he owed Thuy Huynh-Le for keeping his family afloat.",
+            "days_ago": 21
+        },
+        {
+            "handle": "binh_dang",
+            "text": "Binh scrubbed the grease traps until they gleamed, even as the coffee pot sat cold and empty on the counter.",
+            "days_ago": 3
+        },
+        {
+            "handle": "binh_dang",
+            "text": "He watched Ruth walk past the kitchen window while he was busy cleaning the vents.",
+            "days_ago": 12
+        },
+        {
+            "handle": "binh_dang",
+            "text": "He forgot to check the brew timer again, leaving the pot to sit dry for the morning rush.",
+            "days_ago": 21
+        },
+        {
+            "handle": "thi_nguyen_phan",
+            "text": "She counted the thick stack of bills by the dim bulb at the corner table.",
+            "days_ago": 3
+        },
+        {
+            "handle": "thi_nguyen_phan",
+            "text": "She stared at the bus schedule pinned to the wall while her fingers brushed the envelope in her coat.",
+            "days_ago": 12
+        },
+        {
+            "handle": "thi_nguyen_phan",
+            "text": "She shared a quiet, unspoken nod with Ruth when they passed each other near the apothecary.",
+            "days_ago": 21
+        },
+        {
+            "handle": "thuy_huynh_le",
+            "text": "Thuy watched Ruth's eyes catch the moonlight during the midnight loading at the docks.",
+            "days_ago": 3
+        },
+        {
+            "handle": "thuy_huynh_le",
+            "text": "She funneled her wealth into Hieu Doan's family to keep them from drowning after the Surge.",
+            "days_ago": 12
+        },
+        {
+            "handle": "thuy_huynh_le",
+            "text": "She kept the true source of the survival funds buried beneath layers of quiet pride.",
+            "days_ago": 21
+        },
+        {
+            "handle": "thuy_nguyen",
+            "text": "She watched the older kids reach for the extra sodas she had brought herself.",
+            "days_ago": 3
+        },
+        {
+            "handle": "thuy_nguyen",
+            "text": "She saw Ruth watching the unmarked crates from the shadows of the docks.",
+            "days_ago": 12
+        },
+        {
+            "handle": "thuy_nguyen",
+            "text": "She kept the cooler stocked even when the heat became unbearable.",
+            "days_ago": 21
+        },
+        {
+            "handle": "lien_dang_vu",
+            "text": "Lien watched the unmarked crates slide off the skiffs under the cover of the new moon.",
+            "days_ago": 3
+        },
+        {
+            "handle": "lien_dang_vu",
+            "text": "She caught Ruth's eye from the shadows during the midnight loading.",
+            "days_ago": 12
+        },
+        {
+            "handle": "lien_dang_vu",
+            "text": "Lien kept her silence when the heavy cargo moved past her hiding spot.",
+            "days_ago": 21
+        },
+        {
+            "handle": "ba_nguyen_do",
+            "text": "Ba Nguyen-Do hovered near the back of the market long before the sun rose.",
+            "days_ago": 3
+        },
+        {
+            "handle": "ba_nguyen_do",
+            "text": "She watched Ruth linger in the shadows near the midnight cargo loading.",
+            "days_ago": 12
+        },
+        {
+            "handle": "ba_nguyen_do",
+            "text": "She stood silently while the unmarked crates slid off the skiffs.",
+            "days_ago": 21
+        }
+    ]
+}

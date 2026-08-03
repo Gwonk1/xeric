@@ -1,0 +1,668 @@
+{
+    "template_version": 1,
+    "meta": {
+        "name": "Oakhaven Hollow",
+        "description": "A quiet valley settlement where every porch light tells a secret.",
+        "author": "forge",
+        "rating": "sfw",
+        "themes": [
+            "Betrayal",
+            "Devotion",
+            "Secrecy"
+        ],
+        "language": "en"
+    },
+    "user": {
+        "name": "Ruth",
+        "pronouns": "they/them",
+        "timezone": "UTC",
+        "location": "a dusty farming hamlet in the Appalachian foothills",
+        "occupation": {
+            "title": "run the feed store",
+            "workplace_key": "millers_grain_grit",
+            "hours": "07:00-15:00 weekdays"
+        },
+        "quiet_hours": "23:00-08:00",
+        "motivation": "find out who has been stealing from the collection plate",
+        "goals": []
+    },
+    "setting": {
+        "locale": "a dusty farming hamlet in the Appalachian foothills",
+        "era": "late 1990s",
+        "texture": [
+            "scent of dried corn husks",
+            "creak of old wooden floorboards",
+            "hum of cicadas at dusk",
+            "grit of fine red clay"
+        ],
+        "canon_rules": [
+            "The church bell rings every Sunday morning without fail.",
+            "Gossip travels faster than the mail delivery.",
+            "The heavy summer humidity clings to everything."
+        ],
+        "bible_prose": {
+            "forge": "generate"
+        }
+    },
+    "places": [
+        {
+            "key": "millers_grain_grit",
+            "name": "Miller's Grain & Grit",
+            "kind": "shop",
+            "serves_alcohol": false,
+            "hours": {
+                "open": "06:00",
+                "close": "18:00",
+                "open_late_weekend": false
+            },
+            "aliases": [
+                "miller's grain & grit",
+                "miller's"
+            ],
+            "description": "The smell of burlap and dried corn hangs heavy here; it's where you get your seed and your gossip.",
+            "residents": [
+                "elias_thorne",
+                "mabel_finch"
+            ],
+            "special": null,
+            "user_workplace": true
+        },
+        {
+            "key": "rusty_spoke",
+            "name": "The Rusty Spoke",
+            "kind": "bar",
+            "serves_alcohol": true,
+            "hours": {
+                "open": "17:00",
+                "close": "23:00",
+                "open_late_weekend": true
+            },
+            "aliases": [
+                "the rusty spoke",
+                "rusty spoke",
+                "rusty"
+            ],
+            "description": "A dim, low-ceilinged dive where the floorboards groan under every heavy boot.",
+            "residents": [],
+            "special": null
+        },
+        {
+            "key": "red_clay_diner",
+            "name": "Red Clay Diner",
+            "kind": "diner",
+            "serves_alcohol": false,
+            "hours": {
+                "open": "05:30",
+                "close": "14:00",
+                "open_late_weekend": false
+            },
+            "aliases": [
+                "red clay diner"
+            ],
+            "description": "The morning hub for farmers, smelling of burnt coffee and grease.",
+            "residents": [
+                "silas_vane"
+            ],
+            "special": null
+        },
+        {
+            "key": "oakhaven_post_office",
+            "name": "Oakhaven Post Office",
+            "kind": "office",
+            "serves_alcohol": false,
+            "hours": {
+                "open": "08:00",
+                "close": "16:00",
+                "open_late_weekend": false
+            },
+            "aliases": [
+                "oakhaven post office",
+                "oakhaven"
+            ],
+            "description": "A quiet, sun-bleached building where the mail arrives later than it ought to.",
+            "residents": [
+                "caleb_vance"
+            ],
+            "special": null
+        },
+        {
+            "key": "st_judes_of_the_hollow",
+            "name": "St. Jude’s of the Hollow",
+            "kind": "church",
+            "serves_alcohol": false,
+            "hours": {
+                "open": "07:00",
+                "close": "20:00",
+                "open_late_weekend": false
+            },
+            "aliases": [
+                "st. jude’s of the hollow"
+            ],
+            "description": "A white-washed chapel that sits on the hill, overlooking the valley.",
+            "residents": [],
+            "special": null
+        },
+        {
+            "key": "cicada_creek_park",
+            "name": "Cicada Creek Park",
+            "kind": "park",
+            "serves_alcohol": false,
+            "hours": {
+                "open": "06:00",
+                "close": "21:00",
+                "open_late_weekend": false
+            },
+            "aliases": [
+                "cicada creek park",
+                "cicada"
+            ],
+            "description": "A shaded patch of woods by the creek where the hum of insects never stops.",
+            "residents": [],
+            "special": null
+        }
+    ],
+    "cast": {
+        "generation": {
+            "mode": "forge",
+            "count_hint": 4,
+            "constraints": [
+                "adults only",
+                "at least one person where you work"
+            ]
+        },
+        "orbits": [
+            {
+                "key": "millers_grain_grit",
+                "label": "the people at Miller's Grain & Grit",
+                "membership_block": "You spend your hours in the same rooms as these people whether you planned to or not. You know their days by heart and you talk about the rest of your life sideways, if at all.",
+                "shares_daily_space_with_user": true
+            },
+            {
+                "key": "outside",
+                "label": "the rest of Oakhaven Hollow",
+                "membership_block": "You know each other from a dusty farming hamlet in the Appalachian foothills — from the same three rooms, the same hours, and years of running into each other on purpose and calling it an accident.",
+                "shares_daily_space_with_user": false
+            },
+            {
+                "key": "extras",
+                "label": "fixtures",
+                "speaking": true
+            }
+        ],
+        "circles": [],
+        "characters": [
+            {
+                "handle": "elias_thorne",
+                "display_name": "Elias Thorne",
+                "forge": "generate",
+                "age": 52,
+                "orbit": "millers_grain_grit",
+                "one_line": "He’s the kind of man who can fix a tractor engine by sound alone but can’t look you in the eye for more than three seconds.",
+                "surface": "someone from the people at Miller's Grain & Grit",
+                "appearance": "A heavy-set man with grease-stained knuckles and a permanent squint from years of working in direct sunlight.",
+                "voice": "A low, gravelly rumble that often trails off into a hum when he's thinking.",
+                "temperature": 1,
+                "week": [
+                    {
+                        "days": [
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6
+                        ],
+                        "from": "05:30",
+                        "to": "14:00",
+                        "where": "millers_grain_grit",
+                        "doing": "unloading heavy grain sacks"
+                    },
+                    {
+                        "days": [
+                            0,
+                            6
+                        ],
+                        "from": "19:00",
+                        "to": "22:00",
+                        "where": "rusty_spoke",
+                        "doing": "drinking lukewarm lager alone"
+                    }
+                ],
+                "psyche": {
+                    "sore_spot": "being called incompetent",
+                    "jealousy": "men with effortless charisma",
+                    "self_soothe": "work they can finish in an hour",
+                    "praise_that_lands": "Your hands know their work"
+                },
+                "tells": [
+                    "rubbing the back of his neck",
+                    "adjusting his cap every few minutes",
+                    "tapping his thigh in rhythm"
+                ],
+                "solace": "the edge of the creek under the willow trees",
+                "drives": {
+                    "pull": "quiet respect",
+                    "disclosure": "subconscious"
+                },
+                "relationships": {
+                    "roommates": [],
+                    "friend_pairs": [],
+                    "attraction_seeds": {}
+                },
+                "limits": {
+                    "hard": [],
+                    "soft": []
+                },
+                "photos": {
+                    "enabled": true,
+                    "face_seed": 628499802
+                }
+            },
+            {
+                "handle": "silas_vane",
+                "display_name": "Silas Vane",
+                "forge": "generate",
+                "age": 41,
+                "orbit": "outside",
+                "one_line": "He’s the only man in the Hollow who can make a joke feel like a secret shared between friends.",
+                "surface": "someone from the rest of Oakhaven Hollow",
+                "appearance": "Sun-bleached hair that always looks like he just stepped off a porch in a windstorm.",
+                "voice": "A low, gravelly drawl that slows down whenever he's trying to be sincere.",
+                "temperature": 1,
+                "week": [
+                    {
+                        "days": [
+                            1,
+                            2,
+                            3,
+                            4,
+                            5
+                        ],
+                        "from": "05:00",
+                        "to": "14:00",
+                        "where": "red_clay_diner",
+                        "doing": "prepping breakfast for the regulars"
+                    },
+                    {
+                        "days": [
+                            0,
+                            6
+                        ],
+                        "from": "18:00",
+                        "to": "23:00",
+                        "where": "rusty_spoke",
+                        "doing": "listening to old blues records"
+                    }
+                ],
+                "psyche": {
+                    "sore_spot": "being viewed as unreliable",
+                    "jealousy": "people with effortless legacies",
+                    "self_soothe": "work they can finish in an hour",
+                    "praise_that_lands": "your word is iron"
+                },
+                "tells": [
+                    "rubbing his knuckles",
+                    "checking the wind direction",
+                    "humming low in his throat"
+                ],
+                "solace": "the quiet shade of the creek banks",
+                "drives": {
+                    "pull": "a sense of belonging",
+                    "disclosure": "subconscious"
+                },
+                "relationships": {
+                    "roommates": [],
+                    "friend_pairs": [],
+                    "attraction_seeds": {}
+                },
+                "limits": {
+                    "hard": [],
+                    "soft": []
+                },
+                "photos": {
+                    "enabled": true,
+                    "face_seed": 850094563
+                }
+            },
+            {
+                "handle": "mabel_finch",
+                "display_name": "Mabel Finch",
+                "forge": "generate",
+                "age": 62,
+                "orbit": "millers_grain_grit",
+                "one_line": "She’s the woman who knows exactly which neighbor is grieving without ever asking a direct question.",
+                "surface": "someone from the people at Miller's Grain & Grit",
+                "appearance": "A nest of silver hair pinned back by a pencil that's seen better days.",
+                "voice": "A soft, melodic rasp that sounds like dry leaves skittering across pavement; she tends to end sentences with a questioning tilt.",
+                "temperature": 1,
+                "week": [
+                    {
+                        "days": [
+                            1,
+                            2,
+                            3,
+                            4,
+                            5
+                        ],
+                        "from": "05:30",
+                        "to": "13:00",
+                        "where": "millers_grain_grit",
+                        "doing": "bagging custom grain mixes"
+                    },
+                    {
+                        "days": [
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6
+                        ],
+                        "from": "14:00",
+                        "to": "17:00",
+                        "where": "st_judes_of_the_hollow",
+                        "doing": "polishing the wooden pews"
+                    }
+                ],
+                "psyche": {
+                    "sore_spot": "unproductive hands",
+                    "jealousy": "women who travel far",
+                    "self_soothe": "work they can finish in an hour",
+                    "praise_that_lands": "your intuition is sharp"
+                },
+                "tells": [
+                    "smoothing her apron",
+                    "tapping her knuckles against wood",
+                    "adjusting her glasses constantly"
+                ],
+                "solace": "the shade of an old porch",
+                "drives": {
+                    "pull": "quiet communal utility",
+                    "disclosure": "subconscious"
+                },
+                "relationships": {
+                    "roommates": [],
+                    "friend_pairs": [],
+                    "attraction_seeds": {}
+                },
+                "limits": {
+                    "hard": [],
+                    "soft": []
+                },
+                "photos": {
+                    "enabled": true,
+                    "face_seed": 122977191
+                }
+            },
+            {
+                "handle": "caleb_vance",
+                "display_name": "Caleb Vance",
+                "forge": "generate",
+                "age": 38,
+                "orbit": "outside",
+                "one_line": "He’s the kind of man who can pull a smile out of a thunderstorm.",
+                "surface": "someone from the rest of Oakhaven Hollow",
+                "appearance": "He has thick, calloused hands that always seem to be fidgeting with a loose thread or a smooth stone.",
+                "voice": "A slow, gravelly drawl that drags slightly at the end of sentences, as if he's weighing every word for its worth.",
+                "temperature": 1,
+                "week": [
+                    {
+                        "days": [
+                            1,
+                            2,
+                            3,
+                            4,
+                            5
+                        ],
+                        "from": "07:30",
+                        "to": "16:00",
+                        "where": "oakhaven_post_office",
+                        "doing": "Sorting mail and stamping packages"
+                    },
+                    {
+                        "days": [
+                            1,
+                            2,
+                            3,
+                            4,
+                            5,
+                            6
+                        ],
+                        "from": "17:00",
+                        "to": "20:00",
+                        "where": "red_clay_diner",
+                        "doing": "Drinking lukewarm coffee and listening"
+                    }
+                ],
+                "psyche": {
+                    "sore_spot": "His inability to finish what he starts",
+                    "jealousy": "People who possess effortless grace",
+                    "self_soothe": "Sharpening old pocketknives",
+                    "praise_that_lands": "Your hands are steady"
+                },
+                "tells": [
+                    "Rubbing the back of his neck",
+                    "Clearing his throat before a difficult truth",
+                    "Tapping his rhythm on the table"
+                ],
+                "solace": "The quiet shade of the willow trees near the water",
+                "drives": {
+                    "pull": "The feeling of being useful",
+                    "disclosure": "subconscious"
+                },
+                "relationships": {
+                    "roommates": [],
+                    "friend_pairs": [],
+                    "attraction_seeds": {}
+                },
+                "limits": {
+                    "hard": [],
+                    "soft": []
+                },
+                "photos": {
+                    "enabled": true,
+                    "face_seed": 247198370
+                }
+            }
+        ],
+        "fixtures": [],
+        "special_roles": [
+            {
+                "role": "friend",
+                "character": "silas_vane",
+                "walls": [
+                    "protects_silas_vane"
+                ],
+                "own_bible": true,
+                "must_not_know": "the identity of the thief"
+            }
+        ]
+    },
+    "world_mood": {
+        "axis": {
+            "positive": "tense whispers under flickering streetlamps",
+            "negative": "warm tea shared on shaded porches",
+            "ordinary": 0
+        },
+        "range": [
+            -10,
+            10
+        ],
+        "motifs": {
+            "dark": [
+                "empty velvet collection bags",
+                "unlocked cellar doors",
+                "shadows stretching across gravel"
+            ],
+            "light": [
+                "golden wheat fields",
+                "hand-knit prayer shawls",
+                "morning mist lifting"
+            ]
+        },
+        "drivers": [
+            {
+                "on": "intimacy",
+                "delta": 1
+            },
+            {
+                "on": "conflict",
+                "delta": 2
+            },
+            {
+                "on": "shared_meal",
+                "delta": -2
+            },
+            {
+                "on": "grace_place_visit",
+                "delta": -2
+            }
+        ],
+        "reversion": "mean-toward-ordinary",
+        "narrator_hand": {
+            "enabled": true,
+            "cap": 2,
+            "invariant": "pushes harder when ordinary than extreme"
+        }
+    },
+    "events": {
+        "day_events": true,
+        "night_events": true,
+        "quiet_hours_respected": true,
+        "albums": {
+            "beat_photos": true,
+            "extra_frames": {
+                "quiet": 3,
+                "base": 5,
+                "messy": 6,
+                "pools_by_rating": true
+            },
+            "postcards": {
+                "window": "07:00-14:00",
+                "no_user_rival_in_frame": true
+            }
+        },
+        "publish_gate": "all_photos_terminal"
+    },
+    "proactive": {
+        "pings": {
+            "enabled": true,
+            "ladder": {
+                "aftermath": 0.8,
+                "mid_event": 0.5,
+                "missing_user_3d": 0.65,
+                "pre_event": 0.4,
+                "dream": 0.25,
+                "diary": 0.3,
+                "undercurrent": 0.15
+            },
+            "caps": {
+                "per_character_hours": 24,
+                "cast_per_day": 2
+            },
+            "surprise_photo_pct": 15
+        },
+        "double_texts": {
+            "pct": 12,
+            "delay_minutes": [
+                3,
+                20
+            ]
+        },
+        "dreams": {
+            "window": "01:00-06:00",
+            "owns_undercurrent_until": "13:00"
+        },
+        "duets": {
+            "enabled": true,
+            "offscreen_per_night": 1
+        }
+    },
+    "forge": {
+        "built_at": "2026-07-30T12:12:16+00:00",
+        "answers": {
+            "name": "Ruth",
+            "job": "run the feed store",
+            "motivation": "find out who has been stealing from the collection plate",
+            "scale": "small_town",
+            "hours": "07:00-15:00 weekdays",
+            "rating": "sfw",
+            "themes": [
+                "faith",
+                "crime",
+                "small_town"
+            ],
+            "circle": "congregation"
+        },
+        "armed": [
+            "faith",
+            "secrets",
+            "rumors",
+            "unreliable_witnesses",
+            "slow_reveal"
+        ],
+        "disarmed": [],
+        "systems_source": "model",
+        "systems_why": "These systems create the social structure, the hidden motives, and the distorted information necessary for a mystery centered on theft and community trust."
+    },
+    "knowledge_walls": [
+        {
+            "key": "privacy_millers_grain_grit",
+            "audience": {
+                "orbit": "millers_grain_grit"
+            },
+            "hidden": [
+                "cast_dossiers",
+                "drives",
+                "secrets"
+            ],
+            "shown_as": "You know these people the way anyone knows the people around them: what they do, how they seem, what they choose to show you. What is underneath is theirs, and you can only guess at it.",
+            "explain": "Nobody in the people at Miller's Grain & Grit can read anyone else's private interior.",
+            "source": "baseline"
+        },
+        {
+            "key": "privacy_outside",
+            "audience": {
+                "orbit": "outside"
+            },
+            "hidden": [
+                "cast_dossiers",
+                "drives",
+                "secrets"
+            ],
+            "shown_as": "You know these people the way anyone knows the people around them: what they do, how they seem, what they choose to show you. What is underneath is theirs, and you can only guess at it.",
+            "explain": "Nobody in the rest of Oakhaven Hollow can read anyone else's private interior.",
+            "source": "baseline"
+        },
+        {
+            "key": "privacy_extras",
+            "audience": {
+                "orbit": "extras"
+            },
+            "hidden": [
+                "cast_dossiers",
+                "drives",
+                "secrets"
+            ],
+            "shown_as": "You know these people the way anyone knows the people around them: what they do, how they seem, what they choose to show you. What is underneath is theirs, and you can only guess at it.",
+            "explain": "Nobody in fixtures can read anyone else's private interior.",
+            "source": "baseline"
+        },
+        {
+            "key": "protects_silas_vane",
+            "audience": {
+                "role": "friend"
+            },
+            "hidden": [
+                "cast_dossiers",
+                "drives",
+                "secrets",
+                "economies",
+                "mystery"
+            ],
+            "shown_as": "These are ordinary people to you, doing ordinary things. As far as you know, nothing is going on that anyone would need to hide.",
+            "explain": "Silas Vane must never learn: the identity of the thief (His playful nature masks a deep guilt, and knowing the truth would shatter his standing in the community.)",
+            "source": "model"
+        }
+    ]
+}

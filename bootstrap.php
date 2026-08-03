@@ -123,7 +123,10 @@ $out = [
     'XERIC_PORT'       => (string)$port,
     'XERIC_BIND'       => $host,
     'XERIC_DATA_DIR'   => $data,
-    'XERIC_WORLDS_DIR' => $data . '/worlds',
+    // NOT `$data . '/worlds'` SPELLED OUT AGAIN. The launcher's answer and the
+    // app's answer have to be the same answer, and when this line held its own
+    // copy of the rule the two drifted apart — see xeric_web_worlds_default().
+    'XERIC_WORLDS_DIR' => xeric_web_worlds_default($data),
     // The browser is opened on loopback whatever the bind: this machine can
     // always reach itself, and 0.0.0.0 is a bind address rather than a place.
     'XERIC_URL'        => 'http://127.0.0.1:' . $port . '/play.php',

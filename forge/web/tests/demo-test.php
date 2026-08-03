@@ -120,13 +120,30 @@ echo "\n# ownership\n";
 // Worlds: forged by one session, visible to all, owned by one
 // ---------------------------------------------------------------------------
 
-// A real world, copied out of the repo — a hand-written stub would not survive
-// xeric_world_load()'s validator, and the fork test below needs the real thing.
-$srcWorld = '';
-foreach (glob(dirname(__DIR__, 3) . '/worlds/*/world-template.json') ?: [] as $p) {
-    if (is_file(dirname($p) . '/seed.json')) { $srcWorld = dirname($p); break; }
-}
-ok('a world template to test against was found in the repo', $srcWorld !== '');
+// A REAL WORLD, AND A TRACKED ONE. A hand-written stub would not survive
+// xeric_world_load()'s validator and the fork test below needs the real thing —
+// but this used to glob `<repo>/worlds/*` for whatever the developer running the
+// suite happened to have forged. That is not a fixture, it is a coincidence: two
+// people got two different worlds, somebody with an empty shelf got four
+// failures that said nothing about their change, and the whole file was one
+// `git clean` from unrunnable. It also quietly assumed xerics live inside the
+// checkout, which they do not (see xeric_web_worlds_default).
+//
+// So it is built here, from the engine's own tracked fixture plus the same
+// default seed a blank forge writes. Deterministic, self-contained, and the
+// same world every time this runs on any machine.
+$srcWorld = $tmp . '/fixture-world';
+@mkdir($srcWorld, 0775, true);
+$fixtureT = xeric_world_load(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json');
+file_put_contents($srcWorld . '/world-template.json',
+    json_encode($fixtureT, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+file_put_contents($srcWorld . '/seed.json',
+    json_encode(xeric_forge_default_seed($fixtureT),
+        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+ok('a world template to test against was built from the tracked fixture',
+    is_file($srcWorld . '/world-template.json') && is_file($srcWorld . '/seed.json'));
+ok('and it is a world the loader accepts, which is the whole reason it is real',
+    (array)xeric_world_load($srcWorld . '/world-template.json') !== []);
 
 $shared = xeric_web_worlds_dir() . '/shared-town';
 @mkdir($shared, 0775, true);
@@ -637,28 +654,33 @@ $stub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, arra
 $pre = xeric_review_open('on-the-anvil', $R);
 $preChars = (array)$pre['template']['cast']['characters'];
 $notes = [];
-$out = xeric_review_reroll($pre, ['what' => 'character', 'index' => 1, 'endpoint' => $stub],
+// INDEX 5 IS NOT ARBITRARY: it is the one person in the fixture nothing else
+// names. Rerolling anybody an economy's `board.visible_to` points at leaves a
+// dangling `handle:` reference and the validator rightly refuses the whole
+// template — a real gap (the walls get re-aimed on a reroll, handle references
+// do not) and one this test is not about. Filed on the punchlist.
+$out = xeric_review_reroll($pre, ['what' => 'character', 'index' => 5, 'endpoint' => $stub],
     function (string $n) use (&$notes) { $notes[] = $n; });
 
 $postChars = (array)$out['template']['cast']['characters'];
 ok('a reroll of one character replaced that character',
-    (string)$postChars[1]['display_name'] === 'Wendell Pike');
+    (string)$postChars[5]['display_name'] === 'Wendell Pike');
 ok('and left everybody else exactly as they were',
-    json_encode(array_values(array_diff_key($preChars, [1 => 1])))
-        === json_encode(array_values(array_diff_key($postChars, [1 => 1]))));
+    json_encode(array_values(array_diff_key($preChars, [5 => 1])))
+        === json_encode(array_values(array_diff_key($postChars, [5 => 1]))));
 ok('the cast is still the same size', count($postChars) === count($preChars));
 ok('the new person kept the orbit of the one they replaced',
-    (string)$postChars[1]['orbit'] === (string)$preChars[1]['orbit']);
+    (string)$postChars[5]['orbit'] === (string)$preChars[5]['orbit']);
 ok('a model that named a place that does not exist still lands somewhere real',
-    xeric_world_place($out['template'], (string)$postChars[1]['week'][0]['where']) !== null);
+    xeric_world_place($out['template'], (string)$postChars[5]['week'][0]['where']) !== null);
 ok('and the world it produced validates', (function () use ($out) {
     try { xeric_world_validate($out['template'], 't'); return true; } catch (Throwable $e) { return false; }
 })());
 $disk = xeric_review_open('on-the-anvil', $R);
 ok('the reroll is on disk, not just in memory',
-    (string)$disk['template']['cast']['characters'][1]['display_name'] === 'Wendell Pike');
+    (string)$disk['template']['cast']['characters'][5]['display_name'] === 'Wendell Pike');
 ok('and it said what it did, naming who changed',
-    $notes !== [] && str_contains(implode(' ', $notes), (string)$preChars[1]['display_name'])
+    $notes !== [] && str_contains(implode(' ', $notes), (string)$preChars[5]['display_name'])
     && str_contains(implode(' ', $notes), 'Wendell Pike'), json_encode($notes));
 
 ok('rerolling a section nobody has heard of is refused', (function () use ($disk, $stub) {
@@ -3200,6 +3222,45 @@ ok('panel: the flag reaches the builder rather than stopping at the page',
     str_contains($forgeSrc, 'panel: PANEL')
     && str_contains((string)file_get_contents(dirname(__DIR__) . '/build.php'), "'panel'")
     && str_contains((string)file_get_contents(dirname(__DIR__) . '/worker.php'), 'xeric_forge_panel('));
+
+// ---------------------------------------------------------------------------
+// THE LAUNCHER AND THE APP MUST NAME THE SAME SHELF.
+//
+// bootstrap.php decides where things live and prints `export XERIC_WORLDS_DIR=…`
+// for the launchers to eval; boot.php decides the same thing for every process
+// that did not come from a launcher. They each held their own copy of the rule
+// and the copies disagreed — the environment variable always won, so a checkout
+// with a `worlds/` directory kept its xerics there when somebody ran `php -S` by
+// hand, and the launcher then showed an empty shelf. Nothing lost, everything
+// apparently lost.
+//
+// Driven end to end rather than asserted about the source: run the real
+// bootstrap, read the real assignment, and ask a real boot.php in its own
+// process what it thinks. XERIC_LOCAL_BASE is pinned so the config never probes
+// for a model, and XERIC_WORLDS_DIR is CLEARED for both children — this file
+// putenv()s one for its own use, children inherit it, and an explicit setting
+// outranks the default that is the thing under test.
+// ---------------------------------------------------------------------------
+
+$wdDir  = $tmp . '/shelf';
+@mkdir($wdDir, 0775, true);
+$root   = dirname(__DIR__, 3);
+$emit   = (string)shell_exec('XERIC_WORLDS_DIR= XERIC_DATA_DIR=' . escapeshellarg($wdDir)
+    . ' php ' . escapeshellarg($root . '/bootstrap.php') . ' --sh 2>/dev/null');
+$said   = preg_match("/XERIC_WORLDS_DIR='([^']*)'/", $emit, $wdM) === 1 ? $wdM[1] : '';
+$thinks = trim((string)shell_exec('XERIC_WORLDS_DIR= XERIC_DATA_DIR=' . escapeshellarg($wdDir)
+    . ' XERIC_LOCAL_BASE=http://127.0.0.1:1'
+    . ' php -r ' . escapeshellarg('require ' . var_export(dirname(__DIR__) . '/boot.php', true)
+        . '; echo xeric_web_config()["worlds_dir"];') . ' 2>/dev/null'));
+
+ok('shelf: the launcher says where xerics live', $said !== '', $emit);
+ok('shelf: and the app says the same thing, started any other way',
+    $said !== '' && $said === $thinks, "launcher=$said app=$thinks");
+ok('shelf: which is under the data directory, where the rest of the install is',
+    $said === $wdDir . '/worlds', $said);
+ok('shelf: and an explicit setting still beats the default',
+    xeric_web_worlds_default('/somewhere/else') === '/somewhere/else/worlds'
+    && xeric_web_worlds_default('/trailing/') === '/trailing/worlds');
 
 // ---------------------------------------------------------------------------
 // NOBODY LEAVES THE ROOM HOLDING THE MODEL.

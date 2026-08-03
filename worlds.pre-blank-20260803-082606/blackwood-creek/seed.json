@@ -1,0 +1,103 @@
+{
+    "events": [
+        {
+            "title": "A broken radiator at dawn",
+            "days_ago": 34,
+            "place": "diesel_depot",
+            "participants": [
+                "maren_vance"
+            ],
+            "prose": "Maren spent four hours under the hood of a rusted truck, cursing the grease under her fingernails. She left a heavy wrench on the workbench, waiting for a customer who never showed."
+        },
+        {
+            "title": "The heavy silence at dinner",
+            "days_ago": 22,
+            "place": "rivers_edge_diner",
+            "participants": [
+                "caleb_miller",
+                "elias_thorne"
+            ],
+            "prose": "Caleb stared into a cup of black coffee while Elias poured a whiskey he didn't ask for. Neither man spoke of the foreclosure notice sitting on Caleb's kitchen table."
+        },
+        {
+            "title": "An apology left unsaid",
+            "days_ago": 15,
+            "place": "cedar_creek_park",
+            "participants": [
+                "silas_vane"
+            ],
+            "prose": "Silas knelt by the trampled flowerbeds, his hands trembling as he cleared the debris. He opened his mouth to call out to Ada, but the words died in his throat before he could speak."
+        },
+        {
+            "title": "A debt at the counter",
+            "days_ago": 6,
+            "place": "blackwood_general_store",
+            "participants": [
+                "elias_thorne"
+            ],
+            "prose": "Elias settled the monthly tab with a stack of crumpled bills. He left a single, unlit cigar on the counter for Ada, a gesture that remained strangely out of place."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "elias_thorne",
+            "text": "He poured a glass of amber liquid for Ada before she even reached the bar.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He kept the exact change for her tab tucked inside a worn leather ledger.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He watched the way the light caught the dust motes in the window and felt the weight of every secret shared in his bar.",
+            "days_ago": 21
+        },
+        {
+            "handle": "maren_vance",
+            "text": "Maren wiped the grease from her knuckles after she watched Ada walk past the Diesel Depot without looking up.",
+            "days_ago": 3
+        },
+        {
+            "handle": "maren_vance",
+            "text": "She kept the heavy wrench on her workbench as a silent reminder of the morning's wasted labor.",
+            "days_ago": 12
+        },
+        {
+            "handle": "maren_vance",
+            "text": "Maren owed Ada a debt for the three months she spent repairing the old man's tractor for free.",
+            "days_ago": 21
+        },
+        {
+            "handle": "caleb_miller",
+            "text": "Caleb watched Ada walk past the empty cornfields without once turning her head toward his porch.",
+            "days_ago": 3
+        },
+        {
+            "handle": "caleb_miller",
+            "text": "He felt the rough texture of the foreclosure notice every time he reached for his keys.",
+            "days_ago": 12
+        },
+        {
+            "handle": "caleb_miller",
+            "text": "He spent the entire afternoon mending a fence line that no longer held anything of value.",
+            "days_ago": 21
+        },
+        {
+            "handle": "silas_vane",
+            "text": "Silas watched Ada walk toward the general store and felt the weight of the apology he never gave her.",
+            "days_ago": 3
+        },
+        {
+            "handle": "silas_vane",
+            "text": "He knelt in the dirt and apologized to the crushed marigolds before he moved them to the compost pile.",
+            "days_ago": 12
+        },
+        {
+            "handle": "silas_vane",
+            "text": "He owed the town a debt of silence for the way he looked away when the bank notices arrived.",
+            "days_ago": 21
+        }
+    ]
+}

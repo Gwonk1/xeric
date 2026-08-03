@@ -1,0 +1,94 @@
+{
+    "events": [
+        {
+            "title": "A spilled glass of gin",
+            "days_ago": 40,
+            "place": "mariner_hotel_bar",
+            "participants": [],
+            "prose": "Julian spilled his drink when Maren laughed too loudly at the corner table. He wiped the wet mahogany with a trembling hand, but never met her eyes again."
+        },
+        {
+            "title": "The engine part arrived late",
+            "days_ago": 28,
+            "place": "pier_9_station",
+            "participants": [],
+            "prose": "Caleb waited by the docks for a crate that never came. He sat on the edge of the pier, staring at the oily tide and wondering if the rust had finally won."
+        },
+        {
+            "title": "An unspoken debt at breakfast",
+            "days_ago": 15,
+            "place": "salt_crust_diner",
+            "participants": [],
+            "prose": "Elias sat in the booth across from Ada, staring at a cold cup of coffee. He opened his mouth to say something about the previous night, but the words died in his throat."
+        },
+        {
+            "title": "Missing ledger at the store",
+            "days_ago": 4,
+            "place": "blackwood_general_store",
+            "participants": [],
+            "prose": "Ada found the ledger drawer pulled slightly ajar during her morning inventory. Someone had been looking for something specific, leaving only the scent of salt and old paper behind."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "elias_thorne",
+            "text": "He sat in the diner booth and watched the steam vanish from his coffee while Ada looked away.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He kept the small, rusted key hidden in the lining of his coat.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He owed Julian Vane three months of back rent for the room above the harbor.",
+            "days_ago": 21
+        },
+        {
+            "handle": "julian_vane",
+            "text": "Julian hid the rusted key beneath the loose floorboard of his office.",
+            "days_ago": 3
+        },
+        {
+            "handle": "julian_vane",
+            "text": "He watched Ada walk toward the pier through the fogged window of the Mariner Hotel Bar.",
+            "days_ago": 12
+        },
+        {
+            "handle": "julian_vane",
+            "text": "He owed Maren Voss three months of silence regarding the shipment from Pier 9.",
+            "days_ago": 21
+        },
+        {
+            "handle": "maren_voss",
+            "text": "Maren watched Ada slip a heavy envelope into her coat pocket behind the Blackwood General Store.",
+            "days_ago": 3
+        },
+        {
+            "handle": "maren_voss",
+            "text": "She left a chipped ceramic bird on Ada's windowsill as a silent apology for the shouting match at the Rusty Anchor.",
+            "days_ago": 12
+        },
+        {
+            "handle": "maren_voss",
+            "text": "Maren practiced her loud, jarring laugh in the mirror until it sounded like genuine joy.",
+            "days_ago": 21
+        },
+        {
+            "handle": "caleb_vance",
+            "text": "Caleb spent the morning scrubbing grease from his knuckles after a long night at the docks.",
+            "days_ago": 3
+        },
+        {
+            "handle": "caleb_vance",
+            "text": "He watched Ada walk past the workshop window with a shadow in her eyes that he couldn't repair.",
+            "days_ago": 12
+        },
+        {
+            "handle": "caleb_vance",
+            "text": "He owed Julian Vane three months of back rent on the small shed behind the harbor.",
+            "days_ago": 21
+        }
+    ]
+}

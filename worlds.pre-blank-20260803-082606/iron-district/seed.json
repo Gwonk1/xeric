@@ -1,0 +1,101 @@
+{
+    "events": [
+        {
+            "title": "The dented brass bell",
+            "days_ago": 40,
+            "place": "st_judes_boxing_gym",
+            "participants": [
+                "silas_vane"
+            ],
+            "prose": "Silas caught Tobin staring at the cracked ceiling tiles during the afternoon sparring session. He didn't say anything, but he stopped correcting Tobin's footwork for the rest of the week."
+        },
+        {
+            "title": "Unpaid tab at the diner",
+            "days_ago": 28,
+            "place": "neon_spoon_diner",
+            "participants": [
+                "elias_thorne"
+            ],
+            "prose": "Elias scribbled a new total on the grease-stained ledger after Tobin left without paying for the coffee. There was a heavy silence when their eyes met over the counter."
+        },
+        {
+            "title": "A spilled drink incident",
+            "days_ago": 15,
+            "place": "rusty_anchor",
+            "participants": [
+                "lenora_vance",
+                "mickie_vane"
+            ],
+            "prose": "Lenora threw a glass of cheap gin toward the floor after Mickie made a joke about her latest performance. The glass shattered, but Mickie just laughed and offered to help clean it up."
+        },
+        {
+            "title": "The missing shipment notice",
+            "days_ago": 5,
+            "place": "saltbox_market",
+            "participants": [],
+            "prose": "Tobin found a crumpled note tucked into the crate of bruised apples. He kept the paper in his pocket, waiting for a moment that never seemed to arrive."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "mickie_vane",
+            "text": "Mickie laughed when a heavy hook caught him square in the jaw during a sparring session.",
+            "days_ago": 3
+        },
+        {
+            "handle": "mickie_vane",
+            "text": "He offered to sweep up the gin shards after Lenora shattered her glass.",
+            "days_ago": 12
+        },
+        {
+            "handle": "mickie_vane",
+            "text": "He watched Tobin stare blankly at the cracked ceiling tiles in the gym.",
+            "days_ago": 21
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "Elias watched Tobin walk away from the counter without paying for his coffee.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He scribbled the new debt into the grease-stained ledger.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He felt a heavy silence settle between him and Tobin after their eyes met.",
+            "days_ago": 21
+        },
+        {
+            "handle": "silas_vane",
+            "text": "Silas watched Tobin's gaze linger on the cracked ceiling tiles during the afternoon sparring session.",
+            "days_ago": 3
+        },
+        {
+            "handle": "silas_vane",
+            "text": "Silas stopped correcting Tobin's footwork for the remainder of that week.",
+            "days_ago": 12
+        },
+        {
+            "handle": "silas_vane",
+            "text": "Silas kept his mouth shut when he saw the hollow look in Tobin's eyes.",
+            "days_ago": 21
+        },
+        {
+            "handle": "lenora_vance",
+            "text": "Lenora wore her brightest sequins to the Rusty Anchor and demanded the attention of every patron in the room.",
+            "days_ago": 3
+        },
+        {
+            "handle": "lenora_vance",
+            "text": "She threw a glass of cheap gin at the floor after Mickie made a joke at her expense.",
+            "days_ago": 12
+        },
+        {
+            "handle": "lenora_vance",
+            "text": "She watched Tobin linger near the ring long after the sparring session ended.",
+            "days_ago": 21
+        }
+    ]
+}

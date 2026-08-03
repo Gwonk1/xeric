@@ -1,0 +1,102 @@
+{
+    "events": [
+        {
+            "title": "A silver spoon went missing",
+            "days_ago": 4,
+            "place": "iron_griddle",
+            "participants": [
+                "maren_vance"
+            ],
+            "prose": "Maren noticed a heavy silver spoon vanish from the table during the breakfast rush. She watched the patron's trembling hands, but she didn't say a word to the cook."
+        },
+        {
+            "title": "The soot-stained debt",
+            "days_ago": 18,
+            "place": "low_crossing_market",
+            "participants": [
+                "pipkin_pip_thorne"
+            ],
+            "prose": "Pipkin accidentally knocked over a crate of dried spices while weaving through the crowd. He left before the merchant could demand payment, leaving a trail of yellow dust behind him."
+        },
+        {
+            "title": "A heavy secret shared",
+            "days_ago": 30,
+            "place": "rusty_spoke_inn",
+            "participants": [
+                "kaelen_voss"
+            ],
+            "prose": "Kaelen poured three fingers of dark ale for a man who looked like he'd seen a ghost. He listened to the confession in silence, nodding slowly as the lantern light flickered."
+        },
+        {
+            "title": "The quick hand's mistake",
+            "days_ago": 42,
+            "place": "north_gate_station",
+            "participants": [
+                "elias_thorne"
+            ],
+            "prose": "Elias attempted a light-fingered lift near the boarding gates. He secured the coin purse, but the weight of it felt wrong, and he hasn't quite decided if he should return it."
+        }
+    ],
+    "memories": [
+        {
+            "handle": "elias_thorne",
+            "text": "Elias lifted a heavy coin purse from a sleeping merchant's belt near the North Gate Station.",
+            "days_ago": 3
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He owed Barliman three silver marks for a tab left open at the Rusty Spoke Inn.",
+            "days_ago": 12
+        },
+        {
+            "handle": "elias_thorne",
+            "text": "He swiped a brass key from the counter while Barliman turned to serve a fresh round of ales.",
+            "days_ago": 21
+        },
+        {
+            "handle": "maren_vance",
+            "text": "Maren watched Barliman scrub the grease from the counters while the morning fog rolled in.",
+            "days_ago": 3
+        },
+        {
+            "handle": "maren_vance",
+            "text": "She saw a man's grip tighten on his spoon when he lied about the silver piece.",
+            "days_ago": 12
+        },
+        {
+            "handle": "maren_vance",
+            "text": "Maren kept the secret of the missing utensil tucked behind her eyes like a hidden coin.",
+            "days_ago": 21
+        },
+        {
+            "handle": "kaelen_voss",
+            "text": "Kaelen watched Barliman scrub the heavy oak counter with a weary, rhythmic motion.",
+            "days_ago": 3
+        },
+        {
+            "handle": "kaelen_voss",
+            "text": "He polished the brass tap until his own tired eyes reflected back at him.",
+            "days_ago": 12
+        },
+        {
+            "handle": "kaelen_voss",
+            "text": "He kept the coin Barliman gave him for settling the tab of the man who never returned.",
+            "days_ago": 21
+        },
+        {
+            "handle": "pipkin_pip_thorne",
+            "text": "Pipkin left a trail of yellow spice dust behind him after he collided with a merchant's crate.",
+            "days_ago": 3
+        },
+        {
+            "handle": "pipkin_pip_thorne",
+            "text": "Pipkin swiped a bruised apple from Barliman's counter when the man turned to face a customer.",
+            "days_ago": 12
+        },
+        {
+            "handle": "pipkin_pip_thorne",
+            "text": "Pipkin owed three copper bits to Elias Thorne for a pair of thin-soled boots.",
+            "days_ago": 21
+        }
+    ]
+}
