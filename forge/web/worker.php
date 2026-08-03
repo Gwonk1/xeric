@@ -128,6 +128,27 @@ try {
             . '. Your answers are still here, press build again in a few minutes.');
     };
 
+    // EXPERIMENTAL DISCUSSION MODE. A different builder and the same everything
+    // else: the world it returns is an ordinary xeric, so the write, the claim,
+    // the review door and the play screen below are untouched. That is the whole
+    // architectural bet — a panel is a room with people in it, and this engine
+    // already knows how to run one of those.
+    if (!empty($payload['panel'])) {
+        require_once XERIC_WEB_LIB . '/forge/panel-forge.php';
+        $problem = trim((string)($answers['premise'] ?? ''));
+        if ($problem === '') {
+            xeric_web_job_append($job, ['k' => 'error',
+                'message' => 'there is no problem written down to put in the room']);
+            exit(0);
+        }
+        $onNote('casting a room that will not agree with itself');
+        $template = xeric_forge_panel($problem, $endpoint,
+            ['timeout' => XERIC_WEB_BUILD_CALL_TIMEOUT], $onNote);
+        $out = ['template' => $template, 'seed' => [], 'notes' => [
+            'EXPERIMENTAL: this is a discussion room, not a place to live in. '
+            . 'What it produces is characters arguing, never advice.',
+        ]];
+    } else {
     $out = xeric_forge_build($answers, $endpoint, [
         'interview' => $interview,
         'places' => (int)($cfg['places'] ?? 6),
@@ -140,6 +161,7 @@ try {
         'timeout' => XERIC_WEB_BUILD_CALL_TIMEOUT,
         'guard'   => $stop,
     ], $onNote);
+    }
 
     $template = $out['template'];
     $seed = $out['seed'];

@@ -3020,6 +3020,25 @@ ok('spans: sleep lands where skip to morning would have',
 ok('spans: and the ordinary offers survive it',
     isset($spNight['hour'], $spNight['evening']));
 
+// ---------------------------------------------------------------------------
+// THE EXPERIMENTAL DISCUSSION TAB. Asserted against the source rather than a
+// rendered page on purpose: forge.php redirects to model.php when no machine is
+// connected, which every headless harness is, so a DOM check there would be
+// testing the machines screen and reporting on the forge.
+// ---------------------------------------------------------------------------
+
+echo "\n# the discussion door\n";
+
+$forgeSrc = (string)file_get_contents(dirname(__DIR__) . '/forge.php');
+ok('panel: the forge offers a problem as well as a place',
+    str_contains($forgeSrc, 'data-mode="panel"'));
+ok('panel: and the tab says experimental where somebody will read it',
+    str_contains($forgeSrc, 'EXPERIMENTAL. Describe a problem'));
+ok('panel: the flag reaches the builder rather than stopping at the page',
+    str_contains($forgeSrc, 'panel: PANEL')
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/build.php'), "'panel'")
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/worker.php'), 'xeric_forge_panel('));
+
 rmtree($tmp);
 
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";

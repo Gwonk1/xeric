@@ -678,11 +678,19 @@ xeric_web_head('Xeric: the forge');
               title="Write it in your own words, as much or as little as you like">type it</button>
       <button type="button" class="w3" role="tab" aria-selected="false" data-mode="pdf"
               title="Hand over a PDF and the forge reads the text out of it">a PDF</button>
+      <!-- DISCUSSION MODE (owner, 2026-08-03). EXPERIMENTAL, and labelled so on
+           the tab itself rather than only in a note underneath: this builds a
+           different kind of xeric — not a place you live in, a room you put a
+           question into and watch three to five people fail to settle it. The
+           engine underneath is the ordinary one, which is why it is a tab here
+           and not a second product. -->
+      <button type="button" class="w3" role="tab" aria-selected="false" data-mode="panel"
+              title="EXPERIMENTAL. Describe a problem instead of a place, and the forge casts a room of people who will not agree about it">a problem 🧪</button>
     </div>
 
     <p class="sub">A paragraph is plenty. Where you are, when it is, who is around, what the place
       is like. Anything you leave out gets invented to fit what you wrote.</p>
-    <textarea class="val" data-key="premise" rows="9" placeholder="A river town of nine hundred in southern Ohio, November 1973. The mill has been closing for two years and everybody knows it. My uncle runs the hardware store on Front Street and hears everything first…"></textarea>
+    <textarea class="val" data-key="premise" rows="9" data-ph="A river town of nine hundred in southern Ohio, November 1973. The mill has been closing for two years and everybody knows it. My uncle runs the hardware store on Front Street and hears everything first…" placeholder="A river town of nine hundred in southern Ohio, November 1973. The mill has been closing for two years and everybody knows it. My uncle runs the hardware store on Front Street and hears everything first…"></textarea>
     <p class="hintline">Names, dates and facts you put here are kept. The forge does not overrule them.</p>
     <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, 'premise', 'And keep it', $ratingAffirm) ?>
 
@@ -828,6 +836,7 @@ xeric_web_head('Xeric: the forge');
 (function () {
   'use strict';
   var LOCAL_UP = <?= $localUp ? 'true' : 'false' ?>;
+  var PANEL = false;   // EXPERIMENTAL discussion mode: a problem, not a place
   var PASSES = [
     ['prep',     'getting your answers straight'],
     ['concept',  'the premise: what this place is'],
@@ -1225,7 +1234,34 @@ xeric_web_head('Xeric: the forge');
       // status, and pressing it again simply asks again.
       if (mode === 'pdf' && file) file.click();
       var box = $('.screen[data-screen=premise] .val');
-      if (mode === 'type' && box) box.focus();
+      // Discussion mode is the same box holding a different kind of writing, so
+      // the copy around it changes and the box does not. What you type here is
+      // a PROBLEM, and saying so in the placeholder is worth more than any
+      // amount of explanation underneath it.
+      var head = $('.screen[data-screen=premise] h1');
+      var sub  = $('.screen[data-screen=premise] .sub');
+      var hint = $('.screen[data-screen=premise] .hintline');
+      PANEL = (mode === 'panel');
+      if (head) head.textContent = PANEL
+        ? 'What is the problem?'
+        : 'Tell it what you have in mind.';
+      if (sub) sub.textContent = PANEL
+        ? 'The forge builds a room to hold it and three to five people who will not agree about it. '
+          + 'You can watch, or walk in and say something. Consensus is not the goal — if the room '
+          + 'cannot get there, it tells you which two positions could never both be satisfied, and '
+          + 'that is usually the more useful answer.'
+        : 'A paragraph is plenty. Where you are, when it is, who is around, what the place is like. '
+          + 'Anything you leave out gets invented to fit what you wrote.';
+      if (hint) hint.textContent = PANEL
+        ? 'EXPERIMENTAL. These are characters arguing, not experts consulting — treat what comes out '
+          + 'as a way of seeing the disagreement, never as advice.'
+        : 'Names, dates and facts you put here are kept. The forge does not overrule them.';
+      if (box) {
+        box.placeholder = PANEL
+          ? 'We have to cut twenty percent of the budget and every department says theirs is the one that cannot take it…'
+          : box.dataset.ph || box.placeholder;
+        if (mode === 'type' || PANEL) box.focus();
+      }
     });
   });
 
@@ -1491,7 +1527,7 @@ xeric_web_head('Xeric: the forge');
     openBuildScreen();
     next.disabled = true;
     fetch('build.php', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers: collect(), model: modelChoice(), fill: fill }) })
+      body: JSON.stringify({ answers: collect(), model: modelChoice(), fill: fill, panel: PANEL }) })
       .then(function (res) {
         return res.json().then(function (d) {
           next.disabled = false;

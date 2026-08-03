@@ -140,6 +140,11 @@ try {
     xeric_web_spawn($job, [
         'answers' => $answers,
         'fill'    => $fill,
+        // EXPERIMENTAL discussion mode. Carried as a flag rather than a second
+        // endpoint, because everything downstream of the build — the queue, the
+        // meter, the job feed, the world that lands on disk — is identical. What
+        // changes is which builder the worker calls.
+        'panel'   => !empty($in['panel']),
         'model'   => $endpoint,          // includes the key — pipe only, never disk
         'sid'     => $sid,
         'ticket'  => $ticket,
