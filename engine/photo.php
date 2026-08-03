@@ -57,10 +57,65 @@ function xeric_image_endpoint(): ?array
     return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: '')];
 }
 
+/**
+ * IS the machine actually answering? Detection, not configuration: the app
+ * decides photo-versus-caption by asking, the way xeric_llm_up() asks, so an
+ * endpoint that is configured but down degrades to captions instead of to
+ * broken image bubbles. A stub is always up (the tests' seam); a closed port
+ * and a 404 are both "no imaging here", and no caller needs to tell them
+ * apart. Short timeout, never a thrown error — absence is a mode, not a fault.
+ */
+function xeric_image_up(?array $endpoint = null, int $timeout = 3): bool
+{
+    $endpoint ??= xeric_image_endpoint();
+    if ($endpoint === null) return false;
+    if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) return true;
+
+    $base = rtrim((string)($endpoint['base'] ?? ''), '/');
+    if ($base === '') return false;
+    $headers = ['Accept: application/json'];
+    if ((string)($endpoint['key'] ?? '') !== '') {
+        $headers[] = 'Authorization: Bearer ' . (string)$endpoint['key'];
+    }
+    $ctx = stream_context_create(['http' => [
+        'method' => 'GET', 'header' => implode("\r\n", $headers),
+        'timeout' => $timeout, 'ignore_errors' => true, 'follow_location' => 0,
+    ]]);
+    return @file_get_contents($base, false, $ctx) !== false;
+}
+
 /** A stable seed for one named thing in one world. Derived, never stored. */
 function xeric_photo_seed(array $t, string $scope, string $thing): int
 {
     return crc32((string)($t['meta']['name'] ?? 'xeric') . '|' . $scope . '|' . mb_strtolower(trim($thing)));
+}
+
+/**
+ * A place's own seeds: the outside, the inside, and every named thing in it.
+ *
+ * Two shells and their contents, seeded apart on purpose: the Bluebird's
+ * street face in June is its street face in March, the room behind the door
+ * is consistently THAT room, and the pie case is the same pie case in every
+ * frame it appears in — the same discipline the wears/carries seeds keep for
+ * people, applied to rooms. Derived, never stored, like everything here.
+ *
+ * @return ?array{exterior:int,interior:int,items:array<int,array{text:string,seed:int}>}
+ */
+function xeric_photo_place_seeds(array $t, string $key): ?array
+{
+    $p = xeric_world_place($t, $key);
+    if ($p === null) return null;
+
+    $items = [];
+    foreach ((array)($p['interior'] ?? []) as $item) {
+        $s = trim(xeric_text($item));
+        if ($s !== '') $items[] = ['text' => $s, 'seed' => xeric_photo_seed($t, $key . '.item', $s)];
+    }
+    return [
+        'exterior' => xeric_photo_seed($t, 'place.exterior', $key),
+        'interior' => xeric_photo_seed($t, 'place.interior', $key),
+        'items'    => $items,
+    ];
 }
 
 /**
@@ -159,16 +214,20 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
     // The background: the room and the day, the same data every other surface
     // reads, so the photo agrees with the arrival beat and the sweep about
     // which chairs exist and what the sky is doing.
+    $placeName = '';
     if (($opts['place'] ?? '') !== '') {
         $p = xeric_world_place($t, (string)$opts['place']);
         if ($p !== null) {
-            $bg = 'at ' . (string)($p['name'] ?? $opts['place']);
+            $placeName = (string)($p['name'] ?? $opts['place']);
+            $bg = 'at ' . $placeName;
             $desc = trim(xeric_text($p['description'] ?? ''));
             if ($desc !== '') $bg .= ', ' . rtrim($desc, '.');
             $furn = array_filter(array_map(fn($i) => trim(xeric_text($i)), (array)($p['interior'] ?? [])));
             if ($furn !== []) $bg .= '; in the room: ' . implode(', ', $furn);
             $bits[] = $bg;
-            $seeds['place'] = xeric_photo_seed($t, 'place', (string)$opts['place']);
+            // The full block — shell, room, and every named thing in it — so a
+            // provider that honors regional seeds keeps the pie case the pie case.
+            $seeds['place'] = xeric_photo_place_seeds($t, (string)$opts['place']);
         }
     }
     if (!empty($opts['now']) && is_array($opts['now'])) {
@@ -198,5 +257,50 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
         };
     }
 
-    return ['prompt' => implode('. ', $bits) . '.', 'seeds' => $seeds, 'kind' => $kind, 'rating' => $eff];
+    return ['prompt' => implode('. ', $bits) . '.', 'seeds' => $seeds, 'kind' => $kind, 'rating' => $eff,
+            // The structured parts ride along for the caption: deriving six
+            // words from prose would mean parsing our own sentence back.
+            'parts' => ['who' => $who !== null ? $who['name'] : '', 'ask' => $ask, 'place' => $placeName]];
+}
+
+/**
+ * The photo when there is no photo: six-to-eight words derived from the
+ * prompt, standing where the image would.
+ *
+ * A world without an image machine still SENDS photos — a character reaches
+ * for their camera whether or not this install can develop the film — and the
+ * thread renders the moment as a short line instead of a bubble of nothing:
+ * "photo: Ruth by the urn, mid-laugh". Derived from the composed parts, in
+ * code, deterministically: same prompt, same caption, byte for byte, which
+ * matters because the caption is stored in the thread and re-rendered
+ * forever. When imaging arrives (xeric_image_up), the same composed prompt
+ * renders for real and this line becomes the alt text it always secretly was.
+ *
+ * Word budget is a hard eight: the name and the ask's first clause carry the
+ * moment, the place tops it up when the ask ran short, and whatever is left
+ * is cut at the count rather than summarised — a trimmed clause reads as a
+ * caption, a summary reads as a review.
+ */
+function xeric_photo_caption(array $composed): string
+{
+    $parts = (array)($composed['parts'] ?? []);
+    $who   = trim((string)($parts['who'] ?? ''));
+    $ask   = trim((string)($parts['ask'] ?? ''));
+    $place = trim((string)($parts['place'] ?? ''));
+
+    // The ask's FIRST clause: the moment, not the art direction.
+    $clause = trim((string)preg_split('/[,;.]/u', $ask)[0]);
+
+    $words = [];
+    if ($who !== '') $words[] = $who;
+    foreach (preg_split('/\s+/u', $clause) ?: [] as $w) {
+        if ($w !== '') $words[] = $w;
+    }
+    // Short of six? The place tops it up — "at the Bluebird" earns its words.
+    if (count($words) < 6 && $place !== '') {
+        foreach (explode(' ', 'at ' . $place) as $w) $words[] = $w;
+    }
+    if ($words === []) $words = ['a', 'photograph'];
+
+    return implode(' ', array_slice($words, 0, 8));
 }

@@ -2128,6 +2128,44 @@ ok('photo: a place shot has a room and a sky and no face seed',
     str_contains($phPlace['prompt'], 'Bluebird') && !isset($phPlace['seeds']['face'])
     && isset($phPlace['seeds']['place']));
 
+// Places are seeded like people: the outside, the inside, and every named
+// thing in the room, all apart, all derived, all stable.
+$phFurnT = $phT;
+foreach ($phFurnT['places'] as $i => $p) {
+    if (($p['key'] ?? '') === 'bluebird') $phFurnT['places'][$i]['interior'] = ['the pie case', 'the corner booth'];
+}
+$phPS = xeric_photo_place_seeds($phFurnT, 'bluebird');
+ok('photo: a place carries exterior and interior seeds, and they differ',
+    $phPS !== null && $phPS['exterior'] > 0 && $phPS['interior'] > 0
+    && $phPS['exterior'] !== $phPS['interior']);
+ok('photo: every named thing in the room has its own seed — the pie case is the pie case',
+    count($phPS['items']) === 2 && $phPS['items'][0]['seed'] !== $phPS['items'][1]['seed']
+    && $phPS == xeric_photo_place_seeds($phFurnT, 'bluebird'));
+ok('photo: a place nobody declared has no seeds', xeric_photo_place_seeds($phT, 'nowhere') === null);
+
+// Detection is asking, not configuring: a stub answers, nothing answers not.
+ok('photo: detection — no endpoint is down, a stub endpoint is up, a dead base is down',
+    !xeric_image_up(null) && xeric_image_up(['stub' => fn() => true])
+    && !xeric_image_up(['base' => 'http://127.0.0.1:1/nothing'], 1));
+
+// THE CAPTION — the photo when there is no photo. Six-to-eight words derived
+// from the composed parts, deterministic because the thread stores it forever,
+// and destined to become the alt text the day imaging arrives.
+$phCap = xeric_photo_caption($phP);
+ok('photo: the caption is derived from the prompt — the name and the moment',
+    str_contains($phCap, 'Ruth') && str_contains($phCap, 'selfie'), $phCap);
+ok('photo: and holds the word budget — never more than eight',
+    count(preg_split('/\s+/u', $phCap)) <= 8, $phCap);
+ok('photo: the same prompt captions identically, byte for byte',
+    $phCap === xeric_photo_caption($phP));
+$phShort = xeric_photo_prompt($phT, 'message',
+    ['handle' => 'ruth', 'place' => 'bluebird', 'ask' => 'a quick wave']);
+ok('photo: a short ask is topped up with the place, not padded with air',
+    str_contains(xeric_photo_caption($phShort), 'at the Bluebird'),
+    xeric_photo_caption($phShort));
+ok('photo: even an empty composition captions as something',
+    xeric_photo_caption(['parts' => []]) === 'a photograph');
+
 // ---------------------------------------------------------------------------
 // The inventory — worn and carried, as data. Commons by rule (a bystander
 // sees both), validated like a room's interior, and rendered byte-stable in
