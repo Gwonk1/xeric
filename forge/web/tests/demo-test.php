@@ -399,6 +399,86 @@ foreach (['model', 'notify', 'join'] as $direct) {
 }
 
 // ---------------------------------------------------------------------------
+// WHAT MAY BE POSTED TO, AND WHAT MAY RIDE IN A HEADER.
+//
+// The notification URL is the one field in the app that says "POST to this
+// address on my behalf", and the only thing it ever had to pass was a shape
+// check — while xeric_web_host_open(), which exists precisely to stop the server
+// being aimed at its own back yard, was never applied to it. Any visitor could
+// point it at 127.0.0.1 or 169.254.169.254 and press `test`, and the redirect
+// answered sent=1 when something HTTP-speaking replied: a port scanner wearing
+// this host's source address.
+// ---------------------------------------------------------------------------
+
+foreach (['http://127.0.0.1:9/x' => 'this machine',
+          'http://169.254.169.254/latest/meta-data/' => 'the metadata address',
+          'http://192.168.1.5/hook' => 'a private network',
+          'http://[::1]/x' => 'loopback the other way round'] as $u => $what) {
+    ok("egress: $what is not somewhere a phone notification goes",
+        xeric_web_host_open((string)parse_url($u, PHP_URL_HOST)) === false, $u);
+}
+ok('egress: and a real notification host still is',
+    xeric_web_host_open('ntfy.sh') === true);
+$nfy = (string)file_get_contents(dirname(__DIR__) . '/notify.php');
+ok('egress: the page that SAVES it applies that fence',
+    str_contains($nfy, 'xeric_web_host_open((string)parse_url($url, PHP_URL_HOST))'));
+// And again at read time, because a name that resolved somewhere public on
+// Tuesday can resolve to loopback on Friday. That is what rebinding IS.
+ok('egress: and so does the last read before every send',
+    str_contains($bootSrc, 'if ($url !== \'\' && !xeric_web_host_open((string)parse_url($url, PHP_URL_HOST))) $url = \'\';'));
+
+// A QUEUE HOLD IS A MUTEX, NOT A QUOTA. `a=hint` and `a=suggest` reach the model
+// with no ownership check and no cookie needed, and the only thing standing in
+// front of them was a six-second queue take — which serialises callers and does
+// not bound them. Twelve calls in a loop produced twelve completions while the
+// thirty-an-hour message cap still read thirty of thirty. photo.php was worse:
+// one detached process per request, no limit at all.
+// WHAT THE ENDPOINT SAID MUST NOT COME BACK OUT. A forge note carries
+// $e->getMessage(), and for a model call that is "llm: non-JSON response:
+// <200 bytes of whatever answered>". xeric_web_job_append() rewrites those
+// shapes in text/message/notes — but $meta went on to become the done record's
+// `html` (not scrubbed) and `result.notes` in the session record (never seen at
+// all), so a visitor who pointed a build at an endpoint of their choosing read
+// back what it said, twice.
+ok('leak: a raw endpoint reply is rewritten before it can be read back',
+    xeric_web_note_safe('llm: non-JSON response: CANARY-BODY-LEAK internal-index')
+        === 'the endpoint answered with something that was not JSON');
+ok('leak: and an HTTP body with it',
+    !str_contains(xeric_web_note_safe("llm: HTTP 500, <html>SECRET-PAGE</html>"), 'SECRET-PAGE'));
+$wkSrc = (string)file_get_contents(dirname(__DIR__) . '/worker.php');
+ok('leak: the build scrubs its notes at the source, not at the job file',
+    str_contains($wkSrc, "'notes' => array_map(fn(\$n) => is_string(\$n) ? xeric_web_note_safe(\$n)"));
+ok('leak: and the rendered result passes the same door as everything else',
+    str_contains($bootSrc, "foreach (['text', 'message', 'html'] as \$k) {"));
+ok('leak: the review page no longer hands a model failure over verbatim',
+    substr_count((string)file_get_contents(dirname(__DIR__) . '/review.php'),
+        'xeric_web_note_safe($e->getMessage())') === 3);
+
+// Looking round the machine is the same permission as pointing it somewhere.
+$mdSrc = (string)file_get_contents(dirname(__DIR__) . '/model.php');
+ok('scan: the port scan is behind the same fence as storing an address',
+    preg_match("/=== 'scan'\).*?xeric_web_local_editable\(\)/s", $mdSrc) === 1);
+
+$playSrc = (string)file_get_contents(dirname(__DIR__) . '/play.php');
+$phSrc   = (string)file_get_contents(dirname(__DIR__) . '/photo.php');
+ok('meter: asking the narrator for a hint costs what a message costs',
+    substr_count($playSrc, "xeric_limit_guard(xeric_limit_check('message', ['sid' => \$sid]));") >= 2);
+ok('meter: and so does asking for a line to say',
+    preg_match("/action === 'suggest'.*?xeric_limit_check\('message'/s", $playSrc) === 1);
+ok('meter: and a render, which spawns a process, is budgeted too',
+    str_contains($phSrc, "xeric_limit_check('reroll'"));
+
+require_once dirname(__DIR__, 3) . '/engine/llm.php';
+ok('header: a key cannot carry a newline into the header block',
+    xeric_llm_header_safe("sk-legit\r\nX-Injected: yes") === 'sk-legitX-Injected: yes'
+    && !str_contains(xeric_llm_header_safe("a\r\n\r\nb"), "\r"));
+ok('header: and an ordinary key is untouched but for its whitespace',
+    xeric_llm_header_safe('  sk-normal  ') === 'sk-normal');
+$llmSrc = (string)file_get_contents(dirname(__DIR__, 3) . '/engine/llm.php');
+ok('header: both places that read a key run it through that',
+    substr_count($llmSrc, "xeric_llm_header_safe((string)(\$endpoint['key']") === 2);
+
+// ---------------------------------------------------------------------------
 // THROUGH THE DOOR IS NOT HOLDING THE KEYS.
 //
 // A guest who came in on a pairing code plays the OWNER'S database — that is the
@@ -2164,6 +2244,41 @@ ok('ceiling: and so does a redraft, which re-forges from answers off disk',
     str_contains($wireR, "'rating_ceiling' => xeric_session_ceiling()"));
 ok('ceiling: a redraft also re-runs those answers through the funnel',
     str_contains($wireR, 'xeric_web_clean_answers($answers, $interview)'));
+
+// -- and the REVIEW page is behind the same boundary as the play page --------
+//
+// xeric_play_open() pins the rating as it reads a world, and says at length why
+// that is the whole control rather than a check every consumer remembers. Its
+// sibling — the surface where a world is rewritten section by section — never
+// did it at all, so the seven per-section rerolls, the dice and addchar all
+// composed from the raw stored rating. Affirmation is also REVOCABLE while
+// ownership is not, so an owner who un-ticked the box kept full-rating rerolls
+// forever.
+$rl = (string)file_get_contents(dirname(__DIR__) . '/review-lib.php');
+ok('ceiling: opening a world to REVIEW clamps it, exactly as opening it to play does',
+    str_contains($rl, 'xeric_world_clamp_rating(xeric_world_load($path)'));
+ok('ceiling: and the answers a reroll re-forges from are pinned to THIS session',
+    str_contains($rl, "\$answers['rating'] = xeric_forge_rating(\$answers, xeric_session_ceiling());"));
+
+$openW = xeric_web_worlds_dir() . '/clamp-town';
+@mkdir($openW, 0775, true);
+$clampT = xeric_world_load($srcWorld . '/world-template.json');
+$clampT['meta']['rating'] = $TOP;
+file_put_contents($openW . '/world-template.json', json_encode($clampT));
+@copy($srcWorld . '/seed.json', $openW . '/seed.json');
+$unaff = sid();
+xeric_session_touch($unaff);
+xeric_session_use($unaff);
+ok('ceiling: an unaffirmed session opening a mature world for review gets the floor',
+    (string)xeric_review_open('clamp-town', $unaff)['template']['meta']['rating'] === $WEAK,
+    (string)xeric_review_open('clamp-town', $unaff)['template']['meta']['rating']);
+$aff = sid();
+xeric_session_touch($aff);
+xeric_session_affirm(true, $aff);
+xeric_session_use($aff);
+ok('ceiling: and an affirmed one still sees the world it forged',
+    (string)xeric_review_open('clamp-town', $aff)['template']['meta']['rating'] === $TOP);
+xeric_session_use($A);
 
 // -- the affirmation itself ---------------------------------------------------
 

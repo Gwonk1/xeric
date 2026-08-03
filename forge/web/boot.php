@@ -289,7 +289,10 @@ function xeric_web_note_safe(string $n): string
 /** Append one record. One line, one flush — this file is read while it is written. */
 function xeric_web_job_append(string $id, array $rec): void
 {
-    foreach (['text', 'message'] as $k) {
+    // `html` too: the done record's rendered result is built from notes that
+    // may carry an endpoint's raw reply, and this is the last place every
+    // record passes through before it is written where a browser can read it.
+    foreach (['text', 'message', 'html'] as $k) {
         if (isset($rec[$k]) && is_string($rec[$k])) $rec[$k] = xeric_web_note_safe($rec[$k]);
     }
     if (isset($rec['notes']) && is_array($rec['notes'])) {
@@ -1085,6 +1088,17 @@ function xeric_web_notify(?string $sid = null): array
     $s = (array)(xeric_web_session_read($sid)['notify'] ?? []);
     $url = trim((string)($s['url'] ?? ''));
     if ($url === '') $url = trim((string)(getenv('XERIC_NTFY_URL') ?: ''));
+
+    // CHECKED AGAIN HERE, not only where it was saved. A name that resolved to
+    // a public address on Tuesday can resolve to 127.0.0.1 on Friday — that is
+    // what DNS rebinding IS, and the saved-URL check alone would be a fence
+    // somebody walks around by editing a zone file. This is the last read
+    // before every send, so it is the honest place for the second look.
+    //
+    // Silently emptied rather than refused: this is called from the heartbeat
+    // and from a chat turn, and a notification that cannot be delivered must
+    // never be a reason a world stops living. The screen that SETS it says why.
+    if ($url !== '' && !xeric_web_host_open((string)parse_url($url, PHP_URL_HOST))) $url = '';
 
     return [
         'url'          => $url,

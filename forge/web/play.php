@@ -566,6 +566,14 @@ if ($action !== '') {
     // SPEND the story, which is xeric_play_hint()'s problem and is written into
     // its prompt: it points, it does not tell.
     if ($action === 'hint') {
+        // METERED LIKE A MESSAGE, because that is what it costs. The only thing
+        // standing here was a six-second queue hold, which is a MUTEX and not a
+        // quota: it serialises callers, it does not bound them. So a loop over
+        // `a=hint` — no ownership check, no cookie needed, any world on the
+        // shelf — walked straight past the demo's thirty-messages-an-hour cap
+        // and held the GPU for as long as somebody cared to keep asking.
+        xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
+
         try { $endpoint = xeric_play_endpoint($sid); }
         catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
 
@@ -601,6 +609,10 @@ if ($action !== '') {
         if (isset(xeric_deaths($w['db'])[$handle])) {
             xeric_web_json(['error' => 'they are dead'], 409);
         }
+
+        // Same meter as the hint above, and for the same reason: a model call
+        // somebody can ask for in a loop is a model call that needs a budget.
+        xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 
         try { $endpoint = xeric_play_endpoint($sid); }
         catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }

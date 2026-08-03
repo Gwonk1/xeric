@@ -197,7 +197,18 @@ try {
     $meta = [
         'slug' => $slug,
         'seconds' => microtime(true) - $t0,
-        'notes' => (array)$out['notes'],
+        // SCRUBBED AT THE SOURCE, not at the job file. xeric_web_job_append()
+        // rewrites the `llm:` shapes in `text`, `message` and `notes` — but
+        // $meta goes on to become the `html` field of the done record (which it
+        // does not scrub) and `result.notes` in the session record (which it
+        // never sees at all). A forge note carries $e->getMessage(), and for a
+        // model call that is "llm: non-JSON response: <200 bytes of whatever
+        // answered>". So a visitor who pointed the build at an endpoint of
+        // their choosing could read back what it said — through the progress
+        // stream, and again the next day at forge.php?w=<slug>. On a shared
+        // host, out of the one session file everybody was sharing.
+        'notes' => array_map(fn($n) => is_string($n) ? xeric_web_note_safe($n) : $n,
+                             (array)$out['notes']),
         'endpoint' => xeric_web_endpoint_label($endpoint),
         'json_url' => 'world.php?w=' . rawurlencode($slug),
         'review'   => !xeric_review_launched($template),

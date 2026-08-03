@@ -104,7 +104,22 @@ if ((string)($_GET['a'] ?? '') === 'iprobe') {
 // ASKED BY THE BROWSER, AFTER THE PAGE IS UP, for the same reason the lamps are:
 // a dozen ports checked before the first byte is sent is a screen that appears
 // to hang on the one visit where nothing is working.
+// BEHIND THE SAME BOUNDARY AS STORING ONE. This needed no session at all and
+// returned, to whoever asked, which of ten loopback ports were open and what
+// each one called itself — an Ollama version, a llama.cpp `model_path`, an LM
+// Studio checkpoint id. On a public host that is a free inventory of the box's
+// private services and the exact model names on the owner's workstation.
+//
+// xeric_web_local_editable() is already the fence on the half that STORES an
+// address, for the same reason and with the same argument written out in
+// deploy.sh. Looking and storing are the same permission; only one of them was
+// asking. A visitor who may not point this install at an address has no
+// business being told which addresses would answer.
 if ((string)($_GET['a'] ?? '') === 'scan') {
+    if (!xeric_web_local_editable()) {
+        xeric_web_json(['error' => 'looking round this machine is the owner\'s to do',
+                        'ports' => []], 403);
+    }
     xeric_web_json(xeric_model_scan(array_column($list, 'base')));
 }
 

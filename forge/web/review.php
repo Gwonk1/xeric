@@ -246,7 +246,8 @@ if ($action !== '') {
             $value = xeric_review_roll($w['template'], $path, (string)$spec[0], $endpoint);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
-            xeric_web_json(['error' => 'The dice came back empty: ' . $e->getMessage(), 'kind' => 'model'], 502);
+            xeric_web_json(['error' => 'The dice came back empty: '
+                . xeric_web_note_safe($e->getMessage()), 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
 
@@ -286,7 +287,8 @@ if ($action !== '') {
             $answers = xeric_review_pronoun_ask($w['template'], $missing, $endpoint);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
-            xeric_web_json(['error' => 'The model had no answer: ' . $e->getMessage(), 'kind' => 'model'], 502);
+            xeric_web_json(['error' => 'The model had no answer: '
+                . xeric_web_note_safe($e->getMessage()), 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
 
@@ -388,7 +390,8 @@ if ($action !== '') {
             $r = xeric_repass($w, $endpoint, null, $ropts);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
-            xeric_web_json(['error' => 'The repass fell over: ' . $e->getMessage(), 'kind' => 'model'], 502);
+            xeric_web_json(['error' => 'The repass fell over: '
+                . xeric_web_note_safe($e->getMessage()), 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
         // The editor's rewrites go straight in — one batched save, so ↺ takes

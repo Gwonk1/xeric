@@ -43,12 +43,30 @@ const XERIC_LLM_TIMEOUT = 600;   // a 12B writing a world pass is not fast
  *                          not have to unwrap a whole response envelope for it.
  * @throws RuntimeException on transport or API error
  */
+/**
+ * A header value that cannot end the header block.
+ *
+ * The key comes from the browser and is concatenated into a block joined with
+ * "\r\n", so a key containing a newline emits attacker-chosen headers — and a
+ * doubled one terminates the block and starts a body. engine/notify.php has done
+ * exactly this strip for its own metadata since it was written; the model path
+ * never did.
+ *
+ * Stripped rather than refused: a key with a stray newline in it is almost
+ * always a copy-paste out of a wrapped terminal, and the useful behaviour is
+ * that it works. What must not happen is that the newline reaches the socket.
+ */
+function xeric_llm_header_safe(string $v): string
+{
+    return trim((string)preg_replace('/[\r\n]+/', '', $v));
+}
+
 function xeric_llm_chat(array $endpoint, array $messages, array $opts = [], ?array &$usage = null): string
 {
     $kind = strtolower((string)($endpoint['kind'] ?? 'local'));
     $base = rtrim((string)($endpoint['base'] ?? ''), '/');
     $model = (string)($endpoint['model'] ?? '');
-    $key = (string)($endpoint['key'] ?? '');
+    $key = xeric_llm_header_safe((string)($endpoint['key'] ?? ''));
     $timeout = (int)($opts['timeout'] ?? XERIC_LLM_TIMEOUT);
 
     if ($base === '') throw new RuntimeException('llm: endpoint has no base url');
@@ -311,7 +329,7 @@ function xeric_llm_up(array $endpoint, int $timeout = 5): bool
     $kind = strtolower((string)($endpoint['kind'] ?? 'local'));
     $url = $kind === 'anthropic' ? "$base/v1/models" : "$base/v1/models";
     $headers = ['Accept: application/json'];
-    $key = (string)($endpoint['key'] ?? '');
+    $key = xeric_llm_header_safe((string)($endpoint['key'] ?? ''));
     if ($key !== '') {
         $headers[] = $kind === 'anthropic'
             ? 'x-api-key: ' . $key . "\r\nanthropic-version: 2023-06-01"

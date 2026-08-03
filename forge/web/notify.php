@@ -43,6 +43,27 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     // whole thing off loudly instead of failing silently every time it fires.
     if ($url !== '' && !preg_match('#^https?://\S+$#i', $url)) { $url = ''; $msg = 'That is not a URL.'; }
 
+    // AND IT MUST NAME SOMEWHERE ELSE. This is the one field in the app that
+    // says "POST to this address on my behalf", and the shape check above is
+    // the only thing it ever had to pass — while xeric_web_host_open(), which
+    // exists in this codebase precisely to stop the server being aimed at its
+    // own back yard, was never applied to it.
+    //
+    // Without this, any visitor could point it at 127.0.0.1:<port> or
+    // 169.254.169.254 and press `test`, and the redirect answered `sent=1` when
+    // something HTTP-speaking replied and `sent=0` when nothing did: a working
+    // internal port scanner wearing this host's own source address. The body is
+    // never shown, but the yes/no is the whole of a scan.
+    //
+    // Same fence the model endpoint goes through, deliberately — a notification
+    // host and a model host are the same kind of promise, and there is no
+    // reason for one to be looser.
+    if ($url !== '' && !xeric_web_host_open((string)parse_url($url, PHP_URL_HOST))) {
+        $url = '';
+        $msg = 'That address is on this machine or a private network, so notifications '
+             . 'were not turned on. A phone notification has to go somewhere a phone can reach.';
+    }
+
     $on = [];
     foreach (array_keys(xeric_notify_kinds()) as $k) {
         if (!empty($_POST['on'][$k])) $on[] = $k;

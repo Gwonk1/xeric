@@ -54,6 +54,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         if ((string)(xeric_world_state_get($w['db'], 'photos.approved') ?? '') !== '1') {
             xeric_web_json(['error' => 'this world has not said yes to photographs'], 409);
         }
+        // ONE DETACHED PROCESS PER REQUEST, so it needs a budget as well as an
+        // owner. The guard above stops a stranger; this stops a loop. Metered as
+        // a `reroll` rather than a `message`: a render is closer in cost and
+        // cadence to redrawing something than to saying a sentence, and it must
+        // not eat the allowance somebody needs to talk to the cast.
+        xeric_limit_guard(xeric_limit_check('reroll', ['sid' => $sid]));
+
         $job = xeric_web_job_new();
         xeric_web_spawn($job, ['slug' => (string)$w['slug'], 'sid' => $sid], 'photo-worker.php');
         xeric_web_json(['ok' => 1, 'job' => $job,

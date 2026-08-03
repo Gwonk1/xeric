@@ -142,7 +142,7 @@ function xeric_review_delete(string $slug): array
  *
  * @throws RuntimeException in a sentence, always
  */
-function xeric_review_open(string $slug, ?string $sid = null): array
+function xeric_review_open(string $slug, ?string $sid = null, ?bool $adult = null): array
 {
     $slug = xeric_web_slug($slug);
     if ($slug === '') throw new RuntimeException('which xeric?');
@@ -152,7 +152,25 @@ function xeric_review_open(string $slug, ?string $sid = null): array
         throw new RuntimeException("There is no xeric called '$slug' here any more. Xerics forged in the demo "
             . 'are kept for seven days after your last visit and then let go.');
     }
-    $t = xeric_world_load($path);
+    // THE SAME BOUNDARY xeric_play_open() APPLIES, and for the same reason.
+    //
+    // The affirmation guards the forge at its door; without a clamp past that
+    // door it guards nothing, because a world can be OPENED that this visitor
+    // did not forge and did not affirm for. play-lib.php pins the rating once
+    // here rather than asking every consumer to remember, and says so at length
+    // — and its sibling, the surface where a world is rewritten section by
+    // section, never did it at all.
+    //
+    // That is the whole of finding 8: everything downstream of this line reads
+    // `meta.rating`. The seven per-section rerolls hand it to the forge passes,
+    // the dice puts it in a prompt, addchar-worker composes a new person from
+    // it. Affirmation is also REVOCABLE while ownership is not, so an owner who
+    // un-ticked the box kept full-rating rerolls forever. Clamping the template
+    // as it is read closes all of them at once.
+    //
+    // Null means ask, like play-lib: a detached worker is TOLD, by the request
+    // that started it, rather than asking a session it does not have.
+    $t = xeric_world_clamp_rating(xeric_world_load($path), $adult ?? xeric_session_adult($sid));
     $seed = json_decode((string)@file_get_contents($dir . '/seed.json'), true);
     if (!is_array($seed)) $seed = ['events' => [], 'memories' => []];
     $seed['events']   = array_values((array)($seed['events'] ?? []));
@@ -1199,7 +1217,15 @@ function xeric_review_reroll(array $w, array $o, ?callable $note = null): array
     $seed     = $w['seed'];
     $what     = (string)($o['what'] ?? '');
     $endpoint = (array)($o['endpoint'] ?? []);
+    // THE ANSWERS ARE OFF DISK, so they carry whatever rating the session that
+    // FORGED this world was allowed. `$t` arrives clamped from
+    // xeric_review_open(), which covers everything derived from the template —
+    // but the seven per-section branches below hand these ANSWERS to the forge
+    // passes, and a pass reads the rating out of them. Affirmation is a
+    // per-session yes and it is revocable, so both halves have to be pinned to
+    // the session doing the rerolling and not to the one that built the world.
     $answers  = (array)($t['forge']['answers'] ?? []);
+    $answers['rating'] = xeric_forge_rating($answers, xeric_session_ceiling());
     $counts   = xeric_review_counts($t);
     $notes    = [];
     $say = function (string $m) use (&$notes, $note): void { $notes[] = $m; if ($note) $note($m); };
