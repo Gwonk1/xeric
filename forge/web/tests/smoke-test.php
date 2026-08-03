@@ -98,6 +98,12 @@ $claim = escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg(
     'require ' . var_export($WEB . '/play-lib.php', true) . ';'
     . '$s = xeric_web_sid(); xeric_session_use($s);'
     . 'xeric_session_claim("smoke-town", $s);'
+    // AND A MACHINE, or /forge.php below is not the forge at all. With nothing
+    // attached that page redirects to the machines screen, and the needle it was
+    // checked against — XERIC — is on both, so the forge landing page has been
+    // passing this suite without ever being rendered by it.
+    . 'xeric_web_session_edit(function (array &$x): void {'
+    . ' $x["model"] = ["kind" => "local", "base" => "", "model" => ""]; }, $s);'
     . 'echo $s;');
 $sid = trim((string)@shell_exec($envDirs . ' ' . $claim . ' 2>&1'));
 ok('the world is claimed, so the pages will open it', preg_match('/^[a-f0-9]{32}$/', $sid) === 1, $sid);
@@ -170,7 +176,7 @@ $pages = [
     ['/book.php?w=smoke-town',          'the book',         'XERIC'],
     ['/watch.php?w=smoke-town',         'the watch',        'XERIC'],
     ['/world.php?w=smoke-town',         'the file itself',  'meta'],
-    ['/forge.php',                      'the forge',        'XERIC'],
+    ['/forge.php',                      'the forge',        'data-way'],
 ];
 
 // AND ONE PAGE PROVED TO HAVE ACTUALLY RUN ITS SCRIPTS.
@@ -191,6 +197,32 @@ ok('the play view actually RAN its scripts, not merely rendered them',
     'chips: ' . mb_substr((string)(preg_split('/id="chips"/', $chipDom)[1] ?? '(no #chips)'), 0, 160));
 ok('and it did so with nothing refused by the content policy',
     $chipErrs === [], implode(' | ', $chipErrs));
+
+// -- the forge's own front door ----------------------------------------------
+//
+// Checked here because it is the screen every world starts on and the one the
+// owner keeps finding wrong. Three facts, all of them things a careless edit
+// silently undoes: which box comes first, that Auto Generate's one question is
+// on the page at all, and that the ratings needing eighteen are marked as such
+// in the served bytes rather than only in a stylesheet.
+(function () use ($visit): void {
+    [$fdom, ] = $visit('/forge.php');
+    $own  = strpos($fdom, 'data-way="own"');
+    $auto = strpos($fdom, 'data-way="auto"');
+    ok('the forge leads with Your Own Idea, not with Auto Generate',
+        $own !== false && $auto !== false && $own < $auto,
+        'own at ' . var_export($own, true) . ', auto at ' . var_export($auto, true));
+    ok('and says so on the tile rather than only in a tooltip',
+        str_contains($fdom, 'class="wrec"'));
+    ok('Auto Generate has a door to ask its one question behind',
+        str_contains($fdom, 'id="autowrap"') && str_contains($fdom, 'id="autogo"'));
+    ok('the rating choices are in that door, not loose under the tiles',
+        str_contains($fdom, 'rinline') && !str_contains($fdom, 'class="waysrate"'));
+    ok('and the ones needing eighteen are marked as gated in the markup',
+        substr_count($fdom, 'data-gated="1"') >= 1
+        && str_contains($fdom, 'class="rate-affirm"'),
+        substr_count($fdom, 'data-gated="1"') . ' gated');
+})();
 
 foreach ($pages as [$path, $what, $needle]) {
     [$dom, $errs] = $visit($path);

@@ -370,7 +370,7 @@ if ($ratingNow === '') $ratingNow = xeric_ratings()[0];
  * control on the page re-reads its answer. What changes is that a person is asked
  * where they are standing rather than sent somewhere else to be asked.
  */
-function xeric_web_rating_box(array $presets, string $floor, string $now, bool $adult, string $group, string $label, string $affirmLabel): string
+function xeric_web_rating_box(array $presets, string $floor, string $now, bool $adult, string $group, string $label, string $affirmLabel, bool $inline = false): string
 {
     if (!$presets) return '';
     $h = static fn($s) => htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
@@ -395,18 +395,24 @@ function xeric_web_rating_box(array $presets, string $floor, string $now, bool $
     if ($nowLabel === '') $nowLabel = (string)($presets[0]['label'] ?? $now);
 
     $pop = 'ratepop-' . $h($group);
-    $out = '<div class="rateset" data-pop="' . $h($group) . '">'
-         . '<button type="button" class="ratepill" aria-expanded="false" aria-controls="' . $pop . '">'
-         // "<what will build> · <what it will be> · change". The label names the
-         // control this belongs to rather than describing the rating, because the
-         // preset labels are already sentences ("keep it clean") and gluing them
-         // to a verb produced "Auto Generate keeps it keep it clean".
-         . '<span class="rp-l">' . $h($label) . '</span>'
-         . '<span class="rp-s" aria-hidden="true"> · </span>'
-         . '<span class="rp-v">' . $h($nowLabel) . '</span>'
-         . '<span class="rp-c" aria-hidden="true">change</span>'
-         . '</button>'
-         . '<div class="ratepop" id="' . $pop . '" hidden>'
+    // INLINE IS THE SAME CONTROL WITH THE DOOR TAKEN OFF. In a modal there is
+    // nothing to open — the panel IS the screen — so the pill and the hidden
+    // state both go, and everything else is byte for byte what the pill opens.
+    // One markup, one set of handlers, one place the gate is written down.
+    $out = '<div class="rateset' . ($inline ? ' rinline' : '') . '" data-pop="' . $h($group) . '"'
+         . ($inline ? ' data-inline="1"' : '') . '>'
+         . ($inline ? '' :
+            '<button type="button" class="ratepill" aria-expanded="false" aria-controls="' . $pop . '">'
+            // "<what will build> · <what it will be> · change". The label names the
+            // control this belongs to rather than describing the rating, because the
+            // preset labels are already sentences ("keep it clean") and gluing them
+            // to a verb produced "Auto Generate keeps it keep it clean".
+            . '<span class="rp-l">' . $h($label) . '</span>'
+            . '<span class="rp-s" aria-hidden="true"> · </span>'
+            . '<span class="rp-v">' . $h($nowLabel) . '</span>'
+            . '<span class="rp-c" aria-hidden="true">change</span>'
+            . '</button>')
+         . '<div class="ratepop" id="' . $pop . '"' . ($inline ? '' : ' hidden') . '>'
          . '<div class="rateopts">' . $opts . '</div>';
     if ($gatedAny) {
         $out .= '<label class="rateaff' . ($adult ? '' : ' ask') . '">'
@@ -518,13 +524,22 @@ xeric_web_head('Xeric: the forge');
          build where it stands, and Your Own Idea opens a panel in this same
          page. An <a href="#"> that runs script is a link that lies about what
          will happen when it is opened in a new tab. -->
+    <!-- YOUR OWN IDEA GOES FIRST (owner, 2026-08-03). Auto Generate held the
+         leading spot and was the loudest thing on the page, which quietly made
+         "let it invent everything" the house recommendation — and it is not.
+         The forge is at its best when it is given something to work with: a
+         place, a decade, a name, one sentence of what happened. Somebody who
+         types a line gets their line back; somebody who presses Auto gets
+         whatever the dice said. So the first box is now the one worth pressing,
+         and it says so on its face. -->
     <div class="grid ways">
-      <button class="tile way" type="button" data-way="auto" aria-describedby="tip-auto">
-        <span class="wayface" aria-hidden="true"><span class="wg">&#10024;</span></span>
-        <span class="tname">Auto Generate</span>
-        <span class="tip" id="tip-auto" role="tooltip">You answer nothing. The forge invents the
-          place, the people who live there, what they want from each other, and six weeks of
-          things that already happened, then hands you the keys.</span>
+      <button class="tile way wpick" type="button" data-way="own" aria-describedby="tip-own">
+        <span class="wayface" aria-hidden="true"><span class="wg">&#128161;</span></span>
+        <span class="tname">Your Own Idea<span class="wrec">start here</span></span>
+        <span class="tip" id="tip-own" role="tooltip">Describe it yourself: type it, answer
+          <?= count($steps) ?> questions, or hand over a PDF. Whatever you give it, the forge keeps
+          your place, your era, your names and your facts, and invents only what you left out.
+          One sentence is enough.</span>
       </button>
 
       <button class="tile way" type="button" data-way="blank" aria-describedby="tip-blank">
@@ -537,12 +552,13 @@ xeric_web_head('Xeric: the forge');
           It has no ending and goes on as long as you keep adding to it.</span>
       </button>
 
-      <button class="tile way" type="button" data-way="own" aria-describedby="tip-own">
-        <span class="wayface" aria-hidden="true"><span class="wg wq">&ldquo;</span></span>
-        <span class="tname">Your Own Idea</span>
-        <span class="tip" id="tip-own" role="tooltip">Describe it yourself: type it, answer
-          <?= count($steps) ?> questions, or hand over a PDF. Whatever you give it, the forge keeps
-          your place, your era, your names and your facts, and invents only what you left out.</span>
+      <button class="tile way" type="button" data-way="auto" aria-describedby="tip-auto">
+        <span class="wayface" aria-hidden="true"><span class="wg">&#10024;</span></span>
+        <span class="tname">Auto Generate</span>
+        <span class="tip" id="tip-auto" role="tooltip">You answer nothing. The forge invents the
+          place, the people who live there, what they want from each other, and six weeks of
+          things that already happened, then hands you the keys. It asks how far it may go,
+          and nothing else.</span>
       </button>
 
       <!-- SOLVE A PROBLEM (owner, 2026-08-03). It was already reachable as a tab
@@ -570,16 +586,31 @@ xeric_web_head('Xeric: the forge');
       </button>
     </div>
 
-    <!-- AUTO GENERATE ANSWERS NOTHING, so this is the only place its content
-         rating can be said. It sits under the three ways rather than inside the
-         Auto Generate tile because that tile is a <button>, and a radio inside a
-         button is neither valid nor clickable. Start Blank calls no model and
-         invents nothing; Your Own Idea reaches the rating question the long way
-         round. This row is for the one way in that builds a whole world without
-         asking anything. -->
+    <!-- AUTO GENERATE ANSWERS NOTHING, so the one thing it still has to be told
+         is how far it may go. That used to be a pill sitting under the tiles,
+         which is the wrong shape twice over: it is a decision that belongs to
+         ONE of the four boxes, and putting it beneath all four made it look like
+         a setting for the page. Worse, it was possible to press Auto Generate
+         without ever noticing it — the row is quiet by design, and quiet is the
+         wrong volume for the only question that build ever asks.
+
+         So Auto Generate opens a door instead, asks its one question, and builds
+         from a button called Generate. Nothing about the gate moves: the same
+         control, the same endpoint, the same server answer. What changes is that
+         it is now unmissable and it is now the last thing you press. -->
     <?php if ($ratingPresets): ?>
-    <div class="waysrate">
-      <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, 'auto', 'Auto Generate', $ratingAffirm) ?>
+    <div class="autowrap" id="autowrap" hidden>
+      <div class="autoveil" data-close="1"></div>
+      <div class="autobox" role="dialog" aria-modal="true" aria-labelledby="auto-h">
+        <h2 id="auto-h">How far may it go?</h2>
+        <p class="autosub">Auto Generate answers everything else itself. This is the only
+          thing it needs from you.</p>
+        <?= xeric_web_rating_box($ratingPresets, $ratingFloor, $ratingNow, $adult, 'auto', 'Auto Generate', $ratingAffirm, true) ?>
+        <div class="autorow">
+          <button type="button" class="btn ghost" data-close="1">Not now</button>
+          <button type="button" class="btn" id="autogo">Generate</button>
+        </div>
+      </div>
     </div>
     <?php endif; ?>
 
@@ -1192,6 +1223,50 @@ xeric_web_head('Xeric: the forge');
       });
   });
 
+  // -- Auto Generate's one question ----------------------------------------
+  // The build is the SAME line it always was — lockRating, save, build('model')
+  // — moved behind a button called Generate. What the door buys is that the
+  // rating is now impossible to walk past: the row under the tiles could be, and
+  // a build that quietly took the weakest rating because nobody saw the pill is
+  // a build nobody chose.
+  var autoWrap = $('#autowrap');
+
+  function openAuto() {
+    if (!autoWrap) { lockRating(); save(); build('model'); return; }   // no presets: nothing to ask
+    closeRatePops(null);
+    paintSurpriseRating();
+    autoWrap.hidden = false;
+    document.body.classList.add('modal');
+    var go = $('#autogo');
+    if (go) go.focus();
+  }
+
+  function closeAuto(back) {
+    if (!autoWrap) return;
+    autoWrap.hidden = true;
+    document.body.classList.remove('modal');
+    if (back) { var t = document.querySelector('[data-way="auto"]'); if (t) t.focus(); }
+  }
+
+  if (autoWrap) {
+    $$('[data-close]', autoWrap).forEach(function (b) {
+      b.addEventListener('click', function () { closeAuto(true); });
+    });
+    var autoGo = $('#autogo');
+    if (autoGo) {
+      autoGo.addEventListener('click', function () {
+        if (!keyReady()) { closeAuto(false); return; }
+        closeAuto(false);
+        lockRating(); save(); build('model');
+      });
+    }
+    // ESCAPE CLOSES IT, and closing is not choosing: the rating field keeps
+    // whatever it held, which for an untouched session is the weakest one.
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !autoWrap.hidden) { ev.stopPropagation(); closeAuto(true); }
+    });
+  }
+
   // -- the three ways in ---------------------------------------------------
   // Auto Generate and the ✨ escape hatch on the question screens are the SAME
   // build — fill:'model' — reached from two places, so they call the same line
@@ -1206,7 +1281,7 @@ xeric_web_head('Xeric: the forge');
       // Auto Generate answers NOTHING, so the rating row under the tiles is the
       // only thing standing between it and a gap the fill routes would fill.
       // Untouched it reads the weakest rating, and this writes it.
-      if (w === 'auto') { lockRating(); save(); build('model'); return; }
+      if (w === 'auto') { openAuto(); return; }
       if (w === 'blank') { show(idxOf('blank')); return; }
       // SOLVE A PROBLEM lands on the same premise screen and then LIGHTS ITS OWN
       // TAB, rather than repeating what that tab does. Everything the panel
@@ -1398,7 +1473,9 @@ xeric_web_head('Xeric: the forge');
 
   function closeRatePops(except) {
     $$('.rateset').forEach(function (set) {
-      if (set === except) return;
+      // An inline set has no door to shut: hiding its panel would empty the
+      // modal it IS, which is what happened the first time this ran over it.
+      if (set === except || set.dataset.inline === '1') return;
       var pop = $('.ratepop', set), pill = $('.ratepill', set);
       if (pop) pop.hidden = true;
       if (pill) pill.setAttribute('aria-expanded', 'false');
@@ -1445,10 +1522,10 @@ xeric_web_head('Xeric: the forge');
       }
       paintSurpriseRating();
       paintNext(); save();
+      if (set.dataset.inline === '1') return;
       var pop = $('.ratepop', set), pill = $('.ratepill', set);
-      pop.hidden = true;
-      pill.setAttribute('aria-expanded', 'false');
-      pill.focus();
+      if (pop) pop.hidden = true;
+      if (pill) { pill.setAttribute('aria-expanded', 'false'); pill.focus(); }
     });
   });
 

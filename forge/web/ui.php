@@ -484,8 +484,35 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 .rateopt:hover{background:var(--line)}
 .rateopt[aria-pressed=true]{background:var(--line);box-shadow:inset 2px 0 0 var(--accent)}
 .rateopt .ro-h{font-size:.78rem;color:var(--dim)}
-.rateopt.held{opacity:.5}
-.rateopt.held .ro-l::after{content:" · 18+";color:var(--dim);font-size:.78rem}
+
+/* HELD IS BLANKED, NOT MERELY DIMMED (owner, 2026-08-03). The rule the box
+   guards is not "these are harder to read", it is "these are not for you until
+   you say otherwise" — and a half-opacity label is still a label anybody can
+   read, which made the affirmation feel like a formality standing in front of
+   something already on show.
+
+   Still NOT hidden, for the reason it never was: a visitor who cannot see that
+   there is anything to unlock has no way to know the box does anything. So the
+   shape stays, the words go. What is left is plainly a choice, plainly withheld,
+   and plainly labelled with what it costs.
+
+   The badge is on the BUTTON and not inside .ro-l, because a filter applies to
+   an element's pseudo-children too — put it in there and the one crisp word on
+   the row blurs along with the rest. */
+.rateopt{position:relative}
+.rateopt.held{opacity:.9}
+.rateopt.held .ro-l,.rateopt.held .ro-h{
+  filter:blur(4.5px);user-select:none;-webkit-user-select:none;pointer-events:none;
+}
+.rateopt.held::after{
+  content:"18+";position:absolute;right:.5rem;top:50%;transform:translateY(-50%);
+  font-size:.7rem;font-weight:600;letter-spacing:.05em;color:var(--dim);
+  border:1px solid var(--line);border-radius:.3rem;padding:.05rem .3rem;background:var(--bg-2);
+}
+.rateopt.held:hover::after,.rateopt.held:focus-visible::after{color:var(--accent);border-color:var(--accent-dim)}
+@supports not (filter: blur(1px)){
+  .rateopt.held .ro-l,.rateopt.held .ro-h{color:transparent;background:var(--line);border-radius:.25rem}
+}
 .rateaff{
   display:flex;gap:.5rem;align-items:flex-start;margin:.5rem 0 0;padding:.45rem .5rem;
   border-top:1px solid var(--line);cursor:pointer;
@@ -507,10 +534,28 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
   grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr))}
 @media (max-width:30rem){.ways{grid-template-columns:1fr}}
 
-/* The rating under the three ways. It belongs to Auto Generate, which is the one
-   way in that builds a whole world without asking anything — so it is pulled up
-   under the tiles, tight to them, rather than floating as its own decision. */
-.waysrate{margin:-1.6rem 0 2rem}
+/* AUTO GENERATE'S ONE QUESTION, AS A DOOR. It used to be a pill under the tiles
+   (.waysrate), which read as a setting for the page rather than a decision
+   belonging to one box — and was quiet enough to walk straight past on the way
+   to pressing Auto Generate. A build that took the weakest rating because nobody
+   saw the pill is a build nobody chose. */
+.autowrap[hidden]{display:none}
+.autowrap{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;
+  padding:1rem}
+.autoveil{position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px)}
+.autobox{position:relative;width:min(26rem,100%);max-height:90vh;overflow:auto;
+  background:var(--bg-2);border:1px solid var(--line);border-radius:.9rem;
+  padding:1.1rem 1.2rem 1rem;box-shadow:var(--shadow-lift)}
+.autobox h2{margin:0 0 .3rem;font-size:1.15rem;line-height:1.25}
+.autosub{margin:0 0 .9rem;font-size:.85rem;color:var(--dim);line-height:1.45}
+/* Inline: the panel IS the screen, so it loses the popover's frame and float. */
+.autobox .rateset.rinline{display:block;width:100%;font-size:.9rem}
+.autobox .rinline .ratepop{position:static;min-width:0;max-width:none;padding:0;
+  border:0;border-radius:0;background:none;box-shadow:none}
+.autobox .rinline .rateopt{padding:.55rem .6rem;border:1px solid transparent}
+.autobox .rinline .rateopt[aria-pressed=true]{border-color:var(--accent-dim)}
+.autorow{display:flex;gap:.5rem;justify-content:flex-end;align-items:center;margin-top:1rem}
+body.modal{overflow:hidden}
 
 .way{position:relative;display:block;width:100%;aspect-ratio:4/3;padding:0;
   font:inherit;text-align:left;color:var(--fg);cursor:pointer;
@@ -562,6 +607,20 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 .way .wexp{display:block;margin-top:.2rem;font-size:.66rem;font-weight:600;
   letter-spacing:.06em;text-transform:uppercase;color:var(--fg-far)}
 .way:hover .wexp,.way:focus-visible .wexp{color:var(--accent-dim)}
+
+/* THE ONE WORTH PRESSING. Same object as its neighbours — same box, same lift,
+   same everything — carrying an accent edge and a lit mark so the eye lands
+   here first. Loud enough to be the answer to "where do I start", quiet enough
+   that the other three still read as real choices and not as consolation.
+
+   The mark is lit from the start rather than on hover, which is the whole
+   difference: every other tile's glyph waits to be reached for, and this one
+   is already awake. */
+.way.wpick{border-color:var(--accent-dim)}
+.way.wpick:hover,.way.wpick:focus-visible{border-color:var(--accent)}
+.way.wpick .wg{color:var(--accent)}
+.way .wrec{display:block;margin-top:.2rem;font-size:.66rem;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
 
 /* The tooltip. On hover AND on focus, because a keyboard reaching this box
    deserves the same sentence a mouse gets — and it is the only place the

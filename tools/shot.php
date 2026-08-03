@@ -147,9 +147,18 @@ $envDirs = 'XERIC_DATA_DIR=' . escapeshellarg($tmp . '/data')
          . ' XERIC_LOCAL_BASE=http://127.0.0.1:1';
 
 // Claimed, or every page answers "that xeric is gone".
+//
+// AND A MACHINE ATTACHED. forge.php will not open without one — a forge is
+// fourteen model calls and it refuses to ask twenty questions ending in "there
+// is no machine" — so without this the landing page cannot be photographed at
+// all; the shot comes back as the machines screen every time. Nothing is ever
+// called: XERIC_LOCAL_BASE points at port 1 above, and a screenshot never
+// presses Generate.
 shell_exec($envDirs . ' ' . escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg(
     'require ' . var_export($WEB . '/play-lib.php', true) . ';'
-    . '$s = xeric_web_sid(); xeric_session_use($s); xeric_session_claim(' . var_export($slug, true) . ', $s);')
+    . '$s = xeric_web_sid(); xeric_session_use($s); xeric_session_claim(' . var_export($slug, true) . ', $s);'
+    . 'xeric_web_session_edit(function (array &$x): void {'
+    . ' $x["model"] = ["kind" => "local", "base" => "", "model" => ""]; }, $s);')
     . ' 2>&1');
 
 $port = 0;
