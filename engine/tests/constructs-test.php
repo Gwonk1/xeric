@@ -633,8 +633,65 @@ ok('gate: the places wall still blocks its room',
 ok('gate: and a wall-less viewer is still blocked by nothing',
     !xeric_gossip_wall_blocked($T, $placedItem, 'ruth'));
 
+// ---------------------------------------------------------------------------
+// THE FLOOR, WHERE A RIPPLE CROSSES ROOMS.
+//
+// Everything else in a character's prompt is filtered at THEIR OWN ceiling. A
+// gossip line arrives by a different road: it was written into an hour whose
+// ceiling was that ROOM's — clamped by whoever stood in it, which is precisely
+// the set of people it will never be shown to — and then it travels. A child
+// who was nowhere near it hears it third-hand.
+//
+// Own database on purpose: the items here are hand-laid, and the numbering
+// above is asserted against by name.
+// ---------------------------------------------------------------------------
+
+$dbFPath = sys_get_temp_dir() . '/xeric-constructs-floor-' . getmypid() . '.db';
+foreach ([$dbFPath, $dbFPath . '-wal', $dbFPath . '-shm'] as $f) @unlink($f);
+$dbF = xeric_state_open($dbFPath);
+xeric_state_migrate($dbF);
+
+$both = [['who' => 'theo', 'hop' => 1, 'from' => 'dot'],
+         ['who' => 'harlan', 'hop' => 1, 'from' => 'dot']];
+$lay = static function (string $key, string $line) use ($dbF, $both): void {
+    xeric_arc_set($dbF, xeric_arc_world(), $key, json_encode([
+        'kind' => 'charged', 'event' => 0, 'line' => $line, 'place' => null,
+        'participants' => [], 'born' => ep('2026-07-31 20:00'), 'state' => 'live',
+        'knowers' => $both,
+    ], JSON_UNESCAPED_UNICODE));
+};
+$lay('gossip.1', 'the coffee pot went over at the diner');
+$lay('gossip.2', 'there were condoms in the church parking lot');
+$lay('gossip.3', 'Theo Vance was seen out past midnight');
+
+$fNow    = xeric_world_now($T, ep('2026-08-01 09:30'));
+$adult   = xeric_expect_block($T, $dbF, 'harlan', $fNow);
+$child   = xeric_expect_block($T, $dbF, 'theo', $fNow);
+
+ok('floor: an ordinary line reaches everybody who heard it',
+    str_contains($adult, 'the coffee pot went over')
+    && str_contains($child, 'the coffee pot went over'));
+ok('floor: the adult line reaches the adult',
+    str_contains($adult, 'church parking lot'));
+ok('floor: and never lands in the child\'s prompt',
+    !str_contains($child, 'church parking lot'), $child);
+ok('floor: an ordinary line about a child is still ordinary',
+    str_contains($adult, 'Theo Vance was seen out past midnight')
+    && str_contains($child, 'Theo Vance was seen out past midnight'));
+
+// DROPPED FOR THE READER, NOT KILLED FOR THE TOWN. An hour is refused whole
+// because half an hour is not a smaller hour; the town's talk is a list, and a
+// list with one thing missing from it is what not being told something is.
+ok('floor: the item stays live — the town has not stopped saying it',
+    (xeric_gossip_items($dbF)['gossip.2']['state'] ?? '') === 'live');
+ok('floor: and the child still gets a block, not silence',
+    str_starts_with(trim($child), 'WHAT PEOPLE ARE SAYING'));
+
+$dbF = null;
+
 foreach ([$dbPath, $dbPath . '-wal', $dbPath . '-shm',
-          $db2Path, $db2Path . '-wal', $db2Path . '-shm'] as $f) @unlink($f);
+          $db2Path, $db2Path . '-wal', $db2Path . '-shm',
+          $dbFPath, $dbFPath . '-wal', $dbFPath . '-shm'] as $f) @unlink($f);
 
 echo $FAILED === 0 ? "\nPASS\n" : "\n$FAILED FAILED\n";
 exit($FAILED === 0 ? 0 : 1);

@@ -264,11 +264,24 @@ function xeric_remind_due(PDO $db, ?int $now = null): array
     return $rows ?: [];
 }
 
-/** Said. Stamped before the send, never after — see xeric_remind_fire(). */
-function xeric_remind_done(PDO $db, int $id, ?int $at = null): void
+/**
+ * Said. Stamped before the send, never after — see xeric_remind_fire().
+ *
+ * `AND fired_at IS NULL` is what makes the claim exclusive, and the RETURN is
+ * what makes it useful: SQLite serializes the two writes, so of two runners
+ * reaching the same row a second apart exactly one updates a row and the other
+ * updates none. A caller that does not look at the answer gets the query's
+ * safety and none of its meaning — both would go on to send.
+ *
+ * @return bool whether THIS call is the one that claimed it
+ */
+function xeric_remind_done(PDO $db, int $id, ?int $at = null): bool
 {
     $q = $db->prepare('UPDATE reminders SET fired_at = ? WHERE id = ? AND fired_at IS NULL');
     $q->execute([$at ?? xeric_state_time(), $id]);
+    $n = $q->rowCount();
+    $q->closeCursor();
+    return $n > 0;
 }
 
 /** What is still coming, for a screen that wants to show it. */

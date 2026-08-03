@@ -1209,7 +1209,7 @@ echo '<style>' . xeric_play_css() . '
            the player does not. -->
       <div class="rewindrow" id="rewindrow">
         <button type="button" class="tbtn rwbtn" id="rewindbtn">
-          <span class="tl">⏪ take back the <?= h((string)$rw['span']) ?></span>
+          <span class="tl">⏪ take back the <?= h((string)$rw['label']) ?></span>
           <span class="ts">the last skip, un-happened</span>
         </button>
         <div class="leavecard" id="rewindcard" hidden>

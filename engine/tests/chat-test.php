@@ -794,6 +794,67 @@ ok('canary: and the exact phrase is byte-stable across calls — one string, for
 
 $dbCan = null;
 
+// ---------------------------------------------------------------------------
+// REMINDERS: a row claimed first is claimed once.
+//
+// xeric_remind_fire()'s docblock has always said so, and the UPDATE has always
+// carried the `AND fired_at IS NULL` that makes it true — but the answer was
+// thrown away, so both runners walked past the claim into the send. A page load
+// and a heartbeat land on this a second apart in ordinary use.
+//
+// The interleave below is the real one, assembled by hand: two connections to
+// one file, both past their select, neither having written yet. That is exactly
+// the state two processes are in, and it is the state the guarantee is about.
+// ---------------------------------------------------------------------------
+
+echo "\n# reminders\n";
+
+$remPath = sys_get_temp_dir() . '/xeric-chat-test-' . getmypid() . '-remind.db';
+foreach ([$remPath, $remPath . '-wal', $remPath . '-shm'] as $f) @unlink($f);
+$DBFILES[] = $remPath;
+$dbR1 = xeric_state_open($remPath);
+$dbR2 = xeric_state_open($remPath);          // the heartbeat, on its own handle
+
+$rNow = ep('2026-07-30 20:15');
+$rid  = xeric_remind_add($dbR1, 'ring the bank back', $rNow - 60, 'ruth', $rNow - 3600);
+
+// Both of them look, and both of them see it. Nothing is wrong yet.
+ok('remind: two runners a second apart both see the same unfired row',
+    count(xeric_remind_due($dbR1, $rNow)) === 1 && count(xeric_remind_due($dbR2, $rNow)) === 1);
+
+// THE DISCRIMINATING ASSERTION. Pre-fix this function returned void, so the
+// loser could not be told it had lost and every caller sent regardless.
+ok('remind: the first to write claims it, and says so',
+    xeric_remind_done($dbR1, $rid, $rNow) === true);
+ok('remind: the second writes nothing, and is told it wrote nothing',
+    xeric_remind_done($dbR2, $rid, $rNow) === false);
+
+// And the stamp is the winner's, not the last writer's.
+ok('remind: it is fired once, at the moment it was claimed',
+    (int)($dbR2->query('SELECT fired_at FROM reminders WHERE id = ' . $rid)
+        ->fetchAll()[0]['fired_at'] ?? 0) === $rNow);
+ok('remind: and nothing is due any more, on either handle',
+    xeric_remind_due($dbR1, $rNow) === [] && xeric_remind_due($dbR2, $rNow) === []);
+
+// The loop honours it. `[]` for the notify config means no url, which means
+// xeric_notify_on() is false for every kind — nothing leaves this test.
+$rid2 = xeric_remind_add($dbR1, 'take the bins out', $rNow - 60, '', $rNow - 3600);
+$fired = xeric_remind_fire($dbR1, [], 'Milldale', $rNow);
+ok('remind: fire returns the one it claimed',
+    count($fired) === 1 && (int)$fired[0]['id'] === $rid2);
+ok('remind: and a second pass over the same world claims nothing',
+    xeric_remind_fire($dbR2, [], 'Milldale', $rNow) === []);
+
+// A row somebody else claimed mid-loop is skipped, not returned: `$sent` is
+// what this runner is responsible for having said, and a caller that logs it
+// would otherwise report a notification it never sent.
+$rid3 = xeric_remind_add($dbR1, 'call about the roof', $rNow - 60, '', $rNow - 3600);
+xeric_remind_done($dbR2, $rid3, $rNow);
+ok('remind: one already claimed elsewhere is not reported as sent',
+    xeric_remind_fire($dbR1, [], 'Milldale', $rNow) === []);
+
+$dbR1 = $dbR2 = null;
+
 $dbS = null;
 $dbA = $dbB = $dbC = null;
 $db = $db2 = $db3 = $db4 = null;

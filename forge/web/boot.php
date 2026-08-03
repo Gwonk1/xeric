@@ -662,6 +662,14 @@ function xeric_web_solo(): bool
  * has xerics must not orphan them, so the first run looks for the session that
  * owns the most and takes its id. That is the identity they have been using; it
  * simply stops depending on a cookie to be found again.
+ *
+ * AND THE FIRST RUN IS WRITTEN ONCE, BY WHOEVER GETS THERE FIRST. In solo mode
+ * this id is the visitor's whole ownership identity, so two of them is not a
+ * cosmetic problem: it is two owners of one machine, and whichever loses the
+ * race finds the worlds it made belong to somebody else. A browser opening a
+ * page that fires two requests at a cold install is all it takes, which is why
+ * the claim is an exclusive create and not a write — and why losing it means
+ * ADOPTING the winner's id, never overwriting it with your own.
  */
 function xeric_web_machine_id(): string
 {
@@ -683,10 +691,38 @@ function xeric_web_machine_id(): string
         if ($n > $most) { $most = $n; $best = $sid; }
     }
 
-    $id = $best !== '' ? $best : bin2hex(random_bytes(16));
-    @file_put_contents($path, $id);
+    $mine = $best !== '' ? $best : bin2hex(random_bytes(16));
+
+    // ONE PATH, AND THE DECISION IS MADE UNDER THE LOCK. 'c' creates the file
+    // if it is not there and never truncates it, so opening is not yet a claim;
+    // the read INSIDE the lock is what decides. A process that lost the race
+    // sees the winner's bytes and adopts them, and one that finds the file
+    // empty or truncated — a crash mid-write, a disk that filled — repairs it,
+    // which the check-then-act version did by accident and an exclusive create
+    // would have stopped doing.
+    // 'c+' and not 'c': 'c' is write-ONLY, and the read below is the whole
+    // point of holding the lock.
+    $fh = @fopen($path, 'c+b');
+    // Unwritable data_dir. Use ours for this process rather than failing the
+    // request, and cache it: an id that changes between two calls inside one
+    // request is worse than one that does not outlive the request. This is the
+    // only path left where two machines can disagree, and the unconditional
+    // write always had it too.
+    if ($fh === false) return $id = $mine;
+    if (!flock($fh, LOCK_EX)) { fclose($fh); return $id = $mine; }
+
+    $have = trim((string)stream_get_contents($fh));
+    if (!preg_match('/^[a-f0-9]{32}$/', $have)) {
+        ftruncate($fh, 0);
+        rewind($fh);
+        fwrite($fh, $mine);
+        fflush($fh);
+        $have = $mine;
+    }
+    flock($fh, LOCK_UN);
+    fclose($fh);
     @chmod($path, 0600);
-    return $id;
+    return $id = $have;
 }
 
 function xeric_web_sid(): string

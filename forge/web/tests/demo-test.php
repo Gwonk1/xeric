@@ -3185,6 +3185,74 @@ ok('panel: the flag reaches the builder rather than stopping at the page',
     && str_contains((string)file_get_contents(dirname(__DIR__) . '/build.php'), "'panel'")
     && str_contains((string)file_get_contents(dirname(__DIR__) . '/worker.php'), 'xeric_forge_panel('));
 
+// ---------------------------------------------------------------------------
+// WHO THIS MACHINE IS, WHEN FOUR REQUESTS ASK AT ONCE.
+//
+// The first multi-process race in these suites, and it is here because the
+// answer is not a number in a database — in solo mode the machine id IS the
+// visitor's ownership identity, so two of them means two owners of one install
+// and whoever loses finds the worlds they made belong to somebody else. A page
+// that fires a few requests at a cold install is the whole reproduction.
+//
+// The sessions below are what make it deterministic rather than lucky. The
+// adoption pass globs and JSON-decodes every session file before it writes, so
+// filling that directory holds all four processes inside the same stretch of
+// work and they arrive at the write together. `own` is empty in all of them so
+// nobody is adopted and each process must mint its own id — with adoption
+// there is nothing to disagree about. Measured before it was written: the
+// check-then-act version this replaces returned 3 or 4 distinct ids in every
+// one of eight rounds at this size, and the locked one returns 1.
+// ---------------------------------------------------------------------------
+
+$rcDir = $tmp . '/race';
+@mkdir($rcDir . '/sessions', 0775, true);
+for ($i = 1; $i <= 1500; $i++) {
+    file_put_contents($rcDir . '/sessions/' . sprintf('%032x', $i) . '.json', '{"own":[]}');
+}
+file_put_contents($rcDir . '/who.php',
+    "<?php require_once " . var_export(dirname(__DIR__) . '/boot.php', true)
+    . "; echo xeric_web_machine_id();\n");
+
+$rcIds = [];
+for ($round = 0; $round < 3; $round++) {
+    @unlink($rcDir . '/identity');
+    $procs = [];
+    for ($i = 0; $i < 4; $i++) {
+        $procs[$i] = proc_open(
+            'php ' . escapeshellarg($rcDir . '/who.php'),
+            [1 => ['pipe', 'w'], 2 => ['file', '/dev/null', 'w']], $pipes[$i],
+            null, ['XERIC_DATA_DIR' => $rcDir, 'PATH' => getenv('PATH')]);
+    }
+    $said = [];
+    for ($i = 0; $i < 4; $i++) {
+        $said[] = trim((string)stream_get_contents($pipes[$i][1]));
+        fclose($pipes[$i][1]);
+        proc_close($procs[$i]);
+    }
+    $rcIds[] = $said;
+}
+
+$rcDistinct = array_map(fn($r) => count(array_unique(array_filter($r))), $rcIds);
+ok('identity: four requests at a cold install agree on one machine, every round',
+    $rcDistinct === [1, 1, 1], json_encode($rcIds));
+ok('identity: and what they agree on is what is on the disk',
+    ($rcIds[2][0] ?? '') !== ''
+    && trim((string)file_get_contents($rcDir . '/identity')) === $rcIds[2][0]);
+
+// A truncated identity — a crash mid-write, a disk that filled — must repair
+// itself. The check-then-act version did this by accident, and an exclusive
+// create would have stopped doing it, which is why the claim is a lock and a
+// read rather than an O_EXCL.
+file_put_contents($rcDir . '/identity', '');
+$repaired = trim((string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($rcDir)
+    . ' php ' . escapeshellarg($rcDir . '/who.php')));
+ok('identity: an emptied identity file is repaired, not inherited as nothing',
+    preg_match('/^[a-f0-9]{32}$/', $repaired) === 1
+    && trim((string)file_get_contents($rcDir . '/identity')) === $repaired);
+ok('identity: and the repair sticks — the next request adopts it rather than minting again',
+    trim((string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($rcDir)
+        . ' php ' . escapeshellarg($rcDir . '/who.php'))) === $repaired);
+
 rmtree($tmp);
 
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";

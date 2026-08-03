@@ -794,6 +794,32 @@ ok('catchup: sweeping the same stretch twice writes nothing the second time',
         ['chance' => 1.0, 'seed' => 21, 'max_events' => 2])['events'] === []
     && xeric_events_count($dbCU) === 2);
 
+// THE WINDOW IS PART OF THE ADDRESS. A world may set its own
+// `events.window_seconds`, and every mark catchup leaves carries that number in
+// its key — `sweep:<size>:<index>` for the per-window guard, `sweep_watermark:
+// <size>` for the stretch. A caller that walks in one size and lets catchup
+// default to another writes marks into a namespace it will never read back, and
+// the symptom is not a crash: it is a world that lives the same hour forever
+// because nothing it wrote down is anywhere it looks. forge/web/heart.php reads
+// `events.window_seconds`, computes with it, and reads its guards back at it, so
+// it must hand the same number down — this is the contract that makes that work.
+$dbWin = fresh_db('window');
+$wSize = 1800;
+$wFrom = ep('2026-07-30 14:00');
+xeric_sweep_catchup($T2, $dbWin, stub_event(), $wFrom, $wFrom + 3 * $wSize,
+    ['window' => $wSize, 'chance' => 1.0, 'seed' => 21, 'max_events' => 2]);
+$wKeys = array_keys(xeric_world_state_all($dbWin));
+ok('window: the guards it leaves are keyed by the window it was given',
+    array_filter($wKeys, fn($k) => str_starts_with((string)$k, 'sweep:' . $wSize . ':')) !== []
+    && array_filter($wKeys, fn($k) => str_starts_with((string)$k, 'sweep:' . XERIC_SWEEP_WINDOW . ':')) === [],
+    implode(',', $wKeys));
+ok('window: and so is the watermark for the stretch',
+    in_array('sweep_watermark:' . $wSize, $wKeys, true)
+    && !in_array('sweep_watermark:' . XERIC_SWEEP_WINDOW, $wKeys, true), implode(',', $wKeys));
+ok('window: a second pass at the same size finds its own marks and lives nothing again',
+    xeric_sweep_catchup($T2, $dbWin, stub_event(), $wFrom, $wFrom + 3 * $wSize,
+        ['window' => $wSize, 'chance' => 1.0, 'seed' => 21, 'max_events' => 2])['events'] === []);
+
 // The clock is the edge of the world: events are read back in world_epoch order
 // everywhere, so an hour stamped half a window ahead of the moment the header
 // prints leads the feed with something that has not happened yet.

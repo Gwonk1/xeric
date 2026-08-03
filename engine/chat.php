@@ -871,6 +871,12 @@ function xeric_chat_remind(array $t, PDO $db, string $speaker, string $said,
  * and somebody is told twice about a thing they already did. A row claimed first
  * is claimed once.
  *
+ * WHICH MEANS THE LOSER HAS TO STOP. Stamping first is only half of it: the
+ * exclusive UPDATE decides who won, and until this loop reads that answer both
+ * runners walk straight past it into the send. The select above is a read of a
+ * moment that has already passed by the time the write lands, so the claim
+ * belongs to whoever's UPDATE touched a row — never to whoever's SELECT saw one.
+ *
  * The cost is that a reminder lost to a dead ntfy host is lost for good, and
  * that is the right way round: a duplicate notification erodes trust in every
  * future one, where a missed one is simply a thing that did not happen.
@@ -883,7 +889,10 @@ function xeric_remind_fire(PDO $db, array $notify, string $world = '', ?int $rea
     $sent = [];
 
     foreach (xeric_remind_due($db, $now) as $row) {
-        xeric_remind_done($db, (int)$row['id'], $now);
+        // Somebody else claimed it between the select and here. Not an error,
+        // not a note — it is the machinery working, and the other runner is
+        // already telling them.
+        if (!xeric_remind_done($db, (int)$row['id'], $now)) continue;
         $sent[] = $row;
 
         if (!xeric_notify_on($notify, 'reminder')) continue;

@@ -234,6 +234,23 @@ ok('skip: and it remembers both edges of the clock',
     && (int)$m1['after']['offset'] === xeric_clock_offset($db)
     && (int)$m1['span'] === 6 * 3600);
 
+// THE OFFER, WORDED. peek() is what the play view reads to draw the button, and
+// it is the only place the manifest is turned into something a person sees. The
+// manifest stores seconds; a button reading "take back the 21600" is a button
+// nobody presses, and it is the sort of defect no test catches because every
+// assertion around it is about the numbers being right — which they were.
+$pk = xeric_rewind_peek($T, $db);
+ok('peek: it offers the same span the manifest recorded',
+    $pk !== null && $pk['span'] === 6 * 3600);
+ok('peek: worded the way a person reads a duration, not the way a clock stores one',
+    ($pk['label'] ?? '') === '6h', json_encode($pk));
+ok('peek: through the same labeller the receipt uses, so the offer and the receipt agree',
+    ($pk['label'] ?? '') === xeric_clock_span_label((int)$m1['span']));
+ok('peek: and the counts it shows are the manifest\'s own',
+    $pk['events'] === count((array)$m1['ids']['events'])
+    && $pk['memories'] === count((array)$m1['ids']['memories'])
+    && $pk['messages'] === count((array)$m1['ids']['messages']));
+
 // ---------------------------------------------------------------------------
 // 2–3. The rewind: exactly the manifest's rows, and the clock and watermark back
 // ---------------------------------------------------------------------------

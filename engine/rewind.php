@@ -462,9 +462,15 @@ function xeric_rewind_peek(array $t, PDO $db): ?array
 {
     [$m, $why] = xeric_rewind_check($db);
     if ($m === null) return null;
-    $ids = (array)($m['ids'] ?? []);
+    $ids  = (array)($m['ids'] ?? []);
+    $span = (int)($m['span'] ?? 0);
     return [
-        'span'     => (string)($m['span'] ?? ''),
+        'span'     => $span,
+        // The manifest stores seconds, and a button that says "take back the
+        // 21600" is a button nobody presses. Through the same labeller
+        // xeric_rewind() already runs its own span through, so the offer and
+        // the receipt are worded by one function.
+        'label'    => xeric_clock_span_label($span),
         'events'   => count((array)($ids['events'] ?? [])),
         'memories' => count((array)($ids['memories'] ?? [])),
         'messages' => count((array)($ids['messages'] ?? [])),

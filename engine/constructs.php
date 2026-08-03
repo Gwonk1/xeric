@@ -1220,9 +1220,25 @@ function xeric_gossip_cared(array $t, PDO $db, string $handle, array $participan
  * on it, and past that it is just what people are saying. Your own hours
  * are not gossip to you — a participant gets no line about themselves; the
  * ledger and their memories already carry the real thing.
+ *
+ * ── AND THE FLOOR, BECAUSE A RIPPLE CROSSES ROOMS ─────────────────────────
+ *
+ * Every other thing in a character's prompt is filtered at THEIR OWN ceiling:
+ * xeric_prompt_system() clamps to the floor for a child and screens tells,
+ * moods and secrets through it. A gossip line arrives by a different road. It
+ * was written into an hour whose ceiling was that ROOM's — clamped by whoever
+ * was standing in it, which is exactly the set of people this line will never
+ * be shown to — and then it travels, and lands wherever the ripple reaches. A
+ * child who was nowhere near it hears it third-hand.
+ *
+ * So it is screened here, per line, against the reader, with the engine's one
+ * reader-for-sex. An adult with no children in the world pays nothing: the
+ * floor returns early before it scans a byte.
  */
 function xeric_gossip_block(array $t, PDO $db, string $handle): string
 {
+    require_once __DIR__ . '/chat.php';    // xeric_age_floor — the one floor
+
     $lines = [];
     foreach (xeric_gossip_items($db) as $item) {
         if (($item['state'] ?? '') !== 'live') continue;
@@ -1234,6 +1250,11 @@ function xeric_gossip_block(array $t, PDO $db, string $handle): string
         if ($mine === null) continue;
 
         $line = (string)$item['line'];
+        // Dropped, not refused: an hour is refused whole because half an hour is
+        // not a smaller hour, but the town's talk is a list, and a list with one
+        // thing missing from it is exactly what a child not being told something
+        // looks like. The item stays live for everybody else.
+        if (xeric_age_floor($t, [$handle], [$line]) !== null) continue;
         $hop  = (int)($mine['hop'] ?? 0);
         $from = xeric_world_name($t, (string)($mine['from'] ?? ''));
         if ($hop === 0) {

@@ -140,8 +140,17 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             $from = ($last + 1) * $size;
             $to   = min($here, $last + XERIC_HEART_MAX_WINDOWS) * $size;
 
+            // THE SAME WINDOW AT BOTH ENDS. This loop reads the world's own
+            // `events.window_seconds` into $size, walks in it, and reads its
+            // guards back at `sweep:$size:` — and catchup, handed no `window`,
+            // defaults to XERIC_SWEEP_WINDOW and stamps `sweep:3600:`. Any world
+            // that set its own window would then write guards in a namespace
+            // xeric_heart_last_window() never looks in: $last stays 0 forever,
+            // every tick re-derives from scratch, and the heart is permanently
+            // blind to hours it has already lived.
             $r = xeric_sweep_catchup($T, $db, $endpoint, $from, $to,
-                                     ['clock' => (int)$now['epoch'], 'stories' => $w['stories']]);
+                                     ['window' => $size, 'clock' => (int)$now['epoch'],
+                                      'stories' => $w['stories']]);
             $n = count((array)($r['events'] ?? []));
             $lived += $n;
             $ticked++;
