@@ -181,8 +181,9 @@ function xeric_room(array $t, PDO $db, array $handles, array $now, array $endpoi
 {
     if (isset($opts['seed'])) mt_srand((int)$opts['seed']);   // the sweep's own idiom
 
-    $epoch = (int)($now['epoch'] ?? 0);
-    if ($epoch <= 0) throw new RuntimeException('room: a room needs a moment, pass xeric_world_now()');
+    // Absence, not sign: a pre-1970 world's epoch is negative and real.
+    if (!isset($now['epoch'])) throw new RuntimeException('room: a room needs a moment, pass xeric_world_now()');
+    $epoch = (int)$now['epoch'];
 
     // -- the roster, resolved loudly (chat.php's posture) ------------------
     $handles = array_values(array_map('strval', $handles));

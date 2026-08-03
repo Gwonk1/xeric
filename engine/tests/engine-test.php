@@ -2033,6 +2033,175 @@ foreach ([$deathDb, $permDb, $endDb] as $p) {
 }
 
 // ---------------------------------------------------------------------------
+// Egress: what an hour and a ping may say to a phone. notify.php is the one
+// file that talks to a third party during ordinary use, and its commons-text
+// rule was caller discipline until heart.php shipped raw spine titles under
+// the very trigger built to fire on the secret's hours. The rule is code now.
+// ---------------------------------------------------------------------------
+
+require_once __DIR__ . '/../notify.php';
+
+echo "\n# egress\n";
+
+ok('egress: a spine hour\'s title never leaves the machine — the body is a fixed sentence',
+    xeric_notify_hour_body(['title' => 'who really emptied the building fund', 'on_spine' => true])
+        === 'Something happened close to the heart of it.');
+ok('egress: an ordinary hour\'s title is commons and rides as itself',
+    xeric_notify_hour_body(['title' => 'the urn ran out early', 'on_spine' => false])
+        === 'the urn ran out early');
+ok('egress: an hour with no title still says something, and nothing more',
+    xeric_notify_hour_body(['on_spine' => false]) === 'something happened');
+ok('egress: a ping ships the doorbell, never the letter',
+    xeric_notify_ping_body(['name' => 'Ruth Amberg', 'text' => 'the whole private message'])
+        === 'Ruth Amberg texted you.'
+    && !str_contains(xeric_notify_ping_body(['name' => 'Ruth', 'text' => 'secret']), 'secret'));
+ok('egress: a nameless ping stays a doorbell',
+    xeric_notify_ping_body([]) === 'Somebody texted you.');
+
+// ---------------------------------------------------------------------------
+// The inventory — worn and carried, as data. Commons by rule (a bystander
+// sees both), validated like a room's interior, and rendered byte-stable in
+// the wearer's own identity because it is template data like the voice.
+// ---------------------------------------------------------------------------
+
+echo "\n# the inventory\n";
+
+$invT = $T;
+foreach ($invT['cast']['characters'] as $i => $c) {
+    if (($c['handle'] ?? '') === 'ruth') {
+        $invT['cast']['characters'][$i]['wears']   = ['a grey work apron', 'boots gone soft at the heel'];
+        $invT['cast']['characters'][$i]['carries'] = ['a pocket notebook', 'the diner keys'];
+    }
+}
+ok('inventory: a furnished person still validates', err(fn() => xeric_world_validate($invT, 'x')) === '');
+$invSys = xeric_prompt_system($invT, $wxDb2 = xeric_state_open(sys_get_temp_dir() . '/xeric-inv-' . getmypid() . '.db'),
+    'ruth', xeric_world_rating($invT));
+ok('inventory: her own prompt knows her apron and her notebook',
+    str_contains($invSys, 'a grey work apron') && str_contains($invSys, 'a pocket notebook'));
+ok('inventory: an unfurnished person\'s prompt says nothing about pockets — absent, not invented',
+    !str_contains(xeric_prompt_system($invT, $wxDb2, 'dot', xeric_world_rating($invT)), 'pockets or hands'));
+ok('inventory: and the lists are byte-stable — same person, same bytes, twice',
+    $invSys === xeric_prompt_system($invT, $wxDb2, 'ruth', xeric_world_rating($invT)));
+$invBad = $invT;
+$invBad['cast']['characters'][0]['carries'] = 'the diner keys';
+ok('inventory: a hand-edit that turns the pockets into a string is refused by name',
+    str_contains(err(fn() => xeric_world_validate($invBad, 'x')), 'carries'));
+$wxDb2 = null;
+foreach ([sys_get_temp_dir() . '/xeric-inv-' . getmypid() . '.db'] as $f) {
+    foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
+}
+
+// ---------------------------------------------------------------------------
+// The arrival beat — the narrator's line for walking into a room, assembled
+// from observables and never asked of a model: presence, the week's `doing`,
+// the room's `interior` list. Deterministic, walls-safe by construction (the
+// surface of a conversation, never its topic), and free.
+// ---------------------------------------------------------------------------
+
+echo "\n# the arrival beat\n";
+
+$arT = $T;
+foreach ($arT['places'] as $i => $p) {
+    if (($p['key'] ?? '') === 'bluebird') {
+        $arT['places'][$i]['interior'] = ['the corner booth', 'the pie case', 'a coffee urn older than anybody'];
+    }
+}
+$arTue = xeric_world_now($arT, ep('2026-07-28 07:30'));      // ruth + dot share the diner
+$arPres = xeric_world_who_is_where($arT, $arTue);
+$arScene = xeric_travel_scene($arT, 'bluebird', $arTue, $arPres);
+ok('arrival: an occupied room names who is here and what they are at',
+    str_contains($arScene, 'Ruth') && str_contains($arScene, 'Dot')
+    && str_contains($arScene, ' is '), $arScene);
+ok('arrival: and closes on the SURFACE of the room noticing a door — never a topic',
+    str_contains($arScene, 'door') || str_contains($arScene, 'conversation')
+    || str_contains($arScene, 'talk') || str_contains($arScene, 'room takes'), $arScene);
+ok('arrival: the beat is deterministic — the same doorway twice is the same sentence',
+    $arScene === xeric_travel_scene($arT, 'bluebird', $arTue, $arPres));
+ok('arrival: the day\'s prop comes from the interior list, not from thin air',
+    (bool)array_filter(['corner booth', 'pie case', 'coffee urn'],
+        fn($p) => str_contains($arScene, $p)), $arScene);
+
+// An empty room is quiet and a little sad, and the renderer must not apologise.
+$arDawn = xeric_world_now($arT, ep('2026-07-28 04:00'));
+$arEmpty = xeric_travel_scene($arT, 'bluebird', $arDawn, xeric_world_who_is_where($arT, $arDawn));
+ok('arrival: an empty room says so, with its furniture sitting where it always sits',
+    str_contains($arEmpty, 'Nobody is at') && str_contains($arEmpty, 'sits where it always sits'),
+    $arEmpty);
+
+// A room the forge never furnished still gets a beat — absent, not invented.
+$arBare = xeric_travel_scene($T, 'bluebird', $arTue, $arPres);
+ok('arrival: a room with no interior list gets people and no imaginary furniture',
+    str_contains($arBare, 'Ruth')
+    && !str_contains($arBare, 'booth') && !str_contains($arBare, 'urn older'), $arBare);
+
+// The interior list is validated as furniture, not prose.
+$arBad = $arT;
+$arBad['places'][0]['interior'] = 'the corner booth';
+ok('arrival: a hand-edit that turns the furniture into a string is refused by name',
+    str_contains(err(fn() => xeric_world_validate($arBad, 'x')), 'interior'));
+
+// ---------------------------------------------------------------------------
+// Weather: one derived sentence about the sky that everybody agrees on.
+// Deterministic per (world, date), day-coarse by construction, seasonal by
+// month, climate-routed by the locale's own words — and never stored, so
+// nothing can ever disagree with it.
+// ---------------------------------------------------------------------------
+
+require_once __DIR__ . '/../weather.php';
+
+echo "\n# weather\n";
+
+$wxEp = fn(string $when): int =>
+    (new DateTimeImmutable($when, new DateTimeZone('America/New_York')))->getTimestamp();
+
+ok('weather: the same world and date derive the same byte string, always',
+    xeric_weather_line($T, xeric_world_now($T, $wxEp('2026-08-02 10:00')))
+        === xeric_weather_line($T, xeric_world_now($T, $wxEp('2026-08-02 10:00'))));
+ok('weather: day-coarse — ten in the morning and ten at night share one sky',
+    xeric_weather_line($T, xeric_world_now($T, $wxEp('2026-08-02 10:00')))
+        === xeric_weather_line($T, xeric_world_now($T, $wxEp('2026-08-02 22:00'))));
+$wxSeen = [];
+for ($d = 0; $d < 40; $d++) {
+    $wxSeen[xeric_weather_line($T, xeric_world_now($T, $wxEp('2026-08-02 10:00') + $d * 86400))] = 1;
+}
+ok('weather: forty days are not one long identical afternoon', count($wxSeen) >= 3,
+    count($wxSeen) . ' distinct');
+ok('weather: december reads from the winter shelf',
+    in_array(xeric_weather_line($T, xeric_world_now($T, $wxEp('2026-12-25 10:00'))),
+        xeric_weather_lines()[xeric_weather_climate($T)][0], true));
+ok('weather: an 1873 date has a sky too — the derivation survives negative epochs',
+    xeric_weather_line($T, xeric_world_now($T, $wxEp('1873-06-04 07:40'))) !== '');
+
+// Climate is the locale's own words, checked in specificity order.
+$mk = function (string $locale) use ($T): array { $t = $T; $t['setting']['locale'] = $locale; return $t; };
+ok('weather: a gulf town is coastal, a dust town is arid, a river town is temperate',
+    xeric_weather_climate($mk('a gulf fishing town on the barrier islands')) === 'coastal'
+    && xeric_weather_climate($mk('a dust town at the edge of the high desert')) === 'arid'
+    && xeric_weather_climate($T) === 'temperate');
+ok('weather: a station has no sky, and a dome over a dead sea is a dome before it is a sea',
+    xeric_weather_climate($mk('a mining station in orbit')) === 'interior'
+    && xeric_weather_climate($mk('a dome over a dead sea')) === 'interior');
+
+// Where it rides: the volatile RIGHT NOW block, and never anything byte-stable.
+$wxNow   = xeric_world_now($T, $wxEp('2026-08-02 10:00'));
+$wxBlock = xeric_prompt_now_block($T, 'ruth', $wxNow);
+ok('weather: the RIGHT NOW block carries the day\'s sky',
+    str_contains($wxBlock, xeric_weather_line($T, $wxNow)));
+// The structural half of the cache claim: the system message is built with no
+// $now at all (its signature has nowhere to put a date), so the sky CANNOT
+// climb above the fold — and the sentence is asserted absent anyway, because
+// signatures change and this line should go red the day one does.
+$wxDb  = xeric_state_open(sys_get_temp_dir() . '/xeric-wx-' . getmypid() . '.db');
+xeric_state_migrate($wxDb);
+$wxSys = xeric_prompt_system($T, $wxDb, 'ruth', xeric_world_rating($T));
+ok('weather: the SYSTEM message carries no sky — day-coarse still means volatile-block only',
+    !str_contains($wxSys, xeric_weather_line($T, $wxNow)));
+$wxDb = null;
+foreach ([sys_get_temp_dir() . '/xeric-wx-' . getmypid() . '.db'] as $f) {
+    foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
+}
+
+// ---------------------------------------------------------------------------
 
 $db2 = null;
 foreach ([$dbPath, $dbPath . '-wal', $dbPath . '-shm'] as $f) @unlink($f);

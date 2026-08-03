@@ -229,8 +229,43 @@ function xeric_clock_reset(PDO $db, ?array $t = null, ?int $realNow = null): voi
     // which is right for a world that is, and destructive for one that is not:
     // a reset would have hauled a town out of November 1973 into this afternoon
     // and called it undoing a fast-forward.
+    $real   = $realNow ?? xeric_state_time();
     $starts = $t !== null ? xeric_clock_starts($t) : null;
-    xeric_clock_offset_set($db, $starts === null ? 0 : $starts - ($realNow ?? xeric_state_time()));
+    xeric_clock_offset_set($db, $starts === null ? 0 : $starts - $real);
+
+    // THE GUARDS GO BACK WITH THE CLOCK. A fast-forward wrote per-window
+    // `sweep:<size>:<n>` guards and a `sweep_watermark:<size>` high mark in the
+    // hours it lived — hours that now sit in this world's FUTURE. Left standing
+    // (as they were), every later sweep answered "that stretch of the world has
+    // already been lived", the heart skipped the world without a note, and the
+    // early return meant the stale mark could never rewrite itself downward:
+    // reset printed success and the world silently never lived again. So the
+    // reset does what the rewind already does for un-happened hours: guards
+    // whose window opens after the new now are deleted, and a watermark
+    // standing past it goes too. Guards at or below the new now are kept —
+    // those hours were genuinely lived, and one guard's worth of quiet at the
+    // boundary beats a doubled event.
+    //
+    // The raw SELECT is here because state.php has no prefix reader for
+    // world_state and must not grow one into it (constructs.php's discipline).
+    $epoch = $starts ?? $real;
+    $st    = $db->query("SELECT key, value FROM world_state WHERE key LIKE 'sweep%'");
+    $rows  = $st->fetchAll(PDO::FETCH_ASSOC);
+    $st->closeCursor();
+    foreach ($rows as $r) {
+        $k = (string)$r['key'];
+        if (preg_match('/^sweep:(\d+):(-?\d+)$/', $k, $m)) {
+            if ((int)$m[2] * (int)$m[1] > $epoch) xeric_world_state_delete($db, $k);
+        } elseif (preg_match('/^sweep_watermark:(\d+)$/', $k, $m)) {
+            $size = (int)$m[1];
+            // Floor division by hand — the world may stand before 1970, and
+            // intdiv truncates toward zero (sweeps.php owns the shared helper,
+            // and this file sits below it).
+            $q = intdiv($epoch, $size);
+            if ($epoch % $size < 0) $q--;
+            if ((int)$r['value'] > $q) xeric_world_state_delete($db, $k);
+        }
+    }
 }
 
 /**

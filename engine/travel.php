@@ -424,6 +424,9 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
     }
     xeric_player_move($db, $to, (int)$now['epoch']);
 
+    $presence = $to === null ? [] : xeric_world_who_is_where($t, $now, xeric_dead_handles($db));
+    $who      = $to === null ? [] : xeric_world_who_is_at($presence, $to);
+
     return [
         'ok'      => true,
         'error'   => null,
@@ -432,9 +435,89 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
         'minutes' => $minutes,
         'now'     => $now,
         'open'    => $to === null ? true : xeric_travel_open($t, $to, $now, xeric_dark_places($db)),
-        'who'     => $to === null ? [] : xeric_world_who_is_at(xeric_world_who_is_where($t, $now, xeric_dead_handles($db)), $to),
+        'who'     => $who,
         'place'   => $to !== null ? xeric_world_place($t, $to) : null,
+        'scene'   => $to !== null ? xeric_travel_scene($t, $to, $now, $presence) : '',
     ];
+}
+
+/**
+ * The narrator's line for walking into a room — assembled, never asked for.
+ *
+ * "*Jim and Tim are discussing stocks at the bar*" was the sketch, and every
+ * word of it is available without a model: who is here is the presence read,
+ * what they are doing is the week's own `doing` field, and the furniture is
+ * the place's `interior` list. So the beat is DETERMINISTIC — built from
+ * observables, byte-stable for a given room, hour and cast, and free.
+ *
+ * OBSERVABLES ONLY, at the wall's edge. What you get on entry is what a body
+ * in a doorway gets: who, posture, props. When two people are mid-something,
+ * you get the SURFACE of it — "the talk drops while the door swings shut" —
+ * and never the topic, because topic-knowledge is exactly where the walls
+ * begin, and "they went quiet when you came in" is both legal and delicious.
+ *
+ * The prop is picked by (place, date) the way the sky is (weather.php): one
+ * detail per room per day, so every arrival that day agrees on which chair
+ * matters, and a room with no `interior` list simply has no furniture worth
+ * mentioning yet — absent, not invented.
+ */
+function xeric_travel_scene(array $t, string $to, array $now, array $presence): string
+{
+    $place = xeric_world_place($t, $to);
+    if ($place === null) return '';
+    $pname = (string)($place['name'] ?? $to);
+
+    // The day's prop, if the forge furnished the room.
+    $props = array_values(array_filter(array_map(
+        fn($i) => trim(xeric_text($i)), (array)($place['interior'] ?? [])), fn($s) => $s !== ''));
+    $iso   = (string)($now['iso'] ?? '');
+    $seed  = crc32($to . '|' . substr($iso, 0, 10));
+    $prop  = $props !== [] ? $props[$seed % count($props)] : '';
+
+    $here = [];
+    foreach ($presence as $row) {
+        if (($row['where'] ?? null) !== $to) continue;
+        $h = (string)($row['handle'] ?? '');
+        if ($h === '') continue;
+        $here[] = ['name' => xeric_world_name($t, $h) ?: $h,
+                   'doing' => trim((string)($row['doing'] ?? ''))];
+    }
+
+    if ($here === []) {
+        return $prop !== ''
+            ? "Nobody is at $pname this hour. " . ucfirst($prop) . ' sits where it always sits.'
+            : "Nobody is at $pname this hour.";
+    }
+
+    if (count($here) === 1) {
+        $p = $here[0];
+        $line = $p['doing'] !== ''
+            ? $p['name'] . ' is here, ' . rtrim($p['doing'], '.') . '.'
+            : $p['name'] . ' is here.';
+        return $prop !== '' ? $line . ' ' . ucfirst($prop) . ' between you.' : $line;
+    }
+
+    // Two or more: names, then what each is at, then the surface of the room
+    // noticing a door. The closers rotate by (place, hour) so a day of coming
+    // and going does not read like a stamp, and every one of them is a thing
+    // a bystander could see — none of them is a topic.
+    $names = array_column($here, 'name');
+    $line  = count($names) === 2
+        ? $names[0] . ' and ' . $names[1] . ' are here.'
+        : implode(', ', array_slice($names, 0, -1)) . ' and ' . end($names) . ' are here.';
+    foreach ($here as $p) {
+        if ($p['doing'] !== '') $line .= ' ' . $p['name'] . ' is ' . rtrim($p['doing'], '.') . '.';
+    }
+    if ($prop !== '') $line .= ' ' . ucfirst($prop) . '.';
+
+    $closers = [
+        'The talk drops while the door swings shut behind you.',
+        'Whatever it was, it waits until you have found somewhere to stand.',
+        'Nobody picks the conversation back up right away.',
+        'The room takes its one look at the door and goes back to itself.',
+    ];
+    $hourSeed = crc32($to . '|' . substr($iso, 0, 13));
+    return $line . ' ' . $closers[$hourSeed % count($closers)];
 }
 
 /**

@@ -58,6 +58,7 @@ require_once __DIR__ . '/travel.php';   // where the player is standing, if anyw
 require_once __DIR__ . '/death.php';    // and who is not standing anywhere any more
 require_once __DIR__ . '/renderers/bible.php';
 require_once __DIR__ . '/renderers/economy.php';
+require_once __DIR__ . '/weather.php';  // the day's sky, derived, day-coarse, RIGHT NOW only
 
 /**
  * @param array $now  from xeric_world_now() — injected, never fetched here
@@ -336,6 +337,16 @@ function xeric_prompt_voice(array $t, string $speakerHandle, string $eff): array
         if ($v !== '') $out[] = $lead . xeric_sentence($v);
     }
 
+    // The inventory, both halves — template data, so as byte-stable as the
+    // voice above it. COMMONS on purpose: what you wear and carry is what any
+    // stranger at ten feet sees, which is why these may ride a system message
+    // where a secret never could. A person with no lists is simply unfurnished
+    // (every world forged before the lists existed), and nothing is invented.
+    $wears = array_values(array_filter(array_map('xeric_text', (array)($c['wears'] ?? []))));
+    if ($wears !== []) $out[] = 'You are wearing, most days: ' . xeric_join_list($wears) . '.';
+    $carries = array_values(array_filter(array_map('xeric_text', (array)($c['carries'] ?? []))));
+    if ($carries !== []) $out[] = 'In your pockets or hands, most days: ' . xeric_join_list($carries) . '.';
+
     $tells = [];
     foreach (xeric_rating_filter((array)($c['tells'] ?? []), $eff) as $tell) {
         $line = xeric_text($tell);
@@ -546,6 +557,15 @@ function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, str
     $clock = trim($day . ' ' . $phase) . ', ' . (string)($now['hhmm'] ?? '');
     $loc   = trim((string)($t['user']['location'] ?? ''));
     $lines[] = xeric_sentence($clock . ($loc !== '' ? ', in ' . $loc : ''));
+
+    // The day's sky — day-coarse and DERIVED (engine/weather.php), so this
+    // block stays as cache-cheap as it was: the line changes when the date
+    // does, not when the message does, and every speaker in the world reads
+    // the identical sentence. It rides RIGHT NOW because it is the one block
+    // allowed to change, and it may never move above this line into anything
+    // byte-stable.
+    $wx = xeric_weather_line($t, $now);
+    if ($wx !== '') $lines[] = $wx;
 
     // HOW LONG IT HAS BEEN, said only when it has actually been a while. The
     // transcript is undated, so without this line a week-skip's goodbye abuts

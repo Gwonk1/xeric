@@ -74,6 +74,16 @@ require_once __DIR__ . '/learn.php';     // what the person living here actually
 // sweeps are the lower layer and a world with no overlay must not pay for the
 // overlay engine. Overlays arrive already loaded, in $opts['stories'], and
 // nothing below reaches for a xeric_story_* function until one actually has.
+//
+// shape.php IS required, and the distinction is the whole reason it is a
+// separate file. A world has a rhythm whether or not any story is laid on it —
+// the curve is world data, not overlay data — so the arithmetic that reads a
+// curve lives one layer down where a shapeless world can reach it for the price
+// of a function call. What stayed in story.php is what is genuinely about
+// overlays: beats, walls, victims, resolution, composition. A world running no
+// shape still pays nothing: xeric_story_ambient() returns [] on the first line.
+require_once __DIR__ . '/shape.php';
+require_once __DIR__ . '/weather.php'; // the day's sky, derived, never stored
 
 /** The unit of offscreen life. One hour: short enough to place an event in a real
  *  shift, long enough that a day is not 1,440 chances to interrupt somebody. */
@@ -81,6 +91,21 @@ const XERIC_SWEEP_WINDOW = 3600;
 
 /** How often a window that COULD produce an event actually does. */
 const XERIC_SWEEP_CHANCE = 0.35;
+
+/**
+ * Which window an epoch falls in. FLOOR division, not intdiv().
+ *
+ * intdiv() truncates toward zero, so below 1970 the two disagree: epoch −100
+ * lives in window −1, and intdiv says 0 — the hour walked and the guard written
+ * would name different windows, off by one for every pre-1970 world. Every
+ * window index in this file comes through here so the walker, the guard and the
+ * watermark can never disagree about which hour an epoch belongs to.
+ */
+function xeric_sweep_windex(int $epoch, int $size): int
+{
+    $q = intdiv($epoch, $size);
+    return ($epoch % $size < 0) ? $q - 1 : $q;
+}
 
 /** Two, or three. Four people at a thing is a scene, and a scene needs dialogue. */
 const XERIC_SWEEP_MAX_PARTICIPANTS = 3;
@@ -442,6 +467,61 @@ function xeric_sweep_story_trail(array $stories, PDO $db, int $epoch, float $wor
 }
 
 /**
+ * What the WORLD'S OWN shape did to this window. The same record, one level down.
+ *
+ * Written in the same fields as the story trail so why.php needs no second
+ * reader: `live` carries one row, the world itself, with the stage it is in and
+ * where on its cycle it stands. The one thing it must never do is read as a
+ * story — a person tuning a shapeless xeric who sees "the crescendo" in the
+ * inspector will go looking for a plot that does not exist — so the row is
+ * titled with the shape rather than a story name, and a world running `none`
+ * produces no trail at all rather than a row that says nothing is happening.
+ */
+function xeric_sweep_shape_trail(array $t, PDO $db, int $epoch, float $worldChance, float $rolled, array $before, array $after): array
+{
+    $a = xeric_story_ambient($t, $db, $epoch);
+    if ($a === []) return [];                          // shapeless: there is nothing to explain
+
+    $why = [
+        'opening'    => 'the front of its cycle, introductions and texture',
+        'rising'     => 'rising, things coming faster than usual',
+        'taper'      => 'coming off the busy stretch',
+        'false_calm' => 'at exactly its own pace, which is where this shape rests',
+        'crescendo'  => 'the loud part of its cycle',
+        'closing'    => 'settling back down',
+    ];
+    $stage = (string)$a['stage'];
+    $shape = xeric_story_shape($t);
+    $key   = xeric_story_shape_key($t);
+    $cycle = (int)($shape['cycle_days'] ?? 0);
+
+    $thumb = [];
+    foreach ($after as $name => $k) {
+        $was = (float)($before[$name]['weight'] ?? 1.0);
+        $now = (float)($k['weight'] ?? 1.0);
+        if ($was > 0.0 && abs($now - $was) > 1e-9) $thumb[$name] = round($now / $was, 3);
+    }
+
+    return [
+        'live'   => [[
+            'key'       => 'world:' . $key,
+            'title'     => 'this xeric\'s own shape — ' . (string)($shape['label'] ?? $key),
+            'stage'     => $stage,
+            'p'         => round((float)$a['p'], 3),
+            'intensity' => round((float)$a['intensity'], 3),
+            'pace'      => round((float)$a['m'], 3),
+            'beats'     => 'no beats — a ' . $cycle . '-day cycle, walked on the calendar',
+            'why'       => $why[$stage] ?? $stage,
+        ]],
+        'chance' => ['world' => round($worldChance, 4), 'rolled' => round($rolled, 4)],
+        'pace'   => $worldChance > 0.0 ? round($rolled / $worldChance, 3) : 1.0,
+        'thumb'  => $thumb,
+        'beat'   => null,
+        'why'    => 'the xeric is ' . ($why[$stage] ?? $stage),
+    ];
+}
+
+/**
  * Anything the WORLD itself can finish, finished. Checked after every window.
  *
  * An accusation is said to somebody's face and closes inside that conversation,
@@ -525,13 +605,18 @@ function xeric_sweep_run(array $t, PDO $db, array $endpoint, array $now, array $
  */
 function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, array $stories, array $opts = []): array
 {
-    $epoch = (int)($now['epoch'] ?? 0);
-    if ($epoch <= 0) throw new RuntimeException('sweep: a sweep needs a moment, pass xeric_world_now()');
+    // ABSENCE, NOT SIGN. A world whose `setting.starts` is before 1970 stands
+    // at a legitimately negative epoch — xeric_world_now() builds a perfectly
+    // good 1873 morning from one — and the old `<= 0` read every hour of such
+    // a world as "no moment passed", so its entire offscreen life threw while
+    // chat kept answering. The sentinel for a missing moment is the missing key.
+    if (!isset($now['epoch'])) throw new RuntimeException('sweep: a sweep needs a moment, pass xeric_world_now()');
+    $epoch = (int)$now['epoch'];
 
     if (isset($opts['seed'])) mt_srand((int)$opts['seed']);
 
     $windowSize = max(60, (int)($opts['window'] ?? XERIC_SWEEP_WINDOW));
-    $window     = intdiv($epoch, $windowSize);
+    $window     = xeric_sweep_windex($epoch, $windowSize);
     $guard      = 'sweep:' . $windowSize . ':' . $window;
 
     $prior = xeric_world_state_get($db, $guard);
@@ -551,7 +636,14 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
     // two thumbs should, and a kind_thumb naming a kind this world never armed
     // hits nothing at all. That invariant is what keeps an overlay out of the
     // attraction economy — it cannot reach a kind the forge did not switch on.
+    // And the WORLD'S OWN shape is the same knob one level down. A world with
+    // no overlay still has a rhythm if it was forged with one — it walks its
+    // curve on the calendar instead of on beats — and the thumb obeys the same
+    // rule for exactly the same reason: it re-weights what the forge armed and
+    // can neither arm nor delete. A world forged shapeless returns $kinds
+    // untouched, which is what every world did before shapes existed.
     if ($stories !== []) $kinds = xeric_story_thumb($kinds, $stories, $db, $epoch);
+    else                 $kinds = xeric_story_ambient_thumb($kinds, $t, $db, $epoch);
 
     $quietWhy = null;
     if (xeric_sweep_quiet($t, $now, $quietWhy)) {
@@ -601,13 +693,18 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
     // a deterministic test became flaky. In the false calm the scale is exactly
     // 1.0 and this line is arithmetically the line it always was.
     $worldChance = (float)($t['events']['sweep_chance'] ?? XERIC_SWEEP_CHANCE);
+    // A world's own shape sits in the same slot a story's would and obeys the
+    // same precedence: an explicit chance is an instruction and is never scaled.
+    // With no shape declared, xeric_story_ambient_chance() hands the world's own
+    // number straight back, so this line is arithmetically the line it was.
     $chance      = isset($opts['chance'])
         ? (float)$opts['chance']
-        : ($stories !== [] ? xeric_story_chance($t, $stories, $db, $epoch) : $worldChance);
+        : ($stories !== [] ? xeric_story_chance($t, $stories, $db, $epoch)
+                           : xeric_story_ambient_chance($t, $db, $epoch));
 
     $snake = $stories !== []
         ? xeric_sweep_story_trail($stories, $db, $epoch, $worldChance, $chance, $plain, $kinds, $beat)
-        : [];
+        : xeric_sweep_shape_trail($t, $db, $epoch, $worldChance, $chance, $plain, $kinds);
 
     if ($beat === null && !xeric_sweep_roll($chance)) {
         // The window is still burned. A caller that rerolled until it got an
@@ -771,8 +868,8 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
     $maxEvents  = (int)($opts['max_events'] ?? 3);
     $maxWindows = (int)($opts['max_windows'] ?? 48);
 
-    $first = intdiv(min($fromEpoch, $toEpoch), $windowSize);
-    $last  = intdiv(max($fromEpoch, $toEpoch), $windowSize);
+    $first = xeric_sweep_windex(min($fromEpoch, $toEpoch), $windowSize);
+    $last  = xeric_sweep_windex(max($fromEpoch, $toEpoch), $windowSize);
 
     // THE CLOCK IS THE EDGE OF THE WORLD. Events are ordered by world_epoch
     // everywhere they are read, so an hour sampled half a window past the moment
@@ -780,10 +877,14 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
     // the simulation telling on itself. A caller handing over a stretch has
     // already said where its far end is; one naming a single window by its start
     // epoch has said nothing about the clock, and passes `clock` when it can.
-    $clock = (int)($opts['clock'] ?? ($fromEpoch !== $toEpoch ? max($fromEpoch, $toEpoch) : 0));
+    // Null is "nobody told us", the way the epoch sentinel works: an 1873 world
+    // hands over a real, negative clock, and a zero-as-absent convention would
+    // silently disable both clamps below for every pre-1970 world.
+    $clock = $opts['clock'] ?? ($fromEpoch !== $toEpoch ? max($fromEpoch, $toEpoch) : null);
+    if ($clock !== null) $clock = (int)$clock;
     // An hour the clock has not entered at all is not late, it is next: left
     // alone, and left out of the watermark, so the following call still has it.
-    if ($clock > 0 && $clock <= $last * $windowSize) $last--;
+    if ($clock !== null && $clock <= $last * $windowSize) $last--;
 
     // The per-window guard makes one HOUR happen once; this makes one STRETCH
     // happen once. Without it, a catch-up that stopped at max_events would leave
@@ -810,7 +911,7 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
         // still in progress is the exception — it is sampled where the world
         // actually stands, because there is no such thing as later than now.
         $at  = $w * $windowSize + intdiv($windowSize, 2);
-        if ($clock > 0 && $at > $clock) $at = $clock;
+        if ($clock !== null && $at > $clock) $at = $clock;
         $now = xeric_world_now($t, $at);
 
         try {
@@ -824,6 +925,7 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
             $out['notes'][] = $now['hhmm'] . ', ' . $e->getMessage();
             if (++$misses >= (int)($opts['max_misses'] ?? 2)) {
                 $out['notes'][] = 'gave up after ' . $misses . ' hours in a row that came back wrong';
+                $gaveUp = true;
                 break;
             }
             continue;
@@ -832,7 +934,24 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
         foreach ($r['notes'] as $n) $out['notes'][] = $now['hhmm'] . ', ' . $n;
     }
 
-    if (empty($opts['force'])) xeric_world_state_set($db, 'sweep_watermark:' . $windowSize, $last);
+    // THE WATERMARK MAY NOT CLAIM HOURS NOBODY LIVED. The early exits above are
+    // three different promises. Stopping at max_events or max_windows buries the
+    // tail on purpose — one stretch happens once, and pressing skip twice must
+    // not mine the same afternoon again. GIVING UP IS NOT THAT: the failed
+    // windows deliberately left their guards unwritten so they could be retried
+    // (xeric_sweep_run's own contract), and a watermark stamped past them made
+    // a six-hour model outage permanently end a world's offscreen life — every
+    // later catchup computed first > last and returned "already been lived"
+    // without a single model call. So on the give-up path the mark stops at the
+    // last window BEFORE the failing streak, and it only ever moves forward:
+    // going backward would re-open hours an earlier call legitimately buried.
+    if (empty($opts['force'])) {
+        $upTo = ($gaveUp ?? false) ? $w - $misses : $last;
+        $prev = xeric_world_state_get($db, 'sweep_watermark:' . $windowSize);
+        if ($prev === null || (int)$prev < $upTo) {
+            xeric_world_state_set($db, 'sweep_watermark:' . $windowSize, $upTo);
+        }
+    }
     return $out;
 }
 
@@ -1475,6 +1594,20 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     $lines[] = '';
     $lines[] = 'WHEN AND WHERE';
     $lines[] = $when . '. ' . rtrim($whereLine, '.') . '.';
+    // The day's sky, the same byte string every prompt derives for this date
+    // (engine/weather.php). Scene-setting only — the still-life rule four
+    // lines down still says weather may dress the hour and never carry it.
+    $wx = xeric_weather_line($t, $now);
+    if ($wx !== '') $lines[] = 'The weather, which is scenery and not the subject: ' . $wx;
+    // And the room's own furniture, when the forge furnished it: the same list
+    // the arrival beat reads, so an hour at the diner and a walk into the
+    // diner touch the SAME chairs instead of each inventing their own. Props,
+    // not subjects — the still-life rule covers these too.
+    $furn = $place === null ? [] : array_values(array_filter(array_map(
+        fn($i) => trim(xeric_text($i)), (array)($place['interior'] ?? [])), fn($s) => $s !== ''));
+    if ($furn !== []) {
+        $lines[] = 'In the room, if hands need something to hold: ' . implode('; ', $furn) . '.';
+    }
 
     // WHOSE PROMPT THIS ALSO IS. One call writes a memory for everybody in the
     // room, so when one of them is protected this prompt is the thing that puts
@@ -1610,7 +1743,12 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     $lines[] = '  half, a different detail, a different thing noticed, a different thing they were left';
     $lines[] = '  holding. If one memory could be swapped for the other, both are wrong.';
     $lines[] = '- Invent no new people and no new places. Nothing is explained, resolved or concluded.';
-    $lines[] = xeric_rating_rank($eff) >= 1
+    // Against a NAMED tier, never a bare integer. `>= 1` was written when rank
+    // 1 meant `mature`; the broadcast ladder made rank 1 `pg`, and for one
+    // evening every TV-PG and TV-14 world was told adult content is permitted
+    // four lines under the style sentence saying the camera cuts away. A named
+    // tier survives the next ladder change too.
+    $lines[] = xeric_rating_rank($eff) >= xeric_rating_rank('mature')
         ? '- Adult content is allowed where the hour honestly calls for it; it is never the point.'
         : '- Keep it clean: nothing sexual, nothing graphic.';
     $lines[] = 'No prose outside the JSON.';
@@ -1638,6 +1776,38 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
  * field to drop, because the prose and the memories are two halves of the same
  * hour. That one is thrown, the hour is refused, and nothing is written.
  */
+/**
+ * Interiority in a public record. '' when clean, else the word that broke it.
+ *
+ * OBSERVABLES-ONLY IS THE ENGINE'S LAW, NOT THE PROMPT'S REQUEST. An event is
+ * the town's shared record: the gossip ripple derives lines from it, the room
+ * block reads its title back to whoever was near it, and the whole walls-
+ * safety argument for spreading it is that it contains only what a bystander
+ * could see. The prompt has always said so ("No she felt, no he realised") —
+ * and the prompt is a request. A small model that writes "she felt the evening
+ * turn on her" into prose makes an interior state a public fact the moment the
+ * row lands, and nothing downstream can un-know it. So the rule gets the same
+ * treatment the protected-secret rule got: said in the prompt, ENFORCED here.
+ *
+ * The verb list is deliberately unambiguous — verbs that can only report the
+ * inside of a head. The one double-agent is "felt": felt ALONG the shelf is
+ * hands (kept), felt ashamed is a heart (refused), so the physical senses are
+ * carved out by their prepositions. Memories are exempt by design: a memory IS
+ * an interior, that is the entire point of divergent per-witness memory.
+ */
+function xeric_sweep_interior(string $text): string
+{
+    static $verbs = 'realised|realized|wondered|hoped|feared|wished|believed|regretted|worried'
+        . '|resented|dreaded|understood|suspected|doubted|envied|longed|yearned'
+        . '|knew|thought|decided|remembered|considered|imagined|daydreamed|felt';
+    if (!preg_match('/\b(' . $verbs . ')\b/iu', $text, $m)) return '';
+    if (strcasecmp($m[1], 'felt') === 0
+        && preg_match('/\bfelt\s+(along|for|under|around|through|across|beneath|behind|inside)\b/iu', $text)) {
+        return '';
+    }
+    return $m[1];
+}
+
 function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
 {
     $notes = [];
@@ -1651,6 +1821,19 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
     if ($title === '') $title = xeric_seed_headline($prose);
     if (mb_strlen($title) > 90) $title = rtrim(mb_substr($title, 0, 90)) . '…';
     if (mb_strlen($prose) > 900) $prose = xeric_chat_trim_length($prose, 900);
+
+    // The public record is observables only — refused whole, like the wall
+    // and the floor below, because half an hour is not a smaller hour. The
+    // memories are deliberately NOT screened here: they are interiors, and
+    // divergent interiors are what a sweep exists to produce.
+    foreach (['title' => $title, 'prose' => $prose] as $field => $text) {
+        $verb = xeric_sweep_interior($text);
+        if ($verb !== '') {
+            throw new RuntimeException("sweep: refused, the $field wrote the inside of somebody's head "
+                . "(\"$verb\") — the record states what a bystander could see, the feeling rides "
+                . 'the feeler\'s own prompt');
+        }
+    }
 
     // Handles first; a display name is resolved through the same index the seeder
     // uses, so "Maren Voss" and "maren_voss" mean the same person in both files.
@@ -1673,6 +1856,12 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
             $notes[] = "$handle's memory only restated something they already knew";
             continue;
         }
+        // Cross-witness divergence is DELIBERATELY not checked here. It lives
+        // one layer up, in xeric_sweep_collision() — pairwise, with a retry
+        // that hands the model back its own two sentences and a refusal when
+        // it cannot do better — and a parse-level drop would swallow the
+        // collision before that loop could see it, turning refuse-and-retry
+        // into silently-accept-a-thinner-hour. One law, one place.
         $memories[$handle] = $text;
     }
 
@@ -1681,9 +1870,15 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
     // the secret into the room it was told to keep it out of. By the time it is
     // stored it is not prose, it is what happened, and nothing downstream can
     // un-happen it. Refusing costs an hour.
+    // THE TITLE IS SCANNED TOO — it is the one field the prompt tells the model
+    // to "name the thing" in, and it travels furthest: the room block reads a
+    // non-spine title back into every recent participant's own prompt, and the
+    // why-trail prints it in the inspector. The age floor eleven lines down
+    // always measured title+prose together; this check now does the same.
     foreach (xeric_sweep_protected($t) as $h => $secret) {
         if (!in_array($h, $chosen['handles'], true)) continue;
-        if (xeric_sweep_touches($prose, $secret)
+        if (xeric_sweep_touches($title, $secret)
+            || xeric_sweep_touches($prose, $secret)
             || (isset($memories[$h]) && xeric_sweep_touches($memories[$h], $secret))) {
             throw new RuntimeException('sweep: refused, the hour put ' . $h
                 . ' next to the thing they must not know');

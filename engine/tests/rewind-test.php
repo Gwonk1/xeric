@@ -373,6 +373,49 @@ ok('death: and the rewind gives them back — the ledger is empty and the world 
     json_encode([$rd, array_diff_assoc($POSTD['world_state'], $PRED['world_state'])]));
 
 // ---------------------------------------------------------------------------
+// 8b. The diff runs BOTH directions: a revive inside the skip is recorded,
+// and the rewind puts the body back — with its own hour and its own story.
+//
+// The one-directional diff walked the current ledger for handles absent from
+// the mark and could not see the converse. The half-reverted catastrophe was
+// the worst case: fate.php's restore mid-skip emptied the ledger, the diff
+// recorded nothing, and the rewind restored `places.dark` (a world_state key,
+// faithfully diffed) over a cast walking around alive — every place dark for a
+// catastrophe with no bodies, the exact ghost this file's header forbids.
+// ---------------------------------------------------------------------------
+
+$dbR = fresh_db('revive-mid-skip');
+xeric_state_seed($dbR, $TM);
+
+// Pre-skip: the world has ended. Whole cast in the ledger, every place dark.
+$cat = xeric_death_catastrophe($TM, $dbR, (int)xeric_clock_now($dbR, $TM, $REAL)['epoch'], 'the dam went');
+$deadPre = (int)$dbR->query('SELECT COUNT(*) c FROM deaths')->fetchAll()[0]['c'];
+$darkPre = (string)(xeric_world_state_get($dbR, 'places.dark') ?? '');
+ok('revive: the catastrophe stands before the mark — bodies and dark places agree',
+    $deadPre > 0 && $darkPre !== '' && $darkPre !== '[]');
+
+// Mid-skip: mark taken, then "everybody back" lands while the feed streams —
+// fate.php takes no queue slot, so this interleaving is one click away.
+$markR = xeric_rewind_mark($dbR);
+xeric_clock_advance($dbR, 2 * 3600, $TM, $REAL);
+xeric_death_restore($TM, $dbR);
+$mR = xeric_rewind_commit($dbR, $markR);
+ok('revive: the manifest records the removed deaths, whole rows and all',
+    count((array)($mR['deaths_removed'] ?? [])) === $deadPre
+    && (($mR['deaths_removed'][array_key_first((array)$mR['deaths_removed'])]['how'] ?? '') === 'the dam went'),
+    json_encode($mR['deaths_removed'] ?? null));
+
+// Take it back: the two halves of one player action must revert TOGETHER.
+$rR = xeric_rewind($TM, $dbR);
+$deadPost = (int)$dbR->query('SELECT COUNT(*) c FROM deaths')->fetchAll()[0]['c'];
+$darkPost = (string)(xeric_world_state_get($dbR, 'places.dark') ?? '');
+ok('revive: the rewind restores the bodies WITH the dark — no catastrophe of empty rooms over a living cast',
+    $rR['ok'] === true && $deadPost === $deadPre && $darkPost === $darkPre,
+    json_encode(['dead' => [$deadPre, $deadPost], 'dark' => [$darkPre, $darkPost]]));
+$howBack = (string)($dbR->query('SELECT how FROM deaths LIMIT 1')->fetchAll()[0]['how'] ?? '');
+ok('revive: and each body kept its story', $howBack === 'the dam went');
+
+// ---------------------------------------------------------------------------
 // 9. The constructs seam: a fuse that fires inside a skip un-fires with it
 // ---------------------------------------------------------------------------
 

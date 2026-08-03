@@ -213,6 +213,31 @@ ok('clock: reset puts the world back on real time',
 ok('clock: a zero advance is a legal no-op, not an error',
     xeric_clock_advance($db, 0, $T, $REAL)['epoch'] === $REAL);
 
+// THE GUARDS GO BACK WITH THE CLOCK. A reset that moved only the offset left
+// the fast-forward's window guards and watermark standing in the world's
+// future, so every later sweep said "already been lived", the heart skipped
+// the world without a note, and the condition could never clear itself.
+ok('clock: reset takes the fast-forward\'s guards and watermark with it, and the world lives again',
+    (function () use ($T, $REAL) {
+        $d = fresh_db('clock-reset-guards');
+        xeric_state_seed($d, $T);
+        xeric_clock_advance($d, 2 * 86400, $T, $REAL);
+        // live the advanced stretch so guards + watermark land in the future
+        $r1 = xeric_sweep_catchup($T, $d, stub_event(), $REAL, $REAL + 2 * 86400,
+            ['chance' => 1.0, 'seed' => 41, 'max_events' => 2]);
+        if (($r1['events'] ?? []) === []) return false;
+        if (xeric_world_state_get($d, 'sweep_watermark:3600') === null) return false;
+        xeric_clock_reset($d, null, $REAL);
+        // the mark must not outlive the hours it claimed
+        $mark = xeric_world_state_get($d, 'sweep_watermark:3600');
+        if ($mark !== null && (int)$mark > intdiv($REAL, 3600)) return false;
+        // and the same afternoon is liveable again — the assertion that was
+        // false for every reset before the fix
+        $r2 = xeric_sweep_catchup($T, $d, stub_event(), $REAL, $REAL + 6 * 3600,
+            ['chance' => 1.0, 'seed' => 42, 'max_events' => 4]);
+        return ($r2['events'] ?? []) !== [];
+    })());
+
 ok('clock: spans are read the way a person types them',
     xeric_clock_span('6h') === 21600 && xeric_clock_span('90m') === 5400
     && xeric_clock_span('2d') === 172800 && xeric_clock_span('3600') === 3600
@@ -581,6 +606,59 @@ ok('wall: and so is prose that puts it in the room with her',
             'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
             'dot'  => 'Dot left before the washing up and nobody called after her.',
         ]], ['handles' => ['ruth', 'dot']])), 'next to the thing they must not know'));
+// The TITLE is the field the prompt tells the model to "name the thing" in,
+// and it travels furthest — the room block reads a non-spine title back into
+// every recent participant's own prompt, and the inspector prints it. Moving
+// the identical string from prose into the title used to be ACCEPTED.
+ok('wall: and so is a TITLE that names it — the one field the prompt asks the model to name things in',
+    str_contains(err(fn() => xeric_sweep_parse($TW, fresh_db('wall-post-title'), [
+        'title'    => 'who really emptied the building fund',
+        'prose'    => 'The last of the coffee went at half past and the chairs went back wrong.',
+        'memories' => [
+            'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
+            'dot'  => 'Dot left before the washing up and nobody called after her.',
+        ]], ['handles' => ['ruth', 'dot']])), 'next to the thing they must not know'));
+// OBSERVABLES-ONLY IS CODE NOW. The rule the gossip ripple's whole walls-
+// safety argument leans on lived in one prompt sentence; a model that wrote
+// "she felt" into prose made an interior state a public fact, permanently.
+// The record refuses; the memories stay exempt, because a memory IS an
+// interior — that is the point of divergence.
+ok('record: prose that writes the inside of somebody\'s head is refused whole',
+    str_contains(err(fn() => xeric_sweep_parse($TW, fresh_db('interior-prose'), [
+        'title'    => 'the urn ran out early',
+        'prose'    => 'Ruth felt the evening turn on her and wondered if anybody would say so.',
+        'memories' => [
+            'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
+            'dot'  => 'Dot left before the washing up and nobody called after her.',
+        ]], ['handles' => ['ruth', 'dot']])), 'what a bystander could see'));
+ok('record: and so is a title that does it in six words',
+    str_contains(err(fn() => xeric_sweep_parse($TW, fresh_db('interior-title'), [
+        'title'    => 'ruth knew the fund was short',
+        'prose'    => 'The last of the coffee went at half past and the chairs went back wrong.',
+        'memories' => [
+            'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
+            'dot'  => 'Dot left before the washing up and nobody called after her.',
+        ]], ['handles' => ['ruth', 'dot']])), 'what a bystander could see'));
+ok('record: felt-with-hands is an action and passes — the prepositions carve out the senses',
+    count(xeric_sweep_parse($TW, fresh_db('interior-hands'), [
+        'title'    => 'the spare key moved',
+        'prose'    => 'Dot felt along the top of the door frame and came down with the spare key.',
+        'memories' => [
+            'ruth' => 'Ruth counted the folding chairs twice on the way out of the hall.',
+            'dot'  => 'Dot left before the washing up and nobody called after her.',
+        ]], ['handles' => ['ruth', 'dot']])['memories']) === 2);
+ok('record: a memory keeps its interiority — the feeling rides the feeler\'s own head',
+    (function () use ($TW) {
+        $p = xeric_sweep_parse($TW, fresh_db('interior-memory'), [
+            'title'    => 'the urn ran out early',
+            'prose'    => 'The last of the coffee went at half past and the chairs went back wrong.',
+            'memories' => [
+                'ruth' => 'Ruth wished she had said something about the chairs before leaving.',
+                'dot'  => 'Dot left before the washing up and nobody called after her.',
+            ]], ['handles' => ['ruth', 'dot']]);
+        return isset($p['memories']['ruth']) && str_contains($p['memories']['ruth'], 'wished');
+    })());
+
 ok('wall: an ordinary hour with her in it is not refused — the check is a wall, not a mood',
     count(xeric_sweep_parse($TW, fresh_db('wall-post-ok'), [
         'title'    => 'the urn ran out early',
@@ -1307,6 +1385,30 @@ ok('floor: and the same explicit world still writes its adult hours as an adult 
         return false;
     })());
 
+// THE THRESHOLD IS A NAMED TIER. `>= 1` was written when rank 1 meant mature;
+// the broadcast ladder made rank 1 `pg`, and for one evening every TV-PG and
+// TV-14 world's hour prompt granted adult content four lines under the style
+// sentence that says the camera cuts away. Both middle tiers, adults-only
+// rooms, so nothing but the world's own rating decides the line.
+$permTier = function (string $rating) use ($SATAM): ?bool {
+    $Tr = world(['daily_rhythms', 'shared_meals'], [], null, ['meta.rating' => $rating]);
+    for ($i = 0; $i < 40; $i++) {
+        $seen = null;
+        $r = xeric_sweep_run($Tr, fresh_db("tier-$rating-$i"), stub_event(null, $seen), $SATAM,
+            ['chance' => 1.0, 'seed' => 900 + $i]);
+        if ($r['events'] === [] || in_array('theo', $r['events'][0]['participants'], true)) continue;
+        $p = (string)($seen[1]['content'] ?? '');
+        return str_contains($p, 'Adult content is allowed') && !str_contains($p, 'Keep it clean');
+    }
+    return null;
+};
+ok('tier: a TV-PG world\'s hour prompt is told to keep it clean, adults in the room or not',
+    $permTier('pg') === false);
+ok('tier: and so is a TV-14 world\'s — teen is not mature with a different label',
+    $permTier('teen') === false);
+ok('tier: mature is where the permission actually begins',
+    $permTier('mature') === true);
+
 // -- and the refusal ---------------------------------------------------------
 
 /** A model that writes a well-formed hour with the one thing in it that may not be. */
@@ -1626,7 +1728,271 @@ ok('proactive: a live overlay does not stop the phone from ringing',
     $ping !== null && ($ping['text'] ?? '') !== '', json_encode($notesPing));
 
 // ---------------------------------------------------------------------------
+// A WORLD BEFORE 1970 — the epoch is negative and every hour of it is real.
+//
+// ROADMAP.md advertises "starts": "1873-06-04 07:40" under "Already works",
+// and it did — for chat. The offscreen life used `$epoch <= 0` as the sentinel
+// for "no moment passed", so an 1873 world's sweeps, duets, rooms and pings
+// all threw forever while the world looked alive. Absence is the sentinel now,
+// and the window arithmetic floors instead of truncating toward zero, so the
+// hour walked and the guard written agree below zero too.
+// ---------------------------------------------------------------------------
 
+echo "\n# a world before 1970\n";
+
+// The helper first, at the exact seam intdiv gets wrong: epoch −100 lives in
+// window −1, and truncation said 0. Boundaries must be half-open both sides
+// of zero: −3600 opens window −1, 0 opens window 0.
+ok('pre-1970: floor division disagrees with intdiv exactly where it must',
+    xeric_sweep_windex(-100, 3600) === -1 && intdiv(-100, 3600) === 0
+    && xeric_sweep_windex(-3600, 3600) === -1 && xeric_sweep_windex(-3601, 3600) === -2
+    && xeric_sweep_windex(0, 3600) === 0 && xeric_sweep_windex(3599, 3600) === 0);
+
+$T1873 = world(['gossip', 'meals'], [], null,
+    ['setting.starts' => '1873-06-04 07:40']);
+$NOW73 = xeric_world_now($T1873, ep('1873-06-04 10:00'));
+ok('pre-1970: xeric_world_now builds a real 1873 morning from a negative epoch',
+    (int)$NOW73['epoch'] < 0 && $NOW73['phase'] === 'morning', json_encode($NOW73));
+
+$db73 = fresh_db('pre1970');
+xeric_state_seed($db73, $T1873);
+$r73 = xeric_sweep_run($T1873, $db73, stub_event(), $NOW73, ['chance' => 1.0, 'seed' => 11]);
+ok('pre-1970: the world lives an hour instead of throwing',
+    ($r73['events'] ?? []) !== [], json_encode($r73['notes'] ?? []));
+ok('pre-1970: and the event is stamped in 1873, not clamped to the epoch floor',
+    (int)($r73['events'][0]['world_epoch'] ?? 0) < 0);
+
+// The guard and a second pass: one hour happens once, below zero as above it.
+$r73b = xeric_sweep_run($T1873, $db73, stub_event(), $NOW73, ['chance' => 1.0, 'seed' => 11]);
+ok('pre-1970: the window guard holds — the same 1873 hour does not happen twice',
+    ($r73b['events'] ?? []) === []);
+
+// And a catchup stretch, with the clock clamp live: nothing may be stamped
+// past the moment the world stands in, negative or not.
+$r73c = xeric_sweep_catchup($T1873, $db73, stub_event(),
+    ep('1873-06-04 11:00'), ep('1873-06-04 15:00'),
+    ['chance' => 1.0, 'seed' => 12, 'max_events' => 8]);
+$late73 = false;
+foreach (($r73c['events'] ?? []) as $e) {
+    if ((int)$e['world_epoch'] > ep('1873-06-04 15:00')) $late73 = true;
+}
+ok('pre-1970: a catchup stretch sweeps and stamps nothing past the clock',
+    ($r73c['events'] ?? []) !== [] && !$late73,
+    json_encode(array_map(fn($e) => $e['world_epoch'], $r73c['events'] ?? [])));
+
+// ---------------------------------------------------------------------------
+// THE WATERMARK AFTER AN OUTAGE — hours nobody lived stay owed.
+//
+// Giving up on a dead model used to stamp the watermark at the far end of the
+// stretch anyway, so an outage longer than the miss allowance permanently
+// ended a world's offscreen life: every later catchup computed first > last
+// and returned "already been lived" without one model call. The mark now stops
+// at the last window before the failing streak.
+// ---------------------------------------------------------------------------
+
+echo "\n# the watermark after an outage\n";
+
+$TWM  = world(['gossip', 'meals']);
+$dbWM = fresh_db('watermark-outage');
+xeric_state_seed($dbWM, $TWM);
+
+// Tick 1: the model is down for the whole stretch. It gives up — and the
+// watermark must not have crossed the hours it never lived.
+$down = xeric_sweep_catchup($TWM, $dbWM, stub_dead(),
+    ep('2026-07-30 08:00'), ep('2026-07-30 14:00'), ['chance' => 1.0, 'seed' => 5]);
+ok('outage: a dead endpoint gives up instead of grinding the stretch',
+    ($down['events'] ?? []) === []
+    && str_contains(implode(' ', $down['notes']), 'gave up'), json_encode($down['notes']));
+
+$markAfter = xeric_world_state_get($dbWM, 'sweep_watermark:3600');
+ok('outage: the watermark did NOT advance past the hours nobody lived',
+    $markAfter === null || (int)$markAfter < xeric_sweep_windex(ep('2026-07-30 08:00'), 3600),
+    var_export($markAfter, true));
+
+// Tick 2: the model is back. The same stretch must produce events — this is
+// the assertion that failed for six-hours-and-forever before the fix.
+$back = xeric_sweep_catchup($TWM, $dbWM, stub_event(),
+    ep('2026-07-30 08:00'), ep('2026-07-30 14:00'),
+    ['chance' => 1.0, 'seed' => 6, 'max_events' => 8]);
+ok('outage: when the model returns, the owed hours are lived after all',
+    ($back['events'] ?? []) !== [], json_encode($back['notes']));
+
+// And the deliberate burials stay deliberate: a stretch stopped at max_events
+// still buries its tail, because one stretch happens once.
+$tail = xeric_sweep_catchup($TWM, $dbWM, stub_event(),
+    ep('2026-07-30 08:00'), ep('2026-07-30 14:00'), ['chance' => 1.0, 'seed' => 7]);
+ok('outage: but a stretch that ENDED cleanly stays lived — skip twice, mine once',
+    ($tail['events'] ?? []) === []
+    && str_contains(implode(' ', $tail['notes']), 'already been lived'), json_encode($tail['notes']));
+
+// ---------------------------------------------------------------------------
+// SHAPES — a world's own rhythm, with or without a story on it.
+//
+// The load-bearing claim of the whole feature is arithmetic: intensity 0.5 is
+// ×1.0 EXACTLY, so refusing the plot snake is not a bypass anywhere in the
+// engine, it is a curve held flat. If that stops being exact, "none" quietly
+// starts changing the rate of every world that asked for nothing.
+// ---------------------------------------------------------------------------
+
+echo "\n# shapes\n";
+
+$SHAPES = xeric_story_shapes();
+ok('shape: the library offers a refusal and at least four rhythms',
+    isset($SHAPES['none']) && count($SHAPES) >= 5, implode(',', array_keys($SHAPES)));
+
+// Every shape must be a legal SNAKE, because a story overlay inherits one.
+$illegal = [];
+foreach ($SHAPES as $k => $s) {
+    $bad = xeric_story_shape_check($s);
+    if ($bad !== []) $illegal[] = "$k: " . implode('; ', $bad);
+}
+ok('shape: every shape in the library passes the shape checker', $illegal === [], implode(' | ', $illegal));
+
+// And passes the OVERLAY validator, which is the stricter of the two readers —
+// as an INHERITED snake, which is how a shape actually reaches a story. Any
+// shape must be droppable onto any overlay, because the person choosing their
+// xeric's rhythm has never seen the beats of a story they might inject later.
+$SFIX = xeric_story_read(STORY);
+$TSH  = world(['gossip', 'danger']);
+$rejected = [];
+foreach ($SHAPES as $k => $s) {
+    $probe = $SFIX;
+    $probe['snake'] = $s + ['inherited' => true];
+    $e = err(fn() => xeric_story_validate($probe, $TSH, "shape-$k"));
+    if ($e !== '') $rejected[] = "$k: $e";
+}
+ok('shape: every shape is legal as an inherited snake, whatever the story\'s beats',
+    $rejected === [], implode(' | ', $rejected));
+
+// …and the authoring check still earns its keep on a snake somebody WROTE. The
+// rule is "you put a beat in your own quiet stretch", and against a declared
+// curve that is exactly the mistake worth refusing.
+$declared = $SFIX;
+$declared['snake'] = $SHAPES['turn'];                       // its calm sits on milldale's beats
+ok('shape: a DECLARED snake whose calm swallows a beat is still refused',
+    err(fn() => xeric_story_validate($declared, $TSH, 'declared')) !== '');
+
+// THE ×1.0 CLAIM. Not "about one" — exactly one, at every point on the curve.
+$flatOff = [];
+foreach ([0.0, 0.01, 0.25, 0.5, 0.5001, 0.75, 0.99, 1.0] as $p) {
+    $m = xeric_story_snake($SHAPES['none'], $p)['m'];
+    if ($m !== 1.0) $flatOff[] = "p=$p gave $m";
+}
+ok('shape: `none` is ×1.0 EXACTLY at every progress — refusing the snake is not a bypass',
+    $flatOff === [], implode(', ', $flatOff));
+ok('shape: and `none` reads as one endless false calm, which is its true name',
+    xeric_story_snake($SHAPES['none'], 0.4)['stage'] === 'false_calm');
+
+// -- ambient: a world walking its own curve on the calendar ------------------
+$dbSh = fresh_db('shape');
+$TSH0 = world(['gossip', 'danger']);                       // no story_shape declared at all
+xeric_state_seed($dbSh, $TSH0);
+$shSeed = (int)(xeric_world_state_get($dbSh, 'seeded_at') ?? 0);
+if ($shSeed <= 0) { xeric_world_state_set($dbSh, 'seeded_at', (string)1785000000); $shSeed = 1785000000; }
+$shBase = (float)($TSH0['events']['sweep_chance'] ?? XERIC_SWEEP_CHANCE);
+
+ok('shape: a world that declared none has no ambient reading at all',
+    xeric_story_ambient($TSH0, $dbSh, $shSeed + 5 * 86400) === []);
+$driftless = true;
+foreach ([0, 1, 9, 40, 400] as $d) {
+    if (xeric_story_ambient_chance($TSH0, $dbSh, $shSeed + $d * 86400) !== $shBase) $driftless = false;
+}
+ok('shape: and its rate is its own declared number, unchanged, forever', $driftless,
+    'base ' . $shBase);
+
+$TSHs = $TSH0;
+$TSHs['events']['story_shape'] = 'snake';
+$moved = [];
+foreach ([0, 3, 7, 14, 21, 26] as $d) {
+    $moved[] = round(xeric_story_ambient_chance($TSHs, $dbSh, $shSeed + $d * 86400), 3);
+}
+ok('shape: a shaped world\'s rate moves across its cycle', count(array_unique($moved)) >= 4,
+    implode(' ', $moved));
+ok('shape: and it never leaves the clamp, however loud the curve gets',
+    min($moved) >= 0.05 && max($moved) <= 0.9, implode(' ', $moved));
+
+// The cycle WRAPS. A world is not over when its rhythm finishes.
+$cyc = (int)$SHAPES['snake']['cycle_days'];
+ok('shape: the cycle wraps — day 0 and day ' . $cyc . ' read identically',
+    xeric_story_ambient($TSHs, $dbSh, $shSeed)['p']
+        === xeric_story_ambient($TSHs, $dbSh, $shSeed + $cyc * 86400)['p']);
+
+// The thumb obeys the rule a story's does: re-weights the armed, arms nothing.
+$armedKinds = xeric_sweep_kinds_for($TSHs, $dbSh);
+$thumbed    = xeric_story_ambient_thumb($armedKinds, $TSHs, $dbSh, $shSeed + 26 * 86400);
+ok('shape: the ambient thumb never arms a kind and never deletes one',
+    array_keys($thumbed) === array_keys($armedKinds));
+$positive = true;
+foreach ($thumbed as $k => $v) if ((float)($v['weight'] ?? 1.0) <= 0.0) $positive = false;
+ok('shape: and every weight it leaves behind is positive', $positive);
+
+// -- the world's shape falls through to its stories --------------------------
+$TSHi = $TSH0;
+$TSHi['events']['story_shape'] = 'tidal';
+$storyDir = sys_get_temp_dir() . '/xeric-shape-story-' . getmypid();
+@mkdir($storyDir, 0775, true);
+$noSnake = $SFIX;
+unset($noSnake['snake']);
+file_put_contents($storyDir . '/story-inherit.json', json_encode($noSnake));
+$inherited = xeric_story_for($storyDir, $TSHi);
+ok('shape: an overlay that declares no snake inherits the world\'s',
+    count($inherited) === 1
+    && ($inherited[0]['snake']['false_calm'] ?? []) === $SHAPES['tidal']['false_calm'],
+    json_encode($inherited[0]['snake']['false_calm'] ?? null));
+
+// …and one that brought its own keeps it. A mystery written to a rhythm is not
+// something a world setting gets to overrule.
+file_put_contents($storyDir . '/story-own.json', json_encode($SFIX));
+@unlink($storyDir . '/story-inherit.json');
+$kept = xeric_story_for($storyDir, $TSHi);
+ok('shape: an overlay that brought its own snake keeps it',
+    count($kept) === 1 && ($kept[0]['snake']['false_calm'] ?? []) === ($SFIX['snake']['false_calm'] ?? []),
+    json_encode($kept[0]['snake']['false_calm'] ?? null));
+@unlink($storyDir . '/story-own.json');
+@rmdir($storyDir);
+
+// -- the invented shape cannot be illegal, whatever came back ----------------
+// The builder is the disposal half of "model proposes, code disposes", so the
+// property under test is that NO input produces a shape the engine would refuse.
+$hostile = [
+    'empty'        => [],
+    'inverted'     => ['calm_from' => 0.9, 'calm_to' => 0.1, 'rise_at' => 0.95, 'peak_at' => 0.02],
+    'out of range' => ['open_at' => 9e9, 'peak' => -40, 'swing' => 7.5, 'cycle_days' => 99999],
+    'wrong types'  => ['calm_from' => 'yes', 'peak_at' => [], 'cycle_days' => 'lots', 'label' => 12],
+    'collapsed'    => ['calm_from' => 0.5, 'calm_to' => 0.5, 'rise_at' => 0.5, 'peak_at' => 0.5],
+    'bad thumb'    => ['kind_thumb' => ['nonsense' => ['rumor' => 2], 'crescendo' => ['nope' => 3, 'rumor' => -1]]],
+];
+$builtBad = [];
+foreach ($hostile as $name => $spec) {
+    $built = xeric_forge_shape_build($spec);
+    $bad   = xeric_story_shape_check($built);
+    if ($bad !== []) $builtBad[] = "$name: " . implode('; ', $bad);
+    $probe = $SFIX;
+    $probe['snake'] = $built;
+    $e = err(fn() => xeric_story_validate($probe, $TSH, 'invented'));
+    if ($e !== '') $builtBad[] = "$name overlay: $e";
+}
+ok('shape: no model output, however wrong, builds an illegal shape', $builtBad === [],
+    implode(' | ', $builtBad));
+ok('shape: and the builder drops thumbs on unknown stages, unknown kinds and non-positive multipliers',
+    xeric_forge_shape_build($hostile['bad thumb'])['kind_thumb'] === ['crescendo' => ['rumor' => 2.0]]
+    || xeric_forge_shape_build($hostile['bad thumb'])['kind_thumb'] === [],
+    json_encode(xeric_forge_shape_build($hostile['bad thumb'])['kind_thumb']));
+
+// -- and the inspector can tell a rhythm from a plot -------------------------
+$trailNone = xeric_sweep_shape_trail($TSH0, $dbSh, $shSeed + 3 * 86400, $shBase, $shBase, [], []);
+ok('shape: a shapeless world writes no trail rather than a row saying nothing happened',
+    $trailNone === []);
+$trailShaped = xeric_sweep_shape_trail($TSHs, $dbSh, $shSeed + 26 * 86400, $shBase, 0.5, [], []);
+ok('shape: a shaped world\'s trail names the SHAPE, never a story that does not exist',
+    ($trailShaped['live'][0]['key'] ?? '') === 'world:snake'
+    && $trailShaped['beat'] === null
+    && str_contains((string)($trailShaped['live'][0]['beats'] ?? ''), 'no beats'),
+    json_encode($trailShaped['live'][0] ?? null));
+
+// ---------------------------------------------------------------------------
+
+$dbSh = null;
 $db = $db2 = $dbG = $dbC = $dbF = $dbS = $dbCU = $dbPR = $dbN = $dbB = $dbB2 = $dbC2 = $dbC3 = $dbQ2 = $dbR = $dbCD = $dbX = $dbL = null;
 $dbEdge = $dbHour = $dbSpine = $dbOrd = $dbDefer = $dbKill = $dbSex = null;
 $dA = $dW = $dM = $dS = $dL = $dL2 = $dOne = $dEv = $dNag = $dCap = $dSec = $dKid = null;

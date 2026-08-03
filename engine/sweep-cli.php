@@ -69,8 +69,12 @@ if (isset($args['reset'])) {
 $db = xeric_state_open($dbPath);
 
 if (isset($args['reset-clock'])) {
-    xeric_clock_reset($db);
-    fwrite(STDOUT, "clock reset to real time\n");
+    // WITH the template — without it the reset takes the "offset 0" branch and
+    // hauls a period world out of its own era into this afternoon, the exact
+    // move xeric_clock_reset's docblock calls destructive. $T is in scope
+    // thirteen lines up; there was never a reason not to hand it over.
+    xeric_clock_reset($db, $T);
+    fwrite(STDOUT, "clock reset to the world's own start\n");
 }
 
 // -- seed on first run, exactly as chat-cli does ----------------------------

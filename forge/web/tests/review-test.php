@@ -270,6 +270,65 @@ $w2['mine'] = false;
 ok('and neither does somebody else\'s browser',
     !str_contains(xeric_review_section_html('cast', $w2), 'pronounfill'));
 
+// ---------------------------------------------------------------------------
+// Re-aiming walls after a cast reroll — by key, never by position.
+//
+// The positional mapping only ever ran when its own justification was false
+// (a model-rewritten orbit list has no order contract), and it landed privacy
+// walls on semantically random circles. The law now: a wall whose orbit
+// survives is untouched; a wall whose orbit is gone covers EVERY new orbit —
+// original key kept (special_roles reference walls by key), clones for the
+// rest — because over-covering is recoverable and a leaked interior is not.
+// ---------------------------------------------------------------------------
+
+echo "\n# re-aiming walls\n";
+
+$reT = [
+    'cast' => ['orbits' => [['key' => 'family'], ['key' => 'congregation']]],
+    'knowledge_walls' => [
+        ['key' => 'privacy_town',  'audience' => ['orbit' => 'town'],
+         'hidden' => ['cast_dossiers', 'drives.*']],
+        ['key' => 'kept_wall',     'audience' => ['orbit' => 'family'],
+         'hidden' => ['secrets.someone']],
+        ['key' => 'by_handle',     'audience' => ['handle' => 'ruth'],
+         'hidden' => ['psyche.someone']],
+    ],
+];
+$reSaid = [];
+$reOut  = xeric_review_reaim_walls($reT, ['inner', 'work', 'town'], function ($s) use (&$reSaid) { $reSaid[] = $s; });
+
+$reWalls = $reOut['knowledge_walls'];
+$covered = [];
+foreach ($reWalls as $wl) {
+    if (str_starts_with((string)($wl['key'] ?? ''), 'privacy_town')) {
+        $covered[(string)($wl['audience']['orbit'] ?? '')] = $wl['hidden'] ?? null;
+    }
+}
+ok('reaim: a wall whose orbit is gone covers EVERY new orbit, hidden list intact',
+    array_keys($covered) === ['family', 'congregation'] || array_keys($covered) === ['congregation', 'family'],
+    json_encode(array_keys($covered)));
+ok('reaim: every copy hides exactly what the original hid',
+    array_values(array_unique(array_map('json_encode', $covered))) === [json_encode(['cast_dossiers', 'drives.*'])]);
+ok('reaim: the original row keeps its key — the name a special role would reference',
+    (bool)array_filter($reWalls, fn($wl) => ($wl['key'] ?? '') === 'privacy_town'));
+ok('reaim: a wall whose orbit SURVIVED is untouched',
+    (bool)array_filter($reWalls, fn($wl) => ($wl['key'] ?? '') === 'kept_wall'
+        && ($wl['audience']['orbit'] ?? '') === 'family'));
+ok('reaim: a handle-aimed wall is no business of the orbit pass',
+    (bool)array_filter($reWalls, fn($wl) => ($wl['key'] ?? '') === 'by_handle'
+        && ($wl['audience']['handle'] ?? '') === 'ruth' && !isset($wl['audience']['orbit'])));
+ok('reaim: no wall is left naming an orbit that does not exist',
+    array_filter($reWalls, fn($wl) => isset($wl['audience']['orbit'])
+        && !in_array($wl['audience']['orbit'], ['family', 'congregation'], true)) === []);
+ok('reaim: the move is reported BY NAME, with the old aim and the advice',
+    count($reSaid) === 1 && str_contains($reSaid[0], "'privacy_town'")
+    && str_contains($reSaid[0], "'town'") && str_contains($reSaid[0], 're-aim'), json_encode($reSaid));
+
+// Idempotent: running it again finds every orbit in place and changes nothing.
+$reAgain = xeric_review_reaim_walls($reOut, ['family', 'congregation']);
+ok('reaim: a second pass is a no-op — nothing re-clones',
+    count($reAgain['knowledge_walls']) === count($reOut['knowledge_walls']));
+
 rmtree($tmp);
 
 echo "\n" . ($FAILED === 0 ? "all review tests passed\n" : "$FAILED review test(s) FAILED\n");

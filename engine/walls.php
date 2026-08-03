@@ -350,6 +350,31 @@ function xeric_framings(array $walls): array
 const XERIC_WALL_QUOTE_RUN = 6;
 
 /**
+ * The vocabulary of interiors: which template fields walls can take away.
+ *
+ * ONE LIST, TWO CONSUMERS, AND THAT IS THE POINT. xeric_wall_interiors() below
+ * indexes these fields' strings for the quotation test, and the play layer's
+ * redaction (xeric_play_redact) strips the same fields before a template is
+ * handed to a non-owner. Those two used to keep separate hand-maintained
+ * lists, and they DRIFTED exactly the way hand copies do: `tells` and `solace`
+ * were once missing from the redaction and fixed by editing its constant, and
+ * then `voice` — filed under the dossier here since the beginning — was
+ * leaking to every stranger who pressed "show me the file". A field added to
+ * the indexer without a line here is the bug class this function exists to
+ * kill; the suites couple the two by property (nothing the indexer holds
+ * survives a redaction).
+ */
+function xeric_wall_interior_fields(): array
+{
+    return [
+        'characters'  => ['voice', 'psyche', 'tells', 'solace', 'secrets', 'drives'],
+        'protagonist' => ['arc', 'pressure'],
+        'economies'   => ['ground_truth', 'rules'],
+        'mystery'     => ['rumor'],
+    ];
+}
+
+/**
  * Every interior string the template holds, filed under the path that hides it.
  *
  * Walls name PATHS, and everything rendered FROM the template arrives through
@@ -408,6 +433,26 @@ function xeric_wall_interiors(array $template): array
         $put('protagonist', $p[$k] ?? '');
         if ($ph !== '') $put('drives.' . $ph, $p[$k] ?? '');
     }
+
+    // A WALLED LEDGER IS AN INTERIOR TOO. `economies.<key>` hides the entire
+    // render (render-test proves it), which makes that ledger's rules and
+    // ground truth quotable secrets for anyone so walled — and until they were
+    // indexed here, the quotation test was structurally blind to them: a
+    // sentence carrying a walled economy's ground truth read as commons, and
+    // the exact prose a wall named was deliverable to the person it named.
+    // Only viewers whose walls actually hide the path are affected — for
+    // everyone else these strings are never consulted, so naming the diner
+    // stays as legal as the header above promises.
+    foreach ((array)($template['economies'] ?? []) as $e) {
+        $k = (string)($e['key'] ?? '');
+        if ($k === '') continue;
+        foreach ((array)($e['ground_truth'] ?? []) as $node) $put('economies.' . $k, $node);
+        foreach ((array)($e['rules'] ?? []) as $node)        $put('economies.' . $k, $node);
+    }
+    // The mystery's rumor is the same shape: one quotable sentence a wall
+    // hides. Filed under its own path so both `mystery.rumor` and a whole-
+    // section `mystery` wall reach it through the prefix rule.
+    $put('mystery.rumor', $template['mystery']['rumor'] ?? '');
 
     return $map;
 }

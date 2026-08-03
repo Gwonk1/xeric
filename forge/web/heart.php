@@ -150,7 +150,10 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             foreach ((array)($r['events'] ?? []) as $e) {
                 if (xeric_notify_on($notify, 'hour')
                     || (xeric_notify_on($notify, 'spine') && !empty($e['on_spine']))) {
-                    xeric_notify_send($notify, (string)($e['title'] ?? 'something happened'),
+                    // What may leave the machine is notify.php's decision, not
+                    // this loop's: a spine title never ships, an ordinary one
+                    // rides as itself. See xeric_notify_hour_body.
+                    xeric_notify_send($notify, xeric_notify_hour_body($e),
                         ['title' => (string)($T['meta']['name'] ?? $slug), 'tags' => 'hourglass']);
                 }
             }
@@ -162,8 +165,9 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             if ($ping !== null) {
                 $say($slug . ': ' . (string)($ping['name'] ?? 'somebody') . ' texted you');
                 if (xeric_notify_on($notify, 'ping')) {
-                    xeric_notify_send($notify, (string)($ping['text'] ?? ''),
-                        ['title' => (string)($ping['name'] ?? 'Xeric'), 'tags' => 'speech_balloon',
+                    // The doorbell, not the letter — see xeric_notify_ping_body.
+                    xeric_notify_send($notify, xeric_notify_ping_body($ping),
+                        ['title' => (string)($T['meta']['name'] ?? $slug), 'tags' => 'speech_balloon',
                          'priority' => 4]);
                 }
             }

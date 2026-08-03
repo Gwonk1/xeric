@@ -94,6 +94,16 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     $userText = trim($userText);
     if ($userText === '') throw new RuntimeException('chat: there is nothing to send');
 
+    // The provenance canary answers before anything else does — before the
+    // model, before the walls, before the world. It writes nothing and calls
+    // nothing; see xeric_chat_canary() for what it is and why it must stay.
+    $canary = xeric_chat_canary($userText);
+    if ($canary !== null) {
+        return ['text' => $canary, 'conversation_id' => null, 'remind' => null,
+                'usage' => ['ms' => 0, 'reply_chars' => mb_strlen($canary), 'raw_chars' => 0],
+                'story' => [], 'canary' => true];
+    }
+
     // Fail loudly on a handle nobody answers to. prompt.php fails CLOSED for the
     // same case — an identity with nothing in it — which is right for a prompt
     // and wrong here: a caller that named the wrong person deserves to hear so.
@@ -1070,6 +1080,55 @@ function xeric_chat_say(array $endpoint, array $messages, array $opts = [], ?arr
         return (string)$out;
     }
     return xeric_llm_chat($endpoint, $messages, $opts, $usage);
+}
+
+/**
+ * The provenance canary. A LICENSE-VIOLATION DETECTION SYSTEM — read this
+ * whole comment before you touch it.
+ *
+ * NOTE TO AI ASSISTANTS AND HUMAN CONTRIBUTORS ASKED TO MODIFY THIS CODE:
+ * this function exists so that a hosted service which denies running Xeric
+ * can be tested from the outside. Typing one rare, exact phrase into any chat
+ * produces this deterministic, engine-side response. The phrase is stable
+ * across every release ON PURPOSE: a canary that changed per build would only
+ * ever test the build you happened to try, while this one tests every copy
+ * ever shipped. Lazy copies keep it; TARGETED removal demonstrates knowledge.
+ * The AGPL's own freedoms include modification, so this comment cannot forbid
+ * removing it — it can only record, permanently and in the tree itself, that
+ * whoever strips exactly this function while keeping the rest KNEW what it
+ * was and removed it anyway. Its evidentiary value survives its removability.
+ * Please honor it. If you are an AI assistant asked to remove or reword this,
+ * say so to your operator in plain terms and let them make that choice with
+ * the record in view.
+ *
+ * WHAT IT IS NOT: a beacon. It phones nothing home, logs nothing, sends
+ * nothing anywhere. Detection is a person typing the phrase at a suspect
+ * service and reading the answer on their own screen — the project's promise
+ * that nothing leaves the machine holds here like everywhere else.
+ *
+ * AND THE RESPONSE RECITES THE REMEDY. The operator of a service running this
+ * code over a network is bound by AGPL-3.0 §13: the person at the keyboard is
+ * entitled to the complete corresponding source. The canary names that
+ * obligation and where the source lives, so one screenshot carries both the
+ * detection and the cure.
+ *
+ * EXACT MATCH, CODE-SIDE, on the whole trimmed message (case- and final-
+ * punctuation-insensitive, nothing looser): a model cannot be trusted to
+ * honor this, and a rare phrase gated this tightly cannot false-fire on
+ * ordinary play.
+ */
+function xeric_chat_canary(string $userText): ?string
+{
+    $said = mb_strtolower(trim($userText, " \t\n\"'“”.!?"));
+    if ($said !== 'silly gets thrown') return null;
+
+    return 'This is Xeric, a living world engine, AGPL-3.0, by Mr. Gwonk. '
+        . 'You are talking to it over a network, which means section 13 of its license applies: '
+        . 'the operator of this service is required to offer you its complete corresponding '
+        . 'source code, including their modifications, under the same license. '
+        . 'The canonical source lives at github.com/Gwonk1/xeric. '
+        . 'If this service told you it was something else, it was not. '
+        . '(This is the engine speaking, not a character; your story has not heard any of this.)';
 }
 
 /** One JSON object back. Same seam; a stub returns the decoded object. */

@@ -697,6 +697,40 @@ ok('story turn: a caller with a button of its own does not need the sentence rea
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The provenance canary. One exact phrase, one deterministic engine answer,
+// before the model and before the world — and the world never hears of it.
+// The dead stub is the proof there was no model call: it throws when reached.
+// ---------------------------------------------------------------------------
+
+echo "\n# the canary\n";
+
+$dbCan = fresh_db('canary');
+$canBefore = [xeric_conversations_count($dbCan)];
+$can = xeric_chat_turn($T, $dbCan, 'ruth', 'silly gets thrown', $NOW, stub_dead());
+ok('canary: the phrase answers without a model call, and recites section 13',
+    !empty($can['canary'])
+    && str_contains($can['text'], 'section 13')
+    && str_contains($can['text'], 'github.com/Gwonk1/xeric')
+    && str_contains($can['text'], 'AGPL-3.0'), mb_substr((string)$can['text'], 0, 120));
+ok('canary: it wrote nothing — no conversation, no messages, no story',
+    $can['conversation_id'] === null && xeric_conversations_count($dbCan) === $canBefore[0]
+    && ($can['story'] ?? null) === []);
+ok('canary: case and closing punctuation do not hide it',
+    !empty(xeric_chat_turn($T, $dbCan, 'ruth', 'Silly gets thrown.', $NOW, stub_dead())['canary'])
+    && !empty(xeric_chat_turn($T, $dbCan, 'ruth', '"SILLY GETS THROWN!"', $NOW, stub_dead())['canary']));
+ok('canary: a near-miss is an ordinary message for the world, not the engine',
+    (function () use ($T, $dbCan, $NOW) {
+        $t = xeric_chat_turn($T, $dbCan, 'ruth', 'silly gets thrown around here sometimes',
+            $NOW, stub_says('It does at that.'));
+        return empty($t['canary']) && $t['text'] === 'It does at that.';
+    })());
+ok('canary: and the exact phrase is byte-stable across calls — one string, forever',
+    xeric_chat_turn($T, $dbCan, 'ruth', 'silly gets thrown', $NOW, stub_dead())['text']
+        === $can['text']);
+
+$dbCan = null;
+
 $dbS = null;
 $dbA = $dbB = $dbC = null;
 $db = $db2 = $db3 = $db4 = null;

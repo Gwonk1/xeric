@@ -355,9 +355,28 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
 
     foreach ((array)($t['cast']['characters'] ?? []) as $c) {
         $h = (string)($c['handle'] ?? '');
-        // The dead wait for nothing: a fuse that fired after its holder died
-        // would write "she waited at the diner" about somebody in the ground.
-        if ($h === '' || !empty($c['out']) || isset($gone[$h])) continue;
+        if ($h === '' || !empty($c['out'])) continue;
+        // The dead wait for nothing — and DEATH SETTLES THE LEDGER. Skipping a
+        // dead holder used to leave an open fuse `open` forever, which read as
+        // safe right up until a revive: the next tick found the fuse burnt,
+        // fired the miss, and backdated the whole package to the due hour —
+        // "she waited at the diner" stamped fifty minutes after her own death
+        // event, a memory of an evening spent dead, and a trust mark to go
+        // with it. So an open expectation held by the dead is RELEASED, here,
+        // quietly: a terminal state, no event, no memory, no trust — a promise
+        // to the dead is released, not broken. A miss that already fired while
+        // they lived keeps its history; that grudge really happened.
+        if (isset($gone[$h])) {
+            foreach (xeric_expects_for($db, $h) as $e) {
+                if ($e['state'] !== 'open') continue;
+                $e['state'] = 'released'; $e['released_at'] = $epoch;
+                $row = $e; unset($row['key']);
+                xeric_arc_set($db, $h, $e['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
+                $note('expectations: ' . xeric_world_name($t, $h)
+                    . ' died holding one, and it died with them');
+            }
+            continue;
+        }
         foreach (xeric_expects_for($db, $h) as $e) {
             if ($e['state'] === 'open' && $epoch > $e['due'] + XERIC_EXPECT_GRACE) {
                 $name  = xeric_world_name($t, $h);
@@ -566,14 +585,44 @@ function xeric_gossip_items(PDO $db): array
  * loose-prose test the prompts use. An unresolvable handle picks up the
  * unknown-viewer floor on the way through xeric_viewer_walls(), which is
  * the fail-closed direction — nobody gossips their way past a typo.
+ *
+ * FOUR PATHS, NOT ONE. This gate used to check places.<key> plus the literal
+ * quotation test and nothing else, which made the ripple the one character-
+ * facing surface in the engine that skipped the protected-secret needle — so a
+ * PARAPHRASE of somebody's must_not_know ("harlan shouted about the mill
+ * landing", six words, no six-word run of the eight-word secret) rode a hop
+ * straight into the protected head's own prompt and, when the item faded, into
+ * a permanent memory. The `schedules` wall had the same hole one door over: a
+ * line seating a name in a room is who-is-where in its Sunday clothes, and it
+ * walked past a viewer the now-block refuses to name a single room to.
  */
 function xeric_gossip_wall_blocked(array $t, array $item, string $handle): bool
 {
+    // Lazy, the way prompt.php pulls this file in for its gossip block: the
+    // needle helpers live in sweeps.php and every real caller has it loaded —
+    // this keeps the one that does not honest without a top-level cycle.
+    require_once __DIR__ . '/sweeps.php';
+
+    $line = (string)($item['line'] ?? '');
+
+    // The needle first, before walls are even resolved: a protected head may
+    // not receive its own secret, and the loose word-overlap test is the one
+    // that survives a paraphrase. Same helper, same threshold, as the sweep,
+    // the room, the duet and the prompt.
+    $protected = xeric_sweep_protected($t);
+    if (isset($protected[$handle]) && xeric_sweep_touches($line, $protected[$handle])) return true;
+
     $walls = xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $handle]));
     if ($walls === []) return false;
     $place = (string)($item['place'] ?? '');
-    if ($place !== '' && xeric_hidden($walls, 'places.' . $place)) return true;
-    return xeric_quotes_walled($t, $walls, (string)($item['line'] ?? '')) !== '';
+    if ($place !== '') {
+        // The pair every other room-knowledge consumer checks together
+        // (prompt.php, room.php, duet.php): the specific room, and `schedules`
+        // — who is where at all.
+        if (xeric_hidden($walls, 'places.' . $place)) return true;
+        if (xeric_hidden($walls, 'schedules')) return true;
+    }
+    return xeric_quotes_walled($t, $walls, $line) !== '';
 }
 
 /**

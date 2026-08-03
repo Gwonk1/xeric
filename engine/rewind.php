@@ -153,8 +153,19 @@ function xeric_rewind_mark(PDO $db): array
     };
 
     $deaths = [];
-    foreach ($db->query('SELECT handle FROM deaths')->fetchAll() as $r) {
+    $deathRows = [];
+    foreach ($db->query('SELECT handle, world_epoch, how, by_handle, created_at FROM deaths')->fetchAll() as $r) {
         $deaths[] = (string)$r['handle'];
+        // The whole row, keyed by handle: the diff needs to PUT BACK a death
+        // that was removed mid-skip (a revive, a restore), and a handle set
+        // can only say who was dead, not how or when — a re-inserted row built
+        // from a handle alone would be a body with no story.
+        $deathRows[(string)$r['handle']] = [
+            'world_epoch' => (int)$r['world_epoch'],
+            'how'         => (string)$r['how'],
+            'by_handle'   => $r['by_handle'] !== null ? (string)$r['by_handle'] : null,
+            'created_at'  => (int)$r['created_at'],
+        ];
     }
 
     // The crumbs still waiting to be read. If the mid-skip distil marks any of
@@ -189,6 +200,7 @@ function xeric_rewind_mark(PDO $db): array
             'signals'       => $top('signals'),
         ],
         'deaths'       => $deaths,
+        'death_rows'   => $deathRows,
         'signals_open' => $open,
         'world_state'  => xeric_world_state_all($db),
         'arcs'         => $arcs,
@@ -241,13 +253,28 @@ function xeric_rewind_commit(PDO $db, array $mark, ?int $at = null): ?array
         'signals'       => $newIds('signals',       (int)($top['signals'] ?? 0)),
     ];
 
-    // XERIC-REWIND-TABLES: deaths, by handle. A lethal hour that landed inside
-    // the skip put a body in the ledger, and a rewind that gave the hours back
-    // while keeping the body would be the worst ghost this file can make.
+    // XERIC-REWIND-TABLES: deaths, by handle, BOTH DIRECTIONS. A lethal hour
+    // that landed inside the skip put a body in the ledger, and a rewind that
+    // gave the hours back while keeping the body would be the worst ghost this
+    // file can make. The converse ghost is as bad and used to be invisible: a
+    // REVIVE inside the mark→commit window (fate.php takes no queue slot, so
+    // its buttons are live during a detached skip) emptied the ledger, the
+    // one-directional diff recorded nothing, and a rewind then restored the
+    // world_state half of a catastrophe — every place dark — over a cast the
+    // deaths half had left walking around alive. Removed rows ride the
+    // manifest whole, so the rewind can put the bodies back with their story.
     $wasDead = array_flip(array_map('strval', (array)($mark['deaths'] ?? [])));
+    $nowDead = [];
     $deaths  = [];
     foreach ($db->query('SELECT handle FROM deaths')->fetchAll() as $r) {
+        $nowDead[(string)$r['handle']] = true;
         if (!isset($wasDead[(string)$r['handle']])) $deaths[] = (string)$r['handle'];
+    }
+    $deathsRemoved = [];
+    foreach ((array)($mark['death_rows'] ?? []) as $h => $row) {
+        if (!isset($nowDead[(string)$h]) && is_array($row)) {
+            $deathsRemoved[(string)$h] = $row;
+        }
     }
 
     // Which of the crumbs that were waiting at the mark did the mid-skip distil
@@ -330,6 +357,7 @@ function xeric_rewind_commit(PDO $db, array $mark, ?int $at = null): ?array
         ],
         'ids'            => $ids,
         'deaths'         => $deaths,
+        'deaths_removed' => $deathsRemoved,
         'signals_reread' => $reread,
         'world_state'    => $ws,
         'arcs'           => $arcs,
@@ -483,6 +511,23 @@ function xeric_rewind(array $t, PDO $db): array
         if ($undead !== []) {
             $q = $db->prepare('DELETE FROM deaths WHERE handle = ?');
             foreach ($undead as $h) $q->execute([$h]);
+        }
+
+        // And the other direction: a death REMOVED mid-skip (a revive, a
+        // restore) goes back whole, with its own hour and its own story —
+        // the same put-back-what-was-removed contract the two key/value
+        // stores have always had. Absent on old manifests, which is an
+        // empty loop and not a version break.
+        $reDead = (array)($m['deaths_removed'] ?? []);
+        if ($reDead !== []) {
+            $q = $db->prepare('INSERT OR REPLACE INTO deaths (handle, world_epoch, how, by_handle, created_at)
+                               VALUES (?, ?, ?, ?, ?)');
+            foreach ($reDead as $h => $row) {
+                if (!is_array($row) || (string)$h === '') continue;
+                $q->execute([(string)$h, (int)($row['world_epoch'] ?? 0), (string)($row['how'] ?? ''),
+                             isset($row['by_handle']) && $row['by_handle'] !== null ? (string)$row['by_handle'] : null,
+                             (int)($row['created_at'] ?? 0)]);
+            }
         }
 
         $reread = array_values(array_filter(array_map('intval', (array)($m['signals_reread'] ?? [])), fn($i) => $i > 0));

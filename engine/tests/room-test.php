@@ -541,6 +541,25 @@ $o15  = xeric_room($TP, $db15, $TRIO, $SUN, stub_room($c15), ['say_first' => 'pa
 ok('wall: the same three talking about anything else lands normally',
     xeric_events_count($db15) === 1 && $o15['turns'] === 3);
 
+// THE EXTRACTOR CAN SYNTHESISE — room.php's guard, same law as the duet's,
+// finally driven: benign spoken lines, and an extractor that hands the
+// protected head her own secret assembled whole. The guard drops that line
+// and keeps her harmless one; deleting it used to leave every suite green.
+$db16 = fresh_db('leak-synth');
+$c16  = [];
+$o16  = xeric_room($TP, $db16, $TRIO, $SUN,
+    stub_room($c16, [
+        'Janelle Kerr' => ['Janelle learned the thursday game is set up in the church basement after supper.',
+                           'Janelle thought the urn ran slow again.'],
+    ]),
+    ['say_first' => 'pastor_dale', 'beats' => 3, 'seed' => 3]);
+$janKept16 = array_map(fn($m) => (string)$m['text'], xeric_memories_for($db16, 'janelle', 10));
+ok('wall: the room lands, and the synthesised secret never reaches her diary',
+    xeric_events_count($db16) === 1
+    && !array_filter($janKept16, fn($m) => str_contains($m, 'church basement')), json_encode($janKept16));
+ok('wall: while her harmless memory of the same hour is kept',
+    array_filter($janKept16, fn($m) => str_contains($m, 'urn')) !== [], json_encode($janKept16));
+
 // ---------------------------------------------------------------------------
 // 9. Read-only until the close, probed from inside the model's own calls
 // ---------------------------------------------------------------------------

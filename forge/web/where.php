@@ -88,5 +88,9 @@ xeric_web_json([
             fn(string $h): array => ['handle' => $h, 'name' => xeric_world_name($w['template'], $h)],
             (array)$trip['who']
         ),
+        // The narrator's arrival beat: assembled from observables in the
+        // engine (xeric_travel_scene), never asked of a model. '' when there
+        // is nothing to say, and the client falls back to its plain line.
+        'scene'   => (string)($trip['scene'] ?? ''),
     ],
 ] + xeric_travel_map($w['template'], $w['db'], $trip['now']));

@@ -49,6 +49,17 @@ if ($a === 'clock') {
     } catch (Throwable $e) {
         xeric_web_json(['error' => $e->getMessage()], 404);
     }
+    // NOT MID-SKIP. A pause flipped while a detached skip is running lands in
+    // that skip's manifest as an `added` key — and a later "take it back"
+    // deletes it, silently un-stopping a world somebody deliberately stopped,
+    // which then counts every real second the pause was supposed to freeze.
+    // travel.php refuses writes on the same guard for the same reason; the
+    // stale window means a dead worker's stamp never wedges the button.
+    if (xeric_travel_skipping($w['db'])) {
+        xeric_web_json(['error' => 'The world is mid-skip. Let it land first — a stop flipped '
+            . 'under a running skip would be silently undone by taking the skip back.',
+            'kind' => 'skipping'], 409);
+    }
     $set = (string)($in['set'] ?? '');
     if ($set === 'stop') {
         xeric_clock_pause($w['db']);
@@ -66,6 +77,12 @@ if ($a === 'learn') {
         $w = xeric_play_open($slug);
     } catch (Throwable $e) {
         xeric_web_json(['error' => $e->getMessage()], 404);
+    }
+    // Same guard as the clock above: learn.off stores "off" as the KEY'S
+    // PRESENCE, so a rewind deleting it from a skip's manifest means ON — a
+    // privacy switch somebody threw, silently un-thrown.
+    if (xeric_travel_skipping($w['db'])) {
+        xeric_web_json(['error' => 'The world is mid-skip. Let it land first.', 'kind' => 'skipping'], 409);
     }
     $set = (string)($in['set'] ?? '');
     if ($set !== 'off' && $set !== 'on') {

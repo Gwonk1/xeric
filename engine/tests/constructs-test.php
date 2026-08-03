@@ -386,6 +386,116 @@ ok('residue: the boy who watched the town lose Harlan keeps the talk of it',
 ok('block: byte-stable after the fade too',
     xeric_expect_block($T, $db2, 'theo', $sunAm) === xeric_expect_block($T, $db2, 'theo', $satAm2));
 
+// ---------------------------------------------------------------------------
+// 12b. Death settles the ledger — no fuse survives its holder.
+//
+// The tick used to SKIP a dead holder, which left an open fuse `open` forever:
+// after a revive, the next tick fired the miss backdated to the due hour —
+// "she waited at the diner" stamped after her own death event, a memory of an
+// evening spent dead, a permanent trust mark. Now death releases the open
+// expectation quietly, so time travel through the grave writes no ghosts.
+// ---------------------------------------------------------------------------
+
+echo "\n# death and the open fuse\n";
+
+$db3Path = sys_get_temp_dir() . '/xeric-constructs-death-' . getmypid() . '.db';
+foreach ([$db3Path, $db3Path . '-wal', $db3Path . '-shm'] as $f) @unlink($f);
+$db3 = xeric_state_open($db3Path);
+xeric_state_migrate($db3);
+
+// Ruth hears the Thursday promise on Wednesday…
+$kD = xeric_expect_form($T, $db3, 'ruth', $firm, $wedAm);
+ok('death: the promise forms while she lives', $kD !== null);
+
+// …and dies Thursday evening, before the fuse burns.
+xeric_death_kill($T, $db3, 'ruth', ep('2026-07-30 18:10'), 'a fall on the mill stairs');
+$evBefore = xeric_events_count($db3);
+$rDead = xeric_constructs_tick($T, $db3, xeric_world_now($T, ep('2026-07-30 20:00')));
+ok('death: the tick fires no miss for the dead — the fuse is released, not paused',
+    $rDead['missed'] === 0
+    && (xeric_expects_for($db3, 'ruth')[0]['state'] ?? '') === 'released',
+    json_encode(xeric_expects_for($db3, 'ruth')));
+ok('death: and the release writes nothing — no event, no memory, no grudge',
+    xeric_events_count($db3) === $evBefore && xeric_memories_count($db3, 'ruth') === 0);
+
+// Four world-days later she is revived. The next tick must find nothing owed.
+xeric_death_revive($T, $db3, 'ruth');
+$rBack = xeric_constructs_tick($T, $db3, xeric_world_now($T, ep('2026-08-03 12:00')));
+ok('death: a revive does not resurrect the fuse — no backdated miss, ever',
+    $rBack['missed'] === 0 && xeric_events_count($db3) === $evBefore,
+    json_encode(xeric_expects_for($db3, 'ruth')));
+ok('death: her trust is untouched by the promise she was dead for',
+    xeric_arc_get($db3, 'ruth', 'trust') === null);
+
+foreach ([$db3Path, $db3Path . '-wal', $db3Path . '-shm'] as $f) @unlink($f);
+
+// ---------------------------------------------------------------------------
+// 13. The gate honours every wall path, not just the room and the literal quote
+//
+// The ripple is character-facing: what passes this gate lands in somebody's
+// byte-stable system prompt and, when the item fades, in a permanent memory.
+// It used to check places.<key> plus the six-word quotation test and nothing
+// else — three ways past it, each asserted here so none can quietly reopen.
+// ---------------------------------------------------------------------------
+
+echo "\n# the gossip wall gate, all four paths\n";
+
+// (a) THE PROTECTED-SECRET NEEDLE. A paraphrase carries the secret without a
+// six-word literal run — the quotation test alone cannot see it, the loose
+// word-overlap needle can. Same helper, same threshold, as every other surface.
+$Tn = $T;
+$Tn['cast']['special_roles'] = [[
+    'role' => 'unaware', 'character' => 'pastor_dale',
+    'must_not_know' => 'who was on the landing at the mill',
+]];
+$needleItem = ['line' => 'harlan shouted about the mill landing', 'place' => ''];
+ok('gate: a paraphrase of the protected secret is blocked for the protected head',
+    xeric_gossip_wall_blocked($Tn, $needleItem, 'pastor_dale'));
+ok('gate: and only for the protected head — the same line rides to anybody else',
+    !xeric_gossip_wall_blocked($Tn, $needleItem, 'dot'));
+
+// (b) THE SCHEDULES WALL. A line seating a name in a room is who-is-where in
+// its Sunday clothes; a viewer the now-block refuses to name a room to may not
+// hear it as gossip either. One wall, one tick, one answer.
+$Ts = $T;
+$Ts['knowledge_walls'][] = ['key' => 'shut_in', 'audience' => ['handle' => 'theo'],
+                            'hidden' => ['schedules']];
+$placedItem = ['line' => 'Ruth Amberg waited at the diner', 'place' => 'bluebird'];
+ok('gate: a schedules wall blocks a placed item the way a places wall does',
+    xeric_gossip_wall_blocked($Ts, $placedItem, 'theo'));
+ok('gate: but not a placeless one — a death has no room to give away',
+    !xeric_gossip_wall_blocked($Ts, ['line' => 'Harlan Voss died', 'place' => ''], 'theo'));
+
+// (c) THE WALLED LEDGER. economies.* hides the entire render, so its ground
+// truth is an interior — and until it was indexed, the quotation test read it
+// as commons and delivered a walled economy's exact prose to the person the
+// wall named.
+$Te = $T;
+$Te['knowledge_walls'][] = ['key' => 'family_innocence', 'audience' => ['handle' => 'janelle'],
+                            'hidden' => ['economies.thursday_pot']];
+$gt = (string)($Te['economies'][1]['ground_truth'][0] ?? '');
+ok('gate: the fixture still carries the thursday pot ground truth this drives', $gt !== '');
+$ledgerItem = ['line' => 'They say ' . $gt, 'place' => ''];
+ok('gate: a line quoting a walled economy\'s ground truth is blocked for the walled viewer',
+    xeric_gossip_wall_blocked($Te, $ledgerItem, 'janelle'));
+ok('gate: and rides freely to a viewer with no such wall',
+    !xeric_gossip_wall_blocked($Te, $ledgerItem, 'dot'));
+
+// The mystery rumor is the same shape of hole, same fix.
+$Tm = $T;
+$Tm['knowledge_walls'][] = ['key' => 'no_rumor', 'audience' => ['handle' => 'theo'],
+                            'hidden' => ['mystery.rumor']];
+$rumor = (string)($Tm['mystery']['rumor'] ?? '');
+ok('gate: a line quoting the mystery rumor is blocked for a viewer walled from it',
+    $rumor !== ''
+    && xeric_gossip_wall_blocked($Tm, ['line' => 'Folks keep saying ' . $rumor, 'place' => ''], 'theo'));
+
+// (d) THE PATHS THAT ALWAYS WORKED still do — the gate grew, it did not move.
+ok('gate: the places wall still blocks its room',
+    xeric_gossip_wall_blocked($Tw, $placedItem, 'janelle'));
+ok('gate: and a wall-less viewer is still blocked by nothing',
+    !xeric_gossip_wall_blocked($T, $placedItem, 'ruth'));
+
 foreach ([$dbPath, $dbPath . '-wal', $dbPath . '-shm',
           $db2Path, $db2Path . '-wal', $db2Path . '-shm'] as $f) @unlink($f);
 

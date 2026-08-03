@@ -685,10 +685,20 @@ function xeric_repass_snake_shape(array $s): array
 
     $maxI = -1.0;
     $maxAt = 0.0;
+    $minI  = 2.0;
     foreach ((array)($snake['curve'] ?? []) as $pt) {
         if (!is_array($pt) || count($pt) !== 2) continue;
         if ((float)$pt[1] > $maxI) { $maxI = (float)$pt[1]; $maxAt = (float)$pt[0]; }
+        if ((float)$pt[1] < $minI) { $minI = (float)$pt[1]; }
     }
+
+    // A FLAT CURVE IS A DECISION, NOT BAD DRAMA. A world forged with no shape
+    // hands its flat 0.5 down to any overlay laid on it, and every check below
+    // would then fire on it — the peak "sits at the very front", the crescendo
+    // "never clears the middle of the dial" — which is a report that somebody's
+    // deliberately unpaced xeric is broken. It is not badly paced. It is not
+    // paced, on purpose, and there is nothing here to say about it.
+    if ($maxI <= $minI) return $out;
     if ($maxAt <= 0.1) $note('Its peak sits at the very front (p=' . $maxAt . ') — the story is loudest '
         . 'before anybody has met it, and everything after reads as closing.');
     if ($maxI < 0.6)   $note('Its loudest point is intensity ' . $maxI . ' — the crescendo never clears '

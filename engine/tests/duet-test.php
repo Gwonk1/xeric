@@ -361,6 +361,30 @@ $out6 = xeric_duet($TP, $db6b, 'pastor_dale', 'janelle', $SUN, stub_duet($c6b),
 ok('wall: the same pair talking about anything else lands normally',
     xeric_events_count($db6b) === 1 && $out6['turns'] === 2);
 
+// THE EXTRACTOR CAN SYNTHESISE — the guard's own comment, finally asserted.
+// Two spoken lines that individually clear the wall (one word of the secret,
+// two words of the secret) can hand an extractor enough to assemble the whole
+// thing, and the protected head must not get to write her own secret down.
+// Deleting duet.php's one-line guard used to leave every suite green; this is
+// the red it costs now.
+$db6c = fresh_db('leak-synth');
+$c6c  = [];
+$out6c = xeric_duet($TP, $db6c, 'pastor_dale', 'janelle', $SUN,
+    stub_duet($c6c, [
+        'Janelle Kerr' => ['Janelle learned the thursday game is set up in the church basement after supper.',
+                           'Janelle thought the coffee was better than last week.'],
+    ], null, fn(int $n) => $n === 1 ? 'Cards again thursday, same crowd as always.'
+           : ($n === 2 ? 'They set it up down in the church basement once supper is cleared.'
+                       : "spoken line $n, nothing much.")),
+    ['say_first' => 'pastor_dale', 'turns' => 4]);
+ok('wall: the lines that fed the synthesis each pass on their own — the duet lands',
+    xeric_events_count($db6c) === 1 && $out6c['turns'] === 4);
+$janKept = array_map(fn($m) => (string)$m['text'], xeric_memories_for($db6c, 'janelle', 10));
+ok('wall: the synthesised secret never reaches her diary',
+    !array_filter($janKept, fn($m) => str_contains($m, 'church basement')), json_encode($janKept));
+ok('wall: while her harmless memory of the same hour is kept — the guard drops a line, not a head',
+    array_filter($janKept, fn($m) => str_contains($m, 'coffee')) !== [], json_encode($janKept));
+
 // ---------------------------------------------------------------------------
 // 7. Turn order: the thumb, the pin, and the last word
 // ---------------------------------------------------------------------------

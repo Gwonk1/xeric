@@ -535,6 +535,22 @@ Design principles, learned the hard way:
                                             // and by exactly 1.0 through the
                                             // false calm — see STORY.md
     "expected_gap_hours": 24,               // how long a normal absence is here
+    // The RHYTHM that rate is walked at. `pace` is how MUCH happens; this is
+    // WHEN. A key from xeric_story_shapes() — none | snake | slow_burn |
+    // episodic | tidal | turn — or an invented shape stored inline as an
+    // object. The forge asks for it (interview step `story_shape`) and
+    // DEFAULTS TO `none`, because a xeric is a place before it is a plot.
+    //
+    // `none` IS A SHAPE, not a switch: a curve held flat at intensity 0.5,
+    // which the modulation m = 1 + swing·(2i − 1) turns into ×1.0 exactly,
+    // forever. So a world that refused an arc runs at precisely the
+    // sweep_chance above and there is no bypass anywhere in the engine.
+    //
+    // With no story overlay, the world walks its own curve on the CALENDAR —
+    // `cycle_days` per lap, then round again, because a world is not over when
+    // its rhythm finishes. With an overlay, the overlay's own snake wins and
+    // one that declares none inherits this. See STORY.md and engine/shape.php.
+    "story_shape": "none",
     "user_concern": 0.4,                    // how often an event is about him
     "proactive_reach": 0.6,                 // how far the cast reaches for him
     "albums": {

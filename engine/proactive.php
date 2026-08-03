@@ -150,8 +150,9 @@ const XERIC_PROACTIVE_DREAM_DAYS = 7;
 function xeric_proactive_check(array $t, PDO $db, array $endpoint, array $now, array $opts = [], ?array &$notes = null): ?array
 {
     $notes = [];
-    $epoch = (int)($now['epoch'] ?? 0);
-    if ($epoch <= 0) throw new RuntimeException('proactive: needs a moment, pass xeric_world_now()');
+    // Absence, not sign: a pre-1970 world's epoch is negative and real.
+    if (!isset($now['epoch'])) throw new RuntimeException('proactive: needs a moment, pass xeric_world_now()');
+    $epoch = (int)$now['epoch'];
 
     if (isset($opts['seed'])) mt_srand((int)$opts['seed']);
 

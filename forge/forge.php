@@ -51,6 +51,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../engine/world.php';   // xeric_world_validate(), the gate
 require_once __DIR__ . '/../engine/llm.php';     // the only thing that talks HTTP
 require_once __DIR__ . '/../engine/walls.php';   // the quotation test the forge checks its own output against
+require_once __DIR__ . '/../engine/shape.php';   // the shape library, and the checker that disposes of an invented one
 
 // ---------------------------------------------------------------------------
 // The interview + the answers
@@ -1117,7 +1118,8 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
                 . "  \"workplace\": { \"name\": \"where they work, from the job above\", \"kind\": \"…\", "
                 . "\"open\": \"HH:MM\", \"close\": \"HH:MM\", \"late\": false, \"alcohol\": false, "
                 . "\"x\": 50, \"y\": 50, "
-                . "\"description\": \"one or two sentences anyone in town could tell you\" },\n"
+                . "\"description\": \"one or two sentences anyone in town could tell you\", "
+                . "\"interior\": [\"4 to 6 concrete things IN the room a scene can touch, 3-6 words each\"] },\n"
                 . "  \"places\": [ " . ($count - 1) . " more objects with the same keys ]\n"
                 . "}\n"
                 . "kind is one of: diner cafe bar club church school clinic shop market office gym park home site station hall.\n"
@@ -1135,6 +1137,12 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
                 . "Do not put everything in the middle and do not spread them evenly — "
                 . "a real place is a cluster with two or three outliers.\n"
                 . "The description is read by EVERYONE — nothing secret in it.\n"
+                // The still-life fix proved models invent props anyway, just
+                // uncoordinated — a brass shaker one hour, gone the next. The
+                // interior list is those props written down ONCE, so sweeps,
+                // duets, arrivals and dreams all touch the same chairs.
+                . "interior is the room's furniture: the register, the corner booth, the pie case. "
+                . "Things, not people, and nothing secret — this is what any stranger sees from the door.\n"
                 . "No prose outside the JSON."],
         ];
         $raw = xeric_forge_ask($endpoint, 'places', $msgs, ['temperature' => 0.9, 'max_tokens' => 1500], $onNote);
@@ -1228,6 +1236,17 @@ function xeric_forge_place_from(array $raw, bool $isWorkplace, array &$taken): ?
         'residents' => [],
         'special' => null,
     ];
+    // The furniture, capped and stringy: at most six things, each a short
+    // commons phrase, dropped rather than repaired when the model hands back
+    // something that is not a thing. Absent when nothing usable came — a room
+    // with no interior has none, and the arrival beat copes.
+    $interior = [];
+    foreach ((array)($raw['interior'] ?? []) as $item) {
+        $s = trim(xeric_forge_str(is_array($item) ? ($item['text'] ?? '') : $item, '', 60));
+        if ($s !== '' && mb_strlen($s) >= 3) $interior[] = $s;
+        if (count($interior) >= 6) break;
+    }
+    if ($interior !== []) $place['interior'] = $interior;
     // Not in WORLD_TEMPLATE.md: the validator ignores unknown keys, and the
     // review UI, the orbit builder and the cast pass all need to find this one
     // place again after it has been renamed by a model.
@@ -1718,6 +1737,10 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
                     . "REQUIRED ANGLE: {$lineBrief}. Say it like gossip, not a citation — never open "
                     . "with 'The only' and never make them the best at anything\",\n"
                     . "  \"appearance\": \"one sentence, what you see first\",\n"
+                    . "  \"wears\": [\"3-4 things they are wearing on an ordinary day, 2-5 words each, "
+                    . "era-true — what a stranger at ten feet would see\"],\n"
+                    . "  \"carries\": [\"2-4 things in their pockets or hands most days, 2-5 words each — "
+                    . "objects a bystander could see them produce, nothing secret\"],\n"
                     . "  \"voice\": \"how they talk — rhythm and habit, one or two sentences. "
                     . "REQUIRED SHAPE: {$voiceBrief}. Do NOT open with 'A low' and do NOT call it "
                     . "gravelly, raspy, or a rumble — every other character already is.\",\n"
@@ -2131,6 +2154,14 @@ function xeric_forge_character_from(array $flat, array $ctx, array $taken): arra
         // dossier, so it may never be derived from voice or pull.
         'surface' => 'someone from ' . $ctx['orbit_label'],
         'appearance' => xeric_forge_str($flat['appearance'] ?? '', '', 300),
+        // THE INVENTORY, both halves of it: worn and carried. COMMONS by rule —
+        // what somebody wears and carries IS what a bystander sees, so these
+        // ride the public presence read without touching a wall, and nothing
+        // secret may be smuggled in here (a hidden letter is a secret, not a
+        // carry). Capped and stringy like a place's interior; absent lists are
+        // an unfurnished person, which every world forged before today is.
+        'wears'   => xeric_forge_things($flat['wears'] ?? [], 4),
+        'carries' => xeric_forge_things($flat['carries'] ?? [], 4),
         'voice' => xeric_forge_str($flat['voice'] ?? '', 'Says less than they mean and means all of it.', 300),
         'temperature' => 1.0,
         'week' => $week,
@@ -2153,6 +2184,22 @@ function xeric_forge_character_from(array $flat, array $ctx, array $taken): arra
         'limits' => ['hard' => [], 'soft' => []],
         'photos' => ['enabled' => true, 'face_seed' => random_int(100000000, 999999999)],
     ];
+}
+
+/**
+ * A short list of THINGS: capped, stringy, dropped rather than repaired.
+ * The one shaping rule shared by a room's interior, a person's wears and
+ * their carries — the three lists that make the world's objects data.
+ */
+function xeric_forge_things($raw, int $cap): array
+{
+    $out = [];
+    foreach ((array)$raw as $item) {
+        $s = trim(xeric_forge_str(is_array($item) ? ($item['text'] ?? '') : $item, '', 60));
+        if ($s !== '' && mb_strlen($s) >= 3) $out[] = $s;
+        if (count($out) >= $cap) break;
+    }
+    return $out;
 }
 
 /** Solace as prose. A bare place key becomes the place's name. */
@@ -2597,6 +2644,155 @@ function xeric_forge_pace(string $pace, string $around): array
 }
 
 /**
+ * A legal shape built from six proportions. The disposal half of "model
+ * proposes, code disposes", and the reason the invented shape cannot fail.
+ *
+ * WHY SCALARS AND NOT A CURVE. A snake is only legal if the curve is FLAT AT
+ * EXACTLY 0.5 across its declared false calm — the arithmetic the ×1.0 claim
+ * rests on — and asking a small model to hand back a piecewise-linear curve
+ * that satisfies that is asking it to do the one part of this it is worst at.
+ * It would fail validation most times and the option would be a fallback with
+ * extra steps. So the model is asked for the DRAMA — where the calm sits, how
+ * long it holds, where the peak lands and how loud — and this builds the curve.
+ * Every knob is clamped and the control points are forced strictly increasing,
+ * so there is no input, hostile or confused, that produces an illegal shape.
+ *
+ * @param array $spec whatever the model said; every field optional
+ */
+function xeric_forge_shape_build(array $spec): array
+{
+    $num = fn(string $k, float $d, float $lo, float $hi): float
+        => max($lo, min($hi, isset($spec[$k]) && is_numeric($spec[$k]) ? (float)$spec[$k] : $d));
+
+    // Where the flat sits, and how long it holds. Everything else is arranged
+    // around it, because it is the part with an exact value to honour.
+    $calmFrom = $num('calm_from', 0.45, 0.15, 0.70);
+    $calmTo   = max($calmFrom + 0.08, $num('calm_to', 0.70, 0.23, 0.85));
+
+    // Four positions, forced apart so progress strictly increases whatever came
+    // back. 0.04 is comfortably above the float noise a 0..1 curve carries.
+    $riseAt = max(0.04, min($calmFrom - 0.04, $num('rise_at', 0.28, 0.04, 0.66)));
+    $peakAt = max($calmTo + 0.04, min(0.96, $num('peak_at', 0.90, 0.27, 0.96)));
+
+    $shape = [
+        'label' => xeric_forge_str($spec['label'] ?? '', 'a shape of its own', 60),
+        'hint'  => xeric_forge_str($spec['hint'] ?? '', 'invented for this xeric', 120),
+        'curve' => [
+            [0.00,      $num('open_at', 0.20, 0.0, 1.0)],
+            [$riseAt,   $num('rise_to', 0.75, 0.0, 1.0)],
+            [$calmFrom, 0.50],
+            [$calmTo,   0.50],
+            [$peakAt,   $num('peak',    0.95, 0.0, 1.0)],
+            [1.00,      $num('end_at',  0.30, 0.0, 1.0)],
+        ],
+        'false_calm' => [$calmFrom, $calmTo],
+        'pace_swing' => $num('swing', 0.55, 0.0, 0.9),
+        'cycle_days' => (int)round($num('cycle_days', 30.0, 3.0, 365.0)),
+        'kind_thumb' => [],
+    ];
+
+    // A thumb may re-weight what a world armed and may never arm or delete, so
+    // unknown stages, unknown kinds and non-positive multipliers are dropped
+    // here rather than carried into a template for the engine to ignore.
+    $stages = xeric_story_stages();
+    $kinds  = array_keys(xeric_sweep_kinds());
+    foreach ((array)($spec['kind_thumb'] ?? []) as $stage => $thumb) {
+        if (!in_array((string)$stage, $stages, true) || !is_array($thumb)) continue;
+        foreach ($thumb as $k => $m) {
+            if (!in_array((string)$k, $kinds, true) || !is_numeric($m)) continue;
+            $m = (float)$m;
+            if ($m <= 0.0 || $m > 4.0) continue;
+            $shape['kind_thumb'][(string)$stage][(string)$k] = round($m, 2);
+        }
+    }
+    return $shape;
+}
+
+/**
+ * The shape this world runs on: a name from the library, or one invented for it.
+ *
+ * THE ANSWER IS A KEY, AND AN UNREADABLE ONE IS `none`. Fail-quiet rather than
+ * fail-closed, which is the right default here for the reason shape.php gives:
+ * pacing is not a safety property, and a world whose shape nobody can read runs
+ * at the rate it declared for itself — the behaviour every world had before
+ * shapes existed.
+ *
+ * `invent` needs a model and this is called once from a path that sometimes has
+ * none (the preview assembly at the top of the file passes no endpoint). With
+ * no endpoint, or a model that will not answer, it falls back to the plot snake
+ * and SAYS SO — silently handing back a different shape than the one somebody
+ * chose is the kind of quiet substitution that makes a setting untrustworthy.
+ */
+function xeric_forge_shape(string $answer, array $concept, ?array $endpoint = null, ?callable $onNote = null): string|array
+{
+    $answer = mb_strtolower(trim($answer));
+    $lib    = xeric_story_shapes();
+
+    if ($answer === '' || $answer === 'none') return 'none';
+    if (isset($lib[$answer])) return $answer;
+    if ($answer !== 'invent' && $answer !== 'surprise') {
+        xeric_forge_note($onNote, "shape: '$answer' is not a shape this engine knows — running with none");
+        return 'none';
+    }
+
+    if ($endpoint === null) return 'snake';
+
+    $premise = xeric_forge_str($concept['premise'] ?? ($concept['one_line'] ?? ''), '', 400);
+    $reg     = xeric_forge_str($concept['register'] ?? '', '', 80);
+
+    $msgs = [
+        ['role' => 'system', 'content' =>
+            'You design the RHYTHM of a story world — how much happens, and when. Not the plot: '
+            . 'the shape the plot would be paced against. Reply with ONE JSON object and nothing else.'],
+        ['role' => 'user', 'content' =>
+            "The world:\n$premise\n" . ($reg !== '' ? "Register: $reg\n" : '')
+            . "\nInvent a rhythm that suits it. Every number is a position from 0 to 1 along one "
+            . "full cycle, except where noted.\n\n"
+            . "Reply exactly:\n{\n"
+            . '  "label": "three or four words naming the rhythm",' . "\n"
+            . '  "hint": "one short sentence a person choosing it would read",' . "\n"
+            . '  "open_at": 0.0-1.0,   how loud it starts' . "\n"
+            . '  "rise_at": 0.0-0.66,  where the first build tops out' . "\n"
+            . '  "rise_to": 0.0-1.0,   how loud that build gets' . "\n"
+            . '  "calm_from": 0.15-0.70, where the quiet stretch begins' . "\n"
+            . '  "calm_to": 0.23-0.85,   where it ends' . "\n"
+            . '  "peak_at": 0.27-0.96,   where the loudest point lands' . "\n"
+            . '  "peak": 0.0-1.0,        how loud it gets there' . "\n"
+            . '  "end_at": 0.0-1.0,      where it settles' . "\n"
+            . '  "swing": 0.0-0.9,       how far the whole thing swings the rate' . "\n"
+            . '  "cycle_days": 3-365,    how many days one full cycle takes' . "\n"
+            . "}\n\n"
+            . "The quiet stretch is the world at EXACTLY its own ordinary pace — not slack, not "
+            . "building. Make it a real stretch, not a pause. A rhythm whose loudest point barely "
+            . "clears the middle is a world where the big night and an ordinary Tuesday feel the same."],
+    ];
+
+    try {
+        $out = xeric_forge_ask($endpoint, 'shape', $msgs, ['temperature' => 0.9, 'max_tokens' => 400], $onNote);
+    } catch (Throwable $e) {
+        xeric_forge_note($onNote, 'shape: the model would not draw one (' . $e->getMessage()
+            . ') — running with the plot snake');
+        return 'snake';
+    }
+
+    $shape = xeric_forge_shape_build(is_array($out) ? $out : []);
+
+    // Belt and braces. The builder cannot produce an illegal shape, so this can
+    // only fire if the builder itself is wrong — which is exactly when a world
+    // should not be paced by it.
+    $bad = xeric_story_shape_check($shape);
+    if ($bad !== []) {
+        xeric_forge_note($onNote, 'shape: the invented rhythm did not validate (' . implode('; ', $bad)
+            . ') — running with the plot snake');
+        return 'snake';
+    }
+    $shape['key'] = 'invented';
+    xeric_forge_note($onNote, 'shape: invented — ' . $shape['label'] . ', a '
+        . $shape['cycle_days'] . '-day cycle');
+    return $shape;
+}
+
+/**
  * Narrative gravity: how much of this world is about the user.
  *
  * Distinct from motivation, which says what they WANT. This says how much the
@@ -2897,6 +3093,11 @@ function xeric_forge_assemble(array $answers, array $concept, array $places, arr
     $systems = xeric_forge_armed($motivation, $endpoint, $onNote);
     $pace = xeric_forge_pace((string)($answers['pace'] ?? 'steady'), (string)($answers['around'] ?? ''));
     $grav = xeric_forge_centrality((string)($answers['centrality'] ?? 'ensemble'));
+    // Default `none` and that is deliberate: a xeric is a place before it is a
+    // plot, and a world nobody asked to have an arc should not quietly acquire
+    // one. Every world forged before this question existed answers '' and keeps
+    // running at exactly the rate it always did.
+    $shape = xeric_forge_shape((string)($answers['story_shape'] ?? ''), $concept, $endpoint, $onNote);
 
     // Residents: whoever's first week block puts them here. The bible prints
     // them as the people you expect to find in the room.
@@ -2997,6 +3198,10 @@ function xeric_forge_assemble(array $answers, array $concept, array $places, arr
             'pace' => $pace['pace'],
             'sweep_chance' => $pace['chance'],
             'expected_gap_hours' => $pace['gap_hours'],
+            // The RHYTHM that rate is walked at — a key from xeric_story_shapes()
+            // or an invented shape inline. 'none' is a shape: flat at 0.5, which
+            // is ×1.0 exactly, which is sweep_chance untouched forever.
+            'story_shape' => $shape,
             // how often an event is about the user — see xeric_forge_centrality()
             'user_concern' => $grav['concern'],
             'proactive_reach' => $grav['reach'],

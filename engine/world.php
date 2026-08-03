@@ -222,6 +222,19 @@ function xeric_world_validate(array $t, string $label = 'template'): void
         if ($k === '')                 $bad("places[$i].key", 'is required and must be a non-empty string');
         if (isset($places[$k]))        $bad("places[$i].key", "'$k' is declared twice");
         $places[$k] = true;
+        // The furniture, when a room has any: a LIST of short strings. Absent
+        // is a room nobody furnished yet (legal); a map or a string here is a
+        // hand-edit gone wrong, and half-reading it would seat a scene on
+        // furniture that is not a list of things.
+        if (array_key_exists('interior', $p)) {
+            if (!xeric_world_is_list($p['interior'])) {
+                $bad("places[$i].interior", 'must be a list of short strings, the things in the room');
+            } else {
+                foreach ((array)$p['interior'] as $j => $item) {
+                    if (trim(xeric_text($item)) === '') $bad("places[$i].interior[$j]", 'is empty');
+                }
+            }
+        }
     }
 
     $orbits = [];
@@ -239,6 +252,19 @@ function xeric_world_validate(array $t, string $label = 'template'): void
         if ($h === '')                 $bad("cast.characters[$i].handle", 'is required and must be a non-empty string');
         if (isset($chars[$h]))         $bad("cast.characters[$i].handle", "'$h' is declared twice");
         $chars[$h] = true;
+
+        // The inventory lists, when a person has them: same shape rule as a
+        // place's interior — lists of short strings, absent legal, garbage not.
+        foreach (['wears', 'carries'] as $inv) {
+            if (!array_key_exists($inv, $c)) continue;
+            if (!xeric_world_is_list($c[$inv])) {
+                $bad("cast.characters[$i].$inv", 'must be a list of short strings, the things themselves');
+                continue;
+            }
+            foreach ((array)$c[$inv] as $j => $item) {
+                if (trim(xeric_text($item)) === '') $bad("cast.characters[$i].$inv" . "[$j]", 'is empty');
+            }
+        }
 
         // Age is a shape rule, checked here with the handle because everything
         // downstream reads it: xeric_is_minor() takes age and nothing else, and

@@ -285,8 +285,19 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
  * too much. The privacy baseline keeps every one of them from the CAST — so a
  * passer-by holding a slug may not have them either. A world that showed a
  * stranger an interior nobody living there may see is not redacted, it is leaky.
+ *
+ * DERIVED, NOT DECLARED. This used to be a hand list, and it drifted from the
+ * engine's own inventory of interiors twice: `tells` and `solace` were missing
+ * once and fixed by editing the constant, then `voice` — which walls.php has
+ * always filed under the dossier — leaked to every stranger who pressed "show
+ * me the file". The list of what a wall can take away is the wall system's to
+ * keep (xeric_wall_interior_fields), and this reads it, so the next field the
+ * indexer learns is redacted the same day.
  */
-const XERIC_PLAY_INTERIORS = ['drives', 'psyche', 'secrets', 'tells', 'solace'];
+function xeric_play_interior_fields(): array
+{
+    return (array)(xeric_wall_interior_fields()['characters'] ?? []);
+}
 
 /**
  * A refusal shaped like whoever asked, and then nothing else.
@@ -405,19 +416,36 @@ function xeric_play_redact(array $T): array
         unset($T['cast']['special_roles'][$i]['must_not_know']);
         $gone['special_roles[].must_not_know'] = true;
     }
+    $vocab = xeric_wall_interior_fields();
     foreach (array_keys((array)($T['cast']['characters'] ?? [])) as $i) {
-        foreach (XERIC_PLAY_INTERIORS as $f) {
+        foreach ((array)($vocab['characters'] ?? []) as $f) {
             if (!isset($T['cast']['characters'][$i][$f])) continue;
             unset($T['cast']['characters'][$i][$f]);
             $gone["characters[].$f"] = true;
         }
     }
     if (isset($T['cast']['protagonist'])) {
-        foreach (['arc', 'pressure'] as $f) {
+        foreach ((array)($vocab['protagonist'] ?? []) as $f) {
             if (!isset($T['cast']['protagonist'][$f])) continue;
             unset($T['cast']['protagonist'][$f]);
             $gone['protagonist.' . $f] = true;
         }
+    }
+    // A walled ledger's private half, and the mystery's rumor: the same
+    // material a family_innocence or no_rumor wall exists to hide is not the
+    // demo's to hand a stranger either. Keys, labels and counters stay — the
+    // SHAPE of a world is the shelf's best argument; its secrets are not.
+    foreach (array_keys((array)($T['economies'] ?? [])) as $i) {
+        foreach ((array)($vocab['economies'] ?? []) as $f) {
+            if (!isset($T['economies'][$i][$f])) continue;
+            unset($T['economies'][$i][$f]);
+            $gone["economies[].$f"] = true;
+        }
+    }
+    foreach ((array)($vocab['mystery'] ?? []) as $f) {
+        if (!isset($T['mystery'][$f])) continue;
+        unset($T['mystery'][$f]);
+        $gone["mystery.$f"] = true;
     }
     return [$T, array_keys($gone)];
 }
@@ -1124,6 +1152,38 @@ function xeric_play_mark_read(PDO $db, int $convId): void
  * looked" rather than "since the server last restarted".
  */
 /**
+ * One collapsible section of the sidebar, opened.
+ *
+ * THE SIDEBAR OUTGREW ITS COLUMN. Rooms, the people the clock says are nowhere,
+ * and everything that happened while nobody was watching all stack into one
+ * 17rem strip — and at the cast of twelve this app is built for, that is a
+ * scroll rather than a glance, which is the one thing a sidebar may not be.
+ *
+ * THE COUNT IS WHY SHUTTING ONE IS SAFE. A folded section still prints how much
+ * is behind it, so closing it costs you the detail and never the fact that
+ * there is something to look at: "while you were away · 6" reads shut.
+ *
+ * AND IT PRINTS ZERO. At four in the morning nobody is anywhere, and "· 0" is
+ * the true answer to a folded "where everybody is" — where no badge at all is
+ * indistinguishable from a section that never counted itself. The one number
+ * this must never do is go quiet.
+ *
+ * <details> AND NOT A CLASS WE TOGGLE, the same call the events inside already
+ * made: the browser gives us the keyboard, the arrow, the screen-reader state
+ * and the print behaviour for free. Which sections are open is a preference
+ * about the app rather than a fact about a xeric, so play.php keeps it in the
+ * browser — and it therefore survives both the twelve-second repaint and the
+ * next time this xeric is opened.
+ */
+function xeric_play_sideblock(string $key, string $title, int $n, bool $open): string
+{
+    return '<details class="sideblock" data-sb="' . h($key) . '"' . ($open ? ' open' : '') . '>'
+         . '<summary class="sh">' . h($title)
+         . '<span class="sbn">' . $n . '</span>'
+         . '</summary><div class="sbb">';
+}
+
+/**
  * The sidebar: where everybody is, and what has been happening without you.
  *
  * THIS IS THE PANEL THE APP WAS MISSING. A messenger without one is a series of
@@ -1169,7 +1229,23 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         if ($k !== '' && $o !== '' && $c !== '') $hours[$k] = $o . '–' . $c;
     }
 
-    $out = '<div class="sideblock"><h3 class="sh">where everybody is</h3><ul class="places">';
+    // Counted before it is drawn, because the heading has to carry the number
+    // even when the section is shut. People and not rooms: an empty diner is
+    // worth a line inside, but "9" on a folded section means nine people about.
+    $standing = 0;
+    foreach ((array)($map['places'] ?? []) as $pl) $standing += count((array)($pl['who'] ?? []));
+
+    // THE DAY'S SKY, above the rooms it hangs over. The same derived line every
+    // prompt reads (engine/weather.php): day-coarse world state that repaints
+    // with the sidebar, so a skip that crosses midnight changes the weather the
+    // same moment it changes everything else.
+    $wx = xeric_weather_line($t, $now);
+    $out = $wx !== '' ? '<p class="swx">' . h($wx) . '</p>' : '';
+
+    // Open by default — this is the panel the sidebar was built for, and the one
+    // section that answers the question only a xeric can be asked.
+    $out .= xeric_play_sideblock('where', 'where everybody is', $standing, true)
+         . '<ul class="places">';
 
     foreach ((array)($map['places'] ?? []) as $pl) {
         $who = (array)($pl['who'] ?? []);
@@ -1202,8 +1278,23 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
             foreach ($who as $p) {
                 $h = (string)($p['handle'] ?? '');
                 $doing = trim((string)($p['doing'] ?? ''));
-                $out .= '<li><button type="button" class="wperson" data-h="' . h($h) . '">' . $disc($h)
-                      . '<span><span class="wn">' . h((string)($p['name'] ?? $h)) . '</span>'
+                // `at_home` rides the map for exactly this: somebody off shift
+                // resolved to their own roof reads "home", not like a customer
+                // standing in a closed room. One word, where the name is.
+                //
+                // And the inventory rides as a TOOLTIP, not a line: what they
+                // wear and carry is commons (a bystander sees it), but printed
+                // it would double every row. Hover answers; the panel stays a
+                // glance.
+                $cInv   = xeric_world_character($t, $h);
+                $invBits = array_merge(
+                    array_map('xeric_text', (array)($cInv['wears'] ?? [])),
+                    array_map('xeric_text', (array)($cInv['carries'] ?? [])));
+                $invTip  = trim(implode(', ', array_filter($invBits)));
+                $out .= '<li><button type="button" class="wperson" data-h="' . h($h) . '"'
+                      . ($invTip !== '' ? ' title="' . h($invTip) . '"' : '') . '>' . $disc($h)
+                      . '<span><span class="wn">' . h((string)($p['name'] ?? $h))
+                      . (!empty($p['at_home']) ? '<span class="whome">home</span>' : '') . '</span>'
                       . ($doing !== '' ? '<span class="wd">' . h($doing) . '</span>' : '')
                       . '</span></button></li>';
             }
@@ -1211,7 +1302,7 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         }
         $out .= '</li>';
     }
-    $out .= '</ul></div>';
+    $out .= '</ul></div></details>';
 
     // Anybody the clock says is nowhere — asleep, off shift, or dead — still
     // exists, and a list that quietly omitted them would read as a cast that
@@ -1227,14 +1318,17 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         $away[] = ['h' => $h, 'name' => (string)($c['display_name'] ?? $h), 'dead' => isset($dead[$h])];
     }
     if ($away !== []) {
-        $out .= '<div class="sideblock"><h3 class="sh">not out</h3><ul class="who away">';
+        // Shut by default. Who is NOT about is the standing background fact —
+        // true all night, changing slowly — so it is the first thing to fold.
+        $out .= xeric_play_sideblock('away', 'not out', count($away), false)
+              . '<ul class="who away">';
         foreach ($away as $a) {
             $out .= '<li><button type="button" class="wperson' . ($a['dead'] ? ' gone' : '') . '"'
                   . ' data-h="' . h($a['h']) . '">' . $disc($a['h'])
                   . '<span><span class="wn">' . h($a['name']) . '</span>'
                   . '<span class="wd">' . ($a['dead'] ? 'dead' : 'not out right now') . '</span></span></button></li>';
         }
-        $out .= '</ul></div>';
+        $out .= '</ul></div></details>';
     }
 
     // WHAT HAPPENED IS NOT A HEADLINE. These were four titles with nothing
@@ -1246,12 +1340,21 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     // <details> and not a class we toggle ourselves: the browser gives us the
     // keyboard, the arrow, the screen-reader state and the print behaviour for
     // free, and the sidebar's repaint re-opens what was open by id.
-    $events = xeric_events_recent($db, 6);
+    // Filtered before it is counted, not while it is drawn: a titleless event
+    // renders nothing, so counting it would print a number the section cannot
+    // show — and a "6" that opens onto four lines is worse than no number.
+    $events = array_values(array_filter(
+        xeric_events_recent($db, 6),
+        fn($e) => trim((string)($e['title'] ?? '')) !== ''
+    ));
     if ($events !== []) {
-        $out .= '<div class="sideblock"><h3 class="sh">while you were away</h3><ul class="offscreen">';
+        // Shut by default too, and the count carries it: this is news, so the
+        // number is the part you need at a glance — the prose is the part you
+        // open when you have a minute for it.
+        $out .= xeric_play_sideblock('recent', 'while you were away', count($events), false)
+              . '<ul class="offscreen">';
         foreach ($events as $e) {
             $ti = trim((string)($e['title'] ?? ''));
-            if ($ti === '') continue;
 
             $who = [];
             foreach ((array)($e['participants'] ?? []) as $p) {
@@ -1274,7 +1377,7 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
                       : '')
                   . '</div></details></li>';
         }
-        $out .= '</ul></div>';
+        $out .= '</ul></div></details>';
     }
 
     return $out;
@@ -3684,6 +3787,23 @@ function xeric_play_css(): string
 .sideblock{border-top:1px solid var(--line-2);padding-top:.7rem}
 .sh{margin:0 0 .45rem;font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;
   color:var(--fg-far);font-weight:700}
+/* Each block folds. Three sections in one 17rem column is a scroll at the cast
+   size this is built for, and a sidebar you have to scroll is not a glance.
+   Same ▸/▾ vocabulary as the events inside, so one arrow means one thing. */
+summary.sh{list-style:none;cursor:pointer;position:relative;display:flex;align-items:center;
+  gap:.4rem;padding-left:.85rem;touch-action:manipulation}
+summary.sh::-webkit-details-marker{display:none}
+summary.sh::before{content:'▸';position:absolute;left:0;top:0;font-size:.7rem;line-height:1.6;
+  color:var(--fg-far)}
+.sideblock[open] > summary.sh::before{content:'▾'}
+summary.sh:hover,.sideblock[open] > summary.sh{color:var(--fg-dim)}
+summary.sh:focus-visible{outline:1px solid var(--accent);outline-offset:2px;border-radius:2px}
+/* The count is what makes folding safe: shut, a section still says how much is
+   behind it, so nothing goes quiet just because somebody put it away. */
+.sbn{font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:normal;
+  font-size:.7rem;color:var(--fg-dim)}
+.sbn::before{content:'·';margin-right:.35rem;color:var(--fg-far)}
+.sbb{padding-bottom:.15rem}
 
 .places{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.55rem}
 .place .pl{display:block;font-size:.84rem;font-weight:600;color:var(--fg)}
@@ -3698,6 +3818,17 @@ function xeric_play_css(): string
 .wperson:hover .wn,.wperson:focus-visible .wn{color:var(--accent);outline:none}
 .wn{display:block;font-size:.82rem}
 .wd{display:block;font-size:.72rem;color:var(--fg-dim)}
+/* the day's sky, one quiet line above the rooms it hangs over */
+.swx{margin:0 0 .55rem;font-size:.74rem;font-style:italic;color:var(--fg-dim);line-height:1.4}
+/* the one-word "home" mark beside a name standing under their own roof */
+.whome{margin-left:.4rem;font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--fg-far);border:1px solid var(--line-2);border-radius:.5rem;padding:0 .3rem}
+/* A WALK IS A LIE MID-SKIP: the worker owns the clock and travel.php refuses
+   the write anyway, so the buttons say so instead of bouncing. Body class over
+   per-node disabling because the sidebar repaints every twelve seconds and a
+   class on <body> survives every repaint for free. */
+body.skipping .wplace{opacity:.45;pointer-events:none}
+body.skipping .wplace .wgo2{visibility:hidden}
 .wperson.gone{cursor:default;opacity:.55}
 .offscreen{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.35rem;
   font-size:.78rem;color:var(--fg-dim)}

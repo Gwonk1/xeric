@@ -1470,8 +1470,16 @@ echo '<style>' . xeric_play_css() . '
       : 'You went to ' + name + '.';
     if (went.to) {
       line += went.open ? '' : ' It is shut.';
-      line += who.length ? ' ' + who.join(', ') + (who.length > 1 ? ' are' : ' is') + ' here.'
-                         : ' There is nobody here.';
+      // The narrator's arrival beat, when the engine composed one: who is
+      // here, what they are at, the day's prop, and the surface of a room
+      // noticing a door. The bare who-list stays as the fallback so a world
+      // forged before interiors still says something.
+      if (went.scene) {
+        line += ' ' + went.scene;
+      } else {
+        line += who.length ? ' ' + who.join(', ') + (who.length > 1 ? ' are' : ' is') + ' here.'
+                           : ' There is nobody here.';
+      }
     }
     $('#feedwrap').hidden = false;
     var el = document.createElement('div');
@@ -1485,7 +1493,11 @@ echo '<style>' . xeric_play_css() . '
     if (state.clock) {
       var tck = $('#tclock');
       if (tck) tck.textContent = state.clock.when;      // the same clock, on the thread screen
-      $$('.tbtn').forEach(function (b) { b.disabled = !!state.clock.paused; });
+      // [data-span] scopes this to the SKIP buttons. The rewind button wears
+      // .tbtn for the row, and disabling it on pause contradicted tick.php,
+      // which answers a rewind BEFORE the paused check precisely so a world
+      // held still keeps its last skip takeable-back.
+      $$('.tbtn[data-span]').forEach(function (b) { b.disabled = !!state.clock.paused; });
       // Every skip and every turn re-anchors the ticker, so the minutes that
       // follow flow from the moment the world just landed on; a stopped world
       // says so on the sidebar pill, which anchorClock owns.
@@ -1528,7 +1540,13 @@ echo '<style>' . xeric_play_css() . '
   }
 
   function paintTimes(spans) {
-    var els = $$('.tbtn');
+    // [data-span] again, and here it is load-bearing twice over: this maps the
+    // span list onto buttons BY POSITION, and the document-wide collection had
+    // the rewind button in it — so a span list one longer than the skip row
+    // overwrote the rewind label and handed the button a real data-span, at
+    // which point pressing "take it back" ran a genuine skip. Only buttons
+    // that are already skip buttons may be repainted as skip buttons.
+    var els = $$('.tbtn[data-span]');
     spans.forEach(function (s, i) {
       if (!els[i]) return;
       els[i].dataset.span = s.key;
@@ -1980,7 +1998,33 @@ echo '<style>' . xeric_play_css() . '
   // the middle of being read — so which ones are open is remembered out here,
   // by event id, and put back on every repaint.
   var openEv = {};
+
+  // AND THE SECTIONS THEMSELVES FOLD. Rooms, the cast that is nowhere and the
+  // off-screen news stack into one 17rem column; at twelve characters that is a
+  // scroll rather than a glance. Which sections are open is a preference about
+  // the app and not a fact about any one xeric, so it is kept in the browser
+  // rather than the world — and it therefore outlives the repaint AND the tab.
+  // localStorage in a try: a browser that refuses it (private mode, a file://
+  // open) must lose the memory and nothing else.
+  var sbOpen = {};
+  try { sbOpen = JSON.parse(localStorage.getItem('xeric.side') || '{}') || {}; } catch (e) { sbOpen = {}; }
+  function sbSave() { try { localStorage.setItem('xeric.side', JSON.stringify(sbOpen)); } catch (e) {} }
+
   function bindSide() {
+    $$('#sidebody .sideblock').forEach(function (d) {
+      var k = d.dataset.sb;
+      if (!k) return;
+      // A stored choice wins; NO stored choice leaves the server's default
+      // alone, so a section added later arrives the way it was designed to
+      // rather than inheriting a decision nobody made about it.
+      if (sbOpen[k] === 1) d.open = true;
+      else if (sbOpen[k] === 0) d.open = false;
+      if (d.dataset.bound) return;
+      d.dataset.bound = '1';
+      // Bound after the state is set, so restoring a fold is not mistaken for
+      // somebody choosing it.
+      d.addEventListener('toggle', function () { sbOpen[k] = d.open ? 1 : 0; sbSave(); });
+    });
     $$('#sidebody .ev').forEach(function (d) {
       if (openEv[d.dataset.e]) d.open = true;
       if (d.dataset.bound) return;
@@ -2019,6 +2063,7 @@ echo '<style>' . xeric_play_css() . '
   if (sideBox) sideBox.addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('.wplace') : null;
     if (!b || !b.dataset.to) return;
+    if (ticking) return;   // the belt to the CSS's braces: no walks mid-skip
     drawer(false);
     go(b.dataset.to);
     show('xeric');
@@ -2615,9 +2660,22 @@ echo '<style>' . xeric_play_css() . '
   function setTicking(on) {
     ticking = on;
     $$('.tbtn').forEach(function (b) { b.disabled = on; });
+    // The sidebar's walk buttons grey with the skip: the worker owns the clock
+    // and travel refuses mid-skip anyway, so the button tells the truth first.
+    // A class on <body> because #sidebody repaints every twelve seconds and
+    // would resurrect per-node disabling; CSS survives the repaint for free.
+    document.body.classList.toggle('skipping', on);
   }
 
-  $$('.tbtn').forEach(function (b) {
+  // `.tbtn[data-span]`, NOT `.tbtn`. The rewind button wears .tbtn too — it
+  // belongs to the same row and takes the same styling and the same disabling —
+  // and this loop used to bind the SKIP handler to it as well. Its dataset.span
+  // is undefined, tick.php reads a missing span as 'hour' (tick.php:97), so
+  // pressing REWIND opened the confirm card and advanced the world an hour
+  // behind it. The one control labelled experimental and destructive was moving
+  // time the wrong way before anybody confirmed anything. A time button with no
+  // span is not a skip button, and now the selector says so.
+  $$('.tbtn[data-span]').forEach(function (b) {
     b.addEventListener('click', function () {
       if (ticking) return;
       setTicking(true);

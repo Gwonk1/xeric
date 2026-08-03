@@ -1574,17 +1574,29 @@ function xeric_review_cast_names(array $t): array
 }
 
 /**
- * Walls kept across a cast reroll, pointed at the orbits that replaced theirs.
+ * Walls kept across a cast reroll, re-aimed at the orbits that replaced theirs.
  *
  * The orbits are rebuilt by the cast pass, so a kept baseline wall names one
  * that is gone — which is what made a cast reroll after a places reroll refuse
- * to validate forever. Position is the mapping, because both lists come from
- * xeric_forge_orbits() and it emits the same three in the same order every time.
+ * to validate forever.
  *
- * FAILS TOWARD MORE PROTECTION. A wall that cannot be placed is re-aimed at the
- * first orbit rather than dropped: a privacy wall that is missing is every
- * character's interior in everybody else's prompt, and that is not a thing to
- * let a rename cause quietly.
+ * BY KEY, NEVER BY POSITION. This used to map old index to new index, on the
+ * theory that both lists come from xeric_forge_orbits() in a fixed order — but
+ * when both lists DO come from there they carry the same keys and the survive-
+ * by-key check already placed every wall, so the positional path only ever ran
+ * in the one case its justification was false: a model-rewritten orbit list,
+ * where docs/WORLD_TEMPLATE.md says keys are free-form and order means
+ * nothing. Old index 2 landing on whatever now sits at index 2 aimed privacy
+ * walls at semantically random circles.
+ *
+ * FAILS TOWARD MORE PROTECTION, actually. A wall whose orbit is gone now
+ * covers EVERY new orbit: the original row keeps its key (special_roles
+ * reference walls by key, and that link must survive) and takes the first,
+ * clones with suffixed keys take the rest. Over-covering costs some characters
+ * a view of interiors until the owner re-aims by hand; under-covering is
+ * somebody's interior in a stranger's prompt — and only one of those is
+ * recoverable. Each move is reported BY NAME, so the owner can see which
+ * walls want their aim checked rather than being told a count.
  */
 function xeric_review_reaim_walls(array $t, array $oldOrbits, ?callable $say = null): array
 {
@@ -1596,17 +1608,24 @@ function xeric_review_reaim_walls(array $t, array $oldOrbits, ?callable $say = n
     if ($new === []) return $t;
     $declared = array_flip($new);
 
-    $moved = 0;
+    $added = [];
     foreach ((array)($t['knowledge_walls'] ?? []) as $i => $wall) {
         $o = (string)($wall['audience']['orbit'] ?? '');
-        if ($o === '' || isset($declared[$o])) continue;
-        $at = array_search($o, $oldOrbits, true);
-        $t['knowledge_walls'][$i]['audience']['orbit'] = $at === false
-            ? $new[0]
-            : ($new[$at] ?? $new[count($new) - 1]);
-        $moved++;
+        if ($o === '' || isset($declared[$o])) continue;   // the key survived: the one mapping that means anything
+
+        $wk = (string)($wall['key'] ?? 'wall');
+        $t['knowledge_walls'][$i]['audience']['orbit'] = $new[0];
+        foreach (array_slice($new, 1) as $nk) {
+            $clone = $wall;
+            $clone['key'] = $wk . '.' . $nk;               // unique, and never the key a role references
+            $clone['audience']['orbit'] = $nk;
+            $added[] = $clone;
+        }
+        if ($say) $say("walls: '" . $wk . "' was aimed at '" . $o . "', which the reroll removed — "
+            . 'it now covers every orbit (' . implode(', ', $new) . '); re-aim it in the review '
+            . 'if that is broader than it was written for');
     }
-    if ($moved > 0 && $say) $say('walls: ' . $moved . ' privacy wall(s) moved onto the new orbits');
+    foreach ($added as $c) $t['knowledge_walls'][] = $c;
     return $t;
 }
 

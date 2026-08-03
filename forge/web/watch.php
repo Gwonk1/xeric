@@ -146,6 +146,24 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             xeric_web_json($body, $status);
         };
 
+        // RE-READ BEHIND THE SLOT. The say slot is this scene's real mutex —
+        // whoever holds it is the only writer — so state read BEFORE taking it
+        // is a photograph from before whatever the previous holder did. A
+        // second line request used to arrive with a pre-slot snapshot and
+        // speak the same turn twice; a close used to arrive with one and write
+        // the world from a transcript missing the line the user just watched
+        // land. Fresh state, or the honest 409.
+        $s = xeric_watch_read($path);
+        if ($s === null) {
+            $done(['error' => 'That scene closed while this was on its way. Nothing was lost — what it '
+                . 'said is in the world now.', 'kind' => 'gone'], 409);
+            return;
+        }
+        if ((int)$s['spoken'] >= (int)$s['turns']) {
+            $done(['error' => 'The scene already said its last line.', 'kind' => 'gone'], 409);
+            return;
+        }
+
         try {
             // The NEXT speaker's pinned voice machine, else the engine — the
             // watch is per-speaker calls by law, which is exactly what makes
@@ -208,19 +226,43 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
     // -- the walk-in ----------------------------------------------------------
     if ($action === 'say') {
+        // No model call in here, but the slot is taken anyway, briefly: it is
+        // the scene's mutex, and a typed line landing while a spoken one is
+        // mid-generation belongs AFTER it — which is exactly what queueing
+        // behind the generating request gives us, plus a fresh read on entry
+        // so neither line survives at the other's expense.
+        $got = xeric_queue_take('say', XERIC_QUEUE_SAY_WAIT, $sid);
+        if (!$got['ok']) {
+            $retry = (int)($got['retry_after'] ?? 15);
+            if ($retry > 0 && !headers_sent()) header('Retry-After: ' . $retry);
+            xeric_web_json(['error' => (string)$got['message'],
+                            'kind' => (string)($got['kind'] ?? 'queued'), 'retry_after' => $retry], 429);
+        }
+        $lock = $got['hold'];
+        $done = function (array $body, int $status = 200) use ($lock): void {
+            xeric_queue_release($lock);
+            xeric_web_json($body, $status);
+        };
+        $s = xeric_watch_read($path);
+        if ($s === null) {
+            $done(['error' => 'That scene closed while this was on its way.', 'kind' => 'gone'], 409);
+            return;
+        }
         try {
             $out = xeric_watch_say($w, $s, (string)($in['text'] ?? ''));
         } catch (Throwable $e) {
             $m = $e->getMessage();
             if (str_contains($m, 'next to the thing they must not know')) {
-                xeric_web_json(['error' => $bare($m), 'kind' => 'refused'], 422);
+                $done(['error' => $bare($m), 'kind' => 'refused'], 422);
+                return;
             }
             $refused = xeric_play_say_refused($m);
-            xeric_web_json(['error' => $refused ? xeric_play_say_error($m, '') : $bare($m),
-                            'kind'  => $refused ? 'refused' : 'bad'], $refused ? 422 : 400);
+            $done(['error' => $refused ? xeric_play_say_error($m, '') : $bare($m),
+                   'kind'  => $refused ? 'refused' : 'bad'], $refused ? 422 : 400);
+            return;
         }
         xeric_watch_write($path, $s);
-        xeric_web_json(['ok' => true, 'next' => (string)$out['next']]);
+        $done(['ok' => true, 'next' => (string)$out['next']]);
     }
 
     // -- a suggestion for the walk-in composer --------------------------------
@@ -268,6 +310,17 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             xeric_queue_release($lock);
             xeric_web_json($body, $status);
         };
+
+        // Fresh state, read BEHIND the slot: the close queued behind whatever
+        // line was generating, so this read carries that line — the close used
+        // to write the world from a snapshot missing it, then delete the only
+        // copy. "The transcript is the ONLY record" has to mean this one.
+        $s = xeric_watch_read($path);
+        if ($s === null) {
+            $done(['error' => 'That scene already closed — its last line closed it on landing.',
+                   'kind' => 'gone'], 409);
+            return;
+        }
 
         $endpoint = null;
         try {
@@ -642,14 +695,20 @@ echo '<style>' . xeric_play_css() . xeric_watch_css() . '</style>';
   var wghosted = false;
   function wghostHide() { wghosted = false; $('#wghost').hidden = true; }
   function wghostAsk() {
+    if (!SCENE) { wghostHide(); return; }
     $('#wgtext').textContent = 'thinking…'; $('#wghost').hidden = false;
-    fetch('watch.php?w=' + encodeURIComponent(W), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ a: 'hint' })
-    }).then(function (r) { return r.json(); }).then(function (d) {
-      if (d && d.ok && d.text) { $('#wgtext').textContent = d.text; wghosted = true; }
-      else wghostHide();
-    }).catch(wghostHide);
+    // Through post(), like every other call on this page. The hand-rolled
+    // fetch this replaces put the ACTION in the body — where the server reads
+    // scene HANDLES from — so `a` arrived as the action's name, the scene
+    // resolved to null, and the ghost flashed one "thinking…" and died on a
+    // 409 nobody ever saw. The action rides the query string; the body names
+    // the pair, because the hint handler needs the scene like everything else.
+    post('hint', { a: SCENE.a, b: SCENE.b })
+      .then(function (res) {
+        if (res.ok && res.d && res.d.ok && res.d.text) {
+          $('#wgtext').textContent = res.d.text; wghosted = true;
+        } else wghostHide();
+      }).catch(wghostHide);
   }
   function wghostTake() {
     var box = $('#wcomposer');

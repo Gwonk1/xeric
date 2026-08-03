@@ -200,6 +200,24 @@ $C = sid();
 xeric_session_use($C);
 ok('a third visitor has no copy of anything', xeric_session_copies($C) === []);
 
+// A REWIND IS NOT HERITABLE. The owner's last skip leaves its manifest
+// (skip:last) in the canonical db, and a fork that carried it offered a
+// visitor who never pressed skip a "take back the 6h" button — executing a
+// rewind that deleted hours of the shared past in their copy. The fork clear
+// takes skip:% with it now, along with everything else that is somebody
+// else's session in a world's clothing.
+xeric_world_state_set($canon2, 'skip:last', json_encode(['v' => 1, 'span' => 21600]));
+xeric_world_state_set($canon2, 'skip:underway', (string)time());
+$D = sid();
+xeric_session_use($D);
+$wd = xeric_play_open('shared-town');
+ok('fork: a visitor\'s copy carries no skip:last — the owner\'s rewind is not theirs to take',
+    $wd['forked'] === true
+    && xeric_world_state_get($wd['db'], 'skip:last') === null
+    && xeric_world_state_get($wd['db'], 'skip:underway') === null);
+xeric_world_state_delete($canon2, 'skip:last');
+xeric_world_state_delete($canon2, 'skip:underway');
+
 // The owner of a world plays the canonical database, not a copy.
 xeric_session_use($A);
 $wown = xeric_play_open('as-forged');
@@ -1124,10 +1142,30 @@ ok('and a refused visitor has no forked database to show for it',
 [$red, $goneFields] = xeric_play_redact($secretT);
 $stillThere = [];
 foreach ((array)$red['cast']['characters'] as $c) {
-    foreach (XERIC_PLAY_INTERIORS as $f) if (isset($c[$f])) $stillThere[] = $f;
+    foreach (xeric_play_interior_fields() as $f) if (isset($c[$f])) $stillThere[] = $f;
 }
 ok('the redaction takes every interior off every character',
     $stillThere === [], implode(',', array_unique($stillThere)));
+ok('and the field list is the WALL system\'s, voice included — the hand copy that drifted is gone',
+    in_array('voice', xeric_play_interior_fields(), true)
+    && xeric_play_interior_fields() === (array)(xeric_wall_interior_fields()['characters'] ?? []));
+
+// THE COUPLING PROPERTY, the drift-killer: nothing xeric_wall_interiors()
+// indexes survives a redaction. A field added to the indexer but forgotten by
+// the redaction — the exact bug `voice` was, and `tells`/`solace` before it —
+// turns this red the same day.
+$redJson = json_encode($red, JSON_UNESCAPED_UNICODE);
+$interiorLeaks = [];
+foreach (xeric_wall_interiors($secretT) as $ipath => $strings) {
+    foreach ($strings as $s) {
+        $s = trim((string)$s);
+        if (mb_strlen($s) >= 12 && str_contains($redJson, mb_substr($s, 0, 48))) {
+            $interiorLeaks[] = $ipath;
+        }
+    }
+}
+ok('the redaction and the wall indexer agree BY PROPERTY: no indexed interior survives',
+    $interiorLeaks === [], implode(',', array_unique($interiorLeaks)));
 ok('and the wall\'s hidden list, its explanation, the must_not_know and the arc',
     !isset($red['knowledge_walls'][count($red['knowledge_walls']) - 1]['hidden'])
     && !isset($red['knowledge_walls'][count($red['knowledge_walls']) - 1]['explain'])
@@ -2812,6 +2850,143 @@ $ws3 = xeric_watch_start($ww, 'ruth', 'dot', $TUEW);
 $emptyW = xeric_watch_close($ww, $ws3, $wstub);
 ok('a scene with no spoken line closes to nothing at all',
     !empty($emptyW['empty']) && xeric_events_count($wdb) === $wbase[0] + 1);
+
+// ---------------------------------------------------------------------------
+// The watch re-states the duet's three laws — age floor, protected secret,
+// minor clamp — in its own loop, and until now not one of the three had an
+// assertion: deleting any of them left all suites green while the engine's
+// twins (duet-test) stayed proven. The fixture has always had the people these
+// need; the cases were reachable and simply were not written.
+// ---------------------------------------------------------------------------
+
+echo "\n# the watch keeps the duet's laws\n";
+
+// The minor clamp at the door: harlan and twelve-year-old theo share Saturday
+// morning at the store (the hour duet-test's own floor case uses).
+$SATW = xeric_world_now($wT, $wep('2026-08-01 10:00'));
+$wsKid = xeric_watch_start($ww, 'harlan', 'theo', $SATW);
+ok('watch: a child in the scene pins it to the weakest rating, structurally',
+    $wsKid['minor'] === true && (string)$wsKid['eff'] === 'sfw', json_encode([$wsKid['minor'], $wsKid['eff']]));
+ok('watch: and an all-adult scene keeps the world\'s own rating',
+    $ws3['minor'] === false, json_encode([$ws3['minor'] ?? null, $ws3['eff'] ?? null]));
+
+// The floor on the way through the loop: a sexual line in the child's scene is
+// refused whoever's mouth it is in — duet-test proves the engine's copy; this
+// proves the watch's.
+$kidStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) {
+    if ($tag === 'chat') return 'All this talk made him horny.';
+    return ['memories' => []];
+}];
+$floorMsg = '';
+try { xeric_watch_line($ww, $wsKid, $kidStub, $WK); }
+catch (Throwable $e) { $floorMsg = $e->getMessage(); }
+ok('watch: a sexual line in a scene with a child is refused, by name',
+    str_contains($floorMsg, 'child') && $floorMsg !== '', $floorMsg);
+ok('watch: and the refused line never entered the transcript',
+    (int)$wsKid['spoken'] === 0 && (array)$wsKid['lines'] === []);
+
+// The protected secret, in the watch's own loop. Milldale's janelle carries
+// the thursday-pot protection; give her scene a line that names it.
+$wTP = $ww;
+$wTP['template']['cast']['special_roles'][0]['must_not_know'] =
+    'what happens at the thursday pot game in the church basement';
+$SUNW  = xeric_world_now($wT, $wep('2026-08-02 10:00'));
+$wsSec = xeric_watch_start($wTP, 'pastor_dale', 'janelle', $SUNW);
+$secStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) {
+    if ($tag === 'chat') return 'the thursday pot game happens in the church basement, after supper';
+    return ['memories' => []];
+}];
+$secMsg = '';
+try { xeric_watch_line($wTP, $wsSec, $secStub, $WK); }
+catch (Throwable $e) { $secMsg = $e->getMessage(); }
+ok('watch: a line that puts the protected listener next to the secret is refused',
+    str_contains($secMsg, 'must not know'), $secMsg);
+ok('watch: and nothing of it was kept',
+    (int)$wsSec['spoken'] === 0 && (array)$wsSec['lines'] === []);
+
+// ---------------------------------------------------------------------------
+// THE SIDEBAR FOLDS, AND THE COUNTS DO NOT LIE.
+//
+// The sections collapse so twelve characters are a glance rather than a scroll,
+// which means a shut section's number is the ONLY thing left saying there is
+// anything behind it. A number that disagrees with what opens is worse than no
+// number at all — it is the panel telling you nothing happened when something
+// did — so every count is asserted against the rows actually rendered inside
+// its own block rather than against a constant.
+// ---------------------------------------------------------------------------
+
+echo "\n# the sidebar's collapsible sections\n";
+
+// Two real events and one with no title: a titleless event renders nothing, so
+// counting it would promise a row that never arrives.
+xeric_event_add($wdb, 'A broken porcelain tea set', $TUEW['epoch'] - 7200, 'bluebird', ['ruth', 'dot'], 'In pieces by the time anybody looked.');
+xeric_event_add($wdb, '', $TUEW['epoch'] - 5400, 'bluebird', ['ruth'], 'no title — must not be counted');
+xeric_event_add($wdb, 'The long way round', $TUEW['epoch'] - 3600, 'bluebird', ['dot'], 'Nobody said why.');
+
+$side = xeric_play_side_html($wT, $wdb, $TUEW, 'watch-town', true);
+
+// Every block is its own chunk: .sideblock details are never nested in each
+// other, so splitting on the open tag gives one chunk per section — and the
+// events' own <details> stay inside the chunk they belong to.
+$chunks = [];
+foreach (array_slice(explode('<details class="sideblock" ', $side), 1) as $c) {
+    if (preg_match('~^data-sb="([a-z]+)"( open)?>~', $c, $mm)) {
+        $chunks[$mm[1]] = ['open' => isset($mm[2]) && $mm[2] !== '', 'html' => $c];
+    }
+}
+$sbn = function (string $k) use ($chunks): ?int {
+    if (!isset($chunks[$k]) || !preg_match('~<span class="sbn">(\d+)</span>~', $chunks[$k]['html'], $m)) return null;
+    return (int)$m[1];
+};
+
+ok('sidebar: all three sections render as collapsible blocks',
+    isset($chunks['where'], $chunks['away'], $chunks['recent']), implode(',', array_keys($chunks)));
+
+// The old markup is gone entirely. A half-migration — one block folded, two
+// still bare headings — reads as a rendering bug rather than a design.
+ok('sidebar: no bare <h3> heading survives the migration',
+    strpos($side, '<h3 class="sh"') === false);
+
+// Where everybody is opens: it is the panel the sidebar exists for. The other
+// two arrive shut, which is the whole point of the change.
+ok('sidebar: "where everybody is" is open by default',
+    ($chunks['where']['open'] ?? false) === true);
+ok('sidebar: "not out" and "while you were away" arrive folded',
+    ($chunks['away']['open'] ?? true) === false && ($chunks['recent']['open'] ?? true) === false);
+
+// Each count against the rows actually inside its own block.
+ok('sidebar: the "where" count is the people standing in the rooms, not the rooms',
+    $sbn('where') === substr_count($chunks['where']['html'], 'class="wperson"'),
+    'badge ' . var_export($sbn('where'), true) . ' vs rows ' . substr_count($chunks['where']['html'], 'class="wperson"'));
+ok('sidebar: the "not out" count matches the people listed under it',
+    $sbn('away') === preg_match_all('~<button type="button" class="wperson~', $chunks['away']['html']),
+    'badge ' . var_export($sbn('away'), true));
+ok('sidebar: the "while you were away" count matches the events that rendered',
+    $sbn('recent') === substr_count($chunks['recent']['html'], '<details class="ev"'),
+    'badge ' . var_export($sbn('recent'), true));
+
+// The specific lie the filter exists to prevent. Not asserted as a constant:
+// this world already has events in it from the duet section above, and a
+// hardcoded total would be testing the fixture rather than the filter. The
+// property that matters is that nothing titleless got through — an empty
+// summary is a row you cannot read and, worse, a row the badge promised.
+ok('sidebar: a titleless event is neither counted nor drawn',
+    strpos($chunks['recent']['html'], '<summary></summary>') === false
+    && $sbn('recent') === substr_count($chunks['recent']['html'], '<details class="ev"'),
+    'badge ' . var_export($sbn('recent'), true));
+
+// And the titled ones did arrive, so the filter is not simply dropping everything.
+ok('sidebar: the events that do have titles are the ones that render',
+    strpos($chunks['recent']['html'], 'A broken porcelain tea set') !== false
+    && strpos($chunks['recent']['html'], 'The long way round') !== false);
+
+// Zero is a number. At an hour when nobody is anywhere the badge must still
+// print, or a folded section is indistinguishable from one that never counted.
+$deadHour = xeric_world_now($wT, $wep('2026-07-28 04:00'));
+$night = xeric_play_side_html($wT, $wdb, $deadHour, 'watch-town', true);
+ok('sidebar: the count still prints when it is zero',
+    preg_match('~data-sb="where" open><summary class="sh">where everybody is<span class="sbn">(\d+)</span>~', $night) === 1,
+    substr($night, 0, 160));
 
 // ---------------------------------------------------------------------------
 

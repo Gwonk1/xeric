@@ -171,8 +171,11 @@ ok('interview.json loads', $iv !== []);
 // `around` and `pace` joined the slice on 2026-07-30: quiet hours are a
 // property of the PERSON (a night-owl's world must sleep by day), and event
 // density is normalised per visit rather than per hour.
-ok('slice steps are all present (scale, you, motivation, around, pace, centrality, rating)',
-    $keys === ['scale', 'name', 'job', 'hours', 'motivation', 'around', 'pace', 'centrality', 'rating'],
+// `story_shape` joined on 2026-08-02: pace is how MUCH happens, shape is WHEN —
+// the rhythm a plot would be paced against, `none` included and defaulted to.
+ok('slice steps are all present (scale, you, motivation, around, pace, centrality, story_shape, rating)',
+    $keys === ['scale', 'name', 'job', 'hours', 'motivation', 'around', 'pace', 'centrality',
+               'story_shape', 'rating'],
     implode(',', $keys));
 ok('interview carries a themes vocabulary', count((array)($iv['themes'] ?? [])) >= 6);
 
@@ -1637,6 +1640,42 @@ $devConsistency = xeric_repass_digest($devDone['template'], $devDone['seed'])[0]
 ok('an enriched line is still on the consistency sheet un-settled — enrichment is not immunity',
     (bool)array_filter($devConsistency, fn($it) => $it['path'] === 'cast.characters.0.one_line'
         && !str_contains($it['label'], 'settled')));
+
+// ---------------------------------------------------------------------------
+// The repass floor. xeric_repass_apply is the ONE path that writes model prose
+// permanently into world-template.json, and its age-floor guard had no
+// assertion: deleting it left every suite green while the hand-edit box's twin
+// stayed proven. The fix text below says "him" and never a name — the case
+// that only survives because xeric_review_edit_handles hands the floor the
+// field's SUBJECT rather than making it fish for names in the text.
+// ---------------------------------------------------------------------------
+
+$devKid = $devW;
+$devKid['template']['cast']['characters'][0]['age'] = 12;
+$kidHandle = (string)($devKid['template']['cast']['characters'][0]['handle'] ?? '');
+ok('repass floor: the edit-handles map names the field\'s subject',
+    $kidHandle !== '' && xeric_review_edit_handles($devKid, 'cast.characters.0.voice') === [$kidHandle]);
+$kidApplied = xeric_repass_apply($devKid, [['kind' => 'develop', 'about' => 'x', 'say' => 'flat',
+    'path' => 'cast.characters.0.voice', 'fix' => 'All this talk made him horny.']]);
+ok('repass floor: a sexual rewrite aimed at a child\'s own field is dropped, and says why',
+    $kidApplied['fixed'] === 0
+    && str_contains((string)($kidApplied['findings'][0]['say'] ?? ''), 'who is a child here'),
+    json_encode($kidApplied['findings'][0] ?? null));
+// The same rewrite against an adult's field lands — the floor is a floor,
+// not a ban on the lens: what it guards is WHO the field belongs to. The save
+// resolves by SLUG under the worlds dir (xeric_review_save), so the world has
+// to really be on the shelf; the refusal cases above never get that far.
+$devGrown = $devW;
+$devGrown['slug'] = 'dev-lens-grown';
+$devGrown['template']['cast']['characters'][0]['age'] = 34;
+$grownDir = xeric_web_worlds_dir() . '/dev-lens-grown';
+@mkdir($grownDir, 0775, true);
+file_put_contents($grownDir . '/world-template.json',
+    json_encode($devGrown['template'], JSON_UNESCAPED_UNICODE));
+$grownApplied = xeric_repass_apply($devGrown, [['kind' => 'develop', 'about' => 'x', 'say' => 'flat',
+    'path' => 'cast.characters.0.voice', 'fix' => 'All this talk made him thirsty.']]);
+ok('repass floor: the same field on an adult takes its rewrite — the guard reads the subject\'s age',
+    $grownApplied['fixed'] === 1, json_encode($grownApplied['findings'][0] ?? null));
 
 // ---------------------------------------------------------------------------
 // Homes and the opening scene (owner, 2026-08-02)

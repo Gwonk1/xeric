@@ -526,7 +526,14 @@ function xeric_session_fork_clear(string $path): bool
         'DELETE FROM conversations',
         "DELETE FROM memories WHERE source = 'auto'",
         "DELETE FROM arcs WHERE key LIKE 'proactive.%' OR key LIKE 'extract.%' OR key LIKE 'learn.%'",
-        "DELETE FROM world_state WHERE key = 'learn.pending' OR key LIKE 'why:%' OR key LIKE 'proactive:%'",
+        // skip:% goes too — skip:last is the OWNER'S rewind manifest, and a
+        // visitor who never pressed skip was being offered "take back the 6h"
+        // on a fork, executing a rewind that deleted hours of the shared past
+        // in their copy. (The owner's own db is never touched by a fork; the
+        // damage was confined and still wrong.) skip:underway is a stamp for a
+        // worker this fork does not have.
+        "DELETE FROM world_state WHERE key = 'learn.pending' OR key LIKE 'why:%' OR key LIKE 'proactive:%'"
+            . " OR key LIKE 'skip:%'",
         'DELETE FROM signals',
     ];
 

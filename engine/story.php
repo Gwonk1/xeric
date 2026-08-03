@@ -39,16 +39,8 @@ require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/walls.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/sweeps.php';   // the kind names a thumb may push on
+require_once __DIR__ . '/shape.php';    // the curve, which a world has with or without a story
 require_once __DIR__ . '/death.php';    // a victim who is somebody you know
-
-/** The only overlay schema this engine reads. */
-const XERIC_STORY_VERSION = 1;
-
-/** The stages the curve produces. Derived from the snake, never declared beside it. */
-function xeric_story_stages(): array
-{
-    return ['opening', 'rising', 'taper', 'false_calm', 'crescendo', 'closing'];
-}
 
 // ---------------------------------------------------------------------------
 // Discovery + load
@@ -111,6 +103,22 @@ function xeric_story_for(string $dir, array $t, ?callable $onNote = null): array
         if (xeric_rating_rank((string)($s['rating_min'] ?? 'sfw')) > xeric_rating_rank($eff)) {
             if ($onNote) $onNote("$label is rated above this world and does not compose");
             continue;
+        }
+        // THE WORLD'S SHAPE FALLS THROUGH TO ITS STORIES. An overlay that
+        // declares its own snake keeps it — a mystery written to a particular
+        // rhythm is not something a world setting gets to overrule — but one
+        // that declares none inherits the world's, so a xeric forged with no
+        // arc gives the stories laid on it no arc either, and a xeric forged
+        // as a slow burn paces the mystery you inject the same way it paces
+        // its own Tuesdays. Before validate(), because the filled snake is the
+        // one that has to be legal, and every shape in the library is.
+        if ((array)($s['snake']['curve'] ?? []) === []) {
+            $s['snake'] = xeric_story_shape($t);
+            // Marked, because the validator has one rule that only makes sense
+            // against a curve the story's own author chose. See beats[].at.
+            $s['snake']['inherited'] = true;
+            if ($onNote) $onNote("$label declares no snake and takes the world's shape, "
+                . xeric_story_shape_key($t));
         }
         xeric_story_validate($s, $t, $label);
         if ($onNote) foreach (xeric_story_warnings($s, $t) as $w) $onNote("$label: $w");
@@ -393,7 +401,16 @@ function xeric_story_validate(array $s, array $t, string $label = ''): void
         $at = (float)($b['at'] ?? -1);
         if ($at < 0.0 || $at > 1.0) $bad("beats[$i].at", 'must be 0..1');
         if ($at <= $prevAt)         $bad("beats[$i].at", 'must strictly increase, the beats are the story\'s order');
-        if ($at > $fc[0] && $at < $fc[1]) {
+        // NOT WHEN THE SNAKE WAS INHERITED. This is an AUTHORING check — you
+        // wrote a beat into your own quiet stretch and probably did not mean to
+        // — and there is no author to tell when the curve came from the world
+        // instead of the file. The person who chose their xeric's rhythm never
+        // saw this story's beats; the person who wrote the beats never saw that
+        // rhythm. Refusing to load is the worst of the three available outcomes,
+        // so an inherited collision is a warning (xeric_story_warnings) and the
+        // story runs — the same call this file already makes for `for_world`,
+        // and for the same reason: portability is a feature.
+        if ($at > $fc[0] && $at < $fc[1] && empty($s['snake']['inherited'])) {
             $bad("beats[$i].at", 'falls inside the false calm, where nothing may open');
         }
         $prevAt = $at;
@@ -844,119 +861,6 @@ function xeric_story_close(array $s, PDO $db, int $epoch, ?int $at = null): void
     }
 }
 
-// ---------------------------------------------------------------------------
-// The plot snake
-// ---------------------------------------------------------------------------
-
-/**
- * Intensity at a point on the curve. Piecewise linear, and exact in the two
- * places exactness is load-bearing.
- *
- * A control point answers for itself rather than being interpolated toward: read
- * off the segment to its left, 0.5 comes back as 0.49999999999999994 and the
- * false calm's ×1.0 stops being arithmetic. Strictly inside a flat segment
- * i0 + (i1 - i0) * f is exact for free, because (i1 - i0) is zero.
- */
-function xeric_story_intensity(array $curve, float $p): float
-{
-    $pts = [];
-    foreach ($curve as $pt) {
-        if (is_array($pt) && count($pt) === 2) $pts[] = [(float)$pt[0], (float)$pt[1]];
-    }
-    if ($pts === []) return 0.5;                       // no curve is the world at its own pace
-    foreach ($pts as [$px, $pi]) if ($px === $p) return $pi;
-
-    $last = count($pts) - 1;
-    if ($p < $pts[0][0])     return $pts[0][1];
-    if ($p > $pts[$last][0]) return $pts[$last][1];
-
-    for ($i = 0; $i < $last; $i++) {
-        [$p0, $i0] = $pts[$i];
-        [$p1, $i1] = $pts[$i + 1];
-        if ($p < $p0 || $p > $p1) continue;
-        if ($p1 <= $p0) return $i1;
-        return $i0 + ($i1 - $i0) * (($p - $p0) / ($p1 - $p0));
-    }
-    return $pts[$last][1];
-}
-
-/**
- * Where on the snake this progress lands: intensity, the stage it implies, and
- * the multiplier that stage does its work with.
- *
- * The stage is DERIVED here and declared nowhere. A second field naming it would
- * be a second timeline to keep in sync, and the first thing that would happen is
- * that the two would disagree.
- *
- * @return array{intensity:float,stage:string,m:float}
- */
-function xeric_story_snake(array $snake, float $p): array
-{
-    $p     = max(0.0, min(1.0, $p));
-    $curve = (array)($snake['curve'] ?? []);
-    $i     = xeric_story_intensity($curve, $p);
-    $swing = (float)($snake['pace_swing'] ?? 0.6);
-
-    $fc = array_map('floatval', (array)($snake['false_calm'] ?? []));
-    $fc0 = $fc[0] ?? 1.1;
-    $fc1 = $fc[1] ?? -1.0;
-
-    $knee = (float)($curve[1][0] ?? 0.0);
-    $peakP = 1.0;
-    $peakI = -1.0;
-    foreach ($curve as $pt) {
-        if (!is_array($pt) || count($pt) !== 2) continue;
-        if ((float)$pt[1] > $peakI) { $peakI = (float)$pt[1]; $peakP = (float)$pt[0]; }
-    }
-
-    // Past the peak, not at it: the beat written to land on the crest is at the
-    // crest, and a story whose last reveal read as `closing` would be paced by
-    // an off-by-one.
-    if ($p >= $fc0 && $p <= $fc1)      $stage = 'false_calm';
-    elseif ($p > $peakP)               $stage = 'closing';
-    elseif ($p <= $knee)               $stage = 'opening';
-    elseif ($p > $fc1)                 $stage = 'crescendo';
-    else                               $stage = xeric_story_slope($curve, $p) >= 0.0 ? 'rising' : 'taper';
-
-    return [
-        'intensity' => $i,
-        'stage'     => $stage,
-        // 0.5 → exactly 1.0: the false calm is not the story turning down, it is
-        // the town carrying on the way it would have if nobody had died.
-        'm'         => 1.0 + $swing * (2.0 * $i - 1.0),
-    ];
-}
-
-/** The sign of the curve at a point: which side of a knee this progress is on. */
-function xeric_story_slope(array $curve, float $p): float
-{
-    $prev = null;
-    foreach ($curve as $pt) {
-        if (!is_array($pt) || count($pt) !== 2) continue;
-        $cur = [(float)$pt[0], (float)$pt[1]];
-        if ($prev !== null && $p > $prev[0] && $p <= $cur[0]) {
-            return $cur[0] > $prev[0] ? ($cur[1] - $prev[1]) / ($cur[0] - $prev[0]) : 0.0;
-        }
-        $prev = $cur;
-    }
-    return 0.0;
-}
-
-/**
- * How far through this story the world is.
- *
- * BEATS, NOT THE CALENDAR: p = (beats opened + the fraction of the next dwell
- * that has passed) / beats total. A player who ignores the story leaves it where
- * it is and the world runs at its own pace forever, which is the correct
- * behaviour and costs nothing to implement, because its own pace is ×1.0.
- *
- * $epoch is what the dwell fraction is measured against. Without one the answer
- * is whole beats only — a legitimate, slightly coarser read, and never a guess
- * at what time it is.
- *
- * @return array{p:float,stage:string,intensity:float,m:float,opened:int,spilled:int,
- *               total:int,closed:?int,live:bool,beats:array<string,string>}
- */
 function xeric_story_progress(array $s, PDO $db, ?int $epoch = null): array
 {
     $st    = xeric_story_state($s, $db);

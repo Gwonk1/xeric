@@ -173,6 +173,15 @@ try {
 }
 $took = microtime(true) - $t0;
 
+// The provenance canary answered instead of the world: nothing was written,
+// there is no conversation to mark, no thread for the story to speak into and
+// nothing to harvest. The engine's sentence goes to the screen and the world
+// never hears about any of it — see xeric_chat_canary() for what this is.
+if (!empty($out['canary'])) {
+    $done(['ok' => true, 'text' => (string)$out['text'], 'canary' => true]);
+    return;
+}
+
 // -- and what the world itself says about that --------------------------------
 // The sentence a dead wrong lead leaves behind, and the one line that says a
 // story has ended, written into the thread in the `narrator` role — the voice

@@ -59,6 +59,38 @@ function xeric_notify_on(array $cfg, string $kind): bool
 }
 
 /**
+ * What an hour is allowed to say to a phone.
+ *
+ * THE RULE IS CODE, NOT CALLER DISCIPLINE. Rule 3 above says a body is commons
+ * text and nothing a wall is holding — and for one evening heart.php shipped
+ * raw spine titles under the 'spine' trigger, the one kind of title written to
+ * circle the thing the xeric keeps quiet, to a third-party push host. The room
+ * block will not read an on_spine title to the cast; a push host is not a
+ * better audience. So the decision of what leaves lives HERE, where the rule
+ * does: a spine hour says THAT it happened, in a fixed sentence, and an
+ * ordinary title — commons by construction — rides as itself.
+ */
+function xeric_notify_hour_body(array $e): string
+{
+    if (!empty($e['on_spine'])) return 'Something happened close to the heart of it.';
+    $ti = trim((string)($e['title'] ?? ''));
+    return $ti !== '' ? $ti : 'something happened';
+}
+
+/**
+ * What a ping is allowed to say to a phone: the doorbell, not the letter.
+ *
+ * A ping's text is a model-written private message — rating-shaped, sometimes
+ * intimate, addressed to the player and not to a lock screen. The name and the
+ * fact of it is everything a pocket needs; the message waits where it belongs.
+ */
+function xeric_notify_ping_body(array $ping): string
+{
+    $name = trim((string)($ping['name'] ?? ''));
+    return ($name !== '' ? $name : 'Somebody') . ' texted you.';
+}
+
+/**
  * Send one. Returns whether it went, and nobody has to care.
  *
  * SHORT TIMEOUT AND SWALLOWED. A caller that waited on this would hand a chat
