@@ -130,6 +130,104 @@ function xeric_trust_contact(PDO $db, string $handle, int $warmth, ?int $at = nu
 }
 
 /**
+ * WHAT AN HOUR DID TO THE PAIR WHO WERE IN IT.
+ *
+ * The complaint at the top of this file was about the person at the centre: a
+ * hundred good conversations moved trust nothing. The same hole is wider
+ * between two people in the town, because they have no conversations at all —
+ * only hours. A world could arm `standings` and `the_ladder`, produce friction
+ * hour after friction hour for a year, and Ruth and Harlan would think exactly
+ * what they thought on the first night.
+ *
+ * SO THE HOURS COUNT, at the same slow rate ordinary contact does — warmth,
+ * not trust, so four rubs make a point and one bad Tuesday makes nothing. This
+ * is standing, and it is deliberately NOT a fifth needle: standing in a small
+ * town is just what everybody thinks of you, and this engine already has a
+ * number for what one person thinks of another. A separate rank would have
+ * been a leaderboard, which is the thing a town is least like.
+ *
+ * FRICTION IS MUTUAL AND A FAVOUR IS NOT. An edge that shows in a room cuts
+ * both ways — neither of them is having a good time, and code cannot tell who
+ * won without asking, and asking would be a leaderboard again. But a favour
+ * has a direction the model already reported, and only one of them owes
+ * anything for it: the person who got the good turn thinks better of the one
+ * who did it, and the giver's opinion is unchanged, because doing somebody a
+ * kindness is not a reason to like them more.
+ *
+ * @return array{mutual:int,to_giver:int} warmth, in the units contact uses
+ */
+function xeric_trust_hour(string $kind): array
+{
+    return match ($kind) {
+        'friction'    => ['mutual' => -2, 'to_giver' => 0],
+        'favor'       => ['mutual' => 0,  'to_giver' => 3],
+        'recognition' => ['mutual' => 1,  'to_giver' => 0],
+        'ordinary'    => ['mutual' => 1,  'to_giver' => 0],
+        default       => ['mutual' => 0,  'to_giver' => 0],
+    };
+}
+
+/**
+ * The pair-warmth converter: contact between two people in the town.
+ *
+ * Same arithmetic as xeric_trust_contact() and same ceiling, on the pair row
+ * instead of the bare one — hours alone carry two people from strangers to
+ * warm, or to wary, and no further. The far ends stay reserved for the things
+ * that cost something, which between two NPCs means a promise kept across a
+ * table (constructs.php) or a debt squared.
+ */
+function xeric_trust_rub(PDO $db, string $who, string $about, int $warmth, ?int $at = null): int
+{
+    if ($who === '' || $about === '' || $who === $about || $warmth === 0) {
+        return xeric_trust_of($db, $who, $about);
+    }
+    $wKey  = 'trust.warmth.of.' . $about;
+    $w     = xeric_arc_int($db, $who, $wKey, 0) + $warmth;
+    $trust = xeric_trust_of($db, $who, $about);
+    $was   = $trust;
+
+    while ($w >= XERIC_TRUST_STEP && $trust < XERIC_TRUST_BAND) { $w -= XERIC_TRUST_STEP; $trust++; }
+    while ($w <= -XERIC_TRUST_STEP && $trust > -XERIC_TRUST_BAND) { $w += XERIC_TRUST_STEP; $trust--; }
+
+    $w = max(-2 * XERIC_TRUST_STEP, min(2 * XERIC_TRUST_STEP, $w));
+    xeric_arc_set($db, $who, $wKey, (string)$w, $at);
+    if ($trust !== $was) xeric_trust_earn($db, $who, $trust - $was, $at, $about);
+    return $trust;
+}
+
+/**
+ * Everybody in the hour, rubbed against everybody else in it.
+ *
+ * Called from the sweep's own transaction, so an hour that rolls back moves
+ * nobody's opinion of anybody. Costs at most a handful of rows and only for
+ * the kinds that are actually about two people — an `ordinary` evening between
+ * four people is six warm pairs, which is what an ordinary evening is.
+ */
+function xeric_trust_hour_apply(PDO $db, string $kind, array $handles, ?array $favor = null,
+                                ?int $at = null): int
+{
+    $w = xeric_trust_hour($kind);
+    $n = 0;
+    if ($w['mutual'] !== 0) {
+        foreach ($handles as $a) {
+            foreach ($handles as $b) {
+                if ($a === $b) continue;
+                xeric_trust_rub($db, (string)$a, (string)$b, $w['mutual'], $at);
+                $n++;
+            }
+        }
+    }
+    // And the one direction a favour has, which the model reported and the
+    // sweep already checked both ends of.
+    if ($w['to_giver'] !== 0 && is_array($favor)
+        && ($favor['from'] ?? '') !== '' && ($favor['to'] ?? '') !== '') {
+        xeric_trust_rub($db, (string)$favor['to'], (string)$favor['from'], $w['to_giver'], $at);
+        $n++;
+    }
+    return $n;
+}
+
+/**
  * What the town's own signals are worth, per crumb learn.php folds.
  *
  * Deliberately small and deliberately asymmetric. A reply is an ordinary

@@ -358,6 +358,164 @@ function xeric_promise_when_phrase(string $text): string
     return '';
 }
 
+// ---------------------------------------------------------------------------
+// The third construct: A DEBT
+// ---------------------------------------------------------------------------
+//
+// `favor`'s own shape has said it since the kinds were written: "one of them
+// did the other a real favour, AND IT IS NOW OWED." The owing was the half
+// nothing kept — the hour landed, the town forgot, and a system the forge
+// armed (`favors`, `a_debt`, `alliances_that_cost`) accumulated nothing.
+//
+// A DEBT IS A CONSTRUCT, NOT A COUNTER, and this is the argument made
+// concrete. "Harlan owes Ruth −1" is a number nobody can act on. A row that
+// says WHAT it was for, WHEN it was done, and that it is still standing can
+// be rendered into his prompt in his own voice, settled by a favour going the
+// other way, faded when it has been carried long enough, and gossiped about
+// by a town that saw one of them do the other a good turn.
+//
+// IT NEVER POINTS AT THE PLAYER. A debt is between two people in the town,
+// formed from an hour they were both in. What the player owes anybody is the
+// expectation machinery above, which has a promise and a due date; what the
+// player is owed is a different construct nobody has asked for yet.
+
+/** How long an unsettled debt stays sharp before it is simply history. */
+const XERIC_DEBT_FADE = 30 * 24 * 3600;
+
+/** Does this world keep score of favours? */
+function xeric_debt_armed(array $t): bool
+{
+    $armed = (array)($t['forge']['armed'] ?? []);
+    if ($armed === []) return true;                 // predates arming, same as the others
+    foreach (['favors', 'a_debt', 'alliances_that_cost'] as $s) {
+        if (in_array($s, $armed, true)) return true;
+    }
+    return false;
+}
+
+/** Every debt this person is carrying, oldest first. */
+function xeric_debts_for(PDO $db, string $handle): array
+{
+    $out = [];
+    foreach (xeric_arcs_for($db, $handle) as $k => $v) {
+        if (!str_starts_with((string)$k, 'debt.')) continue;
+        $row = json_decode((string)$v, true);
+        if (!is_array($row) || !isset($row['to'], $row['state'])) continue;
+        $row['key'] = (string)$k;
+        $out[] = $row;
+    }
+    usort($out, fn($a, $b) => (int)($a['formed'] ?? 0) <=> (int)($b['formed'] ?? 0));
+    return $out;
+}
+
+/**
+ * One of them did the other a real favour. Returns the arc key, or null.
+ *
+ * A FAVOUR THE OTHER WAY SETTLES ONE FIRST. That is what makes this a
+ * relationship rather than a tally: two people trading good turns end up
+ * even, not two-all, and the settling is what a small town actually tracks.
+ * Only then does a new debt form.
+ */
+function xeric_debt_form(array $t, PDO $db, string $ower, string $to, string $what, array $now,
+                         ?callable $onNote = null): ?string
+{
+    $note = $onNote ?? static function (string $s): void {};
+    if (!xeric_debt_armed($t)) return null;
+    if ($ower === '' || $to === '' || $ower === $to) return null;
+    if (xeric_world_character($t, $ower) === null || xeric_world_character($t, $to) === null) return null;
+
+    $epoch = (int)($now['epoch'] ?? 0);
+    $what  = trim($what) !== '' ? mb_substr(trim($what), 0, 80) : 'a good turn';
+
+    // The other way round first: if $to already owes $ower, this squares it.
+    foreach (xeric_debts_for($db, $to) as $d) {
+        if ((string)$d['to'] !== $ower || (string)$d['state'] !== 'open') continue;
+        $d['state'] = 'settled'; $d['settled_at'] = $epoch; $d['settled_by'] = $what;
+        $row = $d; unset($row['key']);
+        xeric_arc_set($db, $to, (string)$d['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
+        $note('debts: ' . xeric_world_name($t, $to) . ' and ' . xeric_world_name($t, $ower) . ' are square');
+        return null;
+    }
+
+    // One open debt per pair. A second favour before the first is repaid
+    // deepens what is owed rather than opening a second account, which is how
+    // people actually talk about it: "I owe her, twice over."
+    foreach (xeric_debts_for($db, $ower) as $d) {
+        if ((string)$d['to'] !== $to || (string)$d['state'] !== 'open') continue;
+        $d['times'] = (int)($d['times'] ?? 1) + 1;
+        $d['what']  = $what;
+        $d['formed'] = $epoch;
+        $row = $d; unset($row['key']);
+        xeric_arc_set($db, $ower, (string)$d['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
+        $note('debts: ' . xeric_world_name($t, $ower) . ' owes ' . xeric_world_name($t, $to) . ' again');
+        return (string)$d['key'];
+    }
+
+    $key = 'debt.' . (1 + count(xeric_debts_for($db, $ower)));
+    xeric_arc_set($db, $ower, $key, json_encode([
+        'to' => $to, 'what' => $what, 'formed' => $epoch, 'state' => 'open', 'times' => 1,
+    ], JSON_UNESCAPED_UNICODE));
+    $note('debts: ' . xeric_world_name($t, $ower) . ' owes ' . xeric_world_name($t, $to) . ' — ' . $what);
+    return $key;
+}
+
+/**
+ * Debts carried long enough stop being debts and become history.
+ *
+ * Not forgiven and not repaid — FADED, which is the honest third state: the
+ * favour still happened, both of them still know, and nobody is keeping the
+ * account open any more. Run from the same tick the fuses burn on.
+ */
+function xeric_debt_fade(array $t, PDO $db, array $now): int
+{
+    $epoch = (int)($now['epoch'] ?? 0);
+    $n = 0;
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        foreach (xeric_debts_for($db, $h) as $d) {
+            if ((string)$d['state'] !== 'open') continue;
+            if ($epoch <= (int)($d['formed'] ?? 0) + XERIC_DEBT_FADE) continue;
+            $d['state'] = 'faded'; $d['faded_at'] = $epoch;
+            $row = $d; unset($row['key']);
+            xeric_arc_set($db, $h, (string)$d['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
+            $n++;
+        }
+    }
+    return $n;
+}
+
+/**
+ * WHAT YOU OWE, in this person's own prompt — the construct's whole point.
+ *
+ * Coarse and clockless like every other construct block: what it was for and
+ * who it is owed to, never a date and never a countdown, so it is byte-stable
+ * between ticks and cannot drag a prompt out of cache.
+ */
+function xeric_debt_block(array $t, PDO $db, string $handle): string
+{
+    $lines = [];
+    foreach (xeric_debts_for($db, $handle) as $d) {
+        if ((string)$d['state'] !== 'open') continue;
+        $to = xeric_world_name($t, (string)$d['to']) ?: (string)$d['to'];
+        $lines[] = '- You owe ' . $to . ' for ' . (string)$d['what'] . '.'
+                 . ((int)($d['times'] ?? 1) > 1 ? ' More than once, now.' : '')
+                 . ' You have not squared it. You would not call it a debt out loud.';
+    }
+    // And what is owed TO them, which is the other half of the same fact and
+    // reads completely differently from the inside.
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || $h === $handle) continue;
+        foreach (xeric_debts_for($db, $h) as $d) {
+            if ((string)$d['state'] !== 'open' || (string)$d['to'] !== $handle) continue;
+            $lines[] = '- ' . (xeric_world_name($t, $h) ?: $h) . ' owes you for ' . (string)$d['what']
+                     . '. You have never mentioned it and you would not.';
+        }
+    }
+    return $lines === [] ? '' : "WHAT IS OWED\n" . implode("\n", $lines);
+}
+
 /** Every expectation this character holds, parsed, oldest first. */
 function xeric_expects_for(PDO $db, string $handle): array
 {
@@ -394,6 +552,15 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now): stri
     $blocks = [];
     $owed   = xeric_expect_owed($t, $db, $handle);
     if ($owed !== '') $blocks[] = $owed;
+
+    // The debts fade on the same read the fuses burn on, for the same reason:
+    // there is no clock in this engine, only somebody looking. A favour carried
+    // long enough stops being an account and becomes history, which is the
+    // honest third state — not forgiven, not repaid, just no longer counted.
+    xeric_debt_fade($t, $db, $now);
+    $debts = xeric_debt_block($t, $db, $handle);
+    if ($debts !== '') $blocks[] = $debts;
+
     $talk = xeric_gossip_block($t, $db, $handle);
     if ($talk !== '') $blocks[] = $talk;
     return implode("\n\n", $blocks);

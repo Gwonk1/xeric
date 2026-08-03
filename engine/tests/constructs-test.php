@@ -449,6 +449,78 @@ ok('cast: and it is a pair, not a number — his opinion of her is his own',
 ok('cast: explaining repairs the player\'s own misses and nobody else\'s',
     xeric_expect_repair($T, $c2, 'ruth', $wedAm) === null);
 
+// ---------------------------------------------------------------------------
+// 12c. A DEBT. `favor`'s shape has said "and it is now owed" since the kinds
+// were written, and nothing kept the owing. Not a counter: a row that knows
+// what it was for, so it can be rendered in somebody's own voice and squared
+// by a favour going the other way.
+// ---------------------------------------------------------------------------
+
+echo "\n# what one of them owes the other\n";
+
+$Tdebt = $T;
+$Tdebt['forge']['armed'] = ['favors', 'daily_rhythms'];
+
+ok('debt: a world that never armed favours keeps no account of them',
+    xeric_debt_form($Toff, $c2, 'harlan', 'ruth', 'the ride home', $wedAm) === null
+    && xeric_debts_for($c2, 'harlan') === []);
+
+$dKey = xeric_debt_form($Tdebt, $c2, 'harlan', 'ruth', 'the ride home', $wedAm);
+ok('debt: a favour done is owed by the one it was done for', $dKey !== null);
+$d = xeric_debts_for($c2, 'harlan')[0] ?? [];
+ok('debt: and the row knows what it was for, not just how much',
+    ($d['to'] ?? '') === 'ruth' && ($d['what'] ?? '') === 'the ride home' && ($d['state'] ?? '') === 'open');
+// A debt is between two people in the TOWN. What the person at the centre
+// owes anybody is the expectation machinery above, which has a promise and a
+// due date; they are not in the cast, so the same guard that rejects an
+// invented name rejects them, and this asserts it by their actual name.
+$centre = trim((string)($T['user']['name'] ?? 'Neil'));
+ok('debt: it never points at the person at the centre, who is not in the cast',
+    xeric_debt_form($Tdebt, $c2, 'harlan', $centre, 'x', $wedAm) === null
+    && xeric_debt_form($Tdebt, $c2, $centre, 'ruth', 'x', $wedAm) === null
+    && xeric_debt_form($Tdebt, $c2, 'harlan', 'nobody_here', 'x', $wedAm) === null);
+ok('debt: and nobody owes themselves anything',
+    xeric_debt_form($Tdebt, $c2, 'harlan', 'harlan', 'x', $wedAm) === null);
+
+// One account per pair. A second favour before the first is squared deepens
+// what is owed rather than opening a second book.
+xeric_debt_form($Tdebt, $c2, 'harlan', 'ruth', 'the loan of the ladder', $wedAm);
+ok('debt: a second favour deepens the one account, it does not open two',
+    count(xeric_debts_for($c2, 'harlan')) === 1
+    && (int)(xeric_debts_for($c2, 'harlan')[0]['times'] ?? 0) === 2);
+
+ok('debt: he carries it in his own prompt, in his own words',
+    str_contains(xeric_debt_block($Tdebt, $c2, 'harlan'), 'You owe')
+    && str_contains(xeric_debt_block($Tdebt, $c2, 'harlan'), 'the loan of the ladder'));
+ok('debt: and she carries the same fact from the other side, which reads differently',
+    str_contains(xeric_debt_block($Tdebt, $c2, 'ruth'), 'owes you')
+    && !str_contains(xeric_debt_block($Tdebt, $c2, 'ruth'), 'You owe'));
+
+// THE POINT OF A RELATIONSHIP OVER A TALLY: a favour the other way makes them
+// square, not two-all.
+ok('debt: a favour the other way squares it rather than starting a rival account',
+    xeric_debt_form($Tdebt, $c2, 'ruth', 'harlan', 'sat with his mother', $wedAm) === null
+    && (xeric_debts_for($c2, 'harlan')[0]['state'] ?? '') === 'settled'
+    && xeric_debts_for($c2, 'ruth') === []);
+ok('debt: and squared means it leaves both prompts',
+    xeric_debt_block($Tdebt, $c2, 'harlan') === '' && xeric_debt_block($Tdebt, $c2, 'ruth') === '');
+
+// Carried long enough, it stops being an account. Not forgiven, not repaid.
+xeric_debt_form($Tdebt, $c2, 'dot', 'theo', 'the night in the storm', $wedAm);
+$muchLater = ['epoch' => (int)$wedAm['epoch'] + XERIC_DEBT_FADE + 3600];
+ok('debt: a debt carried long enough becomes history rather than an account',
+    xeric_debt_fade($Tdebt, $c2, $muchLater) === 1
+    && (xeric_debts_for($c2, 'dot')[0]['state'] ?? '') === 'faded'
+    && xeric_debt_block($Tdebt, $c2, 'dot') === '');
+ok('debt: and it does not fade twice',
+    xeric_debt_fade($Tdebt, $c2, $muchLater) === 0);
+
+// Day-coarse like every other construct: no dates, no counts, no clock.
+xeric_debt_form($Tdebt, $c2, 'harlan', 'ruth', 'the ride home', $wedAm);
+ok('debt: the block is byte-stable while nothing changes, so the cache survives',
+    xeric_expect_block($Tdebt, $c2, 'harlan', $wedAm)
+    === xeric_expect_block($Tdebt, $c2, 'harlan', ['epoch' => (int)$wedAm['epoch'] + 7200]));
+
 foreach ([$c2Path, $c2Path . '-wal', $c2Path . '-shm'] as $f) @unlink($f);
 
 // ---------------------------------------------------------------------------

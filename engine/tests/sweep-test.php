@@ -2276,6 +2276,71 @@ $db = $db2 = $dbG = $dbC = $dbF = $dbS = $dbCU = $dbPR = $dbN = $dbB = $dbB2 = $
 $dbEdge = $dbHour = $dbSpine = $dbOrd = $dbDefer = $dbKill = $dbSex = null;
 $dA = $dW = $dM = $dS = $dL = $dL2 = $dOne = $dEv = $dNag = $dCap = $dSec = $dKid = null;
 $hour = $hourX = null;
+// ---------------------------------------------------------------------------
+// WHICH WAY THE FAVOUR WENT — the one fact about a favour hour that code
+// cannot read out of the prose, so the model reports it and code disposes of
+// it. Everything the sweep needs it takes from its own chosen row; a direction
+// is not in there, and a regex guessing at it gets it backwards half the time.
+// ---------------------------------------------------------------------------
+
+echo "\n# the direction of a favour\n";
+
+$TF = world(['favors', 'daily_rhythms']);
+$favorRaw = static fn(array $favor): array => [
+    'title'    => 'the jump leads in the rain',
+    'prose'    => 'Harlan got the leads out of his boot and Ruth held the torch until it caught.',
+    'memories' => [
+        'harlan' => 'Harlan knelt in the wet and could not find the earth point for a while.',
+        'ruth'   => 'Ruth held the torch and her sleeve went through a puddle on the wing.',
+    ],
+] + ($favor === [] ? [] : ['favor' => $favor]);
+$chosenFav = ['handles' => ['harlan', 'ruth'], 'kind' => ['key' => 'favor']];
+
+$pf = xeric_sweep_parse($TF, fresh_db('favor-dir'), $favorRaw(
+    ['from' => 'harlan', 'to' => 'ruth', 'what' => 'the jump start']), $chosenFav);
+ok('favor: the model reports which way it went and the direction survives',
+    ($pf['favor']['from'] ?? '') === 'harlan' && ($pf['favor']['to'] ?? '') === 'ruth'
+    && ($pf['favor']['what'] ?? '') === 'the jump start');
+
+// The same resolver the memories use, so a display name and a handle mean one
+// person in both fields of the same object.
+$pfName = xeric_sweep_parse($TF, fresh_db('favor-name'), $favorRaw(
+    ['from' => 'Harlan', 'to' => 'Ruth', 'what' => 'the jump start']), $chosenFav);
+ok('favor: a display name resolves the same as a handle, as it does everywhere else',
+    ($pfName['favor']['from'] ?? '') === 'harlan' && ($pfName['favor']['to'] ?? '') === 'ruth');
+
+// CODE DISPOSES. Every one of these is dropped in silence: the hour still
+// lands, it simply did not turn out to be a favour anybody owes for.
+$pfOut = xeric_sweep_parse($TF, fresh_db('favor-out'), $favorRaw(
+    ['from' => 'harlan', 'to' => 'somebody_else', 'what' => 'x']), $chosenFav);
+ok('favor: a favour done for somebody who was not in the room is dropped',
+    ($pfOut['favor'] ?? null) === null && $pfOut['prose'] !== '');
+$pfSelf = xeric_sweep_parse($TF, fresh_db('favor-self'), $favorRaw(
+    ['from' => 'harlan', 'to' => 'harlan', 'what' => 'x']), $chosenFav);
+ok('favor: and so is a favour somebody did themselves', ($pfSelf['favor'] ?? null) === null);
+$pfNone = xeric_sweep_parse($TF, fresh_db('favor-none'), $favorRaw([]), $chosenFav);
+ok('favor: an hour with no favour in it reports none, and that is not an error',
+    ($pfNone['favor'] ?? null) === null && $pfNone['notes'] === []);
+
+// NOT EVERY HOUR IS A FAVOUR HOUR. The field is only asked for on the kind
+// whose own shape says "and it is now owed", and only read back on that kind —
+// so a model volunteering one on an ordinary evening is ignored rather than
+// quietly opening an account nobody agreed to.
+$pfWrong = xeric_sweep_parse($TF, fresh_db('favor-kind'), $favorRaw(
+    ['from' => 'harlan', 'to' => 'ruth', 'what' => 'x']),
+    ['handles' => ['harlan', 'ruth'], 'kind' => ['key' => 'ordinary']]);
+ok('favor: a favour volunteered on an hour that was not one is not read at all',
+    ($pfWrong['favor'] ?? null) === null);
+$favNow = xeric_world_now($TF, ep('2026-07-30 18:30'));
+$favAsk = static function (string $key) use ($TF, $favNow): string {
+    $k = xeric_sweep_kinds()[$key] + ['key' => $key];
+    return implode("\n", array_column(xeric_sweep_prompt($TF, fresh_db('favor-p-' . $key), $favNow,
+        ['handles' => ['harlan', 'ruth'], 'kind' => $k, 'where' => '', 'on_spine' => false,
+         'why' => 'they both work Thursdays', 'trail' => []]), 'content'));
+};
+ok('favor: and the prompt only asks for it on the kind whose shape says it is owed',
+    str_contains($favAsk('favor'), '"favor"') && !str_contains($favAsk('ordinary'), '"favor"'));
+
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);
 

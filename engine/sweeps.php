@@ -86,6 +86,8 @@ require_once __DIR__ . '/shape.php';
 require_once __DIR__ . '/weather.php'; // the day's sky, derived, never stored
 require_once __DIR__ . '/mood.php';    // and the town's own needle, which its hours move
 require_once __DIR__ . '/ledger.php';  // and the ledgers those hours earn
+require_once __DIR__ . '/constructs.php'; // the debts a favour hour leaves behind
+require_once __DIR__ . '/trust.php';   // and what an hour did to what they think of each other
 
 /** The unit of offscreen life. One hour: short enough to place an event in a real
  *  shift, long enough that a day is not 1,440 chances to interrupt somebody. */
@@ -801,6 +803,28 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
         // the day boards existed.
         xeric_ledger_step($db, $t, array_keys($written['memories']),
             $written['title'] . ' ' . $written['prose'], $at);
+
+        // AND WHAT THE HOUR PUT SOMEBODY IN DEBT FOR. `favor`'s own shape has
+        // said "and it is now owed" since the kinds were written, and the owing
+        // was the half nothing kept: a world that armed `favors` produced
+        // favour hours and accumulated nothing from them. A favour the other way
+        // squares an open one first, which is why two people trading good turns
+        // end up even instead of two-all. In the transaction, so a debt cannot
+        // outlive a rolled-back hour.
+        if (($written['favor'] ?? null) !== null) {
+            xeric_debt_form($t, $db, (string)$written['favor']['to'], (string)$written['favor']['from'],
+                (string)$written['favor']['what'], $now);
+        }
+
+        // AND WHAT THE HOUR DID TO WHAT THEY THINK OF EACH OTHER. This is
+        // standing, and it is the pair-trust row rather than a fifth needle,
+        // because standing in a small town is just what everybody thinks of
+        // you. Friction cuts both ways, a favour has one direction, and an
+        // ordinary evening is worth a crumb — at the same slow rate ordinary
+        // contact converts, so a year of hours moves a few points and one bad
+        // Tuesday moves nothing.
+        xeric_trust_hour_apply($db, (string)$chosen['kind']['key'],
+            array_keys($written['memories']), $written['favor'] ?? null, $at);
 
         foreach ($written['memories'] as $handle => $text) {
             xeric_memory_add($db, $handle, $text, 'event', [
@@ -1768,6 +1792,18 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     $lines[] = '  half, a different detail, a different thing noticed, a different thing they were left';
     $lines[] = '  holding. If one memory could be swapped for the other, both are wrong.';
     $lines[] = '- Invent no new people and no new places. Nothing is explained, resolved or concluded.';
+    // WHICH WAY THE FAVOUR WENT — asked for on favour hours only, because it is
+    // the one fact about this kind that code genuinely cannot read out of the
+    // prose. Everything else the sweep needs it takes from its own chosen row;
+    // "who did whom the good turn" is a direction, and a regex guessing at it
+    // would get it backwards half the time. So the model REPORTS and code
+    // DISPOSES: two handles, both of whom must be in this hour and different
+    // from each other, or the field is dropped and no debt forms.
+    if ((string)($chosen['kind']['key'] ?? '') === 'favor') {
+        $lines[] = '- Also include "favor": {"from": "<handle>", "to": "<handle>", "what": "…"} —';
+        $lines[] = '  who did the good turn, who it was done FOR, and four words for what it was.';
+        $lines[] = '  Handles exactly as written above. Leave it out if neither of them did the other one.';
+    }
     // Against a NAMED tier, never a bare integer. `>= 1` was written when rank
     // 1 meant `mature`; the broadcast ladder made rank 1 `pg`, and for one
     // evening every TV-PG and TV-14 world was told adult content is permitted
@@ -1941,8 +1977,34 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
         if (isset($memories[$h])) $ordered[$h] = $memories[$h];
     }
 
+    // THE DIRECTION OF A FAVOUR, if the hour was one and the model reported it
+    // straight. Both parties must have been in the room, they must be two
+    // different people, and neither may be the person at the centre — a debt is
+    // between two people in the town, and what the player owes anybody is the
+    // expectation machinery, which has a promise and a due date attached.
+    // Anything else here is dropped in silence: a missing debt is an hour that
+    // simply did not turn out to be a favour, which is a thing that happens.
+    $favor = null;
+    if ((string)($chosen['kind']['key'] ?? '') === 'favor' && is_array($raw['favor'] ?? null)) {
+        $name = static function ($v) use ($want, $index): ?string {
+            $v = (string)$v;
+            if (isset($want[$v])) return $v;
+            $h = xeric_seed_resolve($v, $index);   // "Maren Voss" and maren_voss are one person
+            return ($h !== '' && isset($want[$h])) ? $h : null;
+        };
+        $from = $name($raw['favor']['from'] ?? '');
+        $to   = $name($raw['favor']['to'] ?? '');
+        if ($from !== null && $to !== null && $from !== $to
+            && isset($ordered[$from], $ordered[$to])) {
+            $favor = ['from' => $from, 'to' => $to,
+                      'what' => trim((string)($raw['favor']['what'] ?? '')) ?: 'a good turn'];
+        } elseif ($from !== null || $to !== null) {
+            $notes[] = 'a favour that did not name two people in the room';
+        }
+    }
+
     return ['title' => $title, 'prose' => $prose, 'overheard' => $overheard,
-            'memories' => $ordered, 'notes' => $notes];
+            'memories' => $ordered, 'favor' => $favor, 'notes' => $notes];
 }
 
 /**

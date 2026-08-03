@@ -861,5 +861,56 @@ ok('trust: ordinary replies, folded, actually move her',
 ok('trust: and it is asymmetric — somebody else is untouched',
     xeric_trust_of($trLive, 'dot') === 0);
 
+// ---------------------------------------------------------------------------
+// STANDING: what the town's own hours do to what two people think of each
+// other. A world could arm `standings` and produce friction hour after
+// friction hour for a year, and Ruth and Harlan would think exactly what they
+// thought on the first night.
+// ---------------------------------------------------------------------------
+
+echo "\n# standing, which is just what everybody thinks of you\n";
+
+$stDb = fresh_db('standing');
+$pair = ['harlan', 'ruth'];
+
+ok('standing: one friction hour is a bad night, not a feud',
+    xeric_trust_hour_apply($stDb, 'friction', $pair) === 2
+    && xeric_trust_of($stDb, 'ruth', 'harlan') === 0);
+xeric_trust_hour_apply($stDb, 'friction', $pair);
+ok('standing: a few of them cost a point, and it cuts both ways',
+    xeric_trust_of($stDb, 'ruth', 'harlan') === -1
+    && xeric_trust_of($stDb, 'harlan', 'ruth') === -1);
+
+// The same ceiling ordinary contact has, on the pair row: hours alone carry
+// two people to wary and no further. The deep end is for promises and debts.
+for ($i = 0; $i < 200; $i++) xeric_trust_hour_apply($stDb, 'friction', $pair);
+ok('standing: hours alone cannot make enemies, only wary neighbours',
+    xeric_trust_of($stDb, 'ruth', 'harlan') === -XERIC_TRUST_BAND);
+ok('standing: and a promise broken across a table reaches past where hours can',
+    xeric_trust_earn($stDb, 'ruth', -4, null, 'harlan') === -XERIC_TRUST_BAND - 4);
+
+// A FAVOUR HAS A DIRECTION AND FRICTION DOES NOT. Doing somebody a kindness is
+// not a reason to like them more, so only one of these two moves.
+$fvDb = fresh_db('standing-favor');
+$fv   = ['from' => 'harlan', 'to' => 'ruth'];
+ok('standing: a favour moves the person who got it, not the person who did it',
+    xeric_trust_hour_apply($fvDb, 'favor', $pair, $fv) === 1
+    && xeric_trust_hour_apply($fvDb, 'favor', $pair, $fv) === 1
+    && xeric_trust_of($fvDb, 'ruth', 'harlan') === 1
+    && xeric_trust_of($fvDb, 'harlan', 'ruth') === 0);
+ok('standing: and a favour hour with no direction reported moves nobody',
+    xeric_trust_hour_apply($fvDb, 'favor', $pair, null) === 0);
+
+// Four people in an ordinary evening is six pairs, twice, because what Ruth
+// thinks of Dot is not what Dot thinks of Ruth.
+$rmDb = fresh_db('standing-room');
+ok('standing: an ordinary evening warms everybody in it toward everybody else',
+    xeric_trust_hour_apply($rmDb, 'ordinary', ['harlan', 'ruth', 'dot', 'theo']) === 12);
+ok('standing: and a kind that is about nobody in particular moves nothing',
+    xeric_trust_hour_apply($rmDb, 'weather', $pair) === 0);
+ok('standing: nobody rubs against themselves',
+    xeric_trust_hour_apply($rmDb, 'friction', ['harlan']) === 0
+    && xeric_trust_of($rmDb, 'harlan', 'harlan') === 0);
+
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";
 exit($FAILED === 0 ? 0 : 1);
