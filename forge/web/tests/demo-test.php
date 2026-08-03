@@ -3218,6 +3218,18 @@ ok('panel: the forge offers a problem as well as a place',
     str_contains($forgeSrc, 'data-mode="panel"'));
 ok('panel: and the tab says experimental where somebody will read it',
     str_contains($forgeSrc, 'EXPERIMENTAL. Describe a problem'));
+// A DOOR OF ITS OWN (owner, 2026-08-03). It was reachable only as a tab inside
+// "Your Own Idea", which is the wrong shape — those tabs answer "how do you want
+// to describe your xeric" and this does not describe a xeric at all.
+ok('panel: it is a way in beside the other three, not a tab underneath one',
+    str_contains($forgeSrc, 'data-way="panel"')
+    && str_contains($forgeSrc, '>Solve a Problem<'));
+ok('panel: and the tile says experimental where somebody reads it before pressing',
+    str_contains($forgeSrc, 'class="wexp">experimental'));
+ok('panel: the tile lights the existing tab rather than repeating what it does',
+    str_contains($forgeSrc, '.w3[data-mode="panel"]'));
+ok('panel: and Your Own Idea puts the question back when you come from it',
+    str_contains($forgeSrc, '.w3[data-mode="type"]'));
 ok('panel: the flag reaches the builder rather than stopping at the page',
     str_contains($forgeSrc, 'panel: PANEL')
     && str_contains((string)file_get_contents(dirname(__DIR__) . '/build.php'), "'panel'")

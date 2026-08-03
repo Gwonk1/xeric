@@ -523,6 +523,15 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 .way .tname{position:absolute;left:0;right:0;bottom:0;padding:0 .7rem .7rem;
   font-size:.92rem;font-weight:600;line-height:1.2;text-align:center;color:var(--fg)}
 
+/* EXPERIMENTAL, ON THE TILE. Not in the tooltip: a tooltip is a thing you have
+   to go and find, and "this is not the same kind of xeric" is the one fact
+   somebody needs BEFORE they press, not after. Quiet rather than loud — a
+   warning shouted on a shelf of four reads as a broken feature, and this one
+   works, it is just not a place to live in. */
+.way .wexp{display:block;margin-top:.2rem;font-size:.66rem;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--fg-far)}
+.way:hover .wexp,.way:focus-visible .wexp{color:var(--accent-dim)}
+
 /* The tooltip. On hover AND on focus, because a keyboard reaching this box
    deserves the same sentence a mouse gets — and it is the only place the
    difference between the three is written down.

@@ -507,7 +507,7 @@ xeric_web_head('Xeric: the forge');
         <?php if (xeric_limit_on()): ?><?= (int)$left['forges'] ?> of <?= (int)$left['of']['forges'] ?> builds left today.<?php endif; ?></p>
     <?php endif; ?>
 
-    <!-- THREE WAYS IN, AS THREE BOXES. The shelf's language, reused on purpose:
+    <!-- FOUR WAYS IN, AS FOUR BOXES. The shelf's language, reused on purpose:
          a channel is a thing you point at and pick, and picking how to build is
          the same kind of act as picking what to play. It also replaces a screen
          whose only visible choice was "Begin", with the other two ways in as a
@@ -543,6 +543,30 @@ xeric_web_head('Xeric: the forge');
         <span class="tip" id="tip-own" role="tooltip">Describe it yourself: type it, answer
           <?= count($steps) ?> questions, or hand over a PDF. Whatever you give it, the forge keeps
           your place, your era, your names and your facts, and invents only what you left out.</span>
+      </button>
+
+      <!-- SOLVE A PROBLEM (owner, 2026-08-03). It was already reachable as a tab
+           INSIDE Your Own Idea, which is the wrong shape: the tabs answer "how
+           do you want to describe your xeric", and this does not describe a
+           xeric at all. It is a different thing to make — a room, a question,
+           and three to five people who will not agree about it — so it belongs
+           beside the other ways to make something, not underneath one of them.
+           The tab stays: somebody already typing a premise can still switch, and
+           this tile lights that same tab, so there is one path and not two.
+
+           EXPERIMENTAL IS ON THE TILE, not only in the tooltip. A tooltip is a
+           thing you have to go and find, and "this is not a place you live in"
+           is the fact somebody needs before they press. -->
+      <button class="tile way" type="button" data-way="panel" aria-describedby="tip-panel">
+        <span class="wayface" aria-hidden="true"><span class="wg">&#9878;</span></span>
+        <span class="tname">Solve a Problem<span class="wexp">experimental</span></span>
+        <span class="tip" id="tip-panel" role="tooltip">Not a place to live in — a room to argue in.
+          Describe a problem instead of a town and the forge casts three to five people who want
+          incompatible things from it, puts them somewhere with a door, and lets them fight.
+          Consensus is not the goal: if they cannot get there, it tells you which two positions
+          could never both be satisfied, which is usually the more useful answer. They are
+          characters arguing, never experts consulting — read it as a way of seeing the
+          disagreement, not as advice.</span>
       </button>
     </div>
 
@@ -1184,7 +1208,34 @@ xeric_web_head('Xeric: the forge');
       // Untouched it reads the weakest rating, and this writes it.
       if (w === 'auto') { lockRating(); save(); build('model'); return; }
       if (w === 'blank') { show(idxOf('blank')); return; }
-      show(idxOf(w === 'own' ? 'premise' : 'q'));
+      // SOLVE A PROBLEM lands on the same premise screen and then LIGHTS ITS OWN
+      // TAB, rather than repeating what that tab does. Everything the panel
+      // needs — PANEL = true, the heading, the sub, the experimental line, the
+      // placeholder — is already written once, in the tab's handler; a second
+      // copy here is a second copy to forget to change. Show first, because the
+      // handler ends by focusing the box and a hidden box cannot take focus.
+      if (w === 'panel') {
+        show(idxOf('premise'));
+        var pt = document.querySelector('.w3[data-mode="panel"]');
+        if (pt) pt.click();
+        return;
+      }
+      // AND THE WAY BACK OUT. Both doors land on the same premise screen, so
+      // "Your Own Idea" pressed after "Solve a Problem" would otherwise open a
+      // screen still asking "What is the problem?" with the panel tab lit — the
+      // right box, the wrong question, and a build that quietly makes a
+      // discussion room out of somebody describing a town. Lighting `type it`
+      // undoes it through the same handler that did it, so the heading, the
+      // sub, the hint, the placeholder and PANEL all come back together.
+      if (w === 'own') {
+        show(idxOf('premise'));
+        if (PANEL) {
+            var tt = document.querySelector('.w3[data-mode="type"]');
+            if (tt) tt.click();
+        }
+        return;
+      }
+      show(idxOf('q'));
     });
   });
 
