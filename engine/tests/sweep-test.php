@@ -1761,6 +1761,68 @@ ok('proactive: a live overlay does not stop the phone from ringing',
     $ping !== null && ($ping['text'] ?? '') !== '', json_encode($notesPing));
 
 // ---------------------------------------------------------------------------
+// What a PLAYER may be told about a story over their world, and taking one
+// back. The digest is the thin view on purpose: a UI that could print the
+// culprit would be the overlay engine defeating itself in the settings panel.
+// ---------------------------------------------------------------------------
+
+echo "\n# the stories, as a player sees them\n";
+
+$dgS  = xeric_story_read(STORY);
+$dgT  = world(['gossip', 'danger']);
+$dgDb = fresh_db('digest');
+xeric_state_seed($dgDb, $dgT);
+
+$dg = xeric_story_digest([$dgS], $dgDb);
+ok('digest: one row per story, with the logline it is allowed to show',
+    count($dg) === 1 && $dg[0]['key'] === xeric_story_key($dgS)
+    && $dg[0]['logline'] === trim((string)$dgS['logline']));
+ok('digest: progress is a fraction, and a fresh story has found nothing',
+    $dg[0]['opened'] === 0 && $dg[0]['total'] === count($dgS['beats']) && $dg[0]['live'] === true);
+
+// THE LEAK TEST. Everything the schema calls secret, checked against the whole
+// serialised digest — the truth, the culprit's handle, and every beat's own
+// text. If any of it can reach a settings panel, the panel is the leak.
+$dgJson = json_encode($dg, JSON_UNESCAPED_UNICODE);
+$dgSecrets = [trim((string)$dgS['truth'])];
+foreach ((array)$dgS['beats'] as $b) {
+    foreach (['piece', 'while_locked', 'when_open', 'spilled_as'] as $f) {
+        if (trim((string)($b[$f] ?? '')) !== '') $dgSecrets[] = trim((string)$b[$f]);
+    }
+}
+$dgLeaked = array_values(array_filter($dgSecrets,
+    fn($x) => mb_strlen($x) > 12 && str_contains($dgJson, mb_substr($x, 0, 40))));
+ok('digest: not one secret string survives into the player\'s view',
+    $dgLeaked === [], implode(' | ', array_slice($dgLeaked, 0, 2)));
+ok('digest: and the culprit is not named in it either',
+    !str_contains($dgJson, '"' . (string)$dgS['cast']['culprit'] . '"'), $dgJson);
+
+// Taking one back is a subtraction with the residue left out.
+$dgBefore = [xeric_events_count($dgDb), xeric_memories_count($dgDb)];
+xeric_story_abandon($dgS, $dgDb, (int)$NOW['epoch']);
+ok('abandon: the story stops composing, and reads as closed',
+    xeric_story_state($dgS, $dgDb)['live'] === false
+    && xeric_story_active([$dgS], $dgDb, $dgT) === []);
+ok('abandon: and it leaves NO residue — a story taken back never happened',
+    xeric_events_count($dgDb) === $dgBefore[0] && xeric_memories_count($dgDb) === $dgBefore[1]);
+ok('abandon: a second take-back is a no-op, not a second closing',
+    (function () use ($dgS, $dgDb, $NOW) {
+        $was = xeric_story_state($dgS, $dgDb)['closed'];
+        xeric_story_abandon($dgS, $dgDb, (int)$NOW['epoch'] + 999);
+        return xeric_story_state($dgS, $dgDb)['closed'] === $was;
+    })());
+ok('digest: a closed story still lists — finishing one should not erase it',
+    (($dg2 = xeric_story_digest([$dgS], $dgDb))[0]['live'] ?? true) === false && count($dg2) === 1);
+
+// And the difference that matters: RESOLVING writes the residue, abandoning
+// does not. Same subtraction, two different endings.
+$dgDb2 = fresh_db('digest-resolve');
+xeric_state_seed($dgDb2, $dgT);
+xeric_story_close($dgS, $dgDb2, (int)$NOW['epoch']);
+ok('close: a story that ENDED leaves the town remembering it',
+    xeric_memories_count($dgDb2) > 0 || xeric_events_count($dgDb2) > 0);
+
+// ---------------------------------------------------------------------------
 // A WORLD BEFORE 1970 — the epoch is negative and every hour of it is real.
 //
 // ROADMAP.md advertises "starts": "1873-06-04 07:40" under "Already works",

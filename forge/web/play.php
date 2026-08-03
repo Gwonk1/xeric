@@ -152,6 +152,31 @@ if ($action !== '') {
                         'note' => 'Takes effect from the next hour and the next reply.']);
     }
 
+    // -- the stories over this world -----------------------------------------
+    // The player's own view of them, which is deliberately thin: the logline
+    // and how far along, never the truth and never which beat is next
+    // (xeric_story_digest). Abandoning is a subtraction with the residue left
+    // out — a story that RESOLVED is remembered, one taken back never
+    // happened, and either way the composed template returns to the untouched
+    // one the moment the engine stops composing it.
+    if ($action === 'stories') {
+        xeric_web_json(['ok' => true,
+                        'stories' => xeric_story_digest((array)($w['stories'] ?? []), $w['db'])]);
+    }
+    if ($action === 'abandon') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner takes a story back.'], 403);
+        $in  = xeric_web_input();
+        $key = (string)($in['key'] ?? '');
+        foreach ((array)($w['stories'] ?? []) as $s) {
+            if (xeric_story_key($s) !== $key) continue;
+            xeric_story_abandon($s, $w['db'], xeric_clock_epoch($w['db']));
+            xeric_web_json(['ok' => true, 'key' => $key,
+                            'note' => 'Taken back. The world is exactly what it was underneath it — '
+                                    . 'though the hours it already caused are ordinary history now.']);
+        }
+        xeric_web_json(['error' => 'no story by that name is over this xeric'], 404);
+    }
+
     // -- this xeric, on the phone in your pocket ------------------------------
     // The QR is drawn from the address a phone would actually dial: this
     // machine's LAN IP, this port, this world. When the server is bound to
@@ -731,6 +756,12 @@ echo '<style>' . xeric_play_css() . '
              font-size:.78rem; color:var(--fg-dim); }
 .sbrand .sxall:hover { color:var(--fg); }
 .xcnav { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px; }
+/* the stories over this world, in the cog */
+.xcstories{flex-direction:column;align-items:stretch}
+.xcstory{padding:.4rem 0;border-bottom:1px solid var(--line-2)}
+.xcstory:last-of-type{border-bottom:0}
+.xcstory.done{opacity:.6}
+.xcstory .xchint{display:block;margin:.15rem 0 .3rem}
 /* the portrait at the top of a cog, when the reaper has developed one */
 .cportrait { margin:0 0 12px; }
 .cportrait img { max-width:100%; max-height:240px; border-radius:8px; display:block; }
@@ -1250,6 +1281,9 @@ echo '<style>' . xeric_play_css() . '
   ?>
   var SHAPE = <?= json_encode($shapeKey) ?>;
   var SHAPELINE = <?= json_encode($shapeLine) ?>;
+  // The player's view of the stories over this world: loglines and progress,
+  // never the truth and never which beat is next.
+  var STORIES = <?= json_encode(xeric_story_digest((array)($w['stories'] ?? []), $w['db'])) ?>;
   var MEFACE = <?= json_encode(xeric_play_face([
       'handle' => '__you', 'display_name' => $userName,
       'pronouns' => (string)($T['user']['pronouns'] ?? ''),
@@ -1438,6 +1472,20 @@ echo '<style>' . xeric_play_css() . '
         '<span class="xchint">' + (stopped
           ? 'the clock is stopped — nothing moves and nobody texts until you start it'
           : 'stops the clock: nothing moves and nobody texts until you start it again') + '</span></div>' +
+      (STORIES.length
+        ? '<div class="xcrow xcstories">' + STORIES.map(function (s) {
+            var bar = s.total ? ' · ' + s.opened + ' of ' + s.total + ' found' : '';
+            return '<div class="xcstory' + (s.live ? '' : ' done') + '">' +
+              '<b>' + esc(s.title) + '</b>' + (s.live ? '' : ' <i>(closed)</i>') +
+              '<span class="xchint">' + esc(s.logline) + bar +
+              (s.wrong ? ' · ' + s.wrong + ' wrong accusation' + (s.wrong > 1 ? 's' : '') : '') + '</span>' +
+              (s.live && MINE ? '<button type="button" class="nbtn xcdrop" data-key="' +
+                escA(s.key) + '">take it back</button>' : '') +
+            '</div>';
+          }).join('') +
+          '<span class="xchint">a story sits OVER this xeric and changes nothing in it — ' +
+          'take one back and the world underneath is exactly as it was</span></div>'
+        : '') +
       '<div class="xcrow"><button type="button" class="nbtn" id="xcqr">📱 open on my phone</button>' +
         '<span class="xchint">a code to scan from the same wifi</span></div>' +
       '<div class="xcqrbox" id="xcqrbox" hidden></div>' +
@@ -1481,6 +1529,25 @@ echo '<style>' . xeric_play_css() . '
         if (to) requestAnimationFrame(function () { to.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
       });
     });
+    // Taking a story back. Confirmed once, because it is the one control here
+    // that ends something somebody is in the middle of.
+    $$('#cmodal .xcdrop').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!confirm('Take this story back? The world underneath is exactly as it was, but the '
+                   + 'hours it already caused stay — they are ordinary history now.')) return;
+        b.disabled = true;
+        fetch('play.php?a=abandon&w=' + encodeURIComponent(W), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key: b.dataset.key }) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.ok) { toast(d.note || 'taken back'); location.reload(); }
+            else { b.disabled = false; toast((d && d.error) || 'that did not take'); }
+          })
+          .catch(function () { b.disabled = false; toast('that did not take'); });
+      });
+    });
+
     // The shape switch: same door as the pace, felt from the next lived hour.
     var shSel = document.getElementById('xcshape');
     if (shSel) shSel.addEventListener('change', function () {

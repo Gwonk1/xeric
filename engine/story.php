@@ -668,6 +668,63 @@ function xeric_story_state(array $s, PDO $db): array
     ];
 }
 
+/**
+ * What a PLAYER may be told about the stories over their world.
+ *
+ * The state reader above is the engine's view and holds the answer: which
+ * beats are open, who spilled, what the culprit is called. None of that is a
+ * player's to read — the whole point of an overlay is that it is found out —
+ * so this is the deliberately thin version: the logline (the one string the
+ * schema says may be shown before it resolves), how far along it is as a
+ * fraction, and whether it is still running. Never the truth, never the
+ * culprit, never which beat is next, never a beat's own text.
+ *
+ * A closed story still lists, because "you solved this one" is worth seeing
+ * and because a shelf that forgets what you finished is a shelf that makes
+ * finishing feel like nothing.
+ *
+ * @return array<int,array{key:string,title:string,logline:string,opened:int,
+ *                         total:int,live:bool,wrong:int}>
+ */
+function xeric_story_digest(array $stories, PDO $db): array
+{
+    $out = [];
+    foreach ($stories as $s) {
+        if (!is_array($s)) continue;
+        $st = xeric_story_state($s, $db);
+        $out[] = [
+            'key'     => xeric_story_key($s),
+            'title'   => xeric_story_title($s),
+            'logline' => trim((string)($s['logline'] ?? '')),
+            'opened'  => (int)$st['opened'],
+            'total'   => (int)$st['total'],
+            'live'    => (bool)$st['live'],
+            'wrong'   => (int)$st['wrong'],
+        ];
+    }
+    return $out;
+}
+
+/**
+ * Abandon a story: close it with none of its residue.
+ *
+ * CLOSING A STORY IS A SUBTRACTION, and abandoning one is the same
+ * subtraction with the memories left out. A story that RESOLVED earned its
+ * on_close residue — the town remembers the Tuesday it came out. A story
+ * somebody simply took back never happened, so nothing is remembered, no
+ * event is written, and the composed template returns to the untouched one
+ * the moment this file stops composing.
+ *
+ * What it cannot do is un-write the hours the story already caused. Those are
+ * ordinary events in an ordinary world, and pretending otherwise would be an
+ * overlay editing a world, which is the one thing it may never do.
+ */
+function xeric_story_abandon(array $s, PDO $db, int $epoch, ?int $at = null): void
+{
+    if (!xeric_story_state($s, $db)['live']) return;
+    xeric_arc_set($db, xeric_arc_world(), xeric_story_prefix($s) . 'closed', $epoch, $at ?? xeric_state_time());
+}
+
 /** The overlays that compose right now: still open, and inside the world's rating. */
 function xeric_story_active(array $stories, PDO $db, ?array $t = null): array
 {
