@@ -1211,6 +1211,26 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
       if (b2) b2.disabled = on;
       var _da = $('#draftagain');
       if (_da) _da.disabled = on;
+      // AND LAUNCHING, which this never disabled. Clearing contradictions
+      // REWRITES the template pass after pass; launching mid-run bakes a world
+      // out of a half-corrected draft and there is no way back to the version
+      // that was about to be right. The one button that ends the editable phase
+      // must not be live while something else is editing.
+      var _l = $('#launch');
+      if (_l) {
+        _l.disabled = on;
+        _l.title = on ? 'wait for the contradictions to finish — this is still being rewritten' : '';
+      }
+      var _ls = $('#launchst');
+      if (_ls) {
+        if (on) {
+          if (!_ls.dataset.was) _ls.dataset.was = _ls.textContent;
+          _ls.textContent = 'not while the editor is still rewriting it.';
+        } else if (_ls.dataset.was) {
+          _ls.textContent = _ls.dataset.was;
+          delete _ls.dataset.was;
+        }
+      }
     }
 
     b.addEventListener('click', function () {
@@ -1262,6 +1282,45 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
       e.li.className = 'rf consistency' + (e.state === 'resolved' ? ' done'
         : e.state === 'noise' ? ' noise' : e.state === 'hand' ? ' hand'
         : e.state === 'pair' ? ' pair' : '');
+
+      // ── HANDED BACK MEANS HANDED SOMETHING ────────────────────────────────
+      //
+      // A finding the rewriter gave up on printed "needs a hand" as three spans
+      // of text, with the reason hidden in a `title` — so the button told
+      // somebody nine things were theirs to fix and then gave them no way to
+      // fix any of them, and no way to read why. That is worse than not
+      // offering: it is work handed over with the handle removed.
+      //
+      // The one-off repass has had a `show` button all along (see row()); the
+      // ledger this loop writes never got one. Same helper, same flash.
+      var terminal = (e.state === 'hand' || e.state === 'pair');
+      if (terminal && e.path && !e.li.querySelector('.rfgo') && findField(e.path)) {
+        // The reason, VISIBLE. It is the whole of what a person needs to make
+        // the edit, and it was only ever a tooltip — which a phone does not
+        // have at all.
+        if (e.why) {
+          var wy = document.createElement('span');
+          wy.className = 'rfwhy';
+          wy.textContent = e.why;
+          e.li.appendChild(wy);
+        }
+        var go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'linkbtn rfgo';
+        go.textContent = 'fix it';
+        go.title = 'Take me to the line this is about';
+        go.addEventListener('click', function () {
+          var el = findField(e.path);
+          if (!el) return;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.remove('flash');
+          void el.offsetWidth;
+          el.classList.add('flash');
+          // Focused, not just shown: the point is to type in it.
+          try { el.focus({ preventScroll: true }); } catch (err) { el.focus(); }
+        });
+        e.li.appendChild(go);
+      }
     }
     function setState(k, state, label, why) {
       LG[k].state = state;

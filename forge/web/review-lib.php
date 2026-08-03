@@ -2264,6 +2264,14 @@ function xeric_review_css(): string
 .rf.noise .rfv{color:var(--fg-dim);font-style:italic}
 .rf.hand{border-color:var(--bad)}
 .rf.hand .rfv{color:var(--bad)}
+/* THE REASON, VISIBLE. A finding handed back to a person used to carry its
+   explanation in a `title` — a tooltip, which a phone does not have at all, on
+   the one row whose whole purpose is to tell somebody what to change. */
+.rf .rfwhy{display:block;width:100%;margin:.25rem 0 0;font-size:.78rem;
+  color:var(--fg-dim);line-height:1.4}
+/* And the way in. `fix it` takes you to the field and puts the cursor in it. */
+.rf .rfgo{margin-left:.4rem;font-weight:600}
+.rf.hand .rfgo,.rf.pair .rfgo{color:var(--accent)}
 /* The world's name and the one control with nothing behind it. Red only on
    approach: a permanent scarlet ✕ beside a title reads as an error state on a
    page where nothing is wrong. */

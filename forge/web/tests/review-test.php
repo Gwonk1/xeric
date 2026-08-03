@@ -383,6 +383,31 @@ ok('dice: a place is not a person, and keeps the world\'s rating',
 ok('dice: a cast path that names nobody falls closed rather than open',
     $rated('cast.characters.9.voice') === $floor);
 
+// ---------------------------------------------------------------------------
+// HANDED BACK MEANS HANDED SOMETHING.
+//
+// "Clear All Contradictions" ends by telling you N are "flagged for you" — and
+// a flagged row was three spans of text with its reason hidden in a `title`.
+// So the button handed work over with the handle removed: no way to reach the
+// line, and on a phone no way to read why either. The one-off repass has had a
+// `show` button all along; the ledger this loop writes never got one.
+//
+// And LAUNCH stayed live the whole time. Clearing contradictions rewrites the
+// template pass after pass; launching mid-run bakes a world out of a
+// half-corrected draft, with no way back to the version that was about to be
+// right.
+$rv = (string)file_get_contents(dirname(__DIR__) . '/review.php');
+ok('contradictions: a flagged finding offers a way to fix it',
+    str_contains($rv, "go.textContent = 'fix it';"));
+ok('contradictions: which takes you to the line and puts the cursor in it',
+    preg_match('/rfgo.*?findField\(e\.path\).*?scrollIntoView.*?focus/s', $rv) === 1);
+ok('contradictions: and the reason is on the row, not in a tooltip a phone cannot show',
+    str_contains($rv, "wy.className = 'rfwhy'"));
+ok('contradictions: launching is locked while the editor is still rewriting',
+    preg_match('/function lock\(on\)[^}]*?\$\(.#launch.\)/s', $rv) === 1);
+ok('contradictions: and the line under the button says why it is locked',
+    str_contains($rv, 'not while the editor is still rewriting it.'));
+
 rmtree($tmp);
 
 echo "\n" . ($FAILED === 0 ? "all review tests passed\n" : "$FAILED review test(s) FAILED\n");
