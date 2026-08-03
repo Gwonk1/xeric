@@ -623,6 +623,17 @@ function xeric_room_draw(array $present, ?string $last, string $lastText, array 
     $tier = $addressed !== [] ? $addressed : $candidates;
     $how  = $addressed !== [] ? 'addressed' : 'draw';
 
+    // NOBODY LEFT TO DRAW. One person in the room who also spoke last empties
+    // the candidates, and the weighted shuffle then indexes [0] of nothing —
+    // a warning, and a speaker made of null. It could not happen while a scene
+    // needed two people, and it started happening the moment a room with ONE
+    // person in it became answerable (chatter.php: you at the counter, her
+    // behind it). An empty draw is a real answer: nobody speaks, and callers
+    // already treat '' as the end of the beat.
+    if ($tier === []) {
+        return ['speaker' => '', 'how' => $how, 'addressed' => $addressed, 'weights' => []];
+    }
+
     $weights = [];
     foreach ($tier as $h) {
         $hot = 0;

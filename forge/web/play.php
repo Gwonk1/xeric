@@ -645,16 +645,26 @@ if ($action !== '') {
         $place = trim((string)($in2['place'] ?? ''));
         $text  = trim((string)($in2['text'] ?? ''));
         if ($text === '') xeric_web_json(['error' => 'nothing to say'], 400);
-        if (!xeric_chatter_public($w['template'], $place)) {
-            xeric_web_json(['error' => 'that is not a room in this xeric'], 400);
-        }
-        xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 
         $T2 = $w['template'];
         $db2 = $w['db'];
+        // YOU HAVE TO BE STANDING IN IT. Reading a channel from across town is
+        // what a channel is for; talking into one is not — you cannot call out
+        // to the diner from your own kitchen.
+        $youAt = xeric_player_where($T2, $db2);
+        if (!xeric_chatter_readable($T2, $place, $youAt)) {
+            xeric_web_json(['error' => 'that is not a room in this xeric'], 400);
+        }
+        if ($youAt !== $place) {
+            xeric_web_json(['error' => 'You are not in there. Walk over first.', 'kind' => 'away'], 409);
+        }
+        xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
+
         $now2 = xeric_clock_now($db2, $T2);
         $here = xeric_chatter_present($T2, $db2, $place, $now2);
-        if (count($here) < XERIC_CHATTER_MIN) {
+        // One is enough when it is YOU doing the talking — see the floor in
+        // xeric_chatter_run. Two is the bar for them chattering to each other.
+        if ($here === []) {
             xeric_web_json(['error' => 'There is nobody in there to hear it.', 'kind' => 'empty'], 409);
         }
 
@@ -694,11 +704,14 @@ if ($action !== '') {
     if ($action === 'room') {
         require_once XERIC_WEB_LIB . '/engine/chatter.php';
         $place = trim((string)($_GET['p'] ?? ''));
-        if (!xeric_chatter_public($w['template'], $place)) {
-            xeric_web_json(['error' => 'That is not a room in this xeric — somebody\'s home is theirs.'], 400);
-        }
         $T2  = $w['template'];
         $db2 = $w['db'];
+        $youAt = xeric_player_where($T2, $db2);
+        if (!xeric_chatter_readable($T2, $place, $youAt)) {
+            xeric_web_json(['error' => xeric_chatter_is_place($T2, $place)
+                ? 'That is somebody\'s home. You would have to be standing in it.'
+                : 'That is not a place in this xeric.'], 400);
+        }
         $now2 = xeric_clock_now($db2, $T2);
         $conv = xeric_conversation_find($db2, $place, 'room');
         $here = xeric_chatter_present($T2, $db2, $place, $now2);
@@ -727,19 +740,26 @@ if ($action !== '') {
             xeric_conversation_touch($db2, (int)$conv['id'], 0);
         }
 
-        // WHY IT IS SHUT, in the world's own words rather than a disabled box.
-        // Three different silences — closed, empty, one person — and a composer
-        // that just refuses tells you none of them apart.
+        // WHY YOU CANNOT SPEAK, in the world's own words rather than a disabled
+        // box. Three different silences — you are elsewhere, nobody is in it,
+        // it is shut and empty — and a composer that just refuses tells you
+        // none of them apart.
+        //
+        // PRESENCE BEATS THE CLOCK. Standing in a room with somebody, at an
+        // hour the sign says shut, you can still talk to them: the two of you
+        // being there is a plainer fact than the opening hours.
+        $youHere = $youAt !== null && $youAt === $place;
+        $pname   = xeric_world_place_name($T2, $place);
         $why = '';
-        if (!$open)                     $why = xeric_world_place_name($T2, $place) . ' is shut at this hour.';
-        elseif ($here === [])           $why = 'Nobody is in here right now.';
-        elseif (count($here) < XERIC_CHATTER_MIN) $why = 'Only ' . xeric_world_name($T2, $here[0]) . ' is in here.';
+        if (!$youHere)        $why = 'You are not in here — walk over to say something.';
+        elseif ($here === []) $why = $open ? 'Nobody is in here right now.' : $pname . ' is shut, and empty.';
 
         xeric_web_json([
             'ok'    => true,
             'place' => $place,
-            'name'  => xeric_world_place_name($T2, $place),
+            'name'  => $pname,
             'open'  => $open,
+            'you_here' => $youHere,
             'who'   => array_map(fn($h) => ['h' => $h, 'name' => xeric_world_name($T2, $h)], $here),
             'why'   => $why,
             'can_say' => $why === '',
@@ -1445,6 +1465,11 @@ echo '<style>' . xeric_play_css() . '
       </div>
       <nav class="pnav">
         <button class="nbtn back" type="button" id="back">← the cast</button>
+        <!-- THE WAY IN, from inside the channel. You open the diner, read what
+             is being said, and the reason you cannot join in is that you are
+             three streets away — so the fix for that goes where you read it,
+             not back on a map row you have to go and find again. -->
+        <button class="nbtn" type="button" id="towalk" hidden></button>
       </nav>
     </div>
     <p class="whoami" id="tone"></p>
@@ -2268,7 +2293,10 @@ echo '<style>' . xeric_play_css() . '
     $('#goerr').hidden = true;
     $$('.goto').forEach(function (b) { b.disabled = true; });
 
-    fetch('where.php', {
+    // Returned so a caller can do something ONCE YOU HAVE ARRIVED — the room
+    // view reopens itself on the far end, because whether you may speak in it
+    // is a fact about where you are standing and it has just changed.
+    return fetch('where.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ world: W, to: to || null })
@@ -2445,6 +2473,7 @@ echo '<style>' . xeric_play_css() . '
     var b = ev.target.closest && ev.target.closest('[data-room]');
     if (!b) return;
     ev.preventDefault();
+    drawer(false);                 // it is reached from the sidebar, which on a phone is over the page
     openRoom(b.dataset.room);
   });
 
@@ -2467,6 +2496,7 @@ echo '<style>' . xeric_play_css() . '
     $('#thinking').hidden = true;
     $('#tname').textContent = '';
     $('#tone').textContent = '';
+    $('#towalk').hidden = true;
     show('thread');
 
     fetch('play.php?a=room&w=' + encodeURIComponent(W) + '&p=' + encodeURIComponent(place))
@@ -2485,7 +2515,14 @@ echo '<style>' . xeric_play_css() . '
         // anybody in here — and does it before the scrollback, which is history.
         $('#tone').textContent = (d.who && d.who.length)
           ? d.who.map(function (p) { return p.name; }).join(', ') + ' — in here now'
-          : (d.why || 'Nobody is in here.');
+            + (d.you_here ? ', with you' : '')
+          : (d.open ? 'Nobody is in here.' : d.name + ' is shut.');
+
+        // Walk over, from the room you are reading. Hidden where you already
+        // are, and where you cannot go at all.
+        var wb = $('#towalk');
+        wb.hidden = !!d.you_here;
+        if (!wb.hidden) { wb.textContent = 'walk over'; wb.dataset.walkto = place; }
 
         (d.messages || []).forEach(function (m) {
           addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'),
@@ -2702,6 +2739,22 @@ echo '<style>' . xeric_play_css() . '
   }
 
   $('#back').addEventListener('click', function () { show('xeric'); refreshState(); });
+
+  // Walk over, without leaving the channel. The trip is the same one the map
+  // charges for — and when it lands, the room reopens on itself, so you arrive
+  // reading the conversation you were already reading, now able to join it.
+  $('#towalk').addEventListener('click', function () {
+    var to = this.dataset.walkto;
+    if (!to || going || ticking) return;
+    this.disabled = true;
+    var self = this;
+    go(to).then(function () {
+      self.disabled = false;
+      // `go` repaints the sidebar and the map, but the room's own can_say is
+      // stale until it is asked again — you are standing somewhere new.
+      if (openPlace === to) openRoom(to);
+    });
+  });
 
   // -- saying something ----------------------------------------------------
   // A turn is two to twenty seconds. The page must never look frozen for that
@@ -3062,6 +3115,12 @@ echo '<style>' . xeric_play_css() . '
       b.dataset.bound = '1';
       b.addEventListener('click', function () {
         if (b.classList.contains('gone')) return;
+        // A ROOM ROW IS A `.wperson` TOO — it shares the class for the disc and
+        // the hover, and has `data-room` where a person has `data-h`. Without
+        // this guard both handlers fired: the delegated one opened the channel
+        // and this one opened a thread for `undefined` straight over the top of
+        // it, whichever finished last winning.
+        if (!b.dataset.h) return;
         drawer(false);
         openThread(b.dataset.h);
       });

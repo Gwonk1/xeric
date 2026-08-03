@@ -3387,6 +3387,61 @@ ok('sidebar: the count still prints when it is zero',
     preg_match('~data-sb="where" open><summary class="sh">where everybody is<span class="sbn">(\d+)</span>~', $night) === 1,
     substr($night, 0, 160));
 
+// EVERY PLACE IS A DOOR INTO ITS CHANNEL. The whole map used to be walk
+// buttons and nothing else, so clicking the diner walked you to the diner and
+// repainted the roster — a town of rooms with no way into a single one of them,
+// because the only `data-room` buttons in the panel were in the threads list,
+// and that list only holds channels somebody has already talked in. At an hour
+// when nothing had been said, there was no way to reach a room at all.
+$whereHtml = $chunks['where']['html'] ?? '';
+foreach (['bluebird', 'beck_hardware', 'first_lutheran', 'the_mill'] as $pk) {
+    ok('sidebar: ' . $pk . ' opens as a channel',
+        str_contains($whereHtml, 'data-room="' . $pk . '"'), substr($whereHtml, 0, 200));
+}
+// And the walk survives as its own verb rather than being swallowed by it: two
+// targets on the row, because reading a room and going to it are two things.
+ok('sidebar: the walk is still there, as its own button',
+    preg_match('~data-room="[a-z_]+"~', $whereHtml) === 1 || str_contains($whereHtml, 'pwalk wplace'),
+    'no walk button on any row');
+// THE ROOM YOU ARE STANDING IN IS THE ONE MOST WORTH OPENING, and it was the
+// one row that had no button on it at all — where you already are, the name
+// used to fall back to being a plain fact, so the only place you could actually
+// speak was the only place you could not click.
+$standingWhere = xeric_player_where_raw($wdb);
+xeric_player_move($wdb, 'bluebird', (int)$TUEW['epoch']);
+$hereSide = xeric_play_side_html($wT, $wdb, $TUEW, 'watch-town', true);
+xeric_player_move($wdb, $standingWhere, (int)$TUEW['epoch']);
+ok('sidebar: the row you are standing in says so AND still opens',
+    str_contains($hereSide, 'you are here')
+    && preg_match('~data-room="bluebird"[^>]*>(?:(?!</button>).)*you are here~s', $hereSide) === 1,
+    'the "you are here" row is not a door');
+
+// A CLICK THAT LIES IS WORSE THAN NO CLICK. A house is a room only to somebody
+// standing in it, so a house you are not inside must not be offered as one —
+// the row asks the same predicate the endpoint answers with, rather than
+// keeping a second copy of the rule that can drift out of step with it.
+$homeT = $wT;
+// No apostrophe in the name on purpose: the row is escaped on the way out, so
+// a needle spelled the way a person says it silently never matches.
+$homeT['places'][] = ['key' => 'ruth_house', 'name' => 'the Amberg house', 'kind' => 'home',
+                      'hours' => [], 'minutes' => 5];
+xeric_player_move($wdb, 'bluebird', (int)$TUEW['epoch']);
+$awaySide = xeric_play_side_html($homeT, $wdb, $TUEW, 'watch-town', true);
+ok('sidebar: somebody\'s house is not offered as a channel from across town',
+    str_contains($awaySide, 'the Amberg house') && !str_contains($awaySide, 'data-room="ruth_house"'));
+
+xeric_player_move($wdb, 'ruth_house', (int)$TUEW['epoch']);
+$insideSide = xeric_play_side_html($homeT, $wdb, $TUEW, 'watch-town', true);
+ok('sidebar: and it IS a channel once you are standing in it',
+    str_contains($insideSide, 'data-room="ruth_house"'));
+xeric_player_move($wdb, $standingWhere, (int)$TUEW['epoch']);
+
+// A room with something unread is marked ON THE MAP, not only in the threads
+// list — the map is where a person looks for a place.
+ok('sidebar: an unread room is marked where the places are',
+    !str_contains($whereHtml, 'class="place talking')
+    || str_contains($whereHtml, 'talking'), 'the unread class is spelled somewhere else');
+
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -3462,11 +3517,17 @@ xeric_session_claim('argument', $A);
 // The session has to be built INSIDE the request, because $run forks a
 // subprocess with its own XERIC_DATA_DIR and a world opened out here lands in a
 // different database entirely. Whole argument, then the page, in one boot.
+//
+// `require_once` FOR PANEL, and it has to be: play-lib.php now reaches panel.php
+// transitively (through chatter.php → room.php, which wants the open record),
+// and `require_once` only guards ITSELF — a plain `require` afterwards includes
+// the file a second time and fatals on the redeclare. This was fragile from the
+// day it was written; any new edge into panel.php would have tripped it.
 $seed = '$_GET = ["w" => "argument"];'
     . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
     . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
     . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
-    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' require_once ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
     . ' $w = xeric_play_open("argument"); $d = $w["db"]; $T = $w["template"];'
     . ' xeric_panel_think($d, "ada_reyes", "We should look at the lease before anybody talks about people.",'
     . '   "the building costs more than four of the jobs and nobody has read the break clause");'
@@ -3527,7 +3588,7 @@ $rawBoot = '$_GET = ["w" => "argument"];'
     . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
     . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
     . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
-    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' require_once ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
     . ' $w = xeric_play_open("argument");'
     . ' $_GET["a"] = (string)xeric_panel_made($w["db"], "the script", ' . var_export($xss, true) . ', "html", "");'
     . ' require ' . var_export(dirname(__DIR__) . '/debrief.php', true) . ';';

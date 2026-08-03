@@ -180,6 +180,36 @@ function xeric_chatter_public(array $t, string $place): bool
     return false;                                    // a place not on the map is not a room
 }
 
+/** Is this even somewhere? A key nobody's map has is not a room to anybody. */
+function xeric_chatter_is_place(array $t, string $place): bool
+{
+    if ($place === '') return false;
+    foreach ((array)($t['places'] ?? []) as $p) {
+        if ((string)($p['key'] ?? '') === $place) return true;
+    }
+    return false;
+}
+
+/**
+ * May this person open the room at all?
+ *
+ * A PUBLIC ROOM, ALWAYS — standing in it or not. That is the whole point of a
+ * channel: you were at home asleep, the bar was talking, and you scroll back
+ * through it in the morning like anybody who missed a group chat.
+ *
+ * A HOME, ONLY FROM INSIDE IT. The beat still never chatters in a house, for
+ * every reason in xeric_chatter_public — but at 23:14 the entire cast is at
+ * home, and that rule made the room you were personally standing in refuse to
+ * open. "I am here, two people are here with me, and I cannot say a word to
+ * either of them" is not privacy, it is a dead end. Being in the room is the
+ * license; you still cannot read somebody's kitchen from across town.
+ */
+function xeric_chatter_readable(array $t, string $place, ?string $youAt): bool
+{
+    if (!xeric_chatter_is_place($t, $place)) return false;
+    return xeric_chatter_public($t, $place) || ($youAt !== null && $youAt === $place);
+}
+
 /** Everyone alive and standing in this place right now. */
 function xeric_chatter_present(array $t, PDO $db, string $place, array $now): array
 {
@@ -322,19 +352,31 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
     $realNow = (int)($opts['real_now'] ?? time());
     $now     = $opts['now'] ?? xeric_clock_now($db, $t, $realNow);
     $epoch   = (int)($now['epoch'] ?? 0);
-    $out     = ['said' => 0, 'place' => $place, 'pace' => 'steady', 'lines' => []];
+    // `rating` is a RECEIPT, not a setting: the ceiling this pass actually ran
+    // at, after the room was folded down to the lowest person standing in it.
+    // The sweep and the scene both keep one, for the same reason — a ceiling
+    // nobody can inspect after the fact is a mood, not a wall.
+    $out     = ['said' => 0, 'place' => $place, 'pace' => 'steady', 'rating' => '', 'lines' => []];
 
-    if (!xeric_chatter_public($t, $place)) return $out;
+    // The beat only ever runs public rooms — heart.php filters the rota before
+    // it gets here, and this is the belt to that brace. `user_here` is the one
+    // thing that opens a house: somebody is standing in it and has just spoken.
+    $userHere = !empty($opts['user_here']);
+    if (!xeric_chatter_readable($t, $place, $userHere ? $place : null)) return $out;
 
+    // TWO TO GOSSIP, ONE TO ANSWER. Idle chatter needs a pair — one person
+    // alone in a room is not a conversation, it is a soliloquy. But a person
+    // standing there talking to the one shopkeeper on shift is, and the pair
+    // rule was refusing that with "there is nobody in there to hear it" while
+    // she stood at the counter.
     $present = xeric_chatter_present($t, $db, $place, $now);
-    if (count($present) < XERIC_CHATTER_MIN) return $out;
+    if (count($present) < ($userHere ? 1 : XERIC_CHATTER_MIN)) return $out;
 
     $due = xeric_chatter_due($t, $db, $place, $realNow, $opts);
     $out['pace'] = $due['pace'];
     if (!$due['due']) return $out;
 
     $conv = xeric_chatter_conversation($t, $db, $place);
-    $userHere = !empty($opts['user_here']);
 
     // THE CEILING IS THE LOWEST PERSON STANDING IN IT — the sweep's sentence,
     // the room's fold, copied verbatim. Folded ONCE, before a single call, and
@@ -344,6 +386,7 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
         $who = xeric_viewer($t, ['handle' => $h]);
         if ($who['is_minor']) $eff = xeric_viewer_rating($eff, $who);
     }
+    $out['rating'] = $eff;
     $protected = xeric_sweep_protected($t);
 
     $names = [];

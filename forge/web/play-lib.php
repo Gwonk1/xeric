@@ -48,6 +48,7 @@ require_once XERIC_WEB_LIB . '/engine/qr.php';          // this xeric, on the ph
 require_once XERIC_WEB_LIB . '/engine/mood.php';        // the town's own needle, which its hours move
 require_once XERIC_WEB_LIB . '/engine/work.php';        // the shift, and how much money is allowed to matter
 require_once XERIC_WEB_LIB . '/engine/table.php';       // and the games a place holds
+require_once XERIC_WEB_LIB . '/engine/chatter.php';     // which places are channels, and to whom
 
 /**
  * How many events one press of the time control may produce.
@@ -1525,17 +1526,36 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     $out .= xeric_play_sideblock('where', 'where everybody is', $standing, true)
          . '<ul class="places">';
 
+    // Which rooms have said something you have not read. The threads list has
+    // this already; the map is where a person actually looks for a place, so
+    // the dot belongs on both.
+    $youAt   = xeric_player_where($t, $db);
+    $unheard = [];
+    foreach ($threads as $tr) {
+        if ((string)($tr['kind'] ?? '') === 'room' && (int)($tr['unread'] ?? 0) > 0) {
+            $unheard[(string)($tr['handle'] ?? '')] = true;
+        }
+    }
+
     foreach ((array)($map['places'] ?? []) as $pl) {
         $who = (array)($pl['who'] ?? []);
         $cls = 'place'
              . (!empty($pl['here']) ? ' here' : '')
              . (empty($pl['open']) ? ' shut' : '')
-             . ($who === [] ? ' empty' : '');
+             . ($who === [] ? ' empty' : '')
+             . (isset($unheard[(string)($pl['key'] ?? '')]) ? ' talking' : '');
 
-        // THE PLACE IS A BUTTON. Knowing where everybody is only matters if you
-        // can then go and stand there, so the name walks you over, through the
-        // same trip the map screen charges for. Where you already are, and
-        // anywhere shut, the name goes back to being a fact.
+        // THE PLACE NAME OPENS THE CHANNEL. It used to be a walk button, and
+        // that was the whole of the bug: every row on the map — the diner, the
+        // school, the shop you run — answered a click by walking you there and
+        // repainting the roster screen, so a town full of rooms had no door into
+        // a single one of them. The only `data-room` buttons in the panel were
+        // in the threads list, which lists channels that have ALREADY been
+        // talked in, so at an hour when nothing had been said there was no way
+        // to reach a room at all.
+        //
+        // A place is a channel first. You look at it to see what is being said,
+        // the way you look at a group chat, and THEN decide whether to go.
         $key  = (string)($pl['key'] ?? '');
         // A SHUT ROOM IS STILL A PLACE YOU CAN WALK TO. This required the place
         // to be OPEN, which made the sidebar stricter than both the engine and
@@ -1547,24 +1567,32 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         $walk = $key !== '' && empty($pl['here']);
         $mins = (int)($pl['minutes'] ?? 0);
         $hrs  = isset($hours[$key]) ? '<span class="phrs">' . h($hours[$key]) . '</span>' : '';
-        // THE WHOLE ROW IS THE DOOR. It used to be a text link with a ten-pixel
-        // "› go" beside it, so a place you could walk into and one you could not
-        // were the same shape — the clean room's rows are full-width targets
-        // with a chevron, and that is the difference between a list of facts and
-        // a list of ways in. The minutes ride the row rather than the tooltip:
-        // how far it is decides whether you go, and a tooltip cannot be read by
-        // a thumb.
+        // TWO TARGETS, because they are two different verbs and one row used to
+        // do both silently. The name reads; the chevron walks. The walk keeps
+        // its minutes on the face of it — how far it is decides whether you go,
+        // and a tooltip cannot be read by a thumb.
+        // THE MARKUP AGREES WITH THE GATE, by asking the gate. A home is a room
+        // only to somebody standing in it (xeric_chatter_readable), and a row
+        // that offers a button the server will refuse is a click that lies —
+        // so the name stays a plain fact on a house you are not inside, and the
+        // walk beside it is the honest thing to press.
+        $chan = $key !== '' && xeric_chatter_readable($t, $key, $youAt);
         $out .= '<li class="' . $cls . '">'
-              . ($walk
-                  ? '<button type="button" class="pl wplace" data-to="' . h($key) . '"'
-                    . ' title="walk there · ' . $mins . ' min">'
-                    . '<span class="pln">' . h((string)$pl['name']) . $hrs . '</span>'
-                    . ($mins > 0 ? '<span class="plm">' . $mins . ' min</span>' : '')
-                    . '<span class="wgo2">›</span></button>'
-                  : '<span class="pl">'
+              . ($chan
+                  ? '<button type="button" class="pl proom" data-room="' . h($key) . '"'
+                    . ' title="read the room">'
                     . '<span class="pln">' . h((string)$pl['name']) . $hrs . '</span>'
                     . (!empty($pl['here']) ? '<span class="youare">you are here</span>' : '')
-                    . '</span>');
+                    . '</button>'
+                  : '<span class="pl"><span class="pln">' . h((string)$pl['name']) . $hrs . '</span>'
+                    . (!empty($pl['here']) ? '<span class="youare">you are here</span>' : '')
+                    . '</span>')
+              . ($walk
+                  ? '<button type="button" class="pwalk wplace" data-to="' . h($key) . '"'
+                    . ' title="walk there · ' . $mins . ' min">'
+                    . ($mins > 0 ? '<span class="plm">' . $mins . ' min</span>' : '')
+                    . '<span class="wgo2">›</span></button>'
+                  : '');
 
         if ($who === []) {
             $out .= '<span class="nobody">' . (empty($pl['open']) ? 'closed' : 'nobody') . '</span>';
@@ -4374,6 +4402,30 @@ body.skipping .wplace .wgo2{visibility:hidden}
 .places li.shut .wplace .pln{color:var(--fg-dim)}
 .places li.shut .wplace:hover .pln,.places li.shut .wplace:focus-visible .pln{color:var(--accent)}
 .wplace:disabled{cursor:default;color:var(--fg-dim)}
+
+/* THE ROW IS TWO VERBS, and it used to be one. Every place on the map was a
+   walk button, so clicking the diner walked you to the diner and repainted the
+   roster — a town of twelve rooms with no door into any of them, because the
+   only way to open a channel was a threads-list row, and that list only holds
+   channels somebody has already talked in.
+
+   The name reads the room. The chevron walks you over. `.pwalk` comes after
+   `.place .wplace` on purpose: it shares the class (the delegated walk handler
+   and the mid-skip lockout both key off `.wplace`) and has to undo the
+   full-width flex that made sense when the name was inside it. */
+.place{display:grid;grid-template-columns:1fr auto;align-items:baseline;column-gap:.3rem}
+.place > .who,.place > .nobody{grid-column:1 / -1}
+.place .proom{font:inherit;background:none;border:0;cursor:pointer;text-align:left;width:100%;
+  padding:.28rem .35rem;margin:0 0 0 -.35rem;border-radius:.35rem;
+  transition:background .12s ease-out,color .12s ease-out;touch-action:manipulation}
+.proom:hover,.proom:focus-visible{color:var(--accent);background:var(--bg-2);outline:none}
+.place.shut .proom:hover,.place.empty .proom:hover,
+.place.shut .proom:focus-visible,.place.empty .proom:focus-visible{color:var(--accent)}
+.place .pwalk{width:auto;flex:0 0 auto;gap:.25rem;padding:.28rem .3rem;margin:0 -.3rem 0 0}
+/* An unread room is the whole reason a channel is worth a glance — same red bar
+   the person-threads use, so the eye learns it once. */
+.place.talking .proom .pln::after{content:'';display:inline-block;width:6px;height:6px;
+  margin-left:.35rem;vertical-align:.08em;border-radius:50%;background:#ff3b30}
 
 /* The cog rides the row's top corner, beside the button it is about. */
 .crow{position:relative}
