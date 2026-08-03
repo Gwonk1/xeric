@@ -156,6 +156,40 @@ ok('hand: eight hundred hands, and not one chip made or lost', $bad === 0);
 ok('hand: nobody ever goes below nothing', $negative === 0);
 ok('hand: and a pot always goes to somebody', $noWinner === 0);
 
+// ---------------------------------------------------------------------------
+// SIDE POTS. Conservation is not enough, and this is the case that proves it.
+//
+// The betting loop deliberately lets a busted seat keep its cards — `$stacks[$h]
+// <= 0` skips their turn, it does not fold them — which is right, because
+// somebody all-in is still entitled to what they matched. But the pot was one
+// heap that the best remaining hand took WHOLE, so a player who put in two chips
+// and could not act again stayed live to the river and collected every chip bet
+// after they were out.
+//
+// Nothing ever drifted: the chips were conserved the entire time, which is
+// exactly why eight hundred hands of counting never noticed. The DISTRIBUTION
+// was wrong, and the distribution is what xeric_table_write() turns into the
+// world's economy counter, into trust between winner and loser, and into a DEBT
+// for whoever came up short — a person carrying a marker they should not owe.
+//
+// A seat that put in at most N can never take more than N from each of the
+// seats at the table. Measured against the unfixed code: 1,329 of 1,398
+// payouts to the short stack broke that, one of them taking 26 chips on a
+// 2-chip stake.
+$overPaid = 0; $shortPaid = 0;
+for ($seed = 1; $seed <= 1200; $seed++) {
+    $seats = ['harlan', 'ruth', 'dot'];
+    $r = xeric_table_hand($T, $seats, ['harlan' => 2, 'ruth' => 40, 'dot' => 40], 1, $seed);
+    $got = (int)($r['paid']['harlan'] ?? 0);
+    if ($got <= 0) continue;
+    $shortPaid++;
+    if ($got > 2 * count($seats)) $overPaid++;
+}
+ok('side pots: the short stack does win sometimes, or this proves nothing',
+    $shortPaid > 100, (string)$shortPaid);
+ok('side pots: and never takes a chip it could not have matched',
+    $overPaid === 0, $overPaid . ' of ' . $shortPaid);
+
 // The same over a whole night, where stacks carry between hands and people
 // bust out — which is where an off-by-one actually shows up.
 $nightBad = 0;
@@ -345,6 +379,53 @@ for ($sd = 0; $sd < 60 && ($lost === null || $lost['net'] >= 0); $sd++) {
 ok('you: a losing night with nothing in your pocket does not go negative',
     $lost !== null && $lost['net'] < 0 && xeric_table_purse($brokeDb) === 0,
     json_encode($lost));
+
+// BUT WHAT YOU COULD NOT COVER IS CARRIED, NOT DROPPED. The floor at zero is
+// right; discarding the shortfall behind it was not. The town half of
+// xeric_table_write() has refused to do this since it was written, in a comment
+// that says exactly why — "a person at nothing who loses five and wins five
+// back is up five, and a season of Thursdays quietly mints money". It did:
+// measured over forty nights from an empty purse, the purse read 304 against an
+// honest running net of 291.
+ok('you: and what you could not cover is carried as a marker',
+    xeric_table_owed($brokeDb) > 0, (string)xeric_table_owed($brokeDb));
+
+// The whole point of carrying it: winnings pay the marker down before they
+// reach your pocket, so losing and winning the same amount leaves you level
+// rather than ahead.
+// AND THE MARKER IS PAID DOWN BEFORE THE POCKET IS, which is the half that
+// stops the minting. $brokeDb is standing at nothing with a marker against it
+// from the night above, so every chip won from here is the debt coming back
+// before it is ever yours. The invariant is checked after EVERY night rather
+// than once at the end: position (purse minus marker) equals the honest running
+// net, always.
+//
+// Built out of a losing night that was searched for, rather than hoping a run
+// happens to lose — the first version of this assertion passed against the
+// UNFIXED code because the run it used happened to win.
+$start = xeric_table_purse($brokeDb) - xeric_table_owed($brokeDb);
+ok('you: the marker is real and the pocket is empty before this starts',
+    $start < 0 && xeric_table_purse($brokeDb) === 0, (string)$start);
+
+$honest = $start;
+$drift  = null;
+$paidDown = false;
+$owedWas = xeric_table_owed($brokeDb);
+for ($sd = 0; $sd < 40; $sd++) {
+    $n = xeric_table_sit($Tyou, $brokeDb, $TABLE, ['harlan', 'ruth', 'dot'], 'reckless', 10, 700 + $sd);
+    $honest += (int)$n['net'];
+    $owedNow = xeric_table_owed($brokeDb);
+    if ($owedNow < $owedWas) $paidDown = true;
+    $owedWas = $owedNow;
+    $pos = xeric_table_purse($brokeDb) - $owedNow;
+    if ($pos !== $honest && $drift === null) $drift = "night $sd: position $pos, honest $honest";
+}
+ok('you: winning it back pays the marker down rather than filling the pocket',
+    $paidDown);
+ok('you: and forty more nights mint nothing out of an empty pocket',
+    $drift === null, (string)$drift);
+ok('you: and both halves stay numbers nobody has to read as negative',
+    xeric_table_purse($brokeDb) >= 0 && xeric_table_owed($brokeDb) >= 0);
 
 // ---------------------------------------------------------------------------
 // 7. WHAT WAS SAID WHILE IT HAPPENED. One model call a night, describing rather

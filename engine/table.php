@@ -248,11 +248,18 @@ function xeric_table_hand(array $t, array $seats, array $stacks, int $bet, int $
     $in  = array_fill_keys($seats, true);
     $log = [];
 
+    // WHAT EACH SEAT ACTUALLY PUT IN, which is the whole of the side-pot rule.
+    // A player cannot win a chip they never matched, and without this the pot
+    // was one undifferentiated heap that the best hand took whole — see the
+    // payout at the bottom of this function.
+    $contrib = array_fill_keys($seats, 0);
+
     // The ante, so there is always something to play for. A table where
     // everybody can fold for free is a table where nothing ever happens.
     foreach ($seats as $h) {
         $ante = min($bet, $stacks[$h]);
-        $stacks[$h] -= $ante;
+        $stacks[$h]  -= $ante;
+        $contrib[$h] += $ante;
         $pot += $ante;
     }
     $log[] = 'Everybody antes ' . $bet . '.';
@@ -284,9 +291,10 @@ function xeric_table_hand(array $t, array $seats, array $stacks, int $bet, int $
                 if ($m['do'] === 'check') { $log[] = $name . ' checks.'; continue; }
 
                 $put = min($m['chips'], $stacks[$h]);
-                $stacks[$h] -= $put;
-                $owed[$h]   += $put;
-                $pot        += $put;
+                $stacks[$h]  -= $put;
+                $owed[$h]    += $put;
+                $contrib[$h] += $put;
+                $pot         += $put;
                 $high = max($high, $owed[$h]);
                 $log[] = $name . ' ' . ($m['do'] === 'raise' ? 'raises' : ($toCall > 0 ? 'calls' : 'bets'))
                        . ' ' . $put . '.';
@@ -313,7 +321,65 @@ function xeric_table_hand(array $t, array $seats, array $stacks, int $bet, int $
         }
     }
 
-    $paid = xeric_pot_split($pot, $winners);
+    // ── SIDE POTS ────────────────────────────────────────────────────────────
+    //
+    // The pot used to be one heap that the best remaining hand took whole, and
+    // the loop above deliberately lets a busted player keep their seat
+    // (`$stacks[$h] <= 0` skips their turn, it does not fold them) — which is
+    // right, because somebody all-in is still entitled to what they matched. The
+    // two together meant a player who put in two chips and could not act again
+    // stayed live to the river and collected every chip bet after they were out.
+    // Measured: 4,883 hands in 20,000 with one short stack at the table.
+    //
+    // Chips still conserved globally, so nothing ever drifted and nothing looked
+    // wrong — but the DISTRIBUTION is what everything downstream reads.
+    // xeric_table_write() turns the net into the world's economy counter, into
+    // trust between winner and loser, and into a DEBT for whoever came up short.
+    // A person carrying a debt they should not owe is a construct with a face on
+    // it, which is the most expensive kind of wrong thing this engine can write.
+    //
+    // So the heap is cut into layers at every all-in level. Each layer holds
+    // what everybody still in at that level put into it, and is contested only
+    // by the players who reached it. Folded money stays in the layer it was
+    // paid into — a fold does not take chips back off the table.
+    $levels = array_values(array_unique(array_filter($contrib, fn($c) => $c > 0)));
+    sort($levels);
+
+    $paid = [];
+    $prev = 0;
+    foreach ($levels as $level) {
+        $slice = 0;
+        foreach ($contrib as $c) if ($c >= $level) $slice += $level - $prev;
+
+        // Who may win THIS layer: still holding cards, and in for at least this
+        // much. Ranked off the scores already computed for the showdown, so one
+        // hand is evaluated once however many layers it is eligible for.
+        $eligible = [];
+        foreach ($live as $h) if (($contrib[$h] ?? 0) >= $level) $eligible[] = $h;
+
+        if ($eligible === []) { $prev = $level; continue; }
+        if (count($eligible) === 1 || !$showdown) {
+            $take = [$eligible[0]];
+        } else {
+            $best = null;
+            foreach ($eligible as $h) {
+                $s = $sd['scores'][$h] ?? [];
+                if ($best === null || $s > $best) $best = $s;
+            }
+            $take = [];
+            foreach ($eligible as $h) if (($sd['scores'][$h] ?? []) === $best) $take[] = $h;
+        }
+
+        foreach (xeric_pot_split($slice, $take) as $h => $n) {
+            $paid[$h] = ($paid[$h] ?? 0) + $n;
+        }
+        $prev = $level;
+    }
+
+    // `winners` keeps meaning what it always meant — who won the HAND, which is
+    // what the log line above already said and what a person at the table would
+    // answer. Who ended up with which chips is `paid`, and with side pots those
+    // are no longer the same question.
     foreach ($paid as $h => $n) $stacks[$h] += $n;
 
     return ['pot' => $pot, 'board' => $board, 'hole' => $hole,
@@ -517,6 +583,33 @@ function xeric_table_purse(PDO $db, int $player = XERIC_PLAYER_FIRST): int
 }
 
 /**
+ * WHAT YOU COULD NOT COVER, and are still carrying.
+ *
+ * The purse is floored at zero on purpose — a xeric lets you lose your wages
+ * and never lets you go into the hole to a card game. But the shortfall was
+ * being DISCARDED rather than accounted, and that is the exact thing the town
+ * half of xeric_table_write() refuses to do, eighty lines up, in a comment
+ * that explains why: "a person at nothing who loses five and wins five back is
+ * up five, and a season of Thursdays quietly mints money."
+ *
+ * It did. Measured over forty nights from an empty purse: purse 304 against an
+ * honest running net of 291 — thirteen chips out of nothing, while the three
+ * NPCs at the same table carried their shortfalls as debts.
+ *
+ * So it is carried here instead. The purse stays a number that is never
+ * negative, and this is the marker behind it: winnings pay it down before they
+ * reach your pocket. NOT a debt with a face on it — xeric_debt_form() requires
+ * both parties to be characters and the person at the centre is not one, which
+ * is a real limit and the natural upgrade if debts ever learn about players.
+ * Money is the fungible half of this engine and a counter is the right shape
+ * for it; what a counter must not do is forget.
+ */
+function xeric_table_owed(PDO $db, int $player = XERIC_PLAYER_FIRST): int
+{
+    return max(0, (int)(xeric_world_state_get($db, xeric_player_key('table.owed', $player)) ?? 0));
+}
+
+/**
  * A night with you in it. Pure, like xeric_table_play, and for the same reason.
  *
  * You are seated as XERIC_TABLE_YOU with a nerve from your declared style, and
@@ -577,8 +670,17 @@ function xeric_table_sit(array $t, PDO $db, array $table, array $seats, string $
     $db->beginTransaction();
     try {
         xeric_table_write($t, $db, $table, $townOnly, $at, $epoch);
-        $purse = max(0, xeric_table_purse($db, $player) + $you);
+
+        // YOUR TRUE POSITION FIRST, then split it into a purse and a marker.
+        // The purse is never negative — a xeric lets you lose your wages and
+        // never lets you go into the hole to a card game — but what you could
+        // not cover is CARRIED rather than dropped, so winning it back does not
+        // leave you ahead of where you started. See xeric_table_owed().
+        $bal   = xeric_table_purse($db, $player) - xeric_table_owed($db, $player) + $you;
+        $purse = max(0, $bal);
+        $owed  = max(0, -$bal);
         xeric_world_state_set($db, xeric_player_key('work.wages', $player), (string)$purse, $at);
+        xeric_world_state_set($db, xeric_player_key('table.owed', $player), (string)$owed, $at);
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
