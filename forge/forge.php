@@ -846,17 +846,36 @@ function xeric_forge_world_name_ok(string $name, array $naming): bool
  * The world's name, kept or replaced. A name the premise itself contains is
  * the user's decision and is never touched, banned or not — somebody who
  * typed "a town called Blackwood, like my grandmother's" has already chosen.
+ *
+ * The register test is here rather than in the ban check above, because the
+ * ban check is also what vets the replacements, and a bank entry fits its own
+ * register by construction. Worlds get the same gate the doors and the people
+ * get, and for the same reason: a town of Boudreauxs and Thibodeauxs was
+ * called Stone Fleet Wharf, which is the whole complaint one pass earlier.
  */
 function xeric_forge_fresh_world_name(string $name, array $naming, string $premise = ''): string
 {
     if ($name === '') return $name;
     if ($premise !== '' && mb_stripos($premise, $name) !== false) return $name;
-    if (xeric_forge_world_name_ok($name, $naming)) return $name;
-    $bank = array_merge((array)$naming['toponyms'], (array)($naming['over']['toponyms'] ?? []));
-    if ($bank === []) return $name;
-    $start = (crc32(xeric_forge_name_norm($name)) & 0x7fffffff) % count($bank);
-    for ($k = 0; $k < count($bank); $k++) {
-        $cand = (string)$bank[($start + $k) % count($bank)];
+    if (xeric_forge_world_name_ok($name, $naming) && xeric_forge_name_fits_register($name, $naming)) {
+        return $name;
+    }
+
+    // ITS OWN BANK FIRST. The overflow is the OTHER registers' ground, kept for
+    // the day a bank runs dry, and hashing a start position across the whole
+    // merged list meant a world of six local toponyms and a hundred and eighty
+    // foreign ones took a foreign one ~97 times out of 100 — the register was
+    // being consulted and then walked straight past.
+    $own  = array_values(array_filter(array_map('strval', (array)$naming['toponyms']), fn($v) => trim($v) !== ''));
+    $over = array_values(array_filter(array_map('strval', (array)($naming['over']['toponyms'] ?? [])), fn($v) => trim($v) !== ''));
+    if ($own === [] && $over === []) return $name;
+
+    $bank = $own;
+    if ($own !== []) {
+        $start = (crc32(xeric_forge_name_norm($name)) & 0x7fffffff) % count($own);
+        $bank = array_merge(array_slice($own, $start), array_slice($own, 0, $start));
+    }
+    foreach (array_merge($bank, $over) as $cand) {
         if (xeric_forge_world_name_ok($cand, $naming)) return $cand;
     }
     return $name;
@@ -918,7 +937,7 @@ function xeric_forge_name_trade(): array
         . 'barber salon laundry cleaners bathhouse garage motors auto service filling pump gas fuel '
         . 'oil coal station depot terminal yard works mill lumber timber sawmill foundry refinery '
         . 'forge smithy blacksmith stable stables livery granary silo elevator shed '
-        . 'office offices bank registry records record land deeds title court courthouse jail '
+        . 'office offices bank registry records record ledger land deeds title court courthouse jail lockup '
         . 'firehouse armory post mail library museum school schoolhouse academy college institute '
         . 'church chapel parish mission temple synagogue mosque clinic hospital infirmary surgery '
         . 'pharmacy apothecary drug dentist funeral mortuary cemetery graveyard '
@@ -999,7 +1018,7 @@ function xeric_forge_register_words(array $naming): array
  *
  * Fails open on a register too thin to have an opinion.
  */
-function xeric_forge_place_fits_register(string $name, array $naming): bool
+function xeric_forge_name_fits_register(string $name, array $naming): bool
 {
     $words = xeric_forge_register_words($naming);
     if (count($words) < 8) return true;
@@ -1114,7 +1133,7 @@ function xeric_forge_fresh_place_name(string $name, string $kind, array $naming,
     }
     if ($name !== '' && xeric_forge_place_name_ok($name, $naming) && !isset($used[$norm])) {
         // A good name from the wrong town. Keep the door, change the sign.
-        if (!xeric_forge_place_fits_register($name, $naming)) {
+        if (!xeric_forge_name_fits_register($name, $naming)) {
             $re = xeric_forge_place_reface($name, $naming, $i, $used);
             if ($re !== '') return $re;
         } else {
@@ -1577,7 +1596,7 @@ function xeric_forge_pass_places(array $answers, array $concept, array $endpoint
         $gate = function (array $p, int $i) use ($naming, $brief, &$fresh, &$renamed, &$offkey): array {
             $was = (string)($p['name'] ?? '');
             if ($was === '') return $p;
-            $fit = xeric_forge_place_fits_register($was, $naming);
+            $fit = xeric_forge_name_fits_register($was, $naming);
             $p['name'] = xeric_forge_fresh_place_name($was, (string)($p['kind'] ?? ''), $naming, $i, $fresh, $brief);
             if ($p['name'] !== $was) { $fit ? $renamed++ : $offkey++; }
             return $p;

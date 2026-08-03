@@ -160,6 +160,32 @@ const ANSWERS = [
     'hours' => '16:00-00:00', 'motivation' => 'romance', 'rating' => 'mature',
 ];
 
+/**
+ * The register the build fixture is forged under, pinned so the fixture is
+ * about the BUILD.
+ *
+ * Without a pin the register falls out of a hash over the answers, and the
+ * naming gates then judge every hand-written stub name against whichever of
+ * the thirty it landed on — so a stub town called Ostrander full of Verna's
+ * and St Brigid's came back renamed the day the register gate reached the
+ * doors, and again the day it reached the world's own name. That is the gate
+ * working. It is also a fixture testing something it never meant to test.
+ *
+ * The banks below are the fixture's own names, which is what makes them fit.
+ * Registers, invention, pins and the gates themselves are covered on their own
+ * further down; nothing here stands in for that.
+ */
+const STUB_REGISTER = [
+    'key' => 'stub_fixture', 'label' => 'the fixture register',
+    'sound' => 'plain American names, kept ordinary on purpose',
+    'given'  => ['Ada', 'Verna', 'Brigid', 'Nell', 'Roy', 'Mabel', 'Otis', 'Ruth', 'Hollis', 'Wendell'],
+    'family' => ['Ostrander', 'Pike', 'Quill', 'Hodder', 'Rance', 'Sowell', 'Tilden', 'Verity', 'Larkin', 'Denby'],
+    'toponyms' => ['Ostrander', 'Kettle Bight', 'Pike Run', 'Hodder Cross', 'Tilden Flat', 'Quill Reach'],
+    'businesses' => ['the Ostrander Ledger', 'Pike Hardware', 'Hodder Dry Goods', 'Tilden Coal',
+                     'Quill Ice House', 'Rance Feed'],
+    'church' => 'St Brigid',
+];
+
 // ---------------------------------------------------------------------------
 // The interview, as data
 // ---------------------------------------------------------------------------
@@ -274,7 +300,7 @@ ok('the notes say what fell back', (bool)array_filter($junkBuild['notes'], fn($n
 // The happy path: a model that answers properly
 // ---------------------------------------------------------------------------
 
-$built = xeric_forge_build(ANSWERS, stub_good(), ['places' => 6, 'cast' => 4]);
+$built = xeric_forge_build(ANSWERS + ['register' => STUB_REGISTER], stub_good(), ['places' => 6, 'cast' => 4]);
 $t = $built['template'];
 
 ok('a forged world validates', validates($t) === '', validates($t));
@@ -1492,6 +1518,42 @@ ok('and an ordinary name passes', xeric_forge_world_name_ok('Ostrander', $nm) &&
 ok('a banned world name the premise itself contains is the user\'s choice and stands',
     xeric_forge_fresh_world_name('Blackwood', $nm, 'a town called Blackwood, like my grandmother\'s') === 'Blackwood');
 
+// The world's own name gets the gate the doors and the people get. A town of
+// Boudreauxs and Thibodeauxs was called Stone Fleet Wharf, which is the whole
+// complaint one pass earlier — and the ban list had nothing to say about it,
+// because there is nothing wrong with the name except where it is.
+$delta = [
+    'key' => 'delta', 'label' => 'Delta', 'sound' => 'Louisiana French',
+    'given' => ['Théophile', 'Odelia', 'Clovis', 'Remy'],
+    'family' => ['Boudreaux', 'Broussard', 'Thibodeaux', 'Fontenot', 'LeBlanc', 'Gautreau'],
+    'toponyms' => ['Bayou Petit', 'Terrebonne', 'Vermilion', 'Grand Chenier', 'Anse la Butte', 'Pointe Noire'],
+    'businesses' => ['Boudreaux Feed & Seed', 'LeBlanc Ice House'], 'church' => 'Sainte-Rita de Vermilion',
+    'over' => ['given' => [], 'family' => [],
+               'toponyms' => ['Kettle Bight', 'Marbach Corner', 'Zwolle Flats', 'Skerry Head'], 'businesses' => []],
+    'banned_given' => [], 'banned_family' => [], 'banned_world' => [], 'banned_suffix' => [],
+    'used' => ['worlds' => [], 'places' => [], 'given' => [], 'family' => []],
+];
+ok('a world named out of the wrong register is renamed, ban list or no ban list',
+    xeric_forge_fresh_world_name('Stone Fleet Wharf', $delta) !== 'Stone Fleet Wharf'
+    && xeric_forge_fresh_world_name('Millbrook', $delta) !== 'Millbrook');
+ok('and a world already named out of its own register is left alone',
+    xeric_forge_fresh_world_name('Petit Caillou', $delta) === 'Petit Caillou'
+    && xeric_forge_fresh_world_name('Grand Bayou Sec', $delta) === 'Grand Bayou Sec');
+ok('the premise still outranks the register',
+    xeric_forge_fresh_world_name('Millbrook', $delta, 'a town called Millbrook, like my grandmother\'s')
+        === 'Millbrook');
+
+// The overflow is the OTHER registers' ground, kept for the day a bank runs
+// dry. Hashing a start position across the whole merged list meant a world with
+// six local toponyms and a hundred and eighty foreign ones took a foreign one
+// almost every time: the register was consulted and then walked straight past.
+$foreign = 0;
+foreach (['Stone Fleet Wharf', 'Millbrook', 'Ashwick', 'Redhill', 'Kingsbridge', 'Fernvale',
+          'Northwich', 'Oakmere'] as $w) {
+    if (in_array(xeric_forge_fresh_world_name($w, $delta), $delta['over']['toponyms'], true)) $foreign++;
+}
+ok('a rename takes the world\'s OWN ground before another register\'s', $foreign === 0, (string)$foreign);
+
 $usedP = [];
 $rusty = xeric_forge_fresh_place_name('The Rusty Anchor', 'bar', $nm, 0, $usedP);
 ok('the Rusty <thing> shape is replaced', stripos($rusty, 'rusty') === false, $rusty);
@@ -1523,18 +1585,18 @@ $cajun = [
 $offkey = ['River Valley Land Registry', "Lowell's Bread & Provisions", 'The Stone Fleet Tavern',
            "Caldwell's Hardware", 'Wharfside Post Office', 'High Ridge Orchard'];
 $bad = [];
-foreach ($offkey as $n) if (xeric_forge_place_fits_register($n, $cajun)) $bad[] = $n;
+foreach ($offkey as $n) if (xeric_forge_name_fits_register($n, $cajun)) $bad[] = $n;
 ok('a shopfront from the wrong town does not pass for a local one', $bad === [], implode(', ', $bad));
 
 $fits = ['Boudreaux Feed & Seed', "Thibodeaux's Garage", 'Bayou Petit Landing', 'Dupré Ice House',
          'Sainte-Rita de Vermilion'];
 $bad = [];
-foreach ($fits as $n) if (!xeric_forge_place_fits_register($n, $cajun)) $bad[] = $n;
+foreach ($fits as $n) if (!xeric_forge_name_fits_register($n, $cajun)) $bad[] = $n;
 ok('a name already out of the register is left alone', $bad === [], implode(', ', $bad));
 
 ok('a name with nothing cultural in it belongs everywhere and is not touched',
-    xeric_forge_place_fits_register('the Post Office', $cajun)
-    && xeric_forge_place_fits_register('the Tavern', $cajun));
+    xeric_forge_name_fits_register('the Post Office', $cajun)
+    && xeric_forge_name_fits_register('the Tavern', $cajun));
 
 // Both of these were renamed by the first cut of the gate, and both were made
 // worse by it: "the Old Schoolhouse" came back as "the Old Pointe Noire" with
@@ -1544,7 +1606,7 @@ ok('a name with nothing cultural in it belongs everywhere and is not touched',
 $plain = ['The Old Schoolhouse', 'Parish Records Office', 'The Union Hall', 'Main Street Diner',
           'North Market', 'the Ferry Landing'];
 $bad = [];
-foreach ($plain as $n) if (!xeric_forge_place_fits_register($n, $cajun)) $bad[] = $n;
+foreach ($plain as $n) if (!xeric_forge_name_fits_register($n, $cajun)) $bad[] = $n;
 ok('a name made only of trade and address is nobody\'s and stays', $bad === [], implode(', ', $bad));
 
 $usedT = [];
@@ -1555,7 +1617,7 @@ ok('and a rename can never cost a place what it IS',
 $thin = $cajun;
 $thin['given'] = $thin['family'] = $thin['toponyms'] = $thin['businesses'] = [];
 $thin['church'] = '';
-ok('a register with no banks has no opinion', xeric_forge_place_fits_register('Caldwell\'s Hardware', $thin));
+ok('a register with no banks has no opinion', xeric_forge_name_fits_register('Caldwell\'s Hardware', $thin));
 
 // The repair keeps the door and changes the sign: whatever says what the place
 // DOES stays where the model put it, and only the wrong-town word moves.
@@ -1566,7 +1628,7 @@ ok('every wrong-town door gets a local name',
     count(array_filter($refaced, fn($v, $k) => $v !== $k, ARRAY_FILTER_USE_BOTH)) === count($offkey),
     implode(' | ', $refaced));
 ok('and the new names all sound like they came from here',
-    array_filter($refaced, fn($v) => !xeric_forge_place_fits_register($v, $cajun)) === [],
+    array_filter($refaced, fn($v) => !xeric_forge_name_fits_register($v, $cajun)) === [],
     implode(' | ', $refaced));
 ok('the possessive stays a possessive and the trade survives the rename',
     str_ends_with($refaced["Caldwell's Hardware"], "'s Hardware")
