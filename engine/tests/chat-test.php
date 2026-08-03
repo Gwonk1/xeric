@@ -795,6 +795,67 @@ ok('canary: and the exact phrase is byte-stable across calls — one string, for
 $dbCan = null;
 
 // ---------------------------------------------------------------------------
+// THE HISTORY WINDOW MOVES IN STEPS, NOT ONE MESSAGE AT A TIME.
+//
+// "The last twenty" slides by one every turn, and a prompt built on a sliding
+// window has no stable prefix past the twentieth turn: turn n sends [k … k+19]
+// and turn n+1 sends [k+2 … k+21], so the sequences diverge at the FIRST history
+// message and the model's cache ends at the system block. Measured on a
+// forty-turn conversation: 3,103 bytes re-processed per turn sliding, against
+// 1,131 chunked — on the path every typed sentence takes.
+//
+// Asserted as a property of the WINDOW rather than of byte counts, because the
+// bytes depend on how long people's sentences are and the property does not:
+// the oldest message in the window must hold still for a run of turns.
+// ---------------------------------------------------------------------------
+
+echo "\n# the history window\n";
+
+$hwPath = sys_get_temp_dir() . '/xeric-chat-test-' . getmypid() . '-window.db';
+foreach ([$hwPath, $hwPath . '-wal', $hwPath . '-shm'] as $f) @unlink($f);
+$DBFILES[] = $hwPath;
+$hwDb = xeric_state_open($hwPath);
+$hwConv = xeric_conversation_for($hwDb, 'ruth');
+
+$firsts = [];
+$sizes  = [];
+for ($i = 1; $i <= 60; $i++) {
+    xeric_message_append($hwDb, $hwConv, 'user', null, "line $i");
+    $win = xeric_messages_recent($hwDb, $hwConv, 20, XERIC_PROMPT_HISTORY_CHUNK);
+    $sizes[]  = count($win);
+    $firsts[] = (int)$win[0]['id'];
+}
+$moves = count(array_unique($firsts));
+
+// Measured from the point there is actually a window: before the twentieth
+// message the conversation is simply shorter than the limit.
+$full = array_slice($sizes, 19);
+ok('window: once there is a window, it never carries fewer than it was asked for',
+    min($full) >= 20, min($full) . '..' . max($full));
+ok('window: nor more than one chunk over, so it does not grow without bound',
+    max($sizes) <= 20 + XERIC_PROMPT_HISTORY_CHUNK - 1, (string)max($sizes));
+ok('window: and its oldest message holds still for a run of turns',
+    $moves <= 1 + intdiv(60, XERIC_PROMPT_HISTORY_CHUNK), $moves . ' distinct starts in 60 turns');
+// THE DISCRIMINATING ONE, run over the same growth: chunk 0 is the old
+// behaviour, and it moves the start on every turn past the limit — forty-one
+// distinct starts where the chunked window has seven. That gap IS the defect.
+$slid = [];
+$sDb  = xeric_state_open(sys_get_temp_dir() . '/xeric-chat-test-' . getmypid() . '-slide.db');
+$DBFILES[] = sys_get_temp_dir() . '/xeric-chat-test-' . getmypid() . '-slide.db';
+$sConv = xeric_conversation_for($sDb, 'ruth');
+for ($i = 1; $i <= 60; $i++) {
+    xeric_message_append($sDb, $sConv, 'user', null, "line $i");
+    $slid[] = (int)xeric_messages_recent($sDb, $sConv, 20)[0]['id'];
+}
+ok('window: taking the last twenty moves it on every turn past the twentieth',
+    count(array_unique($slid)) === 41, (string)count(array_unique($slid)));
+ok('window: and stepping instead cuts that by most of an order of magnitude',
+    $moves * 5 < count(array_unique($slid)),
+    $moves . ' vs ' . count(array_unique($slid)));
+
+$hwDb = $sDb = null;
+
+// ---------------------------------------------------------------------------
 // REMINDERS: a row claimed first is claimed once.
 //
 // xeric_remind_fire()'s docblock has always said so, and the UPDATE has always

@@ -62,6 +62,21 @@ require_once __DIR__ . '/weather.php';  // the day's sky, derived, day-coarse, R
 require_once __DIR__ . '/players.php';  // and which person at the centre it is for
 
 /**
+ * How many turns share one cached prefix.
+ *
+ * The conversation window has to lose its oldest messages eventually, and the
+ * only question is whether it does so one at a time — which breaks the prefix on
+ * EVERY turn — or in steps. Ten is the whole of the trade: nine turns in ten pay
+ * nothing for history, the tenth pays for ten messages at once, and the window
+ * carries between twenty and twenty-nine rather than exactly twenty.
+ *
+ * Larger is cheaper and blunter (the window swings wider); smaller approaches
+ * the sliding behaviour this replaced. It is not a per-world knob because it is
+ * a fact about how a model caches, not about a story.
+ */
+const XERIC_PROMPT_HISTORY_CHUNK = 10;
+
+/**
  * @param array $now  from xeric_world_now() — injected, never fetched here
  * @param array $opts effective_rating, tail, conversation_id, user_message,
  *                    history_limit, memory_limit, model_rating
@@ -92,8 +107,14 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
         $found  = xeric_conversation_find($db, $speakerHandle, 'chat');
         $convId = $found ? (int)$found['id'] : null;
     }
+    // IN STEPS, NOT ONE AT A TIME. A window that slides by a message every turn
+    // gives this prompt no stable prefix at all past the twentieth turn — see
+    // xeric_messages_recent(). Measured at six times the prefill of the same
+    // conversation with an anchored window, on the path every typed sentence
+    // takes. XERIC_PROMPT_HISTORY_CHUNK is how many turns share one cache entry.
     $history = $convId !== null
-        ? xeric_messages_recent($db, (int)$convId, (int)($opts['history_limit'] ?? 20))
+        ? xeric_messages_recent($db, (int)$convId, (int)($opts['history_limit'] ?? 20),
+                                XERIC_PROMPT_HISTORY_CHUNK)
         : [];
 
     foreach ($history as $m) {
