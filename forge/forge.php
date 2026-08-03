@@ -487,6 +487,126 @@ function xeric_forge_note(?callable $onNote, string $msg): void
 // unreadable registers.json quietly degrades to shelf-only gates (contrast
 // interview.json, which throws — the interview is the product).
 
+/**
+ * A COORDINATE, AND THE REGISTER THE MODEL INVENTS ON IT.
+ *
+ * The thirty registers below are a mode-collapse countermeasure and they work —
+ * but they are also a menu, and a world could only ever be one of thirty
+ * somewheres. Eleven hundred hand-written names bought thirty places.
+ *
+ * WHY NOT JUST ASK THE MODEL. Because that is what happened before registers
+ * existed: eight worlds, Elias Thorne in every one, Thorne/Vane/Vance/Voss
+ * across 27 of 32 surnames. And it was not a seed problem — engine/llm.php
+ * passes no sampler seed, so llama.cpp drew a fresh one on every one of those
+ * calls. A seed picks WITHIN a distribution; it cannot move one. Temperature
+ * was tried on top of that and rejected for the same reason.
+ *
+ * WHAT DOES MOVE ONE is conditioning the model has real associations with. So:
+ * an era, a people, a place, drawn independently and handed over as a
+ * coordinate the model did not choose. Sixteen by eighteen by fourteen is four
+ * thousand somewheres out of forty-eight hand-written lines — the opposite
+ * trade to the table, which spends eleven hundred lines on thirty.
+ *
+ * The invented register is the SAME SHAPE as a written one, so nothing
+ * downstream changes: the gates replace from its banks, the pin carries it into
+ * the template, and a character reroll a year later reads it back. It fails to a
+ * written register, because a naming failure must never be a build failure.
+ */
+function xeric_forge_coordinate(): array
+{
+    $ax = (array)(xeric_forge_registers()['axes'] ?? []);
+    $one = static function (string $k) use ($ax): string {
+        $rows = array_values(array_filter((array)($ax[$k] ?? []), 'is_string'));
+        return $rows === [] ? '' : (string)$rows[random_int(0, count($rows) - 1)];
+    };
+    return ['era' => $one('era'), 'people' => $one('people'), 'place' => $one('place')];
+}
+
+/**
+ * One call: the naming culture of a place that has never existed.
+ *
+ * Returns a register in registers.json's own shape, or null — and null is a
+ * normal answer rather than an error. Every caller falls back to the table.
+ */
+function xeric_forge_register_invent(array $coord, array $endpoint, ?callable $note = null): ?array
+{
+    $where = trim(implode(', ', array_filter([
+        (string)($coord['place'] ?? ''), (string)($coord['people'] ?? ''),
+        (string)($coord['era'] ?? '')])));
+    if ($where === '') return null;
+
+    $shape = '{ "label": "…", "sound": "…", "given": ["…"], "family": ["…"], '
+           . '"toponyms": ["…"], "businesses": ["…"], "church": "…" }';
+
+    $msgs = [
+        ['role' => 'system', 'content' =>
+            'You invent the naming culture of one place: what its people are actually called, '
+            . 'and what its streets and businesses are actually called. '
+            . 'Reply with ONE JSON object and nothing else.'],
+        ['role' => 'user', 'content' =>
+            "THE PLACE: " . $where . ".\n\n"
+            . "Write the names this place would really use — the ones on its mailboxes, its "
+            . "shopfronts and its road signs. Specific to THIS place and era, never generic "
+            . "fantasy or thriller names.\n\n"
+            . $shape . "\n"
+            . "- label: three or four words naming this naming culture.\n"
+            . "- sound: ONE line on how a name from here sounds, and what somebody is called "
+            . "day to day against what is on an envelope.\n"
+            . "- given: 14 first names, mixed, spanning a whole lifetime of ages.\n"
+            . "- family: 10 surnames.\n"
+            . "- toponyms: 6 place names — districts, roads, landmarks.\n"
+            . "- businesses: 6 full names as they read over a door.\n"
+            . "- church: what the congregation, hall or meeting actually gets called.\n"
+            . "No prose outside the JSON."],
+    ];
+
+    // THROUGH xeric_forge_ask, not straight to the model. Every pass in a build
+    // carries the per-call ceiling it was given — llm.php's own default is 600s
+    // and the queue hands the GPU on after 420, so an unbounded call here is the
+    // one that makes `touch queue.drained` a request the build never hears. The
+    // suite asserts this for every pass and caught this one on its first run.
+    $opts = ['temperature' => 1.0, 'max_tokens' => 700];
+    try {
+        $raw = xeric_forge_ask($endpoint, 'register', $msgs, $opts, $note);
+    } catch (Throwable $e) {
+        if ($note) $note('register: the model had no answer, using a written one');
+        return null;
+    }
+
+    $list = static function ($v, int $min): array {
+        $out = [];
+        foreach ((array)$v as $x) {
+            $x = trim(preg_replace('/\s+/u', ' ', (string)$x) ?? '');
+            if ($x !== '' && mb_strlen($x) <= 60) $out[] = $x;
+        }
+        $out = array_values(array_unique($out));
+        return count($out) >= $min ? $out : [];
+    };
+
+    // A HALF-INVENTED REGISTER IS WORSE THAN A WRITTEN ONE, because the gates
+    // replace FROM these banks: a bank of three names walked by position runs
+    // dry on a cast of twelve, and the overflow then quietly hands this world
+    // somebody else's culture. Short banks are refused whole.
+    $reg = [
+        'key'        => 'invented',
+        'label'      => trim((string)($raw['label'] ?? '')) ?: $where,
+        'sound'      => trim((string)($raw['sound'] ?? '')),
+        'given'      => $list($raw['given'] ?? [], 8),
+        'family'     => $list($raw['family'] ?? [], 6),
+        'toponyms'   => $list($raw['toponyms'] ?? [], 4),
+        'businesses' => $list($raw['businesses'] ?? [], 4),
+        'church'     => trim((string)($raw['church'] ?? '')),
+        'coord'      => $coord,
+    ];
+    if ($reg['sound'] === '' || $reg['given'] === [] || $reg['family'] === []
+        || $reg['toponyms'] === [] || $reg['businesses'] === []) {
+        if ($note) $note('register: what came back was too thin to name a world from, using a written one');
+        return null;
+    }
+    if ($note) $note('register: ' . $reg['label'] . ' — ' . $where);
+    return $reg;
+}
+
 /** registers.json, memoized per path. Never throws; see the section comment. */
 function xeric_forge_registers(?string $path = null): array
 {
@@ -499,6 +619,12 @@ function xeric_forge_registers(?string $path = null): array
     return $memo[$path] = [
         'registers' => array_values((array)($data['registers'] ?? [])),
         'banned'    => (array)($data['banned'] ?? []),
+        // The axes a world's coordinate is drawn from. This loader whitelists
+        // rather than passes through, so a key added to the file and not to
+        // this list is silently absent — which is exactly what happened, and it
+        // failed the honest way: an empty coordinate returns null and every
+        // world quietly took a written register instead.
+        'axes'      => (array)($data['axes'] ?? []),
     ];
 }
 
@@ -613,15 +739,30 @@ function xeric_forge_naming(array $answers): array
     $i = 0;
     $row = [];
     if ($n > 0) {
-        // The pin, when the world carries one.
-        $want = mb_strtolower(trim((string)($answers['register'] ?? '')));
+        // THE PIN IS A VALUE OR A REFERENCE. A world forged since the axes
+        // landed carries its whole invented register here — the object the
+        // model wrote, banks and all — and a world forged before them carries
+        // the key of a written one. Both are pins and both mean the same thing:
+        // this world's naming was decided once and is not to be decided again.
+        $pin = $answers['register'] ?? null;
+        if (is_array($pin) && ($pin['given'] ?? []) !== [] && ($pin['family'] ?? []) !== []) {
+            $row = $pin;
+            $i   = -1;                       // no index: it is not in the table
+        }
+
+        $want = is_string($pin) ? mb_strtolower(trim($pin)) : '';
         $found = -1;
         if ($want !== '') {
             foreach ($rows as $k => $r) {
                 if (mb_strtolower((string)($r['key'] ?? '')) === $want) { $found = $k; break; }
             }
         }
-        if ($found >= 0) {
+        if ($row !== []) {
+            // An invented register still wants the overflow banks below, and
+            // those rotate from an index. It has none, so it borrows the
+            // table's rotation from a stable point of its own.
+            $i = (crc32((string)($row['label'] ?? 'invented')) & 0x7fffffff) % $n;
+        } elseif ($found >= 0) {
             $i = $found;
         } else {
             $seed = mb_strtolower(implode('|', [
@@ -631,7 +772,7 @@ function xeric_forge_naming(array $answers): array
             ]));
             $i = (crc32($seed) & 0x7fffffff) % $n;
         }
-        $row = (array)$rows[$i];
+        if ($row === []) $row = (array)$rows[$i];
     }
 
     // The other registers' banks, in rotation from the chosen one, so a bank
@@ -5375,14 +5516,28 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
     // register a year later. Chosen, then pinned: free once, fixed after. A
     // caller that already carries one — a reroll, a redraft, a test that wants
     // the same world twice — passes it in and nothing here overrules them.
-    if (trim((string)($answers['register'] ?? '')) === '') {
-        $regRows = xeric_forge_registers()['registers'];
-        if ($regRows !== []) {
-            $pick = $regRows[random_int(0, count($regRows) - 1)];
-            $rk = trim((string)($pick['key'] ?? ''));
-            if ($rk !== '') {
-                $answers['register'] = $rk;
-                $note('register: ' . (string)($pick['label'] ?? $rk));
+    if (($answers['register'] ?? null) === null || $answers['register'] === '') {
+        // ONE CALL, BEFORE ANYTHING ELSE IS NAMED. Every later pass quotes the
+        // register, so it has to exist before the concept pass runs — and it is
+        // written into the answers, which ride the template, so a character
+        // reroll a year from now reads back the same one. Free once, fixed
+        // after: you cannot put a Klingon in 1873 Ireland.
+        $coord = xeric_forge_coordinate();
+        $invented = xeric_forge_register_invent($coord, $endpoint, $note);
+        if ($invented !== null) {
+            $answers['register'] = $invented;
+        } else {
+            // The written table is the floor, not the ceiling. A world whose
+            // naming call failed is still a world, and thirty hand-written
+            // somewheres is a better failure than Elias Thorne.
+            $regRows = xeric_forge_registers()['registers'];
+            if ($regRows !== []) {
+                $pick = $regRows[random_int(0, count($regRows) - 1)];
+                $rk = trim((string)($pick['key'] ?? ''));
+                if ($rk !== '') {
+                    $answers['register'] = $rk;
+                    $note('register: ' . (string)($pick['label'] ?? $rk));
+                }
             }
         }
     }

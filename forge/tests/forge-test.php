@@ -1397,6 +1397,41 @@ ok('no register bank contains a banned name — a gate that swaps a ban for a ba
 //
 // What must NOT change is the physics: a character reroll lands in the register
 // of the world it happens in. You cannot put a Klingon in 1873 Ireland.
+// ── THE COORDINATE, AND THE REGISTER INVENTED ON IT ──────────────────────
+//
+// Thirty written registers is a menu: eleven hundred hand-written names bought
+// thirty somewheres. The axes are the opposite trade — forty-eight lines for
+// four thousand coordinates — and the model invents the names on one it did not
+// choose. Not a seed: engine/llm.php passes no sampler seed, so llama.cpp drew
+// a fresh one on every call that produced Elias Thorne eight times out of eight.
+// A seed picks WITHIN a distribution; conditioning moves it.
+$axes = xeric_forge_registers()['axes'];
+ok('axes: the loader lets them through at all',
+    ($axes['era'] ?? []) !== [] && ($axes['people'] ?? []) !== [] && ($axes['place'] ?? []) !== [],
+    'a whitelisting loader dropped these once and every world silently took a written register');
+$space = count($axes['era']) * count($axes['people']) * count($axes['place']);
+ok('axes: they multiply into far more somewheres than the table enumerates',
+    $space > 1000 && $space > count(xeric_forge_registers()['registers']) * 20, (string)$space);
+$coords = [];
+for ($i = 0; $i < 200; $i++) {
+    $c = xeric_forge_coordinate();
+    $coords[$c['era'] . '|' . $c['people'] . '|' . $c['place']] = true;
+}
+ok('axes: a coordinate is drawn freely, not derived from anything',
+    count($coords) > 120, count($coords) . ' distinct in 200 draws');
+ok('axes: and every draw is complete — a half coordinate invents nothing',
+    (function () { for ($i = 0; $i < 50; $i++) { $c = xeric_forge_coordinate();
+        if ($c['era'] === '' || $c['people'] === '' || $c['place'] === '') return false; } return true; })());
+
+// AND THE BANNED LISTS STILL EARN THEIR KEEP. Run against a live model, the
+// concrete coordinates produced Varga/Chen/Müller/O'Shea/Moretti — and the most
+// ABSTRACT one ("no century anyone here would name") drifted straight back
+// toward thriller names and produced Vane. The axes move the distribution; the
+// gates catch what still lands on the old attractor. Two layers, both needed.
+$bannedFam = array_map('mb_strtolower', xeric_forge_registers()['banned']['family'] ?? []);
+ok('axes: the observed repeat offenders are still gated, invented register or not',
+    in_array('vane', $bannedFam, true) && in_array('thorne', $bannedFam, true));
+
 $regs = xeric_forge_registers()['registers'];
 ok('register: a pin is honoured, whatever the answers around it say',
     xeric_forge_naming(ANSWERS + ['register' => 'rustbelt_polish'])['key'] === 'rustbelt_polish'

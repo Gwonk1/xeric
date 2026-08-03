@@ -1585,11 +1585,42 @@ function xeric_web_clean_answers(array $in, array $interview): array
     // Validated against the shipped list rather than trusted, because this now
     // arrives over HTTP: an unknown value is dropped, and xeric_forge_naming()
     // falls back to deriving one, which is what a world with no pin does anyway.
-    $reg = mb_strtolower(trim((string)($in['register'] ?? '')));
-    if ($reg !== '') {
-        require_once XERIC_WEB_LIB . '/forge/forge.php';
-        foreach (xeric_forge_registers()['registers'] as $r) {
-            if (mb_strtolower((string)($r['key'] ?? '')) === $reg) { $out['register'] = $reg; break; }
+    $pin = $in['register'] ?? null;
+    if (is_array($pin)) {
+        // AN INVENTED REGISTER IS A VALUE, and a redraft has to carry the whole
+        // thing or the world is renamed out from under itself. Rebuilt field by
+        // field rather than passed through, because this arrives over HTTP: what
+        // survives is a register's shape and nothing else somebody posted.
+        $strs = static function ($v, int $cap): array {
+            $o = [];
+            foreach ((array)$v as $x) {
+                if (!is_string($x)) continue;
+                $x = trim(preg_replace('/\s+/u', ' ', $x) ?? '');
+                if ($x !== '' && mb_strlen($x) <= 60) $o[] = $x;
+                if (count($o) >= $cap) break;
+            }
+            return array_values(array_unique($o));
+        };
+        $clean = [
+            'key'        => 'invented',
+            'label'      => mb_substr(trim((string)($pin['label'] ?? '')), 0, 80),
+            'sound'      => mb_substr(trim((string)($pin['sound'] ?? '')), 0, 300),
+            'given'      => $strs($pin['given'] ?? [], 40),
+            'family'     => $strs($pin['family'] ?? [], 40),
+            'toponyms'   => $strs($pin['toponyms'] ?? [], 30),
+            'businesses' => $strs($pin['businesses'] ?? [], 30),
+            'church'     => mb_substr(trim((string)($pin['church'] ?? '')), 0, 80),
+        ];
+        if ($clean['given'] !== [] && $clean['family'] !== [] && $clean['sound'] !== '') {
+            $out['register'] = $clean;
+        }
+    } else {
+        $reg = mb_strtolower(trim((string)$pin));
+        if ($reg !== '') {
+            require_once XERIC_WEB_LIB . '/forge/forge.php';
+            foreach (xeric_forge_registers()['registers'] as $r) {
+                if (mb_strtolower((string)($r['key'] ?? '')) === $reg) { $out['register'] = $reg; break; }
+            }
         }
     }
     return $out;
