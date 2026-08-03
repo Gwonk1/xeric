@@ -97,6 +97,7 @@ require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/death.php';   // the dead wait for nothing, and tell nobody anything
 require_once __DIR__ . '/trust.php';   // a promise broken, and a promise explained
+require_once __DIR__ . '/players.php'; // and whose promise it was
 
 /** Grace past the promised hour before a wait becomes a miss, world seconds. */
 const XERIC_EXPECT_GRACE = 4 * 3600;
@@ -206,7 +207,9 @@ function xeric_expect_armed(array $t): bool
  * this gate disposes — on the QUOTE, not on the model's opinion of it.
  * Returns the arc key formed, or null with a reason via $onNote.
  */
-function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array $now, ?callable $onNote = null, ?string $of = null): ?string
+function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array $now,
+                           ?callable $onNote = null, ?string $of = null,
+                           int $player = XERIC_PLAYER_FIRST): ?string
 {
     $note = $onNote ?? static function (string $s): void {};
     if (!is_array($p)) return null;
@@ -254,7 +257,11 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
       // because they were the only one who could let anybody down. A cast
       // handle here is a promise between two people in the town, which the
       // room's draw has had a dormant, tested notch waiting for.
-      + ($of !== null && $of !== '' ? ['of' => $of] : []), JSON_UNESCAPED_UNICODE));
+      + ($of !== null && $of !== '' ? ['of' => $of] : [])
+        // WHOSE promise, when there is more than one person at the centre. The
+        // first player is the bare case and writes nothing, so every row already
+        // on disk is already correct (engine/players.php).
+        + ($player > XERIC_PLAYER_FIRST ? ['p' => $player] : []), JSON_UNESCAPED_UNICODE));
     $note('expectations: ' . xeric_world_name($t, $listener) . ' now expects — ' . $what);
     return $key;
 }
@@ -708,7 +715,12 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
                     // Against the person who actually missed: a townsperson
                     // standing somebody up must never cost the PLAYER their
                     // standing (engine/trust.php's two rows).
-                    xeric_trust_earn($db, $h, -1, null, $of !== '' ? $of : null);
+                    // AND AGAINST THE PERSON WHO ACTUALLY PROMISED. With two
+                    // people at the centre, a guest breaking their word must not
+                    // cost the owner their standing — the same sentence the
+                    // cast-to-cast fix was about, one row further out.
+                    xeric_trust_earn($db, $h, -1, null, $of !== '' ? $of : null,
+                                     (int)($e['p'] ?? XERIC_PLAYER_FIRST));
                     $e['state'] = 'missed'; $e['missed_at'] = $epoch;
                     $row = $e; unset($row['key']);
                     xeric_arc_set($db, $h, $e['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
@@ -769,10 +781,13 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
  * A scorekeeper and a forgiver read the same mechanic differently, which is
  * the owner's design: forgiveness is a property of the person.
  */
-function xeric_expect_repair(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null): ?string
+function xeric_expect_repair(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null,
+                             int $player = XERIC_PLAYER_FIRST): ?string
 {
     $note = $onNote ?? static function (string $s): void {};
-    $user = trim((string)($t['user']['name'] ?? '')) ?: 'they';
+    $user = $player > XERIC_PLAYER_FIRST
+        ? xeric_player_name($db, $player, $t)
+        : (trim((string)($t['user']['name'] ?? '')) ?: 'they');
     $best = null;
     foreach (xeric_expects_for($db, $handle) as $e) {
         if ($e['state'] !== 'missed') continue;
@@ -781,6 +796,10 @@ function xeric_expect_repair(array $t, PDO $db, string $handle, array $now, ?cal
         // apologise for, and repairing it here would hand the player credit
         // for Harlan turning up.
         if (trim((string)($e['of'] ?? '')) !== '') continue;
+        // AND THEIR OWN AMONG THE PEOPLE AT THE CENTRE, for the same reason one
+        // row further out: with a guest in the world, explaining yourself must
+        // not repair a promise somebody else broke.
+        if ((int)($e['p'] ?? XERIC_PLAYER_FIRST) !== $player) continue;
         if ($best === null || ($e['missed_at'] ?? $e['due']) > ($best['missed_at'] ?? $best['due'])) $best = $e;
     }
     if ($best === null) return null;
@@ -789,7 +808,7 @@ function xeric_expect_repair(array $t, PDO $db, string $handle, array $now, ?cal
     $best['state'] = 'repaired'; $best['explained_at'] = (int)($now['epoch'] ?? 0);
     $key = $best['key']; $row = $best; unset($row['key']);
     xeric_arc_set($db, $handle, $key, json_encode($row, JSON_UNESCAPED_UNICODE));
-    xeric_trust_earn($db, $handle, +1);
+    xeric_trust_earn($db, $handle, +1, null, null, (int)($best['p'] ?? XERIC_PLAYER_FIRST));
     xeric_memory_add($db, $handle, $user . ' told ' . $name . ' why they missed ' . $best['what'] . '.',
         'construct', ['expect' => $key], (int)($now['epoch'] ?? 0));
     $note('expectations: ' . $user . ' explained ' . $best['what'] . ' — repaired');

@@ -1323,7 +1323,9 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
                       : '<span class="pw">' . h($g === null ? 'here too'
                           : ($g['way'] === 'stranger'
                               ? 'a stranger, so far'
-                              : 'came with ' . xeric_player_name($db, (int)$g['via'], $t))) . '</span>')
+                              : 'came with ' . xeric_player_name($db, (int)$g['via'], $t))) . '</span>'
+                    . ($mine ? '<button type="button" class="pout" data-out="' . (int)$pid . '"'
+                             . ' title="show them out">×</button>' : ''))
                   . '</li>';
         }
         $out .= '</ul>';
@@ -3953,6 +3955,9 @@ summary.sh:focus-visible{outline:1px solid var(--accent);outline-offset:2px;bord
 .atcentre li{display:flex;gap:.4rem;align-items:baseline;padding:.18rem 0;font-size:.82rem}
 .atcentre .pn{font-weight:600}
 .atcentre .pw{color:var(--fg-far);font-size:.74rem}
+.atcentre .pout{margin-left:auto;font:inherit;font-size:.9rem;line-height:1;padding:0 .3rem;
+  border:0;background:transparent;color:var(--fg-far);cursor:pointer;border-radius:.25rem}
+.atcentre .pout:hover{color:var(--fg);background:var(--line)}
 .sinv{width:100%;font:inherit;font-size:.8rem;padding:.4rem;border-radius:.35rem;
   border:1px solid var(--line);background:transparent;color:var(--fg-dim);cursor:pointer}
 .sinv:hover{color:var(--fg)}

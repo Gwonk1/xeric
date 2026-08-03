@@ -71,7 +71,10 @@ function xeric_guest(PDO $db, int $player): ?array
 {
     if ($player <= XERIC_PLAYER_FIRST) return null;
     $raw = xeric_world_state_get($db, 'guest.p' . $player);
-    $row = $raw === null ? null : json_decode((string)$raw, true);
+    // An empty string is somebody who was shown out: the row is cleared rather
+    // than deleted, because world_state has no delete and a blank is the same
+    // answer as never-having-arrived.
+    $row = ($raw === null || trim((string)$raw) === '') ? null : json_decode((string)$raw, true);
     if (!is_array($row)) return null;
     return ['via'     => (int)($row['via'] ?? XERIC_PLAYER_FIRST),
             'way'     => in_array((string)($row['way'] ?? ''), XERIC_GUEST_WAYS, true)

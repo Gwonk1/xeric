@@ -140,7 +140,15 @@ function xeric_player_add(PDO $db, array $t, string $name, string $pronouns = ''
             . ' at the centre — past that it is a lobby, not a world');
     }
 
-    $id = max(array_keys($now)) + 1;
+    // A HIGH-WATER MARK, NOT THE HIGHEST STILL PRESENT. Numbering from who is
+    // in the room recycles the number of anybody who left — and every row in
+    // this engine is keyed by that number, so the next person through the door
+    // would inherit a stranger's standing, their wages, and their debts. In a
+    // house that is not hypothetical: one person leaves, another is invited an
+    // hour later, and the town greets them as somebody they have never met.
+    $high = (int)(xeric_world_state_get($db, 'players.issued') ?? 0);
+    $id   = max($high, max(array_keys($now))) + 1;
+    xeric_world_state_set($db, 'players.issued', (string)$id, $at ?? xeric_state_time());
     $now[$id] = ['id' => $id, 'name' => $name,
                  'pronouns' => trim($pronouns) ?: 'they/them', 'implicit' => false];
 
@@ -155,8 +163,15 @@ function xeric_player_add(PDO $db, array $t, string $name, string $pronouns = ''
  * Removing them from the roster is not the same as deleting them from the
  * world, and this engine should never do the second: Ruth's opinion of
  * somebody who stopped coming round is a real thing she still holds, and a
- * promise they broke is still broken. So the row goes and the history does
- * not, and if they come back their id is theirs again.
+ * promise they broke is still broken. So the row goes and the history does not.
+ *
+ * THEIR NUMBER IS NEVER HANDED TO ANYBODY ELSE. An earlier version of this
+ * comment promised the opposite — that a returning person got their id back —
+ * and that is a hazard rather than a feature: ids are the key on every row in
+ * this engine, so recycling one gives the next person through the door a
+ * stranger's standing, wages and debts. In a house that is not hypothetical.
+ * Somebody invited again is somebody new, which is the safe direction and the
+ * honest reading of having been shown out.
  */
 function xeric_player_drop(PDO $db, array $t, int $id, ?int $at = null): bool
 {

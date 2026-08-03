@@ -349,6 +349,15 @@ if ($action !== '') {
         require_once XERIC_WEB_LIB . '/engine/pair.php';
 
         if ($action === 'uninvite') {
+            // A NUMBER SHOWS SOMEBODY OUT; no number puts the waiting codes out.
+            // A program that can let people in and not out is not a door, it is
+            // a hole, and in a house the case is entirely ordinary: somebody has
+            // to go to bed.
+            $who = (int)(xeric_web_input()['player'] ?? 0);
+            if ($who > XERIC_PLAYER_FIRST) {
+                $gone = xeric_pair_show_out($w['db'], $w['template'], $who);
+                xeric_web_json(['ok' => true, 'shown_out' => $gone]);
+            }
             xeric_pair_clear($w['db']);
             xeric_web_json(['ok' => true, 'cleared' => true]);
         }
@@ -2813,6 +2822,31 @@ echo '<style>' . xeric_play_css() . '
         box.appendChild(s);
       })
       .catch(function () { b.disabled = false; box.textContent = 'no code came back'; });
+  });
+
+  // And showing somebody out, from the same list that shows them in. Confirmed,
+  // because it is not undoable — they come back as a new person rather than
+  // picking up where they left off.
+  if (sideBox) sideBox.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-out]') : null;
+    if (!b) return;
+    var who = b.closest('li');
+    var name = who ? (who.querySelector('.pn') || {}).textContent : 'them';
+    if (!confirm('Show ' + (name || 'them') + ' out? What happened while they were here stays, '
+        + 'but they would have to be invited again.')) return;
+    b.disabled = true;
+    fetch('play.php?a=uninvite&w=' + encodeURIComponent(W), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player: parseInt(b.dataset.out, 10) }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        // The row goes now rather than waiting for the pulse, which skips the
+        // sidebar entirely while the drawer is open — on a phone that is
+        // always, and a name that stays put reads as a button that did nothing.
+        if (d && d.ok) { if (who) who.remove(); toast((name || 'they') + ' left'); }
+        else { b.disabled = false; toast((d && d.error) || 'that did not take'); }
+      })
+      .catch(function () { b.disabled = false; toast('that did not take'); });
   });
 
   // The cog beside a cast row. Delegated for the same reason.

@@ -187,6 +187,44 @@ for ($k = 0; $k < 3; $k++) {
 ok('race: one code lets exactly one person in, however many try it',
     $got === 1 && count(xeric_players($i2, $T)) === 2);
 
+// ---------------------------------------------------------------------------
+// 4. SHOWING SOMEBODY OUT. A program that can let people in and not out is not
+// a door, it is a hole — and in a house the case is entirely ordinary.
+// ---------------------------------------------------------------------------
+
+echo "\n# showing somebody out\n";
+
+$j = fresh('out');
+xeric_trust_earn($j, 'ruth', 6, null, null, XERIC_PLAYER_FIRST);
+$jc = xeric_pair_new($j, 'Corey');
+$jid = xeric_pair_claim($j, $T, $jc['code']);
+
+ok('out: they were here', count(xeric_players($j, $T)) === 2 && xeric_guest($j, $jid) !== null);
+ok('out: and now they are not',
+    xeric_pair_show_out($j, $T, $jid) === true
+    && count(xeric_players($j, $T)) === 1
+    && xeric_guest($j, $jid) === null);
+
+// WHAT LEAVING DOES NOT DO. A person who stops coming round does not stop
+// having been here: what the town decided about them stays decided.
+ok('out: what the town made of them stays made',
+    xeric_trust_of($j, 'ruth', null, $jid) === 2);
+ok('out: and the room no longer says they are standing in it',
+    !str_contains(xeric_guest_block($j, $T), 'Corey'));
+
+ok('out: the world is not the first person\'s to be shown out of',
+    xeric_pair_show_out($j, $T, XERIC_PLAYER_FIRST) === false
+    && xeric_pair_show_out($j, $T, 0) === false);
+ok('out: and showing out somebody who already went is not an error twice',
+    xeric_pair_show_out($j, $T, $jid) === false);
+
+// A second invitation is a fresh arrival, not a resurrection.
+$jc2 = xeric_pair_new($j, 'Corey');
+$jid2 = xeric_pair_claim($j, $T, $jc2['code']);
+ok('out: invited again, they come back as somebody new rather than a ghost',
+    $jid2 !== $jid && xeric_guest($j, $jid2) !== null
+    && (xeric_guest($j, $jid2)['vouched'] ?? false) === true);
+
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

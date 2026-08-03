@@ -206,3 +206,32 @@ function xeric_pair_clear(PDO $db, ?int $at = null): void
 {
     xeric_world_state_set($db, 'pair.codes', '[]', $at ?? xeric_state_time());
 }
+
+/**
+ * SHOWING SOMEBODY OUT. The other half of a door.
+ *
+ * A program that can let people in and not out is not a door, it is a hole,
+ * and in a house the case is entirely ordinary: somebody has to go to bed, or
+ * the evening is over, or a person is being a nuisance.
+ *
+ * WHAT LEAVING DOES AND DOES NOT DO. It removes them from the roster and burns
+ * their way back in. It does NOT delete what happened while they were here —
+ * their promises stand, their debts stand, and what the town decided about
+ * them stays decided, because a person who stops coming round does not stop
+ * having been here. If they are invited again they get a new number and start
+ * over; if the owner would rather they picked up where they left off, that is
+ * what NOT showing them out is for.
+ *
+ * @return bool whether there was anybody to show out
+ */
+function xeric_pair_show_out(PDO $db, array $t, int $player, ?int $at = null): bool
+{
+    if ($player <= XERIC_PLAYER_FIRST) return false;
+    $at = $at ?? xeric_state_time();
+    if (!xeric_player_drop($db, $t, $player, $at)) return false;
+
+    // Their arrival row goes with them, so a second invitation is a fresh
+    // arrival rather than a resurrection of a guest who is not on the roster.
+    xeric_world_state_set($db, 'guest.p' . $player, '', $at);
+    return true;
+}

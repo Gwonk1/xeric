@@ -151,6 +151,14 @@ xeric_trust_earn($b, 'ruth', 5, null, null, 2);
 ok('leave: their history stays behind them',
     xeric_player_drop($b, $T, 2) === true
     && xeric_trust_of($b, 'ruth', null, 2) === 5);
+// A NUMBER IS NEVER HANDED TO ANYBODY ELSE. Every row in this engine is keyed
+// by it, so recycling one gives the next person through the door a stranger's
+// standing, wages and debts — in a house that is not hypothetical: one person
+// leaves, another is invited an hour later.
+$reuse = xeric_player_add($b, $T, 'Sam');
+ok('leave: and the number they had is never given to anybody else',
+    $reuse === 3 && xeric_trust_of($b, 'ruth', null, $reuse) === 0);
+
 ok('leave: and the world is not the first person\'s to leave',
     xeric_player_drop($b, $T, XERIC_PLAYER_FIRST) === false);
 ok('leave: dropping somebody who was never here changes nothing',
