@@ -1761,6 +1761,82 @@ ok('proactive: a live overlay does not stop the phone from ringing',
     $ping !== null && ($ping['text'] ?? '') !== '', json_encode($notesPing));
 
 // ---------------------------------------------------------------------------
+// THE LEDGERS. `economies` is the most completely specified dead thing in the
+// schema — earned_by, a board, a podium, ground truth, rules, framing — and
+// nothing ever wrote a counter, so every board in every world has been empty
+// since boards existed. The hour's own words earn the point now.
+// ---------------------------------------------------------------------------
+
+echo "\n# the ledgers\n";
+
+$lgT  = world(['gossip', 'shared_meals']);
+$lgDb = fresh_db('ledger');
+xeric_state_seed($lgDb, $lgT);
+
+ok('ledger: an hour that did the thing the world named earns the point',
+    xeric_ledger_credits($lgT, 'A dish delivered to the porch and nobody said whose') === ['casserole_ledger']);
+ok('ledger: and the same act in a different tense still earns it',
+    xeric_ledger_credits($lgT, 'She was delivering a dish when the rain started') === ['casserole_ledger']);
+ok('ledger: an ordinary hour earns nothing',
+    xeric_ledger_credits($lgT, 'The urn ran out early and the chairs went back wrong') === []);
+ok('ledger: HALF the phrase is not the act — a kitchen is not a delivery',
+    xeric_ledger_credits($lgT, 'A dish left on the counter all afternoon') === []);
+// The rule that keeps the poker pot honest: `hand_won` reduces to one short
+// word, and the still-life rule puts hands in nearly every hour written.
+ok('ledger: a vague earned_by earns nothing rather than everything',
+    xeric_ledger_credits($lgT, 'hands on the counter, a hand of cards, the coffee poured') === []
+    && xeric_ledger_credits($lgT, 'Harlan won the hand and bought the coffee Sunday') === []);
+
+xeric_ledger_step($lgDb, $lgT, ['ruth', 'dot'], 'Ruth shoveled the driveway before anybody was up');
+ok('ledger: everybody who was in the hour is credited',
+    xeric_ledger_of($lgDb, 'casserole_ledger', 'ruth') === 1
+    && xeric_ledger_of($lgDb, 'casserole_ledger', 'dot') === 1);
+ok('ledger: and nobody who was not',
+    xeric_ledger_of($lgDb, 'casserole_ledger', 'harlan') === 0);
+xeric_ledger_step($lgDb, $lgT, ['nobody_here'], 'A dish delivered to the porch');
+ok('ledger: a handle nobody answers to earns nothing',
+    xeric_ledger_of($lgDb, 'casserole_ledger', 'nobody_here') === 0);
+
+for ($i = 0; $i < 3; $i++) xeric_ledger_step($lgDb, $lgT, ['dot'], 'A dish delivered again');
+$lgBoard = xeric_ledger_board($lgDb, $lgT, 'casserole_ledger');
+ok('ledger: the board reads highest first',
+    ($lgBoard[0]['handle'] ?? '') === 'dot' && ($lgBoard[0]['n'] ?? 0) === 4);
+ok('ledger: and the podium takes the top of it',
+    count(xeric_ledger_board($lgDb, $lgT, 'casserole_ledger', 1)) === 1);
+
+// The reader that has been waiting for this since boards existed.
+// Its board is CAST-ordered and keeps the zeroes (the seed gives everybody a
+// row), where xeric_ledger_board() sorts and drops them — two readers, two
+// jobs. What matters is that the number arrives.
+$lgSeen = xeric_state_counters($lgDb, $lgT, 'dot');
+$lgRow  = null;
+foreach ((array)($lgSeen['counters']['casserole_ledger']['board'] ?? []) as $r) {
+    if ($r['handle'] === 'dot') $lgRow = $r;
+}
+ok('ledger: xeric_state_counters finally has something to read',
+    ($lgSeen['counters']['casserole_ledger']['viewer_count'] ?? null) === 4
+    && ($lgRow['n'] ?? 0) === 4, json_encode($lgSeen['counters']['casserole_ledger'] ?? null));
+
+// AND THE HOURS THEMSELVES EARN IT: the wiring, not the function.
+$lgLive = fresh_db('ledger-live');
+xeric_state_seed($lgLive, $lgT);
+$lgStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) {
+    $h = stub_handles($msgs);
+    $mem = [];
+    foreach ($h as $x) $mem[$x] = ucfirst(str_replace('_', ' ', $x)) . ' ' . stub_half() . '.';
+    return ['title' => 'a dish delivered', 'memories' => $mem,
+            'prose' => 'Somebody delivered a dish to the porch rail and left before anybody could say so.'];
+}];
+$lgRun = xeric_sweep_run($lgT, $lgLive, $lgStub, xeric_world_now($lgT, ep('2026-07-30 18:00')),
+    ['chance' => 1.0, 'seed' => 21]);
+$lgAny = 0;
+foreach ((array)($lgRun['events'][0]['participants'] ?? []) as $h) {
+    $lgAny += xeric_ledger_of($lgLive, 'casserole_ledger', (string)$h);
+}
+ok('ledger: an hour the world actually lived puts somebody on the board',
+    $lgRun['events'] !== [] && $lgAny > 0, json_encode($lgRun['notes']));
+
+// ---------------------------------------------------------------------------
 // THE NEEDLE. `world_mood` has been in the schema since the beginning — an
 // axis in the world's own words, a range, motifs, drivers, a reversion rule —
 // and nothing ever wrote the number, so narrator.php printed "the needle sits

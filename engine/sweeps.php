@@ -85,6 +85,7 @@ require_once __DIR__ . '/learn.php';     // what the person living here actually
 require_once __DIR__ . '/shape.php';
 require_once __DIR__ . '/weather.php'; // the day's sky, derived, never stored
 require_once __DIR__ . '/mood.php';    // and the town's own needle, which its hours move
+require_once __DIR__ . '/ledger.php';  // and the ledgers those hours earn
 
 /** The unit of offscreen life. One hour: short enough to place an event in a real
  *  shift, long enough that a day is not 1,440 chances to interrupt somebody. */
@@ -791,6 +792,15 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
         // reverts toward ordinary as it pushes, which is what stops a world
         // from sitting at the end of its own range forever. Costs one row.
         xeric_mood_step($db, $t, (string)$chosen['kind']['key'], $at);
+
+        // AND THE LEDGERS THE HOUR EARNED. `economies` has been fully
+        // specified and never once written to — a casserole ledger nobody is
+        // on, with three rules about how it works. The hour's own words
+        // decide (engine/ledger.php), everybody who was in it is credited,
+        // and xeric_state_counters() has been ready to read the result since
+        // the day boards existed.
+        xeric_ledger_step($db, $t, array_keys($written['memories']),
+            $written['title'] . ' ' . $written['prose'], $at);
 
         foreach ($written['memories'] as $handle => $text) {
             xeric_memory_add($db, $handle, $text, 'event', [
