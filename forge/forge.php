@@ -5386,7 +5386,13 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
     $note('places: ' . implode(', ', array_map(fn($p) => (string)$p['name'], $places)));
 
     $guard();
-    $cast = xeric_forge_pass_cast($answers, $concept, $places, $endpoint, (int)($opts['cast'] ?? 4), $note);
+    // TWELVE, matching every caller and forge/web/boot.php. This line and its
+    // twin in the fallback below were the last two places the old four lived:
+    // the commit that raised the default moved it in worker.php and
+    // forge-cli.php and left it in boot.php and in HERE, so the number lived
+    // in four files and a caller that passed nothing quietly got a writers'
+    // room instead of a town.
+    $cast = xeric_forge_pass_cast($answers, $concept, $places, $endpoint, (int)($opts['cast'] ?? 12), $note);
     $note('cast: ' . implode(', ', array_map(fn($c) => (string)$c['display_name'], $cast['characters'])));
 
     $guard();
@@ -5408,7 +5414,7 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
             // code path the fallbacks always take rather than a second one.
             $concept = xeric_forge_default_concept($answers);
             $places  = xeric_forge_default_places($answers, $concept, (int)($opts['places'] ?? 6));
-            $cast    = xeric_forge_pass_cast($answers, $concept, $places, [], (int)($opts['cast'] ?? 4));
+            $cast    = xeric_forge_pass_cast($answers, $concept, $places, [], (int)($opts['cast'] ?? 12));
             $template = xeric_forge_assemble($answers, $concept, $places, $cast, $endpoint, $note);
             xeric_world_validate($template, 'forged');   // the defaults are ours; if THESE fail, that is a real bug
         }

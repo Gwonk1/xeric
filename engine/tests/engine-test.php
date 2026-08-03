@@ -1591,12 +1591,20 @@ ok('travel: a room that stopped existing under somebody leaves them nowhere, not
 xeric_player_move($db5, null);
 
 // -- the trip ---------------------------------------------------------------
-$before = (int)xeric_clock_now($db5, $T)['epoch'];
+// MEASURED ON THE OFFSET, NOT THE EPOCH. This read the clock, ran the trip,
+// and compared epochs — but xeric_travel_go() reads the clock itself, so a real
+// second ticking between the two reads made the difference 301 and failed a
+// correct engine. A wall-clock race in a test is a test that fails at random
+// forever, and this one did.
+//
+// The offset is what travel actually WRITES (xeric_clock_advance), and it does
+// not move on its own, so it is both drift-free and the stronger assertion.
+$before = xeric_clock_offset($db5);
 $trip   = xeric_travel_go($T, $db5, 'the_mill');
 ok('travel: a trip burns EXACTLY its minutes off the world clock',
     $trip['ok'] && $trip['minutes'] > 0
-    && (int)$trip['now']['epoch'] - $before === $trip['minutes'] * 60,
-    (string)((int)$trip['now']['epoch'] - $before));
+    && xeric_clock_offset($db5) - $before === $trip['minutes'] * 60,
+    (string)(xeric_clock_offset($db5) - $before));
 ok('travel: and leaves the player standing there', xeric_player_where($T, $db5) === 'the_mill'
     && $trip['from'] === null && $trip['to'] === 'the_mill');
 ok('travel: you may walk to a chained gate, and it tells you it is chained',

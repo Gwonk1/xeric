@@ -104,8 +104,19 @@ function xeric_web_config(): array
         $c['local_editable'] = in_array(strtolower(trim((string)$env)), ['1', 'true', 'yes', 'on'], true);
     }
 
+    // THE DEFAULTS LIVE HERE, and only here. This line is why the cast default
+    // has been four since 2026-08-02 despite a commit that afternoon changing it
+    // to twelve: that commit moved the number in worker.php and forge-cli.php
+    // and did not touch this file, so `$cfg['cast']` was ALWAYS set by the time
+    // a caller looked and every `?? 12` behind it was dead code. Four people is
+    // a writers' room, not a town — every sweep drew from the same three
+    // pairings and a world ran out of strangers inside a week.
+    //
+    // Same shape as the worlds-dir bug: a value defaulted in two places, with
+    // the two agreeing right up until somebody changed one of them. A caller
+    // that wants a different number should pass it, not re-default it.
     $c['places'] = (int)($c['places'] ?? 6);
-    $c['cast']   = (int)($c['cast'] ?? 4);
+    $c['cast']   = (int)($c['cast'] ?? 12);
     return $c;
 }
 

@@ -164,11 +164,13 @@ try {
     } else {
     $out = xeric_forge_build($answers, $endpoint, [
         'interview' => $interview,
-        'places' => (int)($cfg['places'] ?? 6),
-        // Twelve by default (owner, 2026-08-02): four people is a writers' room,
-        // not a town. Overridable per-host through config.local.php's `cast`, the
-        // same way every other knob here is.
-        'cast'   => (int)($cfg['cast'] ?? 12),
+        // NO FALLBACK HERE. xeric_web_config() always sets both — twelve people
+        // and six places, overridable per-host through config.local.php — so a
+        // `?? 12` on this line could never fire, and for a day it sat here
+        // looking like the number in force while boot.php quietly supplied four.
+        // One default, in one file.
+        'places' => (int)$cfg['places'],
+        'cast'   => (int)$cfg['cast'],
         'seed'   => true,
         'fill'   => $fill,
         // THE SECOND HALF OF THE AFFIRMATION GATE, which had never been wired.
