@@ -22,6 +22,37 @@ function xeric_web_head(string $title): void
 {
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store');
+
+    // THE HEADERS THIS APP DID NOT SEND. There was no Content-Security-Policy
+    // anywhere in the tree, and this is the one choke point every HTML response
+    // passes through, so it is where they belong.
+    //
+    // `script-src 'nonce-…'` is the load-bearing line: an injected script tag
+    // does not carry the nonce, and neither does an inline `onerror=`, which is
+    // what
+    // the stored-XSS this was written after actually used. No 'unsafe-inline' —
+    // adding it back would make the whole directive decorative — so every inline
+    // block in the app is stamped with xeric_web_nonce(), and one that is missed
+    // silently does not run. That is the cost, and it is worth paying.
+    //
+    // 'unsafe-inline' DOES stay for style-src: the app is styled entirely by an
+    // inline stylesheet plus element-level style attributes, injected CSS is not
+    // script, and the alternative is nonce-ing several hundred attributes for a
+    // much smaller prize.
+    //
+    // frame-ancestors matters more here than it looks: a local server on a known
+    // port is trivially framed by any page the owner happens to open.
+    header("Content-Security-Policy: default-src 'none'; "
+        . "script-src 'nonce-" . xeric_web_nonce() . "'; "
+        . "style-src 'self' 'unsafe-inline'; "
+        . "img-src 'self' data:; "
+        . "connect-src 'self'; "
+        . "form-action 'self'; "
+        . "base-uri 'none'; "
+        . "frame-ancestors 'none'; "
+        . "object-src 'none'");
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: no-referrer');
     ?><!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -33,9 +64,9 @@ function xeric_web_head(string $title): void
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="data:,"><!-- no icon yet; without this every desktop browser asks for /favicon.ico and 404s -->
-<script><?= xeric_web_theme_js() ?></script>
+<script nonce="<?= h(xeric_web_nonce()) ?>"><?= xeric_web_theme_js() ?></script>
 <style><?= xeric_web_css() ?></style>
-<script><?= xeric_web_meter_js() ?></script>
+<script nonce="<?= h(xeric_web_nonce()) ?>"><?= xeric_web_meter_js() ?></script>
 <?php
 }
 
@@ -991,7 +1022,7 @@ function xeric_web_result_html(array $t, array $seed, array $meta = []): string
 <p class="quiet">Written to <code>worlds/<?= h($slug) ?>/</code>, it is a file, and it is yours.</p>
 <p><a href="forge.php?fresh=1">Forge another xeric</a></p>
 <?php if ($slug !== '' && !empty($meta['mine'])): ?>
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
 // The fragment wires itself: this runs as-is when the page is served whole
 // (forge.php?w=), and the wizard executes it by hand after injecting the
 // result — innerHTML does not run scripts, so the injection path calls each

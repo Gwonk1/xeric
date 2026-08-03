@@ -1254,6 +1254,60 @@ function xeric_web_note_warn(string $n): bool
 
 function h($v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
+/**
+ * A PHP value, safe to write INSIDE a `<script>` block. h()'s sibling.
+ *
+ * `h()` is for an HTML text node or an attribute and is wrong here — inside a
+ * script element the browser is not parsing HTML entities, so `&lt;` would
+ * arrive at the JS engine as five literal characters. The right tool is JSON
+ * with the tag characters escaped.
+ *
+ * ── WHY THE FLAGS, WHEN json_encode ALREADY LOOKED SAFE ───────────────────
+ *
+ * Every one of these sites used a bare json_encode(), and `</script>` genuinely
+ * could not break out of them — because PHP escapes `/` as `\/` by default. One
+ * default flag was the only thing holding the line, and `JSON_UNESCAPED_SLASHES`
+ * is already the house style two files over in xeric_web_json(). The copy-paste
+ * that turns this into arbitrary script execution is one commit away, and it
+ * would look like a tidy-up.
+ *
+ * AND ONE STRING GETS THROUGH TODAY REGARDLESS. `<!--<script>` drives the HTML
+ * tokenizer into script-data-double-escaped state, where `</script>` stops
+ * closing the element — so a world named `Mill <!--<script>` swallowed the rest
+ * of the document into script text. Measured: the play view's entire client
+ * side, every listener, the chip bar, the thread and the clock, all dead, WITH
+ * NO CONSOLE ERROR — which is why the browser smoke test could not see it
+ * either. That one is not XSS, it is a world name that silently bricks the app
+ * for whoever opens it.
+ *
+ * JSON_HEX_TAG closes both, permanently, and does not depend on a default.
+ */
+function js($v): string
+{
+    return (string)json_encode($v,
+        JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+}
+
+/**
+ * This request's script nonce. One per response, minted once.
+ *
+ * THE POINT OF IT is that an injected `<script>` does not carry it, and neither
+ * does an `onerror=` attribute — a nonce policy blocks inline event handlers
+ * outright, which is what actually stopped the stored-XSS finding this was
+ * written after. `img-src` would not have helped: the payload never loaded an
+ * image, it used a broken one to get an error handler.
+ *
+ * Every inline block in this app therefore has to be stamped, and the failure
+ * mode when one is missed is a script that silently does not run. That is
+ * unpleasant, and it is still the right trade: the alternative is
+ * 'unsafe-inline', which is the same as having no script policy at all.
+ */
+function xeric_web_nonce(): string
+{
+    static $n = null;
+    return $n ??= base64_encode(random_bytes(16));
+}
+
 /** JSON out, and stop. */
 function xeric_web_json(array $body, int $status = 200): void
 {

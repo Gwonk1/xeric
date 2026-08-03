@@ -133,7 +133,7 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
     · <a href="play.php">back</a></p>
 </div>
 
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
   // The whole card is the target — except the checkbox, its label and the number
   // field, all of which the browser already handles. Toggling here on a click
   // the browser has handled is how the two cancel out.

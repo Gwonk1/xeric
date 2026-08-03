@@ -143,6 +143,16 @@ $visit = function (string $path) use ($chrome, $port, $tmp): array {
     $bad = [];
     foreach (explode("\n", $log) as $line) {
         if (stripos($line, 'CONSOLE') === false) continue;
+        // A REFUSED SCRIPT IS A PAGE ERROR. The Content-Security-Policy grants
+        // no 'unsafe-inline', so every inline block in the app carries a nonce —
+        // and a block that is added without one does not throw, it simply never
+        // runs. Chrome says "Refused to execute inline script" and nothing else
+        // does, so this line is the only thing standing between a missed nonce
+        // and a page that is quietly half dead.
+        if (stripos($line, 'Refused to') !== false || stripos($line, 'Content Security Policy') !== false) {
+            $bad[] = trim($line);
+            continue;
+        }
         if (stripos($line, 'Uncaught') === false && stripos($line, 'SyntaxError') === false) continue;
         $bad[] = trim($line);
     }
@@ -162,6 +172,25 @@ $pages = [
     ['/world.php?w=smoke-town',         'the file itself',  'meta'],
     ['/forge.php',                      'the forge',        'XERIC'],
 ];
+
+// AND ONE PAGE PROVED TO HAVE ACTUALLY RUN ITS SCRIPTS.
+//
+// The needles above are STATIC markup — `chipbar`, `storygo`, `mlist` are in the
+// served HTML whether the JS ran or not — so those assertions prove the page
+// rendered, never that it works. An audit demonstrated the gap: a world named
+// `Mill <!--<script>` drove the HTML tokenizer into script-data-double-escaped
+// state, swallowed the rest of the document into script text, and left the play
+// view's entire client side dead WITH NO CONSOLE ERROR. Every assertion here
+// passed.
+//
+// `#chips` is empty in the served bytes and is filled by paintChips(). A button
+// inside it is a thing only running JavaScript can have put there.
+[$chipDom, $chipErrs] = $visit('/play.php?w=smoke-town');
+ok('the play view actually RAN its scripts, not merely rendered them',
+    preg_match('/id="chips"[^>]*>\s*<button/', $chipDom) === 1,
+    'chips: ' . mb_substr((string)(preg_split('/id="chips"/', $chipDom)[1] ?? '(no #chips)'), 0, 160));
+ok('and it did so with nothing refused by the content policy',
+    $chipErrs === [], implode(' | ', $chipErrs));
 
 foreach ($pages as [$path, $what, $needle]) {
     [$dom, $errs] = $visit($path);

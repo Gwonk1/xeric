@@ -256,9 +256,9 @@ $experts   = $P['experts'];
       <b>Both spend tokens.</b> On a hosted machine that is real money.</p>
     <p class="pst" id="pst" hidden></p>
   </div>
-  <script>
+  <script nonce="<?= h(xeric_web_nonce()) ?>">
   (function () {
-    var W = <?= json_encode($w['slug']) ?>;
+    var W = <?= js($w['slug']) ?>;
     var st = document.getElementById('pst'), box = document.getElementById('ptext');
     function BTNS() {
       return ['pput', 'pbuild', 'pargue'].map(function (i) { return document.getElementById(i); })

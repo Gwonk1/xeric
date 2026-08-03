@@ -706,7 +706,7 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
   <p class="corner"><?= xeric_web_meter_html() ?> · <a href="play.php">back</a></p>
 </div>
 
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
   // ONE PROBE, ONE PLACE. There were two copies of this — the page-load pass and
   // the one after an inline save — and teaching only the first about the offer
   // meant a card fixed in place never showed it. Two functions doing one job is

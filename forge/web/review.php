@@ -957,14 +957,14 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
   </footer>
 </main>
 
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
 (function () {
   'use strict';
-  var W = <?= json_encode($w['slug']) ?>;
+  var W = <?= js($w['slug']) ?>;
   var MINE = <?= $w['mine'] ? 'true' : 'false' ?>;
   // The world's own name, for the one dialog that has to say what it is about
   // to destroy. Read at page load: a rename reloads, so it cannot go stale.
-  var WNAME = <?= json_encode((string)$T['meta']['name']) ?>;
+  var WNAME = <?= js((string)$T['meta']['name']) ?>;
 
   var $  = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };

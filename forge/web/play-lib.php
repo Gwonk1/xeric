@@ -1339,9 +1339,18 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     // reckless · a truck parked where no truck should be".
     $wx   = xeric_weather_line($t, $now, $db);
     $mood = xeric_mood_read($db, $t);
+    // BOTH HALVES ESCAPED. The motif always was; the word was not, and it is the
+    // one string on this page that reached a browser raw. It comes off
+    // `world_mood.axis.positive|negative`, which the forge writes straight from
+    // model output through xeric_forge_str() — trim, collapse, cap length, and
+    // no HTML filtering anywhere in that path — so this was model-written script
+    // running in the browser of somebody who merely opened the world from the
+    // shelf. Nobody typed it, and the person it fired at had never met whoever
+    // forged it. The compass block renders the same value correctly at
+    // xeric_play_compass_html(); this was one missed call, not a pattern.
     $moodLine = $mood === [] || ($mood['side'] ?? '') === 'ordinary'
         ? ''
-        : (string)$mood['word'] . ((string)($mood['motif'] ?? '') !== ''
+        : h((string)$mood['word']) . ((string)($mood['motif'] ?? '') !== ''
             ? ' <i>· ' . h((string)$mood['motif']) . '</i>' : '');
 
     $out = '';

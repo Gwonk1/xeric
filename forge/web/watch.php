@@ -452,14 +452,14 @@ echo '<style>' . xeric_play_css() . xeric_watch_css() . '</style>';
     after: one event saying they talked, and each speaker's own diary of it. Walking away writes nothing.</footer>
 </main>
 
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
 (function () {
   'use strict';
-  var W  = <?= json_encode($w['slug']) ?>;
-  var ME = <?= json_encode($me) ?>;
+  var W  = <?= js($w['slug']) ?>;
+  var ME = <?= js($me) ?>;
   // A scene this session already has running: the transcript lives in the
   // state file, so a reload redraws it whole and picks up paused.
-  var RESUME = <?= json_encode($live !== null ? xeric_watch_public($live) : null) ?>;
+  var RESUME = <?= js($live !== null ? xeric_watch_public($live) : null) ?>;
   var BEAT = 1300;                       // the breath between lines while playing
   var QUEUE_TRIES = 3;
 

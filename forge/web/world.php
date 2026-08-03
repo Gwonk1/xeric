@@ -42,6 +42,11 @@ if (!is_file($path)) {
 
 $json = function (string $body) use ($slug, $which): void {
     header('Content-Type: application/json; charset=utf-8');
+    // The one model-written body served without it. tile.php, photo.php and the
+    // debrief's artifact route all say nosniff; a browser will not sniff
+    // application/json into HTML anyway, so this is the odd one out being
+    // brought into line rather than a hole being closed.
+    header('X-Content-Type-Options: nosniff');
     header('Content-Disposition: inline; filename="' . $slug . '-' . $which . '"');
     header('Cache-Control: no-store');
     echo $body;

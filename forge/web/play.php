@@ -702,7 +702,7 @@ if ($slug === '') {
       <span class="lamp"></span><?= $att ? h($at) : 'no machine attached' ?></a>
     · <a href="notify.php">notify</a> · <?= xeric_web_meter_html($sid) ?></p>
 </div>
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
   // THE ONLY SCRIPT ON THIS SCREEN, and it asks one question: is the machine
   // answering? So a model that has died is visible from the front door, rather
   // than only from the screen somebody opens BECAUSE they suspect it died.
@@ -878,9 +878,9 @@ if (!xeric_review_launched($w['template'])) {
         . '<form method="post" action="review.php?a=launch&amp;w=' . h(rawurlencode($w['slug'])) . '">'
         . '<button class="btn ghost wide" id="skiplaunch" type="submit">Skip the review, launch it and go in</button>'
         . '</form>'
-        . '<script>document.getElementById("skiplaunch").addEventListener("click",function(e){e.preventDefault();'
+        . '<script nonce="<?= h(xeric_web_nonce()) ?>">document.getElementById("skiplaunch").addEventListener("click",function(e){e.preventDefault();'
         . 'fetch("review.php?a=launch",{method:"POST",headers:{"Content-Type":"application/json"},'
-        . 'body:JSON.stringify({xeric:' . json_encode($w['slug']) . '})}).then(function(r){return r.json()})'
+        . 'body:JSON.stringify({xeric:' . js($w['slug']) . '})}).then(function(r){return r.json()})'
         . '.then(function(d){if(d.ok){window.location=d.url}else{alert(d.error||"that xeric would not launch")}})'
         . '.catch(function(){window.location.reload()})});</script>'
         . '</main>';
@@ -1320,10 +1320,10 @@ echo '<style>' . xeric_play_css() . '
 <div id="coverlay"><div id="cmodal" role="dialog" aria-modal="true"></div></div>
 <div id="ptoast" role="status"></div>
 
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
 (function () {
   'use strict';
-  var W = <?= json_encode($w['slug']) ?>;
+  var W = <?= js($w['slug']) ?>;
 
   // -- the rewind ------------------------------------------------------------
   // The button never fires without the card, the card never lies about what
@@ -1440,10 +1440,10 @@ echo '<style>' . xeric_play_css() . '
       });
     });
   })();
-  var ME = <?= json_encode($userName) ?>;
-  var WNAME = <?= json_encode((string)$T['meta']['name']) ?>;
+  var ME = <?= js($userName) ?>;
+  var WNAME = <?= js((string)$T['meta']['name']) ?>;
   var MINE = <?= $w['mine'] ? 'true' : 'false' ?>;
-  var PACE = <?= json_encode((string)($T['events']['pace'] ?? 'steady')) ?>;
+  var PACE = <?= js((string)($T['events']['pace'] ?? 'steady')) ?>;
   <?php
     // The shape and where the world stands on it, for the cog's own line.
     // A story-carrying world is paced by its story and says so instead.
@@ -1456,23 +1456,23 @@ echo '<style>' . xeric_play_css() . '
               . ' of ' . (int)(xeric_story_shapes()[$shapeKey]['cycle_days'] ?? 0)
               . ' — ' . str_replace('_', ' ', (string)$shapeAmb['stage']));
   ?>
-  var SHAPE = <?= json_encode($shapeKey) ?>;
+  var SHAPE = <?= js($shapeKey) ?>;
   var PANELW = <?= !empty($T['panel']['experts']) ? 'true' : 'false' ?>;   // EXPERIMENTAL: a room, not a place
-  var TABLES = <?= json_encode(array_values((array)($state['world']['tables'] ?? []))) ?>;
-  var MONEY  = <?= json_encode((string)($state['world']['money'] ?? 'none')) ?>;
+  var TABLES = <?= js(array_values((array)($state['world']['tables'] ?? []))) ?>;
+  var MONEY  = <?= js((string)($state['world']['money'] ?? 'none')) ?>;
   var SHIFTS = <?= (int)($state['world']['shifts'] ?? 0) ?>;
-  var SHAPELINE = <?= json_encode($shapeLine) ?>;
+  var SHAPELINE = <?= js($shapeLine) ?>;
   // The player's view of the stories over this world: loglines and progress,
   // never the truth and never which beat is next.
-  var STORIES = <?= json_encode(xeric_story_digest((array)($w['stories'] ?? []), $w['db'])) ?>;
-  var MEFACE = <?= json_encode(xeric_play_face([
+  var STORIES = <?= js(xeric_story_digest((array)($w['stories'] ?? []), $w['db'])) ?>;
+  var MEFACE = <?= js(xeric_play_face([
       'handle' => '__you', 'display_name' => $userName,
       'pronouns' => (string)($T['user']['pronouns'] ?? ''),
   ])) ?>;
   // The world's real orbits, for the one question the add form has to ask: is
   // this somebody you see every day, or somebody the town has. `extras` is the
   // fixtures bucket and is not a place to put a person.
-  var ORBITS = <?= json_encode(array_values(array_filter(array_map(
+  var ORBITS = <?= js(array_values(array_filter(array_map(
       fn($o) => ['key' => (string)($o['key'] ?? ''), 'label' => (string)($o['label'] ?? ''),
                  'daily' => !empty($o['shares_daily_space_with_user'])],
       (array)($T['cast']['orbits'] ?? [])),
@@ -1486,7 +1486,7 @@ echo '<style>' . xeric_play_css() . '
   var CLOCK = {
     epoch: <?= (int)$now['epoch'] ?>,
     paused: <?= $state['clock']['paused'] ? 'true' : 'false' ?>,
-    tz: <?= json_encode((string)($T['user']['timezone'] ?? 'UTC')) ?>,
+    tz: <?= js((string)($T['user']['timezone'] ?? 'UTC')) ?>,
     at: Date.now() / 1000
   };
   var CKFMT = null;
@@ -1497,7 +1497,7 @@ echo '<style>' . xeric_play_css() . '
   // the era's year, not the epoch's: a 1990s town never prints 2026 on itself
   var CKYR = <?= (int)xeric_play_era_year($T, $now) ?>;
 
-  var PHASE = <?= json_encode((string)$now['phase']) ?>;
+  var PHASE = <?= js((string)$now['phase']) ?>;
   function phaseOf(mins) {
     if (mins < 5 * 60)  return 'night';
     if (mins < 12 * 60) return 'morning';
@@ -2023,8 +2023,8 @@ echo '<style>' . xeric_play_css() . '
   // would show you a world twenty minutes older than the room you just walked
   // into. Same reason a turn repaints everything.
   var going = false;
-  var PERMANENT = <?= json_encode(xeric_death_mode($w['template'], $w['db']) === XERIC_DEATH_PERMANENT) ?>;
-  var LASTCAST = <?= json_encode(array_map(fn($c) => ['handle' => $c['handle'], 'name' => $c['name']], $state['cast'])) ?>;
+  var PERMANENT = <?= js(xeric_death_mode($w['template'], $w['db']) === XERIC_DEATH_PERMANENT) ?>;
+  var LASTCAST = <?= js(array_map(fn($c) => ['handle' => $c['handle'], 'name' => $c['name']], $state['cast'])) ?>;
   function bindGo() {
     $$('.goto').forEach(function (b) {
       b.addEventListener('click', function () { go(b.dataset.to, b); });
@@ -2357,7 +2357,7 @@ echo '<style>' . xeric_play_css() . '
   // a herring that died because its believer conceded it is a quiz answer, not a
   // mystery. say.php writes the same line down so a refresh does not lose it.
   var storyLive = {};
-  ((<?= json_encode($state['story']) ?>) || []).forEach(function (r) { storyLive[r.key] = r.live; });
+  ((<?= js($state['story']) ?>) || []).forEach(function (r) { storyLive[r.key] = r.live; });
 
   function storyRow(state, key) {
     var rows = (state && state.story) || [];
@@ -3551,7 +3551,12 @@ echo '<style>' . xeric_play_css() . '
         + (takes ? '<div class="tk">what each of them took away from it</div><div class="takes">' + takes + '</div>' : '')
         // Straight from what just happened to why it happened, while the
         // question is still fresh. The trail was written before this frame was.
-        + (d.why_url ? '<a class="whylink" href="' + esc(d.why_url) + '">why did this happen?</a>' : '');
+        // escA, not esc: this is an ATTRIBUTE. esc() is textContent-through-innerHTML,
+        // which does not escape a double quote — which is precisely why escA() exists
+        // two lines below it. why_url is server-built as why.php?w=<slug>&e=<int> so
+        // there is no live path today; it was the one attribute in about forty using
+        // the wrong helper, and the next hand-built url would have been the live one.
+        + (d.why_url ? '<a class="whylink" href="' + escA(d.why_url) + '">why did this happen?</a>' : '');
       $('#feed').appendChild(el);
     });
 
@@ -3649,7 +3654,7 @@ echo '<style>' . xeric_play_css() . '
 
   // A skip already running for this browser (a reload, a locked phone) is
   // rejoined rather than restarted — it was never in the page to begin with.
-  var RESUME = <?= json_encode($resume) ?>;
+  var RESUME = <?= js($resume) ?>;
   if (RESUME) {
     setTicking(true);
     $('#feedwrap').hidden = false;

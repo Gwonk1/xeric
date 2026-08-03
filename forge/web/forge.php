@@ -856,7 +856,7 @@ xeric_web_head('Xeric: the forge');
   <button class="btn wide" id="next" type="button">Begin</button>
 </div></div>
 
-<script>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
 (function () {
   'use strict';
   var LOCAL_UP = <?= $localUp ? 'true' : 'false' ?>;
@@ -1360,7 +1360,10 @@ xeric_web_head('Xeric: the forge');
   // ONE VALUE, HOWEVER MANY COPIES OF THE CONTROL. Each pill writes to the rating
   // question's own field — the same one the chips write — so there is never a
   // second answer to reconcile, and the affirmation logic above keeps working.
-  var RATING_DEFAULT = <?= json_encode(xeric_ratings()[0]) ?>;
+  var RATING_DEFAULT = <?= js(xeric_ratings()[0]) ?>;
+  // This page's script nonce, so the result fragment's own wiring can be
+  // re-created as a real script element rather than eval'd. See below.
+  var NONCE = <?= js(xeric_web_nonce()) ?>;
 
   function ratingField() { return gateScreen ? $('.val', gateScreen) : null; }
   function ratingValue() {
@@ -1667,8 +1670,31 @@ xeric_web_head('Xeric: the forge');
       // innerHTML never runs scripts, and the fragment wires its own back
       // cover and repass button — so its scripts are run by hand, exactly
       // once, here.
+      //
+      // ⚠ THIS DELIBERATELY REMOVES innerHTML'S ONE SAFETY PROPERTY, so the
+      // rule it depends on is worth stating where somebody will read it before
+      // editing the other end: EVERY field xeric_web_result_html() renders must
+      // go through h(). It does today — the whole renderer was swept field by
+      // field with live payloads and came back clean — but if that ever slips,
+      // the consequence here is not a broken layout or injected markup, it is
+      // arbitrary JS from a model-written world running immediately. A missed
+      // h() anywhere else in the app is a bug; a missed h() in THAT function is
+      // remote code execution in the visitor's browser.
+      //
+      // The honest fix is for the fragment to stop shipping executable text at
+      // all and for this file to wire the back cover and repass button itself,
+      // which is a bigger change than a comment and is on the punchlist.
       $$('#result script').forEach(function (s) {
-        try { (new Function(s.textContent))(); } catch (e) { /* a dead wire, not a dead page */ }
+        // A REAL SCRIPT ELEMENT, NOT Function(). The Content-Security-Policy
+        // grants no 'unsafe-eval' — deliberately, since eval is most of what a
+        // script policy is for — so Function() no longer runs at all. Replacing
+        // the inert injected node with a freshly created one that carries this
+        // page's nonce lets the browser execute it the ordinary way, which is
+        // both CSP-clean and closer to what "the fragment wires itself" meant.
+        var n = document.createElement('script');
+        if (NONCE) n.nonce = NONCE;
+        n.textContent = s.textContent;
+        s.parentNode.replaceChild(n, s);
       });
       show(idxOf('done'));
       history.replaceState(null, '', 'forge.php?w=' + encodeURIComponent(d.slug));
@@ -1698,7 +1724,7 @@ xeric_web_head('Xeric: the forge');
 
   // A build already running for this browser (a reload, a locked phone) is
   // rejoined rather than restarted — it was never in the page to begin with.
-  var RESUME = <?= json_encode($resume) ?>;
+  var RESUME = <?= js($resume) ?>;
   if (RESUME) { openBuildScreen(); logline('rejoining the build already running…'); follow(RESUME); }
 })();
 </script>
