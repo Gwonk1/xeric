@@ -561,6 +561,14 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now): stri
     $debts = xeric_debt_block($t, $db, $handle);
     if ($debts !== '') $blocks[] = $debts;
 
+    // Whether the person at the centre has been turning up to work, which is
+    // the kind of thing a small town holds without ever being told. Silent
+    // unless a world has a roster AND somebody turned the money dial up off
+    // `none`, so it costs nothing in every world that is not about a job.
+    require_once __DIR__ . '/work.php';
+    $job = xeric_work_block($db, $t);
+    if ($job !== '') $blocks[] = $job;
+
     $talk = xeric_gossip_block($t, $db, $handle);
     if ($talk !== '') $blocks[] = $talk;
     return implode("\n\n", $blocks);

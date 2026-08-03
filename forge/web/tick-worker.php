@@ -41,6 +41,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(403); exit("tick-worker.php is not 
 
 require_once __DIR__ . '/play-lib.php';
 require_once XERIC_WEB_LIB . '/engine/rewind.php';   // the mark + manifest around the skip
+require_once XERIC_WEB_LIB . '/engine/work.php';     // and what the jump did to the job
 
 $job = (string)($argv[1] ?? '');
 if (!xeric_web_job_ok($job)) { fwrite(STDERR, "tick: bad job id\n"); exit(2); }
@@ -291,6 +292,22 @@ try {
         // failure — so it is shown rather than swallowed.
         xeric_web_job_append($job, ['k' => 'quiet', 't' => $el(), 'why' => array_values(array_map('strval', (array)$why))]);
     }
+
+    // -- what the jump did to the job ----------------------------------------
+    // Read against the roster AFTER the hours are lived, never before: the
+    // skip has already happened and nothing here may block it. A world whose
+    // money dial is at `none` — which is every world by default — returns
+    // immediately and writes nothing at all.
+    try {
+        $shift = xeric_shift_walk($db, $T, (int)$before['epoch'], (int)$after['epoch']);
+        foreach ($shift['lines'] as $line) {
+            xeric_web_job_append($job, ['k' => 'note', 't' => $el(), 'text' => $line]);
+        }
+        if ($shift['paid'] > 0) {
+            xeric_web_job_append($job, ['k' => 'note', 't' => $el(),
+                'text' => 'The hours you worked were paid.']);
+        }
+    } catch (Throwable $e) { /* a job is not worth losing a skip over */ }
 
     // -- and what this skip is now owed an answer to -------------------------
     // The mirror of the settle at the top: what was put in front of the visitor

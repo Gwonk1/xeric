@@ -152,6 +152,30 @@ if ($action !== '') {
                         'note' => 'Takes effect from the next hour and the next reply.']);
     }
 
+    // -- how much money is allowed to matter ----------------------------------
+    // Beside pace, and a dial for the same reason: most worlds are not about
+    // money, and a wage counter in a xeric about a wake is a nag. It lives in
+    // world_state rather than the template because it is a way of PLAYING, not
+    // a fact about the world — the roster stays whatever the forge wrote, and
+    // turning this to `none` mid-play stops the engine having an opinion about
+    // it without editing anybody's job away.
+    if ($action === 'money') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner sets this.'], 403);
+        $in   = xeric_web_input();
+        $want = strtolower(trim((string)($in['money'] ?? '')));
+        if (!in_array($want, XERIC_MONEY_DIALS, true)) {
+            xeric_web_json(['error' => '"' . mb_substr($want, 0, 20) . '" is not one of '
+                . implode(', ', XERIC_MONEY_DIALS)], 400);
+        }
+        $got = xeric_money_set($w['db'], $want);
+        xeric_web_json(['ok' => true, 'money' => $got,
+                        'note' => $got === 'none'
+                            ? 'Your shifts are yours. Nothing counts them.'
+                            : ($got === 'light'
+                                ? 'The town notices when you do not go in. Nothing else happens.'
+                                : 'The hours pay, the ones you skip do not, and enough of those cost you the job.')]);
+    }
+
     // -- the narrator's hand on the ambient world -----------------------------
     // The two dials nobody in the world can touch: the sky and the mood. Both
     // are ordinarily the world's own business — weather derives from the date,
@@ -1322,6 +1346,8 @@ echo '<style>' . xeric_play_css() . '
               . ' — ' . str_replace('_', ' ', (string)$shapeAmb['stage']));
   ?>
   var SHAPE = <?= json_encode($shapeKey) ?>;
+  var MONEY  = <?= json_encode((string)($state['world']['money'] ?? 'none')) ?>;
+  var SHIFTS = <?= (int)($state['world']['shifts'] ?? 0) ?>;
   var SHAPELINE = <?= json_encode($shapeLine) ?>;
   // The player's view of the stories over this world: loglines and progress,
   // never the truth and never which beat is next.
@@ -1550,6 +1576,17 @@ echo '<style>' . xeric_play_css() . '
           }).join('') +
           '<span class="xchint">the world\'s pace, changeable mid-play: how much happens offscreen ' +
           'AND how fast anybody texts back — calm is the token brake</span></div>' +
+          (SHIFTS
+            ? '<div class="xcrow">' +
+              ['none', 'light', 'real'].map(function (m) {
+                return '<button type="button" class="nbtn' + (m === MONEY ? ' on' : '') + '" data-money="' + m + '">' +
+                  (m === 'none' ? '🚫 no money pressure' : m === 'light' ? '👀 they notice' : '💵 it costs') +
+                  '</button>';
+              }).join('') +
+              '<span class="xchint">how much your job is allowed to matter. You can always skip a shift — ' +
+              'this only decides whether anything comes of it: nothing, a remark, or the money and ' +
+              'eventually the job</span></div>'
+            : '') +
           '<div class="xcrow"><select class="nbtn" id="xcshape">' +
           ['none', 'snake', 'slow_burn', 'episodic', 'tidal', 'turn'].map(function (k) {
             var names = { none: 'no arc', snake: 'the plot snake', slow_burn: 'a slow burn',
@@ -1671,6 +1708,32 @@ echo '<style>' . xeric_play_css() . '
           .catch(function () {
             toast('the pace did not take');
             $$('#cmodal [data-pace]').forEach(function (x) { x.disabled = false; });
+          });
+      });
+    });
+
+    // The money dial, beside it. Same one-press shape; it lands in world_state
+    // rather than the template, because how much money matters is a way of
+    // playing and not a fact about the world.
+    $$('#cmodal [data-money]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (b.dataset.money === MONEY) return;
+        $$('#cmodal [data-money]').forEach(function (x) { x.disabled = true; });
+        fetch('play.php?a=money&w=' + encodeURIComponent(W), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ money: b.dataset.money }) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.ok) { MONEY = d.money; toast(d.note || 'saved'); }
+            else { toast((d && d.error) || 'that did not take'); }
+            $$('#cmodal [data-money]').forEach(function (x) {
+              x.disabled = false;
+              x.classList.toggle('on', x.dataset.money === MONEY);
+            });
+          })
+          .catch(function () {
+            toast('that did not take');
+            $$('#cmodal [data-money]').forEach(function (x) { x.disabled = false; });
           });
       });
     });

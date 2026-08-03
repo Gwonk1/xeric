@@ -149,6 +149,21 @@ $cases = [
         mutate($T, ['economies', 1], ['key' => 'thursday_pot', 'counter' => 'per-character',
             'daily_system' => true, 'daily' => ['drift' => '1']]),
         'economies[1].daily.drift must be a whole number'],
+    // A garbled roster is not the same failure as garbled quiet hours below:
+    // that one fails open and is visible, this one silently empties a roster
+    // the author is certain exists.
+    ['a shift on a day that is not one',
+        mutate($T, ['user', 'occupation', 'shifts'],
+            [['days' => ['mon', 'funday'], 'from' => '08:00', 'to' => '16:00']]),
+        "user.occupation.shifts[0].days[1] 'funday' is not a day"],
+    ['a shift that starts at no time at all',
+        mutate($T, ['user', 'occupation', 'shifts'],
+            [['days' => ['mon'], 'from' => '8am', 'to' => '16:00']]),
+        'user.occupation.shifts[0].from \'8am\' is not a time of day'],
+    ['a shift on no days',
+        mutate($T, ['user', 'occupation', 'shifts'],
+            [['days' => [], 'from' => '08:00', 'to' => '16:00']]),
+        'user.occupation.shifts[0].days is required'],
     ['a floor above its own ceiling',
         mutate($T, ['economies', 1], ['key' => 'thursday_pot', 'counter' => 'per-character',
             'daily_system' => true, 'daily' => ['drift' => 1, 'floor' => 9, 'ceiling' => 2]]),
@@ -2564,6 +2579,148 @@ foreach ([sys_get_temp_dir() . '/xeric-wx-' . getmypid() . '.db'] as $f) {
 
 $db2 = null;
 foreach ([$dbPath, $dbPath . '-wal', $dbPath . '-shm'] as $f) @unlink($f);
+
+// ---------------------------------------------------------------------------
+// THE SHIFT, AND HOW MUCH MONEY IS ALLOWED TO MATTER.
+//
+// Most worlds are not about money — a xeric about a wake, a road trip, or a
+// bum on the street is one where a wage counter is a nag. So this starts at
+// nothing everywhere, and the one thing it must never do is stand between
+// somebody and the time control.
+// ---------------------------------------------------------------------------
+
+echo "\n# the shift, and the dial over it\n";
+
+require_once dirname(__DIR__) . '/work.php';
+
+$WKDBS = [];
+$fresh_db = function (string $tag) use (&$WKDBS): PDO {
+    $p = sys_get_temp_dir() . '/xeric-' . $tag . '-' . getmypid() . '.db';
+    foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
+    $WKDBS[] = $p;
+    $d = xeric_state_open($p);
+    xeric_state_migrate($d);
+    return $d;
+};
+
+$wkT = $T;
+$wkT['user']['timezone'] = 'UTC';
+$wkT['user']['occupation']['shifts'] = [
+    ['days' => ['mon', 'tue', 'wed', 'thu', 'fri'], 'from' => '08:00', 'to' => '16:00', 'pay' => 2],
+];
+$wkDb = $fresh_db('work');
+
+ok('work: a world with no roster is not a world about money',
+    xeric_money_default($T) === 'none' && xeric_shifts($T) === []);
+ok('work: and one with a roster and economies starts where the town notices, not where it costs',
+    xeric_money_default($wkT) === 'light');
+ok('work: the dial is a way of playing, so it moves mid-play and sticks',
+    xeric_money_set($wkDb, 'real') === 'real' && xeric_money_dial($wkDb, $wkT) === 'real');
+ok('work: and a dial set to something that is not a dial falls to nothing',
+    xeric_money_set($wkDb, 'whatever') === 'none' && xeric_money_dial($wkDb, $wkT) === 'none');
+xeric_money_set($wkDb, 'real');
+
+// Monday 2026-08-03. The roster says 08:00–16:00.
+$monEarly = (new DateTimeImmutable('2026-08-03 06:00', new DateTimeZone('UTC')))->getTimestamp();
+$monNoon  = $monEarly + 6 * 3600;
+$monLate  = $monEarly + 14 * 3600;                       // 20:00, the shift long over
+
+ok('work: the roster resolves to real hours on the right days',
+    count(xeric_shift_spans($wkT, $monEarly, $monLate)) === 1
+    && count(xeric_shift_spans($wkT, $monEarly, $monEarly + 6 * 86400)) === 5);
+ok('work: and a Saturday has none of them',
+    xeric_shift_spans($wkT, $monEarly + 5 * 86400, $monEarly + 6 * 86400) === []);
+ok('work: what is standing now, and what is due next',
+    (xeric_shift_now($wkT, ['epoch' => $monNoon])['pay'] ?? 0) === 2
+    && xeric_shift_now($wkT, ['epoch' => $monEarly]) === null
+    && (xeric_shift_next($wkT, ['epoch' => $monEarly])['starts'] ?? 0) === $monEarly + 2 * 3600);
+
+// AN HOUR AT A TIME IS BEING AT WORK. This is the whole rule, and it is about
+// the jump rather than about where anybody stood, because the person at the
+// centre of a xeric has no location.
+$wkHour = $fresh_db('work-hour');
+xeric_money_set($wkHour, 'real');
+$paid = 0;
+for ($e = $monEarly; $e < $monLate; $e += 3600) {
+    $r = xeric_shift_walk($wkHour, $wkT, $e, $e + 3600);
+    $paid += $r['paid'];
+}
+ok('work: walking a shift an hour at a time never misses it, and it pays once',
+    $paid === 2 && xeric_work_state($wkHour)['missed'] === 0);
+
+// THE PAIR THAT MAKES THE RULE MEAN ANYTHING: the same stretch of clock, two
+// ways of pressing through it, and only one of them is a day at work.
+$wkHalf = $fresh_db('work-half');
+xeric_money_set($wkHalf, 'real');
+xeric_shift_walk($wkHalf, $wkT, $monEarly, $monEarly + 3 * 3600);      // 06:00 → 09:00, a jump
+for ($e = $monEarly + 3 * 3600; $e < $monLate; $e += 3600) {           // then hour by hour
+    xeric_shift_walk($wkHalf, $wkT, $e, $e + 3600);
+}
+ok('work: an hour of it slept through is still a day you turned up to',
+    xeric_work_state($wkHalf)['missed'] === 0 && xeric_work_state($wkHalf)['wages'] === 2);
+
+// AND SLEEPING THROUGH IT IS NOT.
+$wkSkip = $fresh_db('work-skip');
+xeric_money_set($wkSkip, 'real');
+$sk = xeric_shift_walk($wkSkip, $wkT, $monEarly, $monLate);
+ok('work: one press that swallows the whole shift is a shift you did not go to',
+    $sk['missed'] === 1 && $sk['worked'] === 0 && $sk['paid'] === 0
+    && $sk['fired'] === false && $sk['lines'] !== []);
+
+// Enough of them in a row, and there is no job to skip.
+$fired = xeric_shift_walk($wkSkip, $wkT, $monEarly + 86400, $monEarly + 3 * 86400);
+ok('work: enough missed in a row costs the job',
+    $fired['fired'] === true && xeric_work_state($wkSkip)['fired'] === true);
+ok('work: and there is nothing left to miss after that',
+    xeric_shift_walk($wkSkip, $wkT, $monEarly + 7 * 86400, $monEarly + 8 * 86400)['missed'] === 0);
+
+// A single shift worked wipes the run — this is a job, not a permanent record.
+$wkRun = $fresh_db('work-run');
+xeric_money_set($wkRun, 'real');
+xeric_shift_walk($wkRun, $wkT, $monEarly, $monLate);
+xeric_shift_walk($wkRun, $wkT, $monEarly + 86400, $monEarly + 86400 + 14 * 3600);
+ok('work: two missed and counting', xeric_work_state($wkRun)['missed'] === 2);
+for ($e = $monEarly + 2 * 86400; $e < $monEarly + 2 * 86400 + 14 * 3600; $e += 3600) {
+    xeric_shift_walk($wkRun, $wkT, $e, $e + 3600);
+}
+ok('work: and one shift turned up to wipes the run rather than shaving it',
+    xeric_work_state($wkRun)['missed'] === 0 && xeric_work_state($wkRun)['fired'] === false);
+
+// THE DIAL IS THE WHOLE POINT. At `light` the town notices and that is all; at
+// `none` nothing is counted, written, or said, in any world.
+$wkLight = $fresh_db('work-light');
+xeric_money_set($wkLight, 'light');
+$li = xeric_shift_walk($wkLight, $wkT, $monEarly, $monLate);
+ok('work: at light it is remarked on and nothing else happens',
+    $li['missed'] === 1 && $li['paid'] === 0 && $li['lines'] !== []
+    && xeric_work_state($wkLight)['wages'] === 0);
+ok('work: and light never costs the job, however many go by',
+    xeric_shift_walk($wkLight, $wkT, $monEarly + 86400, $monEarly + 5 * 86400)['fired'] === false
+    && xeric_work_state($wkLight)['fired'] === false);
+
+$wkNone = $fresh_db('work-none');
+xeric_money_set($wkNone, 'none');
+$no = xeric_shift_walk($wkNone, $wkT, $monEarly, $monLate);
+ok('work: at none the engine has no opinion about your job at all',
+    $no === ['missed' => 0, 'worked' => 0, 'paid' => 0, 'fired' => false, 'lines' => []]
+    && xeric_world_state_get($wkNone, 'work.missed') === null);
+ok('work: and no prompt anywhere carries a job block',
+    xeric_work_block($wkNone, $wkT) === '' && xeric_work_block($wkLight, $wkT) !== '');
+
+// Coarse in the prompt, like every other block that reaches one: no wage
+// total, no strike count, no countdown to the next shift.
+$blk = xeric_work_block($wkSkip, $wkT);
+ok('work: what the town knows is whether you turn up, not what you are owed',
+    str_contains($blk, 'any more') && !preg_match('/\d/', $blk), $blk);
+
+// A world with no roster cannot be given one by the dial.
+$wkBare = $fresh_db('work-bare');
+xeric_money_set($wkBare, 'real');
+ok('work: turning the dial up in a world with no shifts invents no shifts',
+    xeric_shift_walk($wkBare, $T, $monEarly, $monLate)['missed'] === 0
+    && xeric_work_block($wkBare, $T) === '');
+
+foreach ($WKDBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";
 exit($FAILED === 0 ? 0 : 1);

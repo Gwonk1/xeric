@@ -426,6 +426,33 @@ function xeric_world_validate(array $t, string $label = 'template'): void
         $bad('user.occupation.workplace_key', "'$wkey' is not a declared place");
     }
 
+    // SHIFTS FAIL LOUD, unlike the quiet hours below them, and the difference
+    // is what a mistake costs. A garbled quiet-hours string means nobody gets
+    // pinged at three in the morning — annoying and visible. A garbled shift
+    // means a roster the author is certain exists and the engine reads as an
+    // empty list, so the money dial they turned on has nothing to act on and
+    // the world simply feels broken with nothing to point at.
+    require_once __DIR__ . '/work.php';
+    $dayNames = xeric_work_days();
+    foreach ((array)($t['user']['occupation']['shifts'] ?? []) as $i => $s) {
+        $p = "user.occupation.shifts[$i]";
+        if (!is_array($s)) { $bad($p, 'must be an object with days, from and to'); continue; }
+        foreach (['from', 'to'] as $f) {
+            if (xeric_work_minutes((string)($s[$f] ?? '')) === null) {
+                $bad("$p.$f", "'" . (string)($s[$f] ?? '') . "' is not a time of day like \"08:30\"");
+            }
+        }
+        $days = (array)($s['days'] ?? []);
+        if ($days === []) $bad("$p.days", 'is required — a shift on no days is not a shift');
+        foreach ($days as $j => $d) {
+            $k = strtolower(substr(trim((string)$d), 0, 3));
+            if (!isset($dayNames[$k])) {
+                $bad("$p.days[$j]", "'$d' is not a day, use " . implode('|', array_keys($dayNames)));
+            }
+        }
+        if (isset($s['pay']) && !is_int($s['pay'])) $bad("$p.pay", 'must be a whole number');
+    }
+
     // Quiet hours fail OPEN when they are malformed: the sweeps parse
     // "HH:MM-HH:MM" and read anything else as "there are none", so "11pm-7am",
     // or the en-dash a paste leaves behind, switches the world's nights back on

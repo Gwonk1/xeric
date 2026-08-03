@@ -2991,6 +2991,35 @@ ok('sidebar: the count still prints when it is zero',
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// THE TIME MENU. "skip to morning" and "sleep until morning" are the same
+// stretch of clock and a different thing to have done, so the row offers
+// whichever one is honest at the hour you are standing in — and never both,
+// because the same jump twice is a cluttered row, not a choice.
+// ---------------------------------------------------------------------------
+
+echo "\n# the time menu\n";
+
+$spT   = ['user' => ['timezone' => 'UTC']];
+$atHr  = function (string $hhmm) use ($spT): array {
+    return xeric_world_now($spT, (new DateTimeImmutable('2026-08-03 ' . $hhmm,
+        new DateTimeZone('UTC')))->getTimestamp());
+};
+$spNight = xeric_play_spans($atHr('23:00'), $spT);
+$spDay   = xeric_play_spans($atHr('14:00'), $spT);
+
+ok('spans: late enough for it, the row offers sleep',
+    isset($spNight['sleep']) && $spNight['sleep']['label'] === 'sleep until morning');
+ok('spans: and not the same jump twice under a second name',
+    !isset($spNight['morning']));
+ok('spans: at two in the afternoon it is a nap, and this world has no nap button',
+    !isset($spDay['sleep']) && isset($spDay['morning']));
+ok('spans: sleep lands where skip to morning would have',
+    $spNight['sleep']['seconds'] === xeric_play_spans($atHr('23:00'), null)['sleep']['seconds']
+    && $spNight['sleep']['to'] === $spDay['morning']['to']);
+ok('spans: and the ordinary offers survive it',
+    isset($spNight['hour'], $spNight['evening']));
+
 rmtree($tmp);
 
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";

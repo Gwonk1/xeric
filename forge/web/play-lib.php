@@ -46,6 +46,7 @@ require_once XERIC_WEB_LIB . '/engine/story.php';       // the overlays beside a
 require_once XERIC_WEB_LIB . '/engine/photo.php';       // the pictures a world owes itself
 require_once XERIC_WEB_LIB . '/engine/qr.php';          // this xeric, on the phone in your pocket
 require_once XERIC_WEB_LIB . '/engine/mood.php';        // the town's own needle, which its hours move
+require_once XERIC_WEB_LIB . '/engine/work.php';        // the shift, and how much money is allowed to matter
 
 /**
  * How many events one press of the time control may produce.
@@ -522,6 +523,19 @@ function xeric_play_spans(array $now, ?array $t = null, ?array $dead = null): ar
         'evening' => ['label' => 'skip to evening',  'seconds' => $until(19)],
         'morning' => ['label' => 'skip to morning',  'seconds' => $until(8)],
     ];
+
+    // SLEEP, which is the same stretch of clock as "skip to morning" and a
+    // different thing to have done. Offered only when it is late enough to be
+    // plausible, because a sleep button at two in the afternoon is a nap
+    // button and this world does not have one. It carries no separate rule —
+    // the hours pass exactly as they would have — but it is the honest label
+    // for the press somebody actually meant, and it is the one that walks you
+    // through a morning shift without pretending you were at it.
+    $h = (int)$here->format('G');
+    if ($h >= 21 || $h < 5) {
+        $spans = ['sleep' => ['label' => 'sleep until morning', 'seconds' => $until(8)]] + $spans;
+        unset($spans['morning']);           // the same jump twice is a cluttered row
+    }
 
     // THE WORLD'S OWN NEXT THING (owner's ask, engine half built 2026-08-02).
     // +1 hour and morning/evening are the clock's offers; these are the
@@ -1660,6 +1674,12 @@ function xeric_play_panel(array $t, PDO $db, bool $mine = true): array
         'disarmed' => xeric_sweep_disarmed($t),
         'kinds'    => array_keys(xeric_sweep_kinds_for($t)),
         'pace'     => (string)($t['events']['pace'] ?? ''),
+        // The money dial, and whether there is a roster for it to act on. Both,
+        // because a dial with nothing under it is worth showing differently
+        // from one that is simply switched off — the first is a world that
+        // never had a shift in it, the second is a choice somebody made.
+        'money'    => xeric_money_dial($db, $t),
+        'shifts'   => count(xeric_shifts($t)),
         'chance'   => $chance,
         'gap'      => (int)($t['events']['expected_gap_hours'] ?? 0),
         // How long a world actually goes between things, which is NOT `gap`:

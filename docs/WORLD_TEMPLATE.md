@@ -75,7 +75,33 @@ Design principles, learned the hard way:
       "title": "retired line foreman",
       "workplace_key": null,                // a place key binds an orbit to the
                                             // job; null when there is no job
-      "hours": "none, and he has not gotten used to it"
+      "hours": "none, and he has not gotten used to it",
+      "shifts": []                          // OPTIONAL and usually empty. `hours`
+                                            // above is prose and stays prose;
+                                            // this is the machine-readable
+                                            // roster, and it exists so a world
+                                            // can be ABOUT a job:
+                                            //   [{ "days": ["mon","tue","wed"],
+                                            //      "from": "08:00",
+                                            //      "to":   "16:00",
+                                            //      "pay":  1,
+                                            //      "label": "the early" }]
+                                            // Overnight shifts are written the
+                                            // obvious way ("22:00" → "06:00").
+                                            // Nothing here forces anything: what
+                                            // a missed shift COSTS is the money
+                                            // dial in the cog, which starts at
+                                            // `none` in every world and can be
+                                            // changed mid-play. You can always
+                                            // skip a shift — the time control is
+                                            // how this engine moves and nothing
+                                            // is allowed to hold it hostage. A
+                                            // shift counts as missed when one
+                                            // press of that control swallows
+                                            // more than half of it, so walking
+                                            // it an hour at a time is being at
+                                            // work and sleeping until morning is
+                                            // not.
     },
     "quiet_hours": "21:30-06:00",           // ping caps, sweep gates
     "home_key": null,                       // a place key that is HOME, or null.
