@@ -3094,7 +3094,10 @@ ok('debrief: a stranger is shown none of it',
 ok('debrief: and an ordinary xeric is told to read its book instead',
     str_contains($run('debrief.php', $A, ['w' => 'lived-in']), 'not a discussion'));
 ok('debrief: the owner gets the box that puts things to them',
-    str_contains($deb, 'put it to the room') && str_contains($deb, 'have them write it'));
+    str_contains($deb, 'put it to the room') && str_contains($deb, 'have them write it')
+    && str_contains($deb, 'let them argue'));
+ok('debrief: and a link to the thing the room made, as itself',
+    str_contains($deb, '&amp;a=0') && str_contains($deb, 'download'));
 ok('debrief: and is told plainly that both of those spend tokens',
     str_contains($deb, 'spend tokens') && str_contains($deb, 'real money'));
 ok('debrief: a stranger is offered no box to spend anybody\'s money with',
@@ -3103,6 +3106,29 @@ ok('debrief: a stranger is offered no box to spend anybody\'s money with',
 // The endpoints behind those two buttons: owner-only, and refusing an ordinary
 // world rather than spawning a worker that would find no room to talk to.
 $prop = $run('play.php', $B, ['a' => 'propose', 'w' => 'argument']);
+// THE RAW ROUTE. "Provide you the link" has to mean an actual link if the
+// deliverable is a program — and it has to be text/plain whatever the room
+// called its language, because this is a model writing at somebody's prompting
+// and serving it as text/html would be handing a stored XSS a content type.
+$xss = '<script>alert(1)</script> print("hi")';
+// The index is whatever xeric_panel_made returns — the debrief block above
+// already wrote one into this same world, so hard-coding 0 tests that one.
+$rawBoot = '$_GET = ["w" => "argument"];'
+    . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
+    . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
+    . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
+    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' $w = xeric_play_open("argument");'
+    . ' $_GET["a"] = (string)xeric_panel_made($w["db"], "the script", ' . var_export($xss, true) . ', "html", "");'
+    . ' require ' . var_export(dirname(__DIR__) . '/debrief.php', true) . ';';
+$raw = (string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($tmp)
+    . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
+    . ' ' . escapeshellarg($php) . ' -d error_reporting=0 -r ' . escapeshellarg($rawBoot) . ' 2>&1');
+ok('raw: the artifact is served as itself, with nothing around it',
+    trim($raw) === $xss, mb_substr($raw, 0, 120));
+ok('raw: and an artifact that does not exist is a plain 404, not a page',
+    str_contains($run('debrief.php', $A, ['w' => 'argument', 'a' => '99']), 'no such thing'));
+
 ok('panel: a stranger cannot put anything to somebody else\'s room',
     str_contains($prop, 'Only the owner') || str_contains($prop, 'not yours'));
 ok('panel: and an ordinary xeric is not a room with a question in it',

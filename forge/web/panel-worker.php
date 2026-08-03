@@ -24,6 +24,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(403); exit("panel-worker.php is not
 
 require_once __DIR__ . '/play-lib.php';
 require_once XERIC_WEB_LIB . '/engine/panel.php';
+require_once XERIC_WEB_LIB . '/engine/room.php';   // a panel is three to five, which is a room
 
 $job = (string)($argv[1] ?? '');
 if (!xeric_web_job_ok($job)) { fwrite(STDERR, "panel: bad job id\n"); exit(2); }
@@ -52,10 +53,12 @@ try {
     $mode = (string)($payload['mode'] ?? 'propose');
 
     if (xeric_panel($T) === null) throw new RuntimeException('this xeric is not a discussion room');
-    if ($what === '') throw new RuntimeException('there is nothing here to put to them');
+    // A round needs nothing said to it — the room already has a question.
+    if ($what === '' && $mode !== 'round') throw new RuntimeException('there is nothing here to put to them');
 
     xeric_web_job_append($job, ['k' => 'hello',
-        'message' => $mode === 'build' ? 'the room is writing it' : 'putting it to the room']);
+        'message' => $mode === 'build' ? 'the room is writing it'
+            : ($mode === 'round' ? 'letting them argue' : 'putting it to the room')]);
 
     if ($ticket === '') $ticket = xeric_queue_join('panel', $sid);
     $got = xeric_queue_wait($ticket, XERIC_QUEUE_WAIT_MAX,
@@ -84,6 +87,31 @@ try {
         xeric_web_job_append($job, ['k' => 'done', 'message' => 'written: ' . (string)$made['title'],
                                     'artifact' => ['title' => (string)$made['title'],
                                                    'kind' => (string)$made['kind']]]);
+        exit(0);
+    }
+
+    // LET THEM ARGUE. The room seats every expert and runs beats, which is what
+    // xeric_room() was built for and what nothing in the web layer had ever
+    // driven — watch.php is the DUET, two people in strict turns. A panel is
+    // three to five, which is exactly the room's own range.
+    //
+    // The close records every line with the speaker's own memory as its
+    // reasoning (engine/room.php), so an argument that runs here is an argument
+    // the debrief can report on and the next round can read.
+    if ($mode === 'round') {
+        $handles = array_keys(xeric_panel_experts($T));
+        $now = xeric_clock_now($db, $T);
+        $r = xeric_room($T, $db, $handles, $now, $endpoint, [
+            'beats'   => max(3, min(12, (int)($payload['beats'] ?? 6))),
+            'timeout' => 90,
+            'on_line' => function (string $h, string $name, string $text, string $kind) use ($job): void {
+                if ($kind !== 'line') return;
+                xeric_web_job_append($job, ['k' => 'note', 'message' => $name . ': ' . $text]);
+            },
+        ]);
+        xeric_web_job_append($job, ['k' => 'done',
+            'message' => 'they talked for ' . count((array)$r['lines']) . ' turns',
+            'round' => ['lines' => count((array)$r['lines'])]]);
         exit(0);
     }
 

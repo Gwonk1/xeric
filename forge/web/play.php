@@ -180,7 +180,7 @@ if ($action !== '') {
     // Detached, because a proposal is one short model call PER EXPERT and the
     // room holds five of them: worst case is five timeouts back to back, which
     // is past the edge's cut long before it is past the model's.
-    if ($action === 'propose' || $action === 'build') {
+    if ($action === 'propose' || $action === 'build' || $action === 'round') {
         if (!$w['mine']) xeric_web_json(['error' => 'Only the owner puts things to the room.'], 403);
         require_once XERIC_WEB_LIB . '/engine/panel.php';
         if (xeric_panel($w['template']) === null) {
@@ -188,7 +188,10 @@ if ($action !== '') {
         }
         $in   = xeric_web_input();
         $text = trim((string)($in['text'] ?? ''));
-        if ($text === '') xeric_web_json(['error' => 'There is nothing here to put to them.'], 400);
+        // A round needs nothing said to it — the room already has its question.
+        if ($text === '' && $action !== 'round') {
+            xeric_web_json(['error' => 'There is nothing here to put to them.'], 400);
+        }
 
         try { xeric_play_endpoint(); }
         catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }

@@ -55,6 +55,26 @@ $T  = $w['template'];
 $db = $w['db'];
 $P  = xeric_panel($T);
 
+// ONE ARTIFACT, RAW. `?a=<n>` serves the thing itself with nothing around it —
+// a link somebody can paste to a colleague, curl, or save, which is what
+// "provide you the link" has to mean if the deliverable is a program. Served
+// as text/plain ALWAYS, whatever the room called its language: this is
+// attacker-adjacent content (a model wrote it, at somebody's prompting) and
+// serving it as text/html would be handing a stored XSS a content type.
+if (isset($_GET['a'])) {
+    $all = xeric_panel_artifacts($db);
+    $i   = (int)$_GET['a'];
+    if (!isset($all[$i])) { http_response_code(404); header('Content-Type: text/plain; charset=utf-8');
+                            exit("no such thing\n"); }
+    $one  = $all[$i];
+    $name = preg_replace('/[^A-Za-z0-9._-]+/', '-', (string)$one['title']) ?: 'artifact';
+    header('Content-Type: text/plain; charset=utf-8');
+    header('X-Content-Type-Options: nosniff');
+    if (isset($_GET['d'])) header('Content-Disposition: attachment; filename="' . trim($name, '-') . '.txt"');
+    echo (string)$one['body'];
+    exit;
+}
+
 xeric_web_head('Xeric: debrief · ' . (string)$T['meta']['name']);
 echo '<style>' . xeric_play_css() . xeric_debrief_css() . '</style>';
 ?>
@@ -127,13 +147,15 @@ $experts   = $P['experts'];
   <!-- WHAT THEY BUILT, above the argument about it. If somebody asked this
        room for a program, the program is what they came for. -->
   <h2 class="sec">What the room made</h2>
-<?php foreach ($made as $m): ?>
+<?php foreach ($made as $mi => $m): ?>
   <section class="made">
     <h3><?= h((string)$m['title']) ?><?php
       if ((string)$m['kind'] !== 'text') echo ' <span class="kind">' . h((string)$m['kind']) . '</span>';
       if ((string)($m['by'] ?? '') !== '') echo ' <span class="by">' . h(xeric_world_name($T, (string)$m['by']) ?: (string)$m['by']) . '</span>';
     ?></h3>
     <pre class="body"><?= h((string)$m['body']) ?></pre>
+    <p class="links"><a href="debrief.php?w=<?= h(rawurlencode($w['slug'])) ?>&amp;a=<?= (int)$mi ?>">raw</a>
+      · <a href="debrief.php?w=<?= h(rawurlencode($w['slug'])) ?>&amp;a=<?= (int)$mi ?>&amp;d=1">download</a></p>
   </section>
 <?php endforeach; ?>
 <?php endif; ?>
@@ -226,6 +248,7 @@ $experts   = $P['experts'];
     <div class="drow">
       <button type="button" class="nbtn" id="pput">put it to the room</button>
       <button type="button" class="nbtn" id="pbuild">have them write it</button>
+      <button type="button" class="nbtn" id="pargue">let them argue</button>
     </div>
     <p class="note">“Put it to the room” asks each of them, separately, whether it crosses their
       own line — one short call per person, and none of them sees the tally. “Have them write it”
@@ -237,11 +260,18 @@ $experts   = $P['experts'];
   (function () {
     var W = <?= json_encode($w['slug']) ?>;
     var st = document.getElementById('pst'), box = document.getElementById('ptext');
-    function go(mode, btn) {
+    function BTNS() {
+      return ['pput', 'pbuild', 'pargue'].map(function (i) { return document.getElementById(i); })
+        .filter(Boolean);
+    }
+    function go(mode) {
       var text = (box.value || '').trim();
-      if (!text) { box.focus(); return; }
-      [document.getElementById('pput'), document.getElementById('pbuild')].forEach(function (b) { b.disabled = true; });
-      st.hidden = false; st.textContent = mode === 'build' ? 'writing it…' : 'putting it to them…';
+      // A round needs nothing typed: the room already has its question.
+      if (!text && mode !== 'round') { box.focus(); return; }
+      BTNS().forEach(function (b) { b.disabled = true; });
+      st.hidden = false;
+      st.textContent = mode === 'build' ? 'writing it…'
+        : (mode === 'round' ? 'letting them talk…' : 'putting it to them…');
       fetch('play.php?a=' + mode + '&w=' + encodeURIComponent(W), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text }) })
@@ -254,7 +284,7 @@ $experts   = $P['experts'];
     }
     function fail(m) {
       st.textContent = m;
-      [document.getElementById('pput'), document.getElementById('pbuild')].forEach(function (b) { b.disabled = false; });
+      BTNS().forEach(function (b) { b.disabled = false; });
     }
     // The room refusing in real time beats a spinner and a verdict: each note
     // is one person answering about their own line.
@@ -277,8 +307,9 @@ $experts   = $P['experts'];
         fail(why);
       });
     }
-    document.getElementById('pput').addEventListener('click', function () { go('propose', this); });
-    document.getElementById('pbuild').addEventListener('click', function () { go('build', this); });
+    document.getElementById('pput').addEventListener('click', function () { go('propose'); });
+    document.getElementById('pbuild').addEventListener('click', function () { go('build'); });
+    document.getElementById('pargue').addEventListener('click', function () { go('round'); });
   })();
   </script>
 <?php endif; ?>
@@ -339,6 +370,7 @@ h2.sec{margin:2.2rem 0 .6rem;font-size:1.05rem;letter-spacing:.02em;text-transfo
 .drow{display:flex;gap:.5rem;flex-wrap:wrap;margin:.6rem 0 .2rem}
 .doer .note{font-size:.85rem;opacity:.72;margin:.5rem 0 0;line-height:1.5}
 .pst{margin:.6rem 0 0;font-size:.9rem;opacity:.85}
+.made .links{margin:.5rem 0 0;font-size:.85rem;opacity:.75}
 .foot{margin:2.5rem 0 1rem;opacity:.75}
 CSS;
 }
