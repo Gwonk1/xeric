@@ -84,6 +84,7 @@ require_once __DIR__ . '/learn.php';     // what the person living here actually
 // shape still pays nothing: xeric_story_ambient() returns [] on the first line.
 require_once __DIR__ . '/shape.php';
 require_once __DIR__ . '/weather.php'; // the day's sky, derived, never stored
+require_once __DIR__ . '/mood.php';    // and the town's own needle, which its hours move
 
 /** The unit of offscreen life. One hour: short enough to place an event in a real
  *  shift, long enough that a day is not 1,440 chances to interrupt somebody. */
@@ -784,6 +785,12 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
         $eventId = xeric_event_add($db, $written['title'], $epoch, $chosen['where'],
             array_keys($written['memories']), $written['prose'], $at, (bool)$chosen['on_spine'],
             (string)($written['overheard'] ?? ''));
+
+        // THE TOWN'S MOOD MOVES WITH ITS HOURS. Inside the transaction, so a
+        // needle can never record an hour that did not land — and the step
+        // reverts toward ordinary as it pushes, which is what stops a world
+        // from sitting at the end of its own range forever. Costs one row.
+        xeric_mood_step($db, $t, (string)$chosen['kind']['key'], $at);
 
         foreach ($written['memories'] as $handle => $text) {
             xeric_memory_add($db, $handle, $text, 'event', [

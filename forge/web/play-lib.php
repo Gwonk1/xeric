@@ -45,6 +45,7 @@ require_once XERIC_WEB_LIB . '/engine/learn.php';
 require_once XERIC_WEB_LIB . '/engine/story.php';       // the overlays beside a world, if it has any
 require_once XERIC_WEB_LIB . '/engine/photo.php';       // the pictures a world owes itself
 require_once XERIC_WEB_LIB . '/engine/qr.php';          // this xeric, on the phone in your pocket
+require_once XERIC_WEB_LIB . '/engine/mood.php';        // the town's own needle, which its hours move
 
 /**
  * How many events one press of the time control may produce.
@@ -878,6 +879,13 @@ function xeric_play_compass_html(array $t, PDO $db, ?array $now = null): string
     $pt = fn(string $v, string $k, string $why) =>
         '<span class="cpt" title="' . h($why) . '"><b>' . h($v) . '</b>' . h($k) . '</span>';
 
+    // THE FOURTH READING, AND THE ONLY ONE THAT IS NOT A COUNT. The needle
+    // finally moves (engine/mood.php), so the compass can say what this town
+    // has been LIKE lately, in the town's own words rather than a number with
+    // a label bolted on. Absent for a world that declared no axis: a world
+    // with no vocabulary for its mood should be shown no mood.
+    $mood = xeric_mood_read($db, $t);
+
     return '<p class="scompass">'
         // "day one" is already a whole phrase; "3 days" and "6 weeks" need the
         // preposition that says they are elapsed rather than remaining.
@@ -887,6 +895,9 @@ function xeric_play_compass_html(array $t, PDO $db, ?array $now = null): string
               'everything this xeric has lived through, baked past and all')
         . $pt($known . '/' . $cast, ' spoken to',
               'how many of the cast you have actually opened a thread with')
+        . ($mood === [] ? '' : $pt((string)$mood['word'], '',
+              'how this xeric has been lately, in its own words'
+              . ($mood['motif'] !== '' ? ' — ' . (string)$mood['motif'] : '')))
         . '</p>';
 }
 

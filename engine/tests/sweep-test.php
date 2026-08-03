@@ -1761,6 +1761,66 @@ ok('proactive: a live overlay does not stop the phone from ringing',
     $ping !== null && ($ping['text'] ?? '') !== '', json_encode($notesPing));
 
 // ---------------------------------------------------------------------------
+// THE NEEDLE. `world_mood` has been in the schema since the beginning — an
+// axis in the world's own words, a range, motifs, drivers, a reversion rule —
+// and nothing ever wrote the number, so narrator.php printed "the needle sits
+// at 0" in every world that has ever existed. Now the hours move it.
+// ---------------------------------------------------------------------------
+
+echo "\n# the town's needle\n";
+
+$mdT  = world(['danger', 'shared_meals']);
+$mdDb = fresh_db('mood');
+xeric_state_seed($mdDb, $mdT);
+
+ok('mood: a fresh world sits at its own ordinary',
+    xeric_mood_now($mdDb, $mdT) === xeric_mood_ordinary($mdT));
+ok('mood: the world\'s OWN drivers win over the engine\'s reading of a kind',
+    xeric_mood_delta($mdT, 'funeral') === 3 && xeric_mood_delta($mdT, 'potluck') === -2);
+ok('mood: and a kind nobody declared falls back to what the kind IS',
+    xeric_mood_delta($mdT, 'mishap') > 0 && xeric_mood_delta($mdT, 'shared_meal') < 0
+    && xeric_mood_delta($mdT, 'routine') === 0);
+ok('mood: a kind nothing has an opinion about moves nothing',
+    xeric_mood_delta($mdT, 'no_such_kind') === 0);
+
+// Tension raises it, warmth lowers it, and the drift home is what keeps the
+// number meaning "lately" rather than "ever".
+for ($i = 0; $i < 6; $i++) xeric_mood_step($mdDb, $mdT, 'mishap');
+$mdHot = xeric_mood_now($mdDb, $mdT);
+ok('mood: a run of bad hours pushes the needle off ordinary', $mdHot > xeric_mood_ordinary($mdT), (string)$mdHot);
+ok('mood: and it never leaves the world\'s own range',
+    $mdHot <= xeric_mood_range($mdT)[1]);
+for ($i = 0; $i < 30; $i++) xeric_mood_step($mdDb, $mdT, 'routine');
+ok('mood: quiet hours bring it home — mean-toward-ordinary, and it STOPS there',
+    xeric_mood_now($mdDb, $mdT) === xeric_mood_ordinary($mdT), (string)xeric_mood_now($mdDb, $mdT));
+
+// The reading is in the world's words, not a number with a label on it.
+for ($i = 0; $i < 8; $i++) xeric_mood_step($mdDb, $mdT, 'loss');
+$mdRead = xeric_mood_read($mdDb, $mdT);
+ok('mood: the reading speaks the world\'s own axis, and carries a motif',
+    ($mdRead['side'] ?? '') === 'positive'
+    && str_contains((string)$mdRead['word'], 'reckless')
+    && (string)($mdRead['motif'] ?? '') !== '', json_encode($mdRead));
+$mdNone = $mdT;
+unset($mdNone['world_mood']['axis']);
+ok('mood: a world with no vocabulary for its mood is shown no mood',
+    xeric_mood_read($mdDb, $mdNone) === []);
+
+// AND THE HOURS THEMSELVES MOVE IT — the assertion that the wiring is real
+// rather than a function nobody calls, which is what this whole entry was.
+$mdLive = fresh_db('mood-live');
+xeric_state_seed($mdLive, $mdT);
+$mdBefore = xeric_mood_now($mdLive, $mdT);
+$mdMoved = false;
+for ($i = 0; $i < 12 && !$mdMoved; $i++) {
+    xeric_sweep_run($mdT, $mdLive, stub_event(), xeric_world_now($mdT, ep('2026-07-30 20:00') + $i * 3600),
+        ['chance' => 1.0, 'seed' => 400 + $i]);
+    $mdMoved = xeric_mood_now($mdLive, $mdT) !== $mdBefore;
+}
+ok('mood: an hour the world actually lived moves the needle', $mdMoved,
+    'before ' . $mdBefore . ', after ' . xeric_mood_now($mdLive, $mdT));
+
+// ---------------------------------------------------------------------------
 // What a PLAYER may be told about a story over their world, and taking one
 // back. The digest is the thin view on purpose: a UI that could print the
 // culprit would be the overlay engine defeating itself in the settings panel.
