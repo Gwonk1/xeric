@@ -34,10 +34,11 @@ $WEB  = $ROOT . '/forge/web';
 
 // -- arguments ---------------------------------------------------------------
 $o = ['out' => '', 'page' => 'play.php', 'sel' => '', 'file' => '', 'w' => 1280, 'h' => 900,
-      'wait' => 2200, 'world' => 'shotworld', 'keep' => false];
+      'wait' => 2200, 'world' => 'shotworld', 'keep' => false, 'chatty' => false];
 for ($i = 1; $i < $argc; $i++) {
     $a = $argv[$i];
     if ($a === '--keep') { $o['keep'] = true; continue; }
+    if ($a === '--chatty') { $o['chatty'] = true; continue; }
     if (str_starts_with($a, '--') && isset($argv[$i + 1])) { $o[substr($a, 2)] = $argv[++$i]; continue; }
 }
 if ($o['out'] === '') { fwrite(STDERR, "shot: --out <file.png> is required\n"); exit(1); }
@@ -111,6 +112,35 @@ file_put_contents($mk, "<?php\n"
     . 'file_put_contents($d . "/world-template.json", json_encode($t, $j));' . "\n"
     . 'file_put_contents($d . "/seed.json", json_encode(xeric_forge_default_seed($t), $j));' . "\n");
 shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($mk) . ' 2>&1');
+
+// --chatty: a world with conversations already in it. The sidebar's thread list,
+// the unread treatment and the chip dots are all invisible on a world nobody has
+// spoken to, which is exactly the world a fresh shot builds — so the one view
+// that most needed looking at could not be looked at.
+if (!empty($o['chatty'])) {
+    $seed = $tmp . '/chatty.php';
+    file_put_contents($seed, "<?php\n"
+        . 'require ' . var_export($ROOT . '/engine/state.php', true) . ";\n"
+        . 'require ' . var_export($ROOT . '/engine/world.php', true) . ";\n"
+        . '$d = ' . var_export($tmp . '/data/worlds/' . $slug, true) . ";\n"
+        . '$t = xeric_world_load($d . "/world-template.json");' . "\n"
+        . '$db = xeric_state_open($d . "/world.db");' . "\n"
+        . 'xeric_state_seed($db, $t);' . "\n"
+        . '$said = ["I put the kettle on before I saw the note.",' . "\n"
+        . '  "He has not been in since Thursday and nobody will say why.",' . "\n"
+        . '  "Tell your father the gate is still hanging off its hinge."];' . "\n"
+        . '$i = 0;' . "\n"
+        . 'foreach ((array)($t["cast"]["characters"] ?? []) as $c) {' . "\n"
+        . '  if ($i >= 3) break;' . "\n"
+        . '  $h = (string)$c["handle"];' . "\n"
+        . '  $cv = xeric_conversation_for($db, $h);' . "\n"
+        . '  xeric_message_append($db, $cv, "user", null, "Are you about later?");' . "\n"
+        . '  xeric_message_append($db, $cv, "assistant", $h, $said[$i]);' . "\n"
+        . '  if ($i === 0) xeric_conversation_touch($db, $cv, 1);' . "\n"
+        . '  $i++;' . "\n"
+        . '}' . "\n");
+    shell_exec(escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($seed) . ' 2>&1');
+}
 
 $envDirs = 'XERIC_DATA_DIR=' . escapeshellarg($tmp . '/data')
          . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/data/worlds')

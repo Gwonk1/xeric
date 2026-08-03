@@ -3628,6 +3628,29 @@ ok('sidebar: writing somebody new is the owner\'s button, inside the owner gate'
     preg_match('/\$w\[.mine.\][^;]*\?>\s*<button[^>]*id="qadd"/s', $playS) === 1
     || preg_match('/mine.*?id="qadd".*?endif/s', $playS) === 1);
 
+// THE THREAD LIST. The clean room opens its sidebar with the conversations; this
+// app had none at all, so the chip bar was doing two jobs — "who exists" and
+// "who I am mid-conversation with" — and only answering the first.
+//
+// xeric_conversations_recent() had been in the engine since the beginning with
+// no caller anywhere, and the kinds it stores (chat / event) are the same split
+// the clean room draws. This is the app's own data getting the shape it was
+// written for.
+$libT = (string)file_get_contents(dirname(__DIR__) . '/play-lib.php');
+ok('threads: the sidebar has a list of what you are in the middle of',
+    str_contains($libT, "xeric_play_sideblock('threads'"));
+ok('threads: each row opens that person, through the binding the panel already has',
+    str_contains($libT, 'class="wperson thrb"'));
+ok('threads: unread carries the edge bar, the tint AND the weight',
+    str_contains($libT, '.thr.unread::before') && str_contains($libT, '.thr.unread .thrb{')
+    && str_contains($libT, 'font-weight:600'));
+// One query, not one per row: the snippet is what makes this a conversation list
+// rather than a second chip bar, and the obvious version of it is an N+1.
+ok('threads: the last line comes from one query, not one per thread',
+    preg_match('/SELECT c\.id.*?SELECT m\.content FROM messages m WHERE m\.conversation_id = c\.id/s',
+        $libT) === 1
+    && substr_count($libT, 'FROM conversations c ORDER BY') === 1);
+
 // AND A PLACE IS A DOOR, INCLUDING A SHUT ONE. The sidebar used to require a
 // place to be OPEN before it would offer the walk — stricter than the engine
 // (engine-test: "you may walk to a chained gate, and it tells you it is

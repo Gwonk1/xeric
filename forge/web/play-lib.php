@@ -1317,6 +1317,34 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
              . h((string)$f['txt']) . '</span>';
     };
 
+    // ── THREADS: THE CONVERSATIONS YOU ARE ACTUALLY IN ────────────────────
+    //
+    // The clean room opens its sidebar with the conversation list, and this app
+    // had none at all: the only way to reach a thread was the chip bar, which
+    // shows EVERYBODY — so "who exists" and "who I am mid-conversation with"
+    // were the same row of buttons, and the second question had no answer.
+    //
+    // xeric_conversations_recent() has been in the engine since the beginning
+    // and was called by NOTHING. The kinds it stores — chat and event — are the
+    // same split the clean room draws (💬 chats, 🎬 events), so this is Xeric's
+    // own data finally getting the shape it was written for.
+    //
+    // ONE QUERY, not one per row. The snippet is what makes this a conversation
+    // list rather than a second copy of the chip bar, and a correlated subquery
+    // over idx_messages_conv(conversation_id, id) is a seek per thread rather
+    // than the N+1 the obvious version would have been.
+    $threads = [];
+    try {
+        $st = $db->prepare(
+            'SELECT c.id, c.handle, c.kind, c.title, c.unread, c.updated_at,'
+            . ' (SELECT m.content FROM messages m WHERE m.conversation_id = c.id'
+            . '  ORDER BY m.id DESC LIMIT 1) AS last'
+            . ' FROM conversations c ORDER BY c.updated_at DESC, c.id DESC LIMIT 14');
+        $st->execute();
+        $threads = $st->fetchAll();
+        $st->closeCursor();
+    } catch (Throwable $e) { $threads = []; }
+
     // Every room's hours, read once off the template: the sidebar answers
     // "who is where" and the next question is always "until when".
     $hours = [];
@@ -1376,6 +1404,63 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     // Shown for the owner always (there is always a way in to offer) and for a
     // guest only when there is somebody besides themselves, so a guest's panel
     // is not a permanent reminder of whose house they are in.
+    // THE THREADS, FIRST, because the clean room's scheme puts what you are in
+    // the middle of above what is merely true about the world. Unread rises to
+    // the top and carries an edge bar; everything else keeps recency order.
+    if ($threads !== []) {
+        $unread = 0;
+        foreach ($threads as $tr) if ((int)($tr['unread'] ?? 0) > 0) $unread++;
+        usort($threads, function ($x, $y) {
+            $ux = (int)($x['unread'] ?? 0) > 0 ? 1 : 0;
+            $uy = (int)($y['unread'] ?? 0) > 0 ? 1 : 0;
+            if ($ux !== $uy) return $uy <=> $ux;
+            return (int)($y['updated_at'] ?? 0) <=> (int)($x['updated_at'] ?? 0);
+        });
+
+        $rowsFor = function (string $kind) use ($threads, $t, $disc, $dead): string {
+            $li = '';
+            foreach ($threads as $tr) {
+                if ((string)($tr['kind'] ?? 'chat') !== $kind) continue;
+                $h = (string)($tr['handle'] ?? '');
+                if ($h === '') continue;
+                $name = xeric_world_name($t, $h) ?: $h;
+                $snip = trim(preg_replace('/\s+/u', ' ', (string)($tr['last'] ?? '')) ?? '');
+                if (mb_strlen($snip) > 64) $snip = rtrim(mb_substr($snip, 0, 64)) . '…';
+                $li .= '<li class="thr' . ((int)($tr['unread'] ?? 0) > 0 ? ' unread' : '')
+                     . (isset($dead[$h]) ? ' gone' : '') . '">'
+                     . '<button type="button" class="wperson thrb" data-h="' . h($h) . '">'
+                     . $disc($h)
+                     . '<span><span class="wn">' . h($name) . '</span>'
+                     . ($snip !== '' ? '<span class="thrl">' . h($snip) . '</span>' : '')
+                     . '</span></button></li>';
+            }
+            return $li;
+        };
+
+        $chats  = $rowsFor('chat');
+        $events = $rowsFor('event');
+        if ($chats !== '' || $events !== '') {
+            // "threads", not "what you are in the middle of": the long version
+            // wrapped onto two lines and stranded its own count on the second,
+            // which is what every other heading in this panel avoids by being
+            // one short word.
+            $out .= xeric_play_sideblock('threads', 'threads', count($threads), true);
+            // The 💬/🎬 sub-heads earn their line only when there is something to
+            // tell apart. With one kind in the list the block title has already
+            // said it, and a heading over every row is a heading nobody reads.
+            $both = $chats !== '' && $events !== '';
+            if ($chats !== '') {
+                $out .= ($both ? '<p class="thrhead">💬 talking</p>' : '')
+                      . '<ul class="thrs">' . $chats . '</ul>';
+            }
+            if ($events !== '') {
+                $out .= ($both ? '<p class="thrhead">🎬 events</p>' : '')
+                      . '<ul class="thrs">' . $events . '</ul>';
+            }
+            $out .= '</div></details>';
+        }
+    }
+
     require_once XERIC_WEB_LIB . '/engine/pair.php';
     $people = xeric_players($db, $t);
     if ($mine || count($people) > 1) {
@@ -4042,6 +4127,35 @@ summary.sh:focus-visible{outline:1px solid var(--accent);outline-offset:2px;bord
   font-size:.7rem;color:var(--fg-dim)}
 .sbn::before{content:'·';margin-right:.35rem;color:var(--fg-far)}
 .sbb{padding-bottom:.15rem}
+
+/* THE THREADS. The clean room's conversation list, with this app's rows in it:
+   a face, a name, and the last thing said. The snippet is the whole reason this
+   is not a second copy of the chip bar — chips answer "who exists", this answers
+   "what am I in the middle of". */
+.thrhead{margin:.5rem 0 .2rem;font-size:.62rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--fg-far)}
+.thrhead:first-child{margin-top:0}
+.thrs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.1rem}
+.thr{position:relative}
+.thr .thrb{display:flex;gap:.45rem;align-items:flex-start;width:100%;text-align:left;
+  font:inherit;color:var(--fg);background:none;border:0;cursor:pointer;
+  padding:.3rem .35rem;margin:0 -.35rem;border-radius:.35rem;
+  transition:background .12s ease-out}
+.thr .thrb:hover,.thr .thrb:focus-visible{background:var(--bg-2);outline:none}
+.thr .wn{display:block;font-size:.82rem;line-height:1.25}
+/* One line, clipped. A snippet that wraps turns a glance into a paragraph. */
+.thr .thrl{display:block;font-size:.7rem;color:var(--fg-far);line-height:1.3;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.thr .thrb > span:last-child{min-width:0;flex:1 1 auto}
+/* The clean room's unread treatment: an edge bar, a tint, and weight. Three
+   signals because one of them is colour, and colour alone is not a signal for
+   everybody. */
+.thr.unread .thrb{background:rgba(255,59,48,.10);font-weight:600}
+.thr.unread .thrb:hover,.thr.unread .thrb:focus-visible{background:rgba(255,59,48,.16)}
+.thr.unread::before{content:'';position:absolute;left:-.35rem;top:.28rem;bottom:.28rem;width:3px;
+  border-radius:2px;background:#ff3b30}
+.thr.gone .thrb{opacity:.55}
+.thr.gone .wn{text-decoration:line-through}
 
 .places{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.55rem}
 .place .pl{display:block;font-size:.84rem;font-weight:600;color:var(--fg)}
