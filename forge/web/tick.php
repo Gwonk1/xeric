@@ -70,6 +70,8 @@ try {
 // sentence is that the world is still moving.
 if (!empty($in['rewind'])) {
     require_once dirname(__DIR__, 2) . '/engine/rewind.php';
+    // Taking back the owner's last skip deletes hours out of their world.
+    xeric_play_owner_only($w, 'taking back hours the world has lived');
     if (!empty(xeric_queue_status()['busy'])) {
         // Over-broad on purpose: "the model is doing something" includes other
         // worlds' turns, but a rewind is instant and rare — waiting out a busy

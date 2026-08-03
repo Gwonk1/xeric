@@ -405,6 +405,56 @@ function xeric_play_guard(string $slug, string $because, ?string $sid = null): v
 }
 
 /**
+ * The second half of the sentence above: through the door is not the same as
+ * holding the keys.
+ *
+ * A guest who came in on a pairing code plays the OWNER'S world — the canonical
+ * database, not a fork — because that is the entire point of inviting somebody.
+ * `xeric_play_guard()` therefore lets them in, and says in its own comment that
+ * what they may DO once inside is answered by `$w['mine']` at every action that
+ * changes the machine or the world rather than the story.
+ *
+ * SIX PLACES NEVER ASKED. A guest could stop the owner's clock, throw their
+ * learning switch, grant standing photo consent and then spend it, walk their
+ * character across town, take back the hours of their last skip, close a scene
+ * into their database — and, worst, `fate.php act=end`, which kills the entire
+ * cast in one request and, in a world whose death mode is permanent, cannot be
+ * undone. engine/pair.php's own docblock promises none of this is possible.
+ *
+ * So it is a function rather than six remembered `if`s: the previous shape was
+ * "remember to check", and six places forgot. A guest is not a hole in the room,
+ * but they are a guest.
+ *
+ * ── AND IT IS NOT SIMPLY `!mine` ──────────────────────────────────────────
+ *
+ * `mine` is false for two completely different people. A STRANGER reading
+ * somebody else's shelf gets a FORK (xeric_session_db), and in their own copy
+ * they may stop the clock, walk the map, end the world — nothing they do
+ * reaches the owner's evening, and refusing them would break the demo's whole
+ * argument. A GUEST is the opposite: false, and on the canonical database,
+ * because being in the same evening is the point of the invitation.
+ *
+ * The thing that tells them apart is which file is open, so that is what this
+ * reads. Off the world's own `world.db` and not the owner: a guest.
+ */
+function xeric_play_is_guest(array $w): bool
+{
+    if (!empty($w['mine'])) return false;                      // the owner
+    $canon = rtrim((string)($w['dir'] ?? ''), '/') . '/world.db';
+    return (string)($w['db_path'] ?? '') === $canon;           // else: their own copy
+}
+
+/** The same question, as a door. Answers and stops. */
+function xeric_play_owner_only(array $w, string $what): void
+{
+    if (!xeric_play_is_guest($w)) return;
+    xeric_web_json([
+        'error' => 'You are a guest in this xeric — ' . $what . ' is the owner\'s to do.',
+        'kind'  => 'guest',
+    ], 403);
+}
+
+/**
  * Somebody else's world with the interiors taken out — the shape of it, which is
  * the demo's best argument, and none of what the walls exist to hold.
  *

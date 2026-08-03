@@ -110,6 +110,11 @@ if ((string)($_GET['a'] ?? '') === 'scan') {
 
 // -- change ------------------------------------------------------------------
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    // This page reads $_POST directly, so it does not pass through
+    // xeric_web_input() where the cross-site guard lives. Both of the
+    // demonstrated drive-by attacks landed here.
+    xeric_web_csrf_guard();
+
     $act = (string)($_POST['act'] ?? '');
     $i   = (int)($_POST['i'] ?? -1);
 

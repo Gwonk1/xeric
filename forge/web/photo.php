@@ -40,6 +40,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         xeric_web_json(['error' => $e->getMessage()], 404);
     }
 
+    // PHOTO CONSENT IS THE OWNER'S, and so is the bill. `approve` is the
+    // standing yes whose own screen warns that every render bills an API key,
+    // and `go` spends it. `decline` too — a guest must not answer a question
+    // about the owner's world on their behalf, in either direction.
+    xeric_play_owner_only($w, 'whether this world takes photographs');
+
     if ($a === 'approve' || $a === 'go') {
         if ($a === 'approve') {
             xeric_world_state_set($w['db'], 'photos.asked', '1');

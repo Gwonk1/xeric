@@ -49,6 +49,8 @@ if ($a === 'clock') {
     } catch (Throwable $e) {
         xeric_web_json(['error' => $e->getMessage()], 404);
     }
+    // The owner's clock and the owner's privacy switch, not a guest's.
+    xeric_play_owner_only($w, 'stopping and starting the world');
     // NOT MID-SKIP. A pause flipped while a detached skip is running lands in
     // that skip's manifest as an `added` key — and a later "take it back"
     // deletes it, silently un-stopping a world somebody deliberately stopped,
@@ -78,6 +80,8 @@ if ($a === 'learn') {
     } catch (Throwable $e) {
         xeric_web_json(['error' => $e->getMessage()], 404);
     }
+    // Learning off is a privacy decision about the owner's own words.
+    xeric_play_owner_only($w, 'what the world is allowed to learn');
     // Same guard as the clock above: learn.off stores "off" as the KEY'S
     // PRESENCE, so a rewind deleting it from a skip's manifest means ON — a
     // privacy switch somebody threw, silently un-thrown.

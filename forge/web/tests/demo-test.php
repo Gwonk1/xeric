@@ -309,8 +309,139 @@ echo "\n# limits\n";
     ));
     ok('one identity per machine unless a host asks for visitors',
         $out === 'solo and it is the machine', $out);
+
+    // AND A DEFAULT IS NOT A DOOR. The rule above is right for a laptop and
+    // catastrophic for a host: solo means the machine identity IS the visitor,
+    // so a public install that never wrote the key made every stranger the same
+    // person — each of them owner of all the others' worlds. deploy.sh omitted
+    // it, so the demo ran the laptop's rule. Silence now means "solo only if you
+    // are this machine"; a peer from anywhere else is a visitor.
+    $ask = static function (string $peer) use ($tmp): string {
+        return trim((string)shell_exec(
+            'XERIC_SOLO= XERIC_DATA_DIR=' . escapeshellarg($tmp)
+            . ' php -r ' . escapeshellarg(
+                'require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
+                . '$_SERVER["REMOTE_ADDR"] = ' . var_export($peer, true) . ';'
+                . 'echo xeric_web_solo() ? "solo" : "visitors";')));
+    };
+    ok('solo: a request off this machine is still one person', $ask('127.0.0.1') === 'solo');
+    ok('solo: and so is the loopback address the other way round', $ask('::1') === 'solo');
+    ok('solo: but a stranger is a visitor, whatever the config forgot to say',
+        $ask('203.0.113.9') === 'visitors', $ask('203.0.113.9'));
+    ok('solo: a host that MEANS it can still say so, and is believed',
+        trim((string)shell_exec('XERIC_SOLO=1 XERIC_DATA_DIR=' . escapeshellarg($tmp)
+            . ' php -r ' . escapeshellarg(
+                'require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
+                . '$_SERVER["REMOTE_ADDR"] = "203.0.113.9";'
+                . 'echo xeric_web_solo() ? "solo" : "visitors";'))) === 'solo');
+
     putenv('XERIC_SOLO=0');
 })();
+
+// AND THE DEPLOYED HOST SAYS BOTH OF THEM OUT LOUD. The two findings above were
+// not code defects at all — deploy.sh wrote a config.local.php with neither key,
+// so the public demo ran with one shared identity and every rate limit inert.
+$dep = (string)file_get_contents(dirname(__DIR__) . '/deploy.sh');
+ok('deploy: the host it writes has visitors on it, not one person',
+    str_contains($dep, "'solo'       => false,"));
+ok('deploy: and its rate limits actually run',
+    str_contains($dep, "'caps'       => true,"));
+
+// ---------------------------------------------------------------------------
+// A POST THAT STARTED ON SOMEBODY ELSE'S PAGE.
+//
+// There was no cross-site protection at all, and the usual fallback could not
+// help: SameSite guards a COOKIE, and in solo mode the identity is a file, so a
+// request carrying no cookie whatsoever is still fully authenticated. Every POST
+// was reachable from any page the owner happened to open — demonstrated with no
+// cookie at all: a world deleted, the notify URL repointed at a stranger's ntfy
+// topic, an attacker's address stored as the ENGINE (after which every prompt
+// leaves the machine), and power.php's shutdown, whose loopback fence passes
+// precisely because the request comes from the victim's own browser.
+// ---------------------------------------------------------------------------
+
+$peerWas = $_SERVER;
+$xs = static function (array $h): bool {
+    foreach (['HTTP_SEC_FETCH_SITE', 'HTTP_ORIGIN', 'HTTP_HOST'] as $k) unset($_SERVER[$k]);
+    foreach ($h as $k => $v) $_SERVER[$k] = $v;
+    return xeric_web_cross_site();
+};
+
+ok('cross-site: the browser saying so is enough',
+    $xs(['HTTP_SEC_FETCH_SITE' => 'cross-site']) === true);
+ok('cross-site: and the browser saying otherwise is believed',
+    $xs(['HTTP_SEC_FETCH_SITE' => 'same-origin']) === false
+    && $xs(['HTTP_SEC_FETCH_SITE' => 'same-site']) === false);
+ok('cross-site: an old browser is judged on its origin instead',
+    $xs(['HTTP_ORIGIN' => 'https://evil.example', 'HTTP_HOST' => '127.0.0.1:8787']) === true
+    && $xs(['HTTP_ORIGIN' => 'http://127.0.0.1:8787', 'HTTP_HOST' => '127.0.0.1:8787']) === false);
+ok('cross-site: an opaque origin is never us',
+    $xs(['HTTP_ORIGIN' => 'null', 'HTTP_HOST' => '127.0.0.1:8787']) === true);
+ok('cross-site: a default port written out is still the same host',
+    $xs(['HTTP_ORIGIN' => 'http://xeric.dev', 'HTTP_HOST' => 'xeric.dev']) === false);
+// FAILS OPEN WITH NO HEADERS, deliberately: curl, the launcher's own tooling and
+// these suites send neither, and they are not the threat — a drive-by needs a
+// browser, and every browser that can mount one sends Sec-Fetch-Site.
+ok('cross-site: a caller with no origin at all is not the threat and is let by',
+    $xs(['HTTP_HOST' => '127.0.0.1:8787']) === false);
+$_SERVER = $peerWas;
+
+// The guard has to be somewhere every POST passes. Most reach it through
+// xeric_web_input(); the four that read $_POST directly must say so themselves,
+// and two of those are where the demonstrated attacks landed.
+$bootSrc = (string)file_get_contents(dirname(__DIR__) . '/boot.php');
+ok('cross-site: every POST that reads a body passes the guard',
+    preg_match('/function xeric_web_input\(\): array\s*\{[^}]*xeric_web_csrf_guard\(\);/s', $bootSrc) === 1);
+foreach (['model', 'notify', 'join'] as $direct) {
+    ok("cross-site: $direct.php guards itself, since it reads \$_POST directly",
+        str_contains((string)file_get_contents(dirname(__DIR__) . '/' . $direct . '.php'),
+            'xeric_web_csrf_guard();'));
+}
+
+// ---------------------------------------------------------------------------
+// THROUGH THE DOOR IS NOT HOLDING THE KEYS.
+//
+// A guest who came in on a pairing code plays the OWNER'S database — that is the
+// point of inviting somebody — so xeric_play_guard() lets them in, and what they
+// may DO is answered by $w['mine']. Six surfaces never asked: a guest could stop
+// the owner's clock, throw their learning switch, grant photo consent and spend
+// it, walk their character across town, take back the hours of their last skip,
+// and — the one that cannot be undone — kill the entire cast with fate.php
+// act=end, which under a permanent death mode xeric_death_restore() refuses to
+// reverse. engine/pair.php's docblock promises none of this is reachable.
+//
+// AND IT IS NOT SIMPLY `!mine`, which is why the predicate is worth its own
+// function. `mine` is false for two different people: a STRANGER, who is on
+// their own FORK and may do as they like in it, and a GUEST, who is on the
+// canonical file. Which file is open is the thing that tells them apart.
+// ---------------------------------------------------------------------------
+
+$gDir = xeric_web_worlds_dir() . '/some-town';
+ok('guest: the owner is not a guest',
+    xeric_play_is_guest(['dir' => $gDir, 'db_path' => $gDir . '/world.db', 'mine' => true]) === false);
+ok('guest: somebody on the owner\'s own database who is not the owner IS one',
+    xeric_play_is_guest(['dir' => $gDir, 'db_path' => $gDir . '/world.db', 'mine' => false]) === true);
+ok('guest: but a stranger on their own fork is not — that copy is theirs',
+    xeric_play_is_guest(['dir' => $gDir, 'mine' => false,
+        'db_path' => $tmp . '/session-worlds/abc/some-town.db']) === false);
+ok('guest: and a trailing slash on the world dir does not smuggle one past',
+    xeric_play_is_guest(['dir' => $gDir . '/', 'db_path' => $gDir . '/world.db', 'mine' => false]) === true);
+
+// The six that forgot, each named, so a seventh cannot be added quietly.
+foreach ([
+    'power'  => 'the clock and the learning switch',
+    'fate'   => 'ending the world',
+    'photo'  => 'photo consent and the spend behind it',
+    'where'  => 'walking the owner\'s character',
+    'tick'   => 'taking back the last skip',
+] as $page => $why) {
+    ok("guest: $page.php asks before it writes — $why",
+        str_contains((string)file_get_contents(dirname(__DIR__) . '/' . $page . '.php'),
+            'xeric_play_owner_only('));
+}
+ok('guest: power.php asks TWICE, because the clock and the switch are two doors',
+    substr_count((string)file_get_contents(dirname(__DIR__) . '/power.php'),
+        'xeric_play_owner_only(') === 2);
 
 reset_limits();
 $S = sid();

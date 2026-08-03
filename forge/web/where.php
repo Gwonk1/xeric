@@ -49,6 +49,10 @@ if (!$post) {
     xeric_web_json(['ok' => true] + xeric_travel_map($w['template'], $w['db']));
 }
 
+// Reading the map is everybody's; WALKING is the owner's, and only when this
+// is their real world — a stranger moves around their own fork freely.
+xeric_play_owner_only($w, 'walking about the place');
+
 // -- go -----------------------------------------------------------------------
 // `to` absent, null or empty means leaving the map: going off on your own time
 // is a trip like any other and costs what getting home costs. It is the only

@@ -48,6 +48,12 @@ try {
 $T  = $w['template'];
 $db = $w['db'];
 
+// A GUEST DOES NOT END THE WORLD. `act=end` kills the whole cast in one
+// request, and under a permanent death mode xeric_death_restore() refuses to
+// undo it — so of everything six surfaces let a guest reach, this was the one
+// that could not be taken back.
+xeric_play_owner_only($w, 'what happens to the people in it');
+
 /** The ledger, and the rule, in the shape every response here ends with. */
 $ledger = function () use ($T, $db): array {
     $rows = [];

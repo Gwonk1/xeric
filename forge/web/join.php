@@ -55,6 +55,11 @@ if ($already !== null) {
 
 $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $code !== '') {
+    // This page reads $_POST directly, so it does not pass through
+    // xeric_web_input() where the cross-site guard lives. Both of the
+    // demonstrated drive-by attacks landed here.
+    xeric_web_csrf_guard();
+
     try {
         // The guest's own copy of the world is NOT forked here: they are joining
         // the owner's evening, which is the entire point. xeric_play_open()'s

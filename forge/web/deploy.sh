@@ -100,6 +100,18 @@ return [
     // to be told where a real CLI php is.
     'php'        => '$PHPBIN',
 $EDIT_LINE
+    // THIS HOST HAS VISITORS ON IT, and both of these must say so out loud.
+    //
+    // solo => the machine identity IS the visitor. Right for a laptop, and on a
+    // public host it makes every stranger the same person: owner of everybody
+    // else's worlds, free to read an unredacted template, edit it or delete it.
+    // This file used to omit the key, and the default was yes.
+    'solo'       => false,
+    // caps => the rate limits actually run. Omitted, xeric_limit_on() is false
+    // and every quota in limits.php returns ok immediately — messages, skips,
+    // forges, rerolls, the per-IP budgets, and the disk eviction that keeps this
+    // box from filling up.
+    'caps'       => true,
     'places'     => 6,
     'cast'       => 4,
 ];

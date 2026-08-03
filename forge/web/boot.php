@@ -665,6 +665,23 @@ function xeric_web_endpoint_label(array $e): string
  *
  * A host turns it off with `solo => false` in config.local.php, or XERIC_SOLO=0,
  * and gets exactly the cookie behaviour it had before.
+ *
+ * ── AND A DEFAULT MUST NOT BE A DOOR ──────────────────────────────────────
+ *
+ * "Default on unless a host says otherwise" is only safe if every host says
+ * otherwise, and one did not: deploy.sh wrote a config.local.php with no `solo`
+ * key at all, so the public demo ran the laptop's rule. Solo means the machine
+ * identity IS the visitor, so that collapsed every stranger on the demo into one
+ * person — each of them owner of all the others' worlds, free to read an
+ * unredacted template, edit it, or delete it. Nobody had to attack anything;
+ * they just had to open the page.
+ *
+ * So the default is now conditional on the thing that makes it TRUE rather than
+ * on nobody having said no. Solo is a claim about there being one person here,
+ * and the only evidence for that available to a request is that it came from
+ * this machine. A request from somewhere else is a visitor, whatever the config
+ * forgot to say. An EXPLICIT `solo => true` still wins — a host that means it
+ * can still say so — but silence no longer reads as yes to a stranger.
  */
 function xeric_web_solo(): bool
 {
@@ -673,10 +690,16 @@ function xeric_web_solo(): bool
         $env = getenv('XERIC_SOLO');
         if ($env !== false && trim((string)$env) !== '') {
             $solo = in_array(strtolower(trim((string)$env)), ['1', 'true', 'yes', 'on'], true);
-        } else {
-            $c = xeric_web_config();
-            $solo = !array_key_exists('solo', $c) || !empty($c['solo']);
+            return $solo;
         }
+        $c = xeric_web_config();
+        if (array_key_exists('solo', $c)) return $solo = !empty($c['solo']);
+
+        // Nobody said. CLI has no peer and is the launcher's own tooling, which
+        // is single-user by definition; a request with a peer is solo only when
+        // that peer is this machine.
+        $peer = (string)($_SERVER['REMOTE_ADDR'] ?? '');
+        $solo = $peer === '' || in_array($peer, ['127.0.0.1', '::1'], true);
     }
     return $solo;
 }
@@ -1228,8 +1251,70 @@ function xeric_web_json(array $body, int $status = 200): void
 }
 
 /** The POST body as an array, whether it arrived as JSON or a form. */
+/**
+ * Did this POST come from somewhere that is not us?
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS NOT A TOKEN ────────────────────────────
+ *
+ * There was no cross-site protection here at all, and the identity model made
+ * the usual fallback useless: `SameSite=Lax` guards a COOKIE, and in solo mode
+ * the identity is a file on disk, so a request that carries no cookie at all is
+ * still fully authenticated. Every POST in the app was therefore reachable by
+ * any page the owner happened to open. Demonstrated, with no cookie: a world
+ * deleted; the notification URL rewritten to a stranger's ntfy topic, which
+ * redirects every future world name, hour title and reminder to them; an
+ * attacker's address stored as the engine, after which every prompt — the whole
+ * world, every conversation — leaves the machine; and `power.php a=off`, whose
+ * loopback fence PASSES precisely because the request comes from the victim's
+ * own browser. It was checking the wrong property.
+ *
+ * A token would also work and is a bigger change: every form and every fetch in
+ * three thousand lines of client JS has to carry it, and the one that forgets is
+ * a broken button nobody notices until a user hits it. This is the property that
+ * actually distinguishes the attack — the request originated on somebody else's
+ * page — read from the two headers browsers send precisely to say so.
+ *
+ * FAILS OPEN FOR CALLERS WITH NO ORIGIN, deliberately. curl, the launcher's own
+ * tooling and the test suites send neither header, and they are not the threat:
+ * a drive-by needs a browser, and every browser that can mount one has sent
+ * `Sec-Fetch-Site` since 2020. Refusing header-less requests would break every
+ * script anybody has written against this app to stop an attack that cannot be
+ * mounted without the header.
+ */
+function xeric_web_cross_site(): bool
+{
+    $sfs = strtolower(trim((string)($_SERVER['HTTP_SEC_FETCH_SITE'] ?? '')));
+    if ($sfs !== '') return $sfs === 'cross-site';
+
+    // No Sec-Fetch-Site. If the caller named an origin, compare it to the host
+    // it reached; `null` is an opaque origin (a sandboxed frame, a data: URL)
+    // and is never us.
+    $origin = trim((string)($_SERVER['HTTP_ORIGIN'] ?? ''));
+    if ($origin === '') return false;
+    if (strtolower($origin) === 'null') return true;
+    return strcasecmp((string)parse_url($origin, PHP_URL_HOST) . ':' . (string)parse_url($origin, PHP_URL_PORT),
+                      (string)($_SERVER['HTTP_HOST'] ?? '')) !== 0
+        && strcasecmp((string)parse_url($origin, PHP_URL_HOST),
+                      (string)preg_replace('/:\d+$/', '', (string)($_SERVER['HTTP_HOST'] ?? ''))) !== 0;
+}
+
+/** Refuse a state-changing request that started on somebody else's page. */
+function xeric_web_csrf_guard(): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') return;
+    if (!xeric_web_cross_site()) return;
+    xeric_web_json(['error' => 'That request came from another site, so it was not carried out.',
+                    'kind'  => 'cross_site'], 403);
+}
+
 function xeric_web_input(): array
 {
+    // EVERY POST THAT READS A BODY PASSES THROUGH HERE, which is why the guard
+    // lives at this line rather than in seventeen page headers where the
+    // eighteenth page would forget it. The four endpoints that read $_POST
+    // directly call xeric_web_csrf_guard() themselves.
+    xeric_web_csrf_guard();
+
     $raw = (string)file_get_contents('php://input');
     if ($raw !== '') {
         $d = json_decode($raw, true);

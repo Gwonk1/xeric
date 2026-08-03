@@ -26,6 +26,11 @@ $cfg = xeric_web_notify($sid);
 $msg = '';
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+    // This page reads $_POST directly, so it does not pass through
+    // xeric_web_input() where the cross-site guard lives. Both of the
+    // demonstrated drive-by attacks landed here.
+    xeric_web_csrf_guard();
+
     if ((string)($_POST['act'] ?? '') === 'test') {
         $ok = xeric_notify_send($cfg, 'If you are reading this on a phone, it works.',
             ['title' => 'Xeric', 'tags' => 'wave', 'priority' => 3]);
