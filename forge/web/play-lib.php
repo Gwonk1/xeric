@@ -1259,8 +1259,26 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     // prompt reads (engine/weather.php): day-coarse world state that repaints
     // with the sidebar, so a skip that crosses midnight changes the weather the
     // same moment it changes everything else.
-    $wx = xeric_weather_line($t, $now);
-    $out = $wx !== '' ? '<p class="swx">' . h($wx) . '</p>' : '';
+    //
+    // AND THE TOWN'S MOOD BESIDE IT, because they are the same kind of fact:
+    // what it is like here today, one line, no numbers. The sky is derived
+    // and the mood is lived — hours move the needle (engine/mood.php) — but a
+    // person reading the panel is asking one question, so they answer as one
+    // sentence. The motif carries it when the world wrote one: "a little
+    // reckless · a truck parked where no truck should be".
+    $wx   = xeric_weather_line($t, $now);
+    $mood = xeric_mood_read($db, $t);
+    $moodLine = $mood === [] || ($mood['side'] ?? '') === 'ordinary'
+        ? ''
+        : (string)$mood['word'] . ((string)($mood['motif'] ?? '') !== ''
+            ? ' <i>· ' . h((string)$mood['motif']) . '</i>' : '');
+
+    $out = '';
+    if ($wx !== '' || $moodLine !== '') {
+        $out = '<p class="swx">' . h($wx)
+             . ($moodLine !== '' ? ($wx !== '' ? '<br>' : '') . '<b>' . $moodLine . '</b>' : '')
+             . '</p>';
+    }
 
     // Open by default — this is the panel the sidebar was built for, and the one
     // section that answers the question only a xeric can be asked.
@@ -3853,6 +3871,10 @@ summary.sh:focus-visible{outline:1px solid var(--accent);outline-offset:2px;bord
 .wd{display:block;font-size:.72rem;color:var(--fg-dim)}
 /* the day's sky, one quiet line above the rooms it hangs over */
 .swx{margin:0 0 .55rem;font-size:.74rem;font-style:italic;color:var(--fg-dim);line-height:1.4}
+/* the mood on the second line: the town's own word carries the weight, its
+   motif trails after in the same voice the sky is written in */
+.swx b{font-weight:600;font-style:normal;color:var(--fg)}
+.swx i{font-weight:400;color:var(--fg-far)}
 /* the one-word "home" mark beside a name standing under their own roof */
 .whome{margin-left:.4rem;font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;
   color:var(--fg-far);border:1px solid var(--line-2);border-radius:.5rem;padding:0 .3rem}
