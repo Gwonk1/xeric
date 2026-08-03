@@ -38,6 +38,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/state.php';
+require_once __DIR__ . '/players.php';   // whose shift, whose wages
 
 /** The dial, weakest first. */
 const XERIC_MONEY_DIALS = ['none', 'light', 'real'];
@@ -206,12 +207,13 @@ function xeric_shift_next(array $t, array $now): ?array
 // ---------------------------------------------------------------------------
 
 /** Wages, strikes, and whether there is still a job to go to. */
-function xeric_work_state(PDO $db): array
+function xeric_work_state(PDO $db, int $player = XERIC_PLAYER_FIRST): array
 {
+    $k = fn(string $b) => xeric_player_key($b, $player);
     return [
-        'wages'  => (int)(xeric_world_state_get($db, 'work.wages')  ?? 0),
-        'missed' => (int)(xeric_world_state_get($db, 'work.missed') ?? 0),
-        'fired'  => (int)(xeric_world_state_get($db, 'work.fired')  ?? 0) === 1,
+        'wages'  => (int)(xeric_world_state_get($db, $k('work.wages'))  ?? 0),
+        'missed' => (int)(xeric_world_state_get($db, $k('work.missed')) ?? 0),
+        'fired'  => (int)(xeric_world_state_get($db, $k('work.fired'))  ?? 0) === 1,
     ];
 }
 
@@ -228,13 +230,15 @@ function xeric_work_state(PDO $db): array
  *
  * @return array{missed:int,worked:int,paid:int,fired:bool,lines:array<int,string>}
  */
-function xeric_shift_walk(PDO $db, array $t, int $from, int $to, ?int $at = null): array
+function xeric_shift_walk(PDO $db, array $t, int $from, int $to, ?int $at = null,
+                          int $player = XERIC_PLAYER_FIRST): array
 {
+    $k = fn(string $b) => xeric_player_key($b, $player);
     $out = ['missed' => 0, 'worked' => 0, 'paid' => 0, 'fired' => false, 'lines' => []];
     $dial = xeric_money_dial($db, $t);
     if ($dial === 'none') return $out;
 
-    $state = xeric_work_state($db);
+    $state = xeric_work_state($db, $player);
     if ($state['fired']) return $out;                  // no shifts to miss
 
     $spans = xeric_shift_spans($t, $from, $to);
@@ -250,8 +254,8 @@ function xeric_shift_walk(PDO $db, array $t, int $from, int $to, ?int $at = null
     // stretch of clock; only one of them is a day at work, and the accumulator
     // is what tells them apart. It is carried in world_state between presses
     // because a shift can be walked across a dozen of them.
-    $accFor  = (int)(xeric_world_state_get($db, 'work.shift') ?? 0);
-    $accSecs = (int)(xeric_world_state_get($db, 'work.away')  ?? 0);
+    $accFor  = (int)(xeric_world_state_get($db, $k('work.shift')) ?? 0);
+    $accSecs = (int)(xeric_world_state_get($db, $k('work.away'))  ?? 0);
     $touched = false;
 
     foreach ($spans as $s) {
@@ -288,18 +292,18 @@ function xeric_shift_walk(PDO $db, array $t, int $from, int $to, ?int $at = null
     }
 
     if ($touched) {
-        xeric_world_state_set($db, 'work.shift', (string)$accFor, $at);
-        xeric_world_state_set($db, 'work.away',  (string)$accSecs, $at);
+        xeric_world_state_set($db, $k('work.shift'), (string)$accFor, $at);
+        xeric_world_state_set($db, $k('work.away'),  (string)$accSecs, $at);
     }
 
     if ($dial === 'real') {
-        if ($wages !== $state['wages']) xeric_world_state_set($db, 'work.wages', (string)$wages, $at);
+        if ($wages !== $state['wages']) xeric_world_state_set($db, $k('work.wages'), (string)$wages, $at);
         if ($out['fired']) {
-            xeric_world_state_set($db, 'work.fired', '1', $at);
+            xeric_world_state_set($db, $k('work.fired'), '1', $at);
             $run = 0;
         }
     }
-    if ($run !== $state['missed']) xeric_world_state_set($db, 'work.missed', (string)$run, $at);
+    if ($run !== $state['missed']) xeric_world_state_set($db, $k('work.missed'), (string)$run, $at);
     return $out;
 }
 
@@ -312,12 +316,12 @@ function xeric_shift_walk(PDO $db, array $t, int $from, int $to, ?int $at = null
  * survives is the only part anybody in a small town would actually have
  * noticed, which is whether you have been turning up.
  */
-function xeric_work_block(PDO $db, array $t): string
+function xeric_work_block(PDO $db, array $t, int $player = XERIC_PLAYER_FIRST): string
 {
     $dial = xeric_money_dial($db, $t);
     if ($dial === 'none' || xeric_shifts($t) === []) return '';
-    $s = xeric_work_state($db);
-    $who = trim((string)($t['user']['name'] ?? '')) ?: 'they';
+    $s = xeric_work_state($db, $player);
+    $who = xeric_player_name($db, $player, $t);
     $job = trim((string)($t['user']['occupation']['title'] ?? '')) ?: 'the job';
 
     if ($s['fired']) return "THE JOB\n- $who does not have $job any more. Everybody knows why.";

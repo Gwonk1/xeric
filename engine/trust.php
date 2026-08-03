@@ -39,6 +39,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/state.php';
+require_once __DIR__ . '/players.php';   // whose opinion of whom
 
 /** How much warmth makes a point of trust. Four exchanges, not one. */
 const XERIC_TRUST_STEP = 4;
@@ -58,16 +59,22 @@ const XERIC_TRUST_MAX = 10;
  * row, because "Ruth trusts you less because Harlan stood her up" is a
  * sentence no engine should ever be able to write.
  */
-function xeric_trust_key(?string $of = null): string
+function xeric_trust_key(?string $of = null, int $player = XERIC_PLAYER_FIRST): string
 {
     $of = trim((string)$of);
-    return $of === '' ? 'trust' : 'trust.of.' . $of;
+    // Somebody in the town is `trust.of.<handle>` and has no player in it —
+    // what Ruth thinks of Harlan is not a fact about anybody at the centre.
+    if ($of !== '') return 'trust.of.' . $of;
+    // And what she thinks of a PERSON at the centre is per-person now, with the
+    // first one keeping the bare key every database on disk already has.
+    return xeric_player_key('trust', $player);
 }
 
 /** What this person has decided about you — or about somebody in the town. */
-function xeric_trust_of(PDO $db, string $handle, ?string $of = null): int
+function xeric_trust_of(PDO $db, string $handle, ?string $of = null,
+                        int $player = XERIC_PLAYER_FIRST): int
 {
-    return xeric_arc_int($db, $handle, xeric_trust_key($of), 0);
+    return xeric_arc_int($db, $handle, xeric_trust_key($of, $player), 0);
 }
 
 /**
@@ -81,11 +88,13 @@ function xeric_trust_of(PDO $db, string $handle, ?string $of = null): int
  * almost never do — one number per pair is the norm, and one number per pair
  * cannot hold a friendship somebody is wrong about.
  */
-function xeric_trust_earn(PDO $db, string $handle, int $delta, ?int $at = null, ?string $of = null): int
+function xeric_trust_earn(PDO $db, string $handle, int $delta, ?int $at = null, ?string $of = null,
+                          int $player = XERIC_PLAYER_FIRST): int
 {
-    if ($handle === '' || $delta === 0) return xeric_trust_of($db, $handle, $of);
-    $now = max(-XERIC_TRUST_MAX, min(XERIC_TRUST_MAX, xeric_trust_of($db, $handle, $of) + $delta));
-    xeric_arc_set($db, $handle, xeric_trust_key($of), (string)$now, $at);
+    if ($handle === '' || $delta === 0) return xeric_trust_of($db, $handle, $of, $player);
+    $now = max(-XERIC_TRUST_MAX,
+               min(XERIC_TRUST_MAX, xeric_trust_of($db, $handle, $of, $player) + $delta));
+    xeric_arc_set($db, $handle, xeric_trust_key($of, $player), (string)$now, $at);
     return $now;
 }
 
@@ -101,12 +110,14 @@ function xeric_trust_earn(PDO $db, string $handle, int $delta, ?int $at = null, 
  *
  * @return int the trust after this contact
  */
-function xeric_trust_contact(PDO $db, string $handle, int $warmth, ?int $at = null): int
+function xeric_trust_contact(PDO $db, string $handle, int $warmth, ?int $at = null,
+                             int $player = XERIC_PLAYER_FIRST): int
 {
-    if ($handle === '' || $warmth === 0) return xeric_trust_of($db, $handle);
+    if ($handle === '' || $warmth === 0) return xeric_trust_of($db, $handle, null, $player);
 
-    $w = xeric_arc_int($db, $handle, 'trust.warmth', 0) + $warmth;
-    $trust = xeric_trust_of($db, $handle);
+    $wKey  = xeric_player_key('trust.warmth', $player);
+    $w     = xeric_arc_int($db, $handle, $wKey, 0) + $warmth;
+    $trust = xeric_trust_of($db, $handle, null, $player);
 
     // Convert whole steps only, one direction at a time, and never past the
     // band contact is allowed to reach.
@@ -124,8 +135,10 @@ function xeric_trust_contact(PDO $db, string $handle, int $warmth, ?int $at = nu
     // under the ceiling.
     $w = max(-2 * XERIC_TRUST_STEP, min(2 * XERIC_TRUST_STEP, $w));
 
-    xeric_arc_set($db, $handle, 'trust.warmth', (string)$w, $at);
-    if ($trust !== xeric_trust_of($db, $handle)) xeric_arc_set($db, $handle, 'trust', (string)$trust, $at);
+    xeric_arc_set($db, $handle, $wKey, (string)$w, $at);
+    if ($trust !== xeric_trust_of($db, $handle, null, $player)) {
+        xeric_arc_set($db, $handle, xeric_trust_key(null, $player), (string)$trust, $at);
+    }
     return $trust;
 }
 

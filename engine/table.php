@@ -50,6 +50,7 @@ require_once __DIR__ . '/ledger.php';
 require_once __DIR__ . '/trust.php';
 require_once __DIR__ . '/constructs.php';  // what somebody could not cover is a debt
 require_once __DIR__ . '/chat.php';        // the model seam, for the table talk only
+require_once __DIR__ . '/players.php';     // whose purse, whose seat
 
 /** Fewest and most at a table. Two is heads-up; past six it is a tournament. */
 const XERIC_TABLE_MIN = 2;
@@ -493,6 +494,12 @@ function xeric_table_say(array $t, array $result): string
 /** The player's seat, which is not a handle and cannot be mistaken for one. */
 const XERIC_TABLE_YOU = '@you';
 
+/** The seat belonging to one particular person at the centre. */
+function xeric_table_seat(int $player = XERIC_PLAYER_FIRST): string
+{
+    return $player <= XERIC_PLAYER_FIRST ? XERIC_TABLE_YOU : XERIC_TABLE_YOU . '.p' . $player;
+}
+
 /** How you are playing tonight → the nerve every other seat is read on. */
 function xeric_table_style(string $style): int
 {
@@ -504,9 +511,9 @@ function xeric_table_style(string $style): int
 }
 
 /** What the person at the centre has to play with. */
-function xeric_table_purse(PDO $db): int
+function xeric_table_purse(PDO $db, int $player = XERIC_PLAYER_FIRST): int
 {
-    return (int)(xeric_world_state_get($db, 'work.wages') ?? 0);
+    return (int)(xeric_world_state_get($db, xeric_player_key('work.wages', $player)) ?? 0);
 }
 
 /**
@@ -519,18 +526,19 @@ function xeric_table_purse(PDO $db): int
  * seeded shuffle and it does not know who is sitting where.
  */
 function xeric_table_play_with_you(array $t, array $table, array $seats, string $style,
-                                   int $hands, int $seed): array
+                                   int $hands, int $seed, int $player = XERIC_PLAYER_FIRST): array
 {
+    $me = xeric_table_seat($player);
     // The style rides in as a one-character stand-in so xeric_table_nerve()
     // reads it the way it reads anybody's psyche — no second code path for the
     // person at the centre, which is how a second code path stays honest.
     $word = match (xeric_table_style($style)) { 1 => 'careful', 4 => 'reckless', default => 'steady' };
     $t2 = $t;
-    $t2['cast']['characters'][] = ['handle' => XERIC_TABLE_YOU,
+    $t2['cast']['characters'][] = ['handle' => $me,
         'display_name' => trim((string)($t['user']['name'] ?? '')) ?: 'you',
         'one_line' => $word];
 
-    $all = array_values(array_unique(array_merge([XERIC_TABLE_YOU], array_values($seats))));
+    $all = array_values(array_unique(array_merge([$me], array_values($seats))));
     return xeric_table_play($t2, $table, $all, $hands, $seed) + ['template' => $t2];
 }
 
@@ -547,23 +555,30 @@ function xeric_table_play_with_you(array $t, array $table, array $seats, string 
  * @return array{net:int,purse:int,result:array}
  */
 function xeric_table_sit(array $t, PDO $db, array $table, array $seats, string $style,
-                         int $hands, int $seed, ?int $at = null, int $epoch = 0): array
+                         int $hands, int $seed, ?int $at = null, int $epoch = 0,
+                         int $player = XERIC_PLAYER_FIRST): array
 {
     $at  = $at ?? xeric_state_time();
-    $r   = xeric_table_play_with_you($t, $table, $seats, $style, $hands, $seed);
-    $you = (int)($r['net'][XERIC_TABLE_YOU] ?? 0);
+    $me  = xeric_table_seat($player);
+    $r   = xeric_table_play_with_you($t, $table, $seats, $style, $hands, $seed, $player);
+    $you = (int)($r['net'][$me] ?? 0);
 
     // What the town does among itself is the town's business — your seat is
     // lifted out so xeric_table_write never tries to find a cast member called
     // '@you' or open a debt against somebody who is not in the world.
     $townOnly = $r;
-    unset($townOnly['net'][XERIC_TABLE_YOU]);
+    foreach (array_keys($townOnly['net']) as $h) {
+        // Every seat at the centre comes out, not just this one: a night with
+        // two people playing must not let xeric_table_write go looking for a
+        // cast member called '@you.p2'.
+        if (str_starts_with((string)$h, XERIC_TABLE_YOU)) unset($townOnly['net'][$h]);
+    }
 
     $db->beginTransaction();
     try {
         xeric_table_write($t, $db, $table, $townOnly, $at, $epoch);
-        $purse = max(0, xeric_table_purse($db) + $you);
-        xeric_world_state_set($db, 'work.wages', (string)$purse, $at);
+        $purse = max(0, xeric_table_purse($db, $player) + $you);
+        xeric_world_state_set($db, xeric_player_key('work.wages', $player), (string)$purse, $at);
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
@@ -589,7 +604,7 @@ function xeric_table_talk(array $t, array $table, array $played, array $endpoint
     $net = (array)$played['net'];
     $who = [];
     foreach ($net as $h => $n) {
-        if ((string)$h === XERIC_TABLE_YOU) { $who[] = '- You: ' . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level')); continue; }
+        if (str_starts_with((string)$h, XERIC_TABLE_YOU)) { $who[] = '- You: ' . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level')); continue; }
         $nerve = xeric_table_nerve($t, (string)$h);
         $who[] = '- ' . (xeric_world_name($t, (string)$h) ?: (string)$h) . ': '
                . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level'))
