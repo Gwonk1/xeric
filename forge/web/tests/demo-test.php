@@ -3605,6 +3605,37 @@ foreach (['worker', 'addchar-worker', 'reroll-worker', 'panel-worker', 'tick-wor
         $stranding === [], 'line(s) ' . implode(', ', $stranding));
 }
 
+// THE SIDEBAR HAS THINGS YOU CAN PRESS.
+//
+// Owner, repeatedly: the play sidebar should look and act like the clean room's,
+// and it did not — no finger buttons at all, and its only affordances were
+// collapsible headings, which reads as a report rather than as somewhere you can
+// act. Three of these four actions were inside the cog, which is where a SETTING
+// goes. Asserted here so the row cannot quietly go away again.
+$playS = (string)file_get_contents(dirname(__DIR__) . '/play.php');
+ok('sidebar: it opens with a row of things to press',
+    str_contains($playS, 'class="quickrow"'));
+foreach (['qadd' => 'writing somebody new in', 'qwhere' => 'where everybody is',
+          'qwatch' => 'watching two of them talk', 'qbook' => 'reading it as a book'] as $id => $what) {
+    ok("sidebar: and one of them is $what", str_contains($playS, 'id="' . $id . '"'));
+}
+// The add button is the owner's alone, like every other way of changing a world.
+ok('sidebar: writing somebody new is the owner\'s button, inside the owner gate',
+    preg_match('/\$w\[.mine.\][^;]*\?>\s*<button[^>]*id="qadd"/s', $playS) === 1
+    || preg_match('/mine.*?id="qadd".*?endif/s', $playS) === 1);
+
+// AND A PLACE IS A DOOR, INCLUDING A SHUT ONE. The sidebar used to require a
+// place to be OPEN before it would offer the walk — stricter than the engine
+// (engine-test: "you may walk to a chained gate, and it tells you it is
+// chained") and stricter than the map screen beside it, which lists every place
+// with an open/shut word on it. A closed mill was a dead end in one panel and a
+// destination in the other.
+$libS = (string)file_get_contents(dirname(__DIR__) . '/play-lib.php');
+ok('sidebar: a place is walkable because you are not already there, full stop',
+    str_contains($libS, "\$walk = \$key !== '' && empty(\$pl['here']);"));
+ok('sidebar: and the row carries how far it is, where a thumb can read it',
+    str_contains($libS, "class=\"plm\"") && str_contains($libS, "class=\"pln\""));
+
 // ---------------------------------------------------------------------------
 // WHO THIS MACHINE IS, WHEN FOUR REQUESTS ASK AT ONCE.
 //

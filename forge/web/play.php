@@ -995,6 +995,31 @@ echo '<style>' . xeric_play_css() . '
               title="delete <?= h((string)$T['meta']['name']) ?>" aria-label="delete this xeric">✕</button>
       <?php endif; ?>
     </div>
+    <!-- THE FINGER BUTTONS (owner, 2026-08-03), the clean-room scheme with this
+         app's own verbs in it. Everything here was already reachable and three
+         of the four were inside the cog — which is where you put a SETTING, not
+         where you put a thing you do. A sidebar whose only affordances are
+         collapsible headings reads as a report; one that opens with a row of
+         buttons reads as somewhere you can act.
+
+         Four, because there are four things a person does to a xeric that are
+         not talking to somebody: write somebody new into it, watch two of them
+         talk without you, read it as a book, and find out where everybody is.
+         The first is accent-filled the way the clean room fills its primary,
+         and it is the one that only an owner has. -->
+    <div class="quickrow" role="group" aria-label="what you can do here">
+      <?php if ($w['mine']): ?>
+      <button type="button" class="qbtn qprime" id="qadd"
+              title="write somebody new into this xeric"><span class="qi">👤</span><span class="ql">add</span></button>
+      <?php endif; ?>
+      <button type="button" class="qbtn" id="qwhere"
+              title="where everybody is right now"><span class="qi">📍</span><span class="ql">where</span></button>
+      <a class="qbtn" id="qwatch" href="watch.php?w=<?= rawurlencode($slug) ?>"
+         title="watch two of them talk, without you"><span class="qi">🎭</span><span class="ql">watch</span></a>
+      <a class="qbtn" id="qbook" href="book.php?w=<?= rawurlencode($slug) ?>"
+         title="read this xeric as a book"><span class="qi">📕</span><span class="ql">book</span></a>
+    </div>
+
     <!-- The compass: three readings that move, so the sidebar says where this
          story stands and not only what it was called. -->
     <div id="scompass"><?= xeric_play_compass_html($T, $w['db']) ?></div>
@@ -3214,6 +3239,28 @@ echo '<style>' . xeric_play_css() . '
       if (addEs && addEs.readyState === 2) addFail('the connection dropped. They may still be arriving, reload to see.');
     };
   }
+
+  // THE FINGER BUTTONS. 👤 is the same door as the + chip and the + person row —
+  // one function, three ways in — and 📍 opens the panel it names rather than
+  // navigating away, because "where is everybody" is a glance, not a screen.
+  if ($('#qadd')) $('#qadd').addEventListener('click', openAdd);
+  if ($('#qwhere')) $('#qwhere').addEventListener('click', function () {
+    var d = document.querySelector('.sideblock[data-sb="where"]');
+    if (!d) return;
+    d.open = true;
+    // Lit while it is open, so the button reports the state it controls.
+    $('#qwhere').classList.add('on');
+    d.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // The button lives IN the sidebar, so on a narrow screen the drawer is
+    // already open when it is pressed — nothing to do here. Left as a note
+    // rather than a call, because the first draft invented an openDrawer()
+    // that does not exist; the real one is drawer(true), and it is not needed.
+  });
+  document.addEventListener('toggle', function (e) {
+    var d = e.target;
+    if (!d || !d.matches || !d.matches('.sideblock[data-sb="where"]')) return;
+    if ($('#qwhere')) $('#qwhere').classList.toggle('on', d.open);
+  }, true);
 
   if ($('#addchar1')) $('#addchar1').addEventListener('click', openAdd);
   if ($('#addchar2')) $('#addchar2').addEventListener('click', openAdd);

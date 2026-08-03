@@ -1417,15 +1417,32 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         // same trip the map screen charges for. Where you already are, and
         // anywhere shut, the name goes back to being a fact.
         $key  = (string)($pl['key'] ?? '');
-        $walk = $key !== '' && empty($pl['here']) && !empty($pl['open']);
+        // A SHUT ROOM IS STILL A PLACE YOU CAN WALK TO. This required the place
+        // to be OPEN, which made the sidebar stricter than both the engine and
+        // the map screen beside it: engine-test asserts "you may walk to a
+        // chained gate, and it tells you it is chained", and where.php's own
+        // list offers every place with an open/shut word on it. Only this panel
+        // turned a closed mill into a dead end — and standing outside somewhere
+        // shut, at the hour it is shut, is a thing a person in a town does.
+        $walk = $key !== '' && empty($pl['here']);
         $mins = (int)($pl['minutes'] ?? 0);
         $hrs  = isset($hours[$key]) ? '<span class="phrs">' . h($hours[$key]) . '</span>' : '';
+        // THE WHOLE ROW IS THE DOOR. It used to be a text link with a ten-pixel
+        // "› go" beside it, so a place you could walk into and one you could not
+        // were the same shape — the clean room's rows are full-width targets
+        // with a chevron, and that is the difference between a list of facts and
+        // a list of ways in. The minutes ride the row rather than the tooltip:
+        // how far it is decides whether you go, and a tooltip cannot be read by
+        // a thumb.
         $out .= '<li class="' . $cls . '">'
               . ($walk
                   ? '<button type="button" class="pl wplace" data-to="' . h($key) . '"'
-                    . ' title="walk there · ' . $mins . ' min">' . h((string)$pl['name']) . $hrs
-                    . '<span class="wgo2">› go</span></button>'
-                  : '<span class="pl">' . h((string)$pl['name']) . $hrs
+                    . ' title="walk there · ' . $mins . ' min">'
+                    . '<span class="pln">' . h((string)$pl['name']) . $hrs . '</span>'
+                    . ($mins > 0 ? '<span class="plm">' . $mins . ' min</span>' : '')
+                    . '<span class="wgo2">›</span></button>'
+                  : '<span class="pl">'
+                    . '<span class="pln">' . h((string)$pl['name']) . $hrs . '</span>'
                     . (!empty($pl['here']) ? '<span class="youare">you are here</span>' : '')
                     . '</span>');
 
@@ -3958,6 +3975,36 @@ function xeric_play_css(): string
 .sstatus{font-size:.8rem}
 /* the world's name, under the brand and over its calendar */
 .sname{margin:.15rem 0 .3rem;font-size:1.2rem;line-height:1.25}
+
+/* THE FINGER BUTTONS. The clean room's scheme, this app's verbs: a row of
+   chunky targets under the name, big enough for a thumb (48px is the floor
+   below which a touch target starts missing), the primary one filled.
+   Everything here was already reachable and three of the four were inside the
+   cog, which is where a SETTING goes, not a thing you do. A sidebar whose only
+   affordances are collapsible headings reads as a report. */
+.quickrow{display:flex;gap:.45rem;margin:.15rem 0 .55rem}
+.quickrow .qbtn{flex:1 1 0;min-width:2.6rem;min-height:2.9rem;border-radius:.6rem;
+  display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:.12rem;
+  font:inherit;text-decoration:none;cursor:pointer;padding:.25rem .15rem;
+  background:var(--bg-2);border:1px solid var(--line);color:var(--fg);
+  -webkit-tap-highlight-color:transparent;
+  transition:border-color .14s ease-out,background .14s ease-out}
+.quickrow .qbtn:hover,.quickrow .qbtn:focus-visible{border-color:var(--accent-dim);outline:none;
+  background:var(--bg-3,var(--bg-2))}
+.quickrow .qi{font-size:1.05rem;line-height:1}
+/* The word under the glyph, because an emoji on its own is a guess. ONE word,
+   and no wrapping: the first draft said "somebody new", which broke onto two
+   lines and cramped the one button that is meant to look most pressable. Small
+   enough that the row still reads as buttons rather than as a menu. */
+.quickrow .ql{font-size:.62rem;letter-spacing:.02em;color:var(--fg-far);line-height:1;
+  white-space:nowrap}
+.quickrow .qbtn:hover .ql,.quickrow .qbtn:focus-visible .ql{color:var(--fg-dim)}
+.quickrow .qprime{background:var(--accent);border-color:var(--accent);color:#fff}
+.quickrow .qprime .ql{color:rgba(255,255,255,.85)}
+.quickrow .qprime:hover,.quickrow .qprime:focus-visible{filter:brightness(1.12);
+  background:var(--accent);border-color:var(--accent)}
+.quickrow .qbtn.on{border-color:var(--accent);box-shadow:0 0 10px -4px var(--accent)}
+@media (max-width:30rem){.quickrow .qbtn{min-height:3.1rem}}
 /* the compass: three readings that move, under the world's name */
 .scompass{display:flex;flex-wrap:wrap;gap:.15rem .7rem;margin:0 0 .5rem;
   font-size:.72rem;color:var(--fg-far)}
@@ -4141,10 +4188,24 @@ body.skipping .wplace .wgo2{visibility:hidden}
    enter a room on the sidebar", and there wasn't one you could SEE.
    Quiet at rest, bright when reached for: the affordance is there, and it still
    does not shout over the names, which are what the panel is actually for. */
-.wplace{font:inherit;color:var(--fg);background:none;border:0;padding:.2rem 0;cursor:pointer;width:100%;text-align:left}
-.wplace:hover,.wplace:focus-visible{color:var(--accent);outline:none}
-.wplace .wgo2{margin-left:.45rem;font-size:.68rem;color:var(--accent-dim);opacity:.7}
+/* `.place .wplace`, not `.wplace`: `.place .pl` two rules up sets display:block
+   at the same specificity, and it is a door only if the row actually lays out —
+   the first draft of this styled a flex row that never became one, so the
+   minutes sat jammed against the name. */
+.place .wplace{font:inherit;color:var(--fg);background:none;border:0;cursor:pointer;width:100%;text-align:left;
+  display:flex;align-items:baseline;gap:.4rem;padding:.28rem .35rem;margin:0 -.35rem;border-radius:.35rem;
+  transition:background .12s ease-out,color .12s ease-out}
+.wplace:hover,.wplace:focus-visible{color:var(--accent);background:var(--bg-2);outline:none}
+.wplace .pln{flex:1 1 auto;min-width:0}
+/* How far it is decides whether you go, so it rides the ROW and not a tooltip —
+   a thumb cannot read a tooltip. */
+.wplace .plm{flex:0 0 auto;font-size:.62rem;color:var(--fg-far);font-variant-numeric:tabular-nums}
+.wplace:hover .plm,.wplace:focus-visible .plm{color:var(--accent-dim)}
+.wplace .wgo2{flex:0 0 auto;font-size:.8rem;color:var(--accent-dim);opacity:.7}
 .wplace:hover .wgo2,.wplace:focus-visible .wgo2{opacity:1}
+/* A place that is shut is still a door, and still says so. */
+.places li.shut .wplace .pln{color:var(--fg-dim)}
+.places li.shut .wplace:hover .pln,.places li.shut .wplace:focus-visible .pln{color:var(--accent)}
 .wplace:disabled{cursor:default;color:var(--fg-dim)}
 
 /* The cog rides the row's top corner, beside the button it is about. */
