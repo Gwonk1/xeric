@@ -91,6 +91,16 @@ function xeric_state_migrate(PDO $db): void
         )
     SQL);
     $db->exec('CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id)');
+    // AND BY WHEN, for the book. xeric_book_scenes() reads a day at a time —
+    // `WHERE world_epoch >= ? AND world_epoch < ? ORDER BY world_epoch, id` —
+    // once per day rendered, up to XERIC_BOOK_DAYS_MAX of them on one page.
+    // With only the conversation index that is a full table scan plus a temp
+    // b-tree for the sort, per day: measured at 10.6ms for a seven-day page and
+    // 54ms for a thirty-one-day one against 2,400 messages, and linear in both.
+    // A year-old world would spend most of a second on the page. The same index
+    // also turns the `SELECT MIN(world_epoch)` that finds where the book starts
+    // into a seek instead of a second scan.
+    $db->exec('CREATE INDEX IF NOT EXISTS idx_messages_epoch ON messages(world_epoch)');
 
     $db->exec(<<<'SQL'
         CREATE TABLE IF NOT EXISTS memories (

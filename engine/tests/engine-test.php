@@ -594,6 +594,16 @@ ok('state: every table exists after the first open', (function () use ($db) {
     return array_values(array_intersect($want, $have)) === $want;
 })());
 
+// AND THE BOOK'S OWN INDEX. xeric_book_scenes() reads a day at a time by
+// world_epoch, once per day rendered, up to a month of them on one page —
+// which with only the conversation index was a full table scan plus a temp
+// b-tree sort, per day, linear in the size of the world. Asserted through the
+// planner rather than by name, because an index nothing chooses is not an index.
+ok('state: reading the book by day is a seek, not a scan of every message',
+    str_contains((string)($db->query(
+        'EXPLAIN QUERY PLAN SELECT * FROM messages WHERE world_epoch >= 1 AND world_epoch < 2'
+        . ' ORDER BY world_epoch, id')->fetchAll()[0]['detail'] ?? ''), 'USING INDEX'));
+
 xeric_state_seed($db, $T);
 ok('state: seeding sets every character\'s economy counters to their start value',
     xeric_arc_int($db, 'ruth', 'economy.casserole_ledger') === 0
