@@ -1437,9 +1437,34 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
             return $li;
         };
 
+        // ROOMS ARE THREADS TOO, and they were being selected and then dropped:
+        // $rowsFor was called for 'chat' and 'event' only, so a channel the
+        // heartbeat had been filling for an hour rendered as nothing at all.
+        //
+        // Not a button yet. The row shows the place, the last thing said in it
+        // and whether it is unread, which is the whole point of a channel you
+        // were not in — but there is nowhere for it to open TO until the room
+        // view exists, and a button that does nothing is the lie this file
+        // already refuses to tell about links.
+        $roomRows = '';
+        foreach ($threads as $tr) {
+            if ((string)($tr['kind'] ?? '') !== 'room') continue;
+            $k = (string)($tr['handle'] ?? '');
+            if ($k === '') continue;
+            $name = trim((string)($tr['title'] ?? '')) ?: xeric_world_place_name($t, $k);
+            $snip = trim(preg_replace('/\s+/u', ' ', (string)($tr['last'] ?? '')) ?? '');
+            if (mb_strlen($snip) > 64) $snip = rtrim(mb_substr($snip, 0, 64)) . '…';
+            $roomRows .= '<li class="thr thrroom' . ((int)($tr['unread'] ?? 0) > 0 ? ' unread' : '') . '">'
+                       . '<span class="wperson thrb">'
+                       . '<span class="rdisc" aria-hidden="true">◻</span>'
+                       . '<span><span class="wn">' . h($name) . '</span>'
+                       . ($snip !== '' ? '<span class="thrl">' . h($snip) . '</span>' : '')
+                       . '</span></span></li>';
+        }
+
         $chats  = $rowsFor('chat');
         $events = $rowsFor('event');
-        if ($chats !== '' || $events !== '') {
+        if ($chats !== '' || $events !== '' || $roomRows !== '') {
             // "threads", not "what you are in the middle of": the long version
             // wrapped onto two lines and stranded its own count on the second,
             // which is what every other heading in this panel avoids by being
@@ -1448,7 +1473,12 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
             // The 💬/🎬 sub-heads earn their line only when there is something to
             // tell apart. With one kind in the list the block title has already
             // said it, and a heading over every row is a heading nobody reads.
-            $both = $chats !== '' && $events !== '';
+            $kinds = (int)($chats !== '') + (int)($events !== '') + (int)($roomRows !== '');
+            $both = $kinds > 1;
+            if ($roomRows !== '') {
+                $out .= ($both ? '<p class="thrhead">🏠 rooms</p>' : '')
+                      . '<ul class="thrs">' . $roomRows . '</ul>';
+            }
             if ($chats !== '') {
                 $out .= ($both ? '<p class="thrhead">💬 talking</p>' : '')
                       . '<ul class="thrs">' . $chats . '</ul>';
@@ -4204,6 +4234,12 @@ summary.sh:focus-visible{outline:1px solid var(--accent);outline-offset:2px;bord
 body.skipping .wplace{opacity:.45;pointer-events:none}
 body.skipping .wplace .wgo2{visibility:hidden}
 .wperson.gone{cursor:default;opacity:.55}
+/* A room thread. Not a person, so not a portrait disc — a doorway mark, and no
+   pointer, because there is nowhere for it to open to yet. */
+.thrroom .wperson{cursor:default}
+.rdisc{flex:0 0 auto;width:1.6rem;height:1.6rem;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--line-2);border-radius:.4rem;color:var(--fg-far);font-size:.7rem}
+.thrroom.unread .rdisc{border-color:var(--accent-dim);color:var(--accent)}
 .offscreen{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.35rem;
   font-size:.78rem;color:var(--fg-dim)}
 .offscreen li{padding-left:.7rem;border-left:2px solid var(--line-2)}

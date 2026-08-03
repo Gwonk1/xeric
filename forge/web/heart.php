@@ -43,9 +43,77 @@ declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 
 require_once __DIR__ . '/play-lib.php';
+require_once XERIC_WEB_LIB . '/engine/chatter.php';   // the rooms talk on the beat
 
 const XERIC_HEART_MAX_WINDOWS = 6;    // hours lived per world per tick
 const XERIC_HEART_MODEL_WAIT  = 2.0;  // seconds to wait for the model before giving up
+const XERIC_HEART_CHATTER_LINES = 8;  // model calls spent on idle room talk, per world per tick
+
+/**
+ * Idle talk in every room that has two people standing in it.
+ *
+ * ITS OWN PHASE, ABOVE THE SWEEP GATE. The sweep only runs when a whole world
+ * HOUR has passed, and the heart ticks every sixty seconds — so a chatter pass
+ * hung below that gate would fire once an hour at best and the rooms would sit
+ * silent through fifty-nine ticks out of sixty. Rooms keep their own clock
+ * (chatter:<place>, real seconds, set by the pace), and this phase exists to
+ * give that clock a chance to come due.
+ *
+ * BOUNDED, AND ROTATED. Six rooms at busy is thirty-six calls, which is a tick
+ * that never ends on a machine with one model slot. So there is a line budget
+ * per world per tick, and the room the budget starts on ROTATES — without that,
+ * the first two places in the list would take every line forever and the far
+ * end of town would never say a word.
+ *
+ * Never fatal. A room that throws is a quiet room; the tick carries on.
+ */
+function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, string $slug): int
+{
+    $now     = xeric_clock_now($db, $t);
+    $realNow = time();
+    $present = xeric_world_who_is_where($t, $now, xeric_dead_handles($db));
+
+    $rooms = [];
+    foreach ($present as $h => $row) {
+        $where = (string)($row['where'] ?? '');
+        if ($where !== '') $rooms[$where] = ($rooms[$where] ?? 0) + 1;
+    }
+    $rooms = array_keys(array_filter($rooms, fn($n) => $n >= XERIC_CHATTER_MIN));
+    if ($rooms === []) return 0;
+    sort($rooms);                                    // a stable order for the rota to walk
+
+    // Where the budget starts this tick. Stored so it survives the process,
+    // which lives for one pass and dies.
+    $rota = (int)(xeric_world_state_get($db, 'chatter_rota', '0') ?? 0);
+    xeric_world_state_set($db, 'chatter_rota', (string)(($rota + 1) % max(1, count($rooms))), $realNow);
+
+    $youAt  = xeric_player_where($t, $db);
+    $budget = XERIC_HEART_CHATTER_LINES;
+    $said   = 0;
+
+    for ($i = 0; $i < count($rooms) && $budget > 0; $i++) {
+        $place = (string)$rooms[($rota + $i) % count($rooms)];
+        try {
+            $r = xeric_chatter_run($t, $db, $place, $endpoint, [
+                'now'       => $now,
+                'real_now'  => $realNow,
+                'user_here' => $youAt !== null && $youAt === $place,
+                'max_lines' => $budget,
+            ]);
+        } catch (Throwable $e) {
+            $say($slug . ': ' . $place . ' stayed quiet, ' . $e->getMessage());
+            continue;
+        }
+        $n = (int)($r['said'] ?? 0);
+        if ($n > 0) {
+            $budget -= $n;
+            $said   += $n;
+            $say($slug . ': ' . $n . ' said at ' . xeric_world_place_name($t, $place)
+                 . ' (' . (string)$r['pace'] . ')');
+        }
+    }
+    return $said;
+}
 
 $loud = in_array('--loud', $argv, true);
 $say  = function (string $s) use ($loud): void {
@@ -118,6 +186,19 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         }
 
         if (xeric_clock_is_paused($db)) continue;         // stopped means stopped
+
+        // -- the rooms talk ------------------------------------------------
+        // Before the sweep gate, on purpose: see xeric_heart_chatter. A person
+        // waiting on a reply still outranks a town making small talk, which is
+        // what the busy check is for.
+        if (!xeric_queue_busy()) {
+            $chold = xeric_queue_take('tick', XERIC_HEART_MODEL_WAIT, 'chatter:' . $slug);
+            if (($chold['ok'] ?? false) === true) {
+                try { xeric_heart_chatter($T, $db, $endpoint, $say, $slug); }
+                catch (Throwable $e) { $say($slug . ': chatter, ' . $e->getMessage()); }
+                finally { xeric_queue_release($chold); }
+            }
+        }
 
         $size = (int)($T['events']['window_seconds'] ?? XERIC_SWEEP_WINDOW);
         $now  = xeric_clock_now($db, $T);

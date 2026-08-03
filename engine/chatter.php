@@ -334,7 +334,11 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
     }
 
     $deaths = xeric_dead_handles($db);
+    // The caller's budget caps the pace's own answer, never raises it: the heart
+    // is saying how many calls it can afford across ALL its rooms this tick, and
+    // a room that wanted two lines does not want eight because the town is quiet.
     $want   = (int)$due['lines'];
+    if (isset($opts['max_lines'])) $want = max(0, min($want, (int)$opts['max_lines']));
     $said   = 0;
 
     for ($n = 0; $n < $want; $n++) {
