@@ -49,22 +49,43 @@ const XERIC_TRUST_BAND = 3;
 /** The far ends, which only the things that cost something reach. */
 const XERIC_TRUST_MAX = 10;
 
-/** What this person has decided about you. */
-function xeric_trust_of(PDO $db, string $handle): int
+/**
+ * Which row holds one person's opinion of another.
+ *
+ * A bare `trust` is what somebody thinks of the person at the centre, which
+ * is every trust row this engine has ever written. `trust.of.<handle>` is
+ * what they think of somebody in the town — and the two must not be the same
+ * row, because "Ruth trusts you less because Harlan stood her up" is a
+ * sentence no engine should ever be able to write.
+ */
+function xeric_trust_key(?string $of = null): string
 {
-    return xeric_arc_int($db, $handle, 'trust', 0);
+    $of = trim((string)$of);
+    return $of === '' ? 'trust' : 'trust.of.' . $of;
+}
+
+/** What this person has decided about you — or about somebody in the town. */
+function xeric_trust_of(PDO $db, string $handle, ?string $of = null): int
+{
+    return xeric_arc_int($db, $handle, xeric_trust_key($of), 0);
 }
 
 /**
  * A thing that cost something: a promise kept, a repair, a secret told.
  * Moves trust directly and is bounded only by the far ends — this is the
  * half of the dial that ordinary conversation cannot reach.
+ *
+ * ASYMMETRIC IN BOTH DIRECTIONS NOW. Ruth's opinion of you and Dot's were
+ * always two numbers; Ruth's opinion of Harlan is a third, and Harlan's of
+ * Ruth is a fourth that never has to agree with it. Which is the thing games
+ * almost never do — one number per pair is the norm, and one number per pair
+ * cannot hold a friendship somebody is wrong about.
  */
-function xeric_trust_earn(PDO $db, string $handle, int $delta, ?int $at = null): int
+function xeric_trust_earn(PDO $db, string $handle, int $delta, ?int $at = null, ?string $of = null): int
 {
-    if ($handle === '' || $delta === 0) return xeric_trust_of($db, $handle);
-    $now = max(-XERIC_TRUST_MAX, min(XERIC_TRUST_MAX, xeric_trust_of($db, $handle) + $delta));
-    xeric_arc_set($db, $handle, 'trust', (string)$now, $at);
+    if ($handle === '' || $delta === 0) return xeric_trust_of($db, $handle, $of);
+    $now = max(-XERIC_TRUST_MAX, min(XERIC_TRUST_MAX, xeric_trust_of($db, $handle, $of) + $delta));
+    xeric_arc_set($db, $handle, xeric_trust_key($of), (string)$now, $at);
     return $now;
 }
 

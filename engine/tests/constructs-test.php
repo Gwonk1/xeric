@@ -387,6 +387,71 @@ ok('block: byte-stable after the fade too',
     xeric_expect_block($T, $db2, 'theo', $sunAm) === xeric_expect_block($T, $db2, 'theo', $satAm2));
 
 // ---------------------------------------------------------------------------
+// 12a. CAST TO CAST. Expectations pointed only at the person at the centre,
+// because v1's reasoning was that they were the only one who could let
+// anybody down. But a duet and a room are the town talking to itself, and
+// "I'll bring the truck round Thursday" said across a table is the same
+// sentence with the same fuse — read by the same code gate.
+// ---------------------------------------------------------------------------
+
+echo "\n# promises between two people in the town\n";
+
+$c2Path = sys_get_temp_dir() . '/xeric-c2c-' . getmypid() . '.db';
+foreach ([$c2Path, $c2Path . '-wal', $c2Path . '-shm'] as $f) @unlink($f);
+$c2 = xeric_state_open($c2Path);
+xeric_state_migrate($c2);
+
+$c2Keys = xeric_expect_from_scene($T, $c2, [
+    ['handle' => 'harlan', 'text' => 'I will bring the truck round Thursday and we will get it done.'],
+    ['handle' => 'ruth',   'text' => 'You always say that.'],
+], $wedAm);
+ok('cast: a promise across a table forms, and the row knows who made it',
+    $c2Keys !== [] && (xeric_expects_for($c2, 'ruth')[0]['of'] ?? '') === 'harlan');
+ok('cast: and it is owed to the person who was told, not to the player',
+    xeric_expects_for($c2, 'harlan') === []);
+
+// The same two gates as the player's promises, on the verbatim words.
+$c2Hedge = xeric_expect_from_scene($T, $c2, [
+    ['handle' => 'dot',  'text' => 'I might come by Friday if the car starts.'],
+    ['handle' => 'theo', 'text' => 'Okay.'],
+], $wedAm);
+ok('cast: a hedge across a table is still not a promise', $c2Hedge === []);
+$c2NoWhen = xeric_expect_from_scene($T, $c2, [
+    ['handle' => 'dot',  'text' => 'I will fix that gate for you.'],
+    ['handle' => 'theo', 'text' => 'Okay.'],
+], $wedAm);
+ok('cast: and a promise with no when is a sentiment', $c2NoWhen === []);
+
+// The prompt block names whoever actually promised — a line that said the
+// player's name about a promise Harlan made is the one sentence in that
+// block that could not be true.
+$c2Owed = xeric_expect_owed($T, $c2, 'ruth');
+ok('cast: what Ruth is owed names HARLAN, not the player',
+    str_contains($c2Owed, 'Harlan') && !str_contains($c2Owed, (string)($T['user']['name'] ?? 'Neil')), $c2Owed);
+
+// And the miss says the same thing: her memory, and the trail, name him.
+$c2Fired = xeric_constructs_tick($T, $c2, xeric_world_now($T, $thu + XERIC_EXPECT_GRACE + 3600));
+$c2Mem   = xeric_memories_for($c2, 'ruth', 1);
+ok('cast: the miss fires and her memory names the man who did not come',
+    ($c2Fired['missed'] ?? 0) === 1
+    && str_contains((string)($c2Mem[0]['text'] ?? ''), 'Harlan'), json_encode($c2Mem[0] ?? null));
+// THE ROW THAT MOVES IS THE RIGHT ONE. Ruth's opinion OF HARLAN drops, and
+// her opinion of the player does not — "Ruth trusts you less because Harlan
+// stood her up" is a sentence no engine should be able to write.
+ok('cast: her standing with HIM drops', xeric_trust_of($c2, 'ruth', 'harlan') < 0,
+    (string)xeric_trust_of($c2, 'ruth', 'harlan'));
+ok('cast: and the player, who did nothing, is untouched by it',
+    xeric_trust_of($c2, 'ruth') === 0, (string)xeric_trust_of($c2, 'ruth'));
+ok('cast: and it is a pair, not a number — his opinion of her is his own',
+    xeric_trust_of($c2, 'harlan', 'ruth') === 0);
+
+// The player cannot apologise for somebody else's broken promise.
+ok('cast: explaining repairs the player\'s own misses and nobody else\'s',
+    xeric_expect_repair($T, $c2, 'ruth', $wedAm) === null);
+
+foreach ([$c2Path, $c2Path . '-wal', $c2Path . '-shm'] as $f) @unlink($f);
+
+// ---------------------------------------------------------------------------
 // 12b. Death settles the ledger — no fuse survives its holder.
 //
 // The tick used to SKIP a dead holder, which left an open fuse `open` forever:

@@ -446,6 +446,13 @@ function xeric_room(array $t, PDO $db, array $handles, array $now, array $endpoi
             }
         }
 
+        // A promise made across a table is a promise. Same code gate, and in
+        // a room of three the ADDRESSED party is the one who gets the
+        // expectation — which is the same "named in the sentence outranks"
+        // rule this file already uses to decide who answers a beat. The
+        // dormant `of` notch in the draw weight above lights up from here.
+        xeric_expect_from_scene($t, $db, $lines, $now);
+
         // The trail, under the key the inspector already reads, kind decided
         // here and only here. It carries who spoke and why — WITH the weights,
         // per beat — who held silence and who was noticed for it, who left and

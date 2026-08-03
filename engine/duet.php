@@ -88,6 +88,7 @@ require_once __DIR__ . '/chat.php';     // clean, floor, dedupe, aliases, the mo
 require_once __DIR__ . '/sweeps.php';   // the protected-secret test, the room-ceiling idiom
 require_once __DIR__ . '/learn.php';    // the weighted shuffle, and reach
 require_once __DIR__ . '/death.php';    // the dead do not talk, even to each other
+require_once __DIR__ . '/constructs.php'; // a promise made across a table is a promise
 
 /** Spoken lines in a duet, total, both voices. ~Three exchanges reads as a scene. */
 const XERIC_DUET_TURNS = 6;
@@ -287,6 +288,15 @@ function xeric_duet(array $t, PDO $db, string $a, string $b, array $now, array $
                 ], $epoch, $at);
             }
         }
+
+        // A PROMISE MADE ACROSS A TABLE IS A PROMISE. The construct that has
+        // only ever pointed at the person at the centre reads these lines with
+        // the same code gate — a hedge is not a promise, a promise with no
+        // when is a sentiment — and the town starts owing itself things. In
+        // the close's own transaction, because an expectation formed over an
+        // hour that was rolled back would be a debt from a scene that never
+        // happened.
+        xeric_expect_from_scene($t, $db, $lines, $now);
 
         // The trail, under the key the inspector and the book already read
         // (why:event:<id>), kind decided here and only here — the same seam

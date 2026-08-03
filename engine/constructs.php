@@ -206,7 +206,7 @@ function xeric_expect_armed(array $t): bool
  * this gate disposes — on the QUOTE, not on the model's opinion of it.
  * Returns the arc key formed, or null with a reason via $onNote.
  */
-function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array $now, ?callable $onNote = null): ?string
+function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array $now, ?callable $onNote = null, ?string $of = null): ?string
 {
     $note = $onNote ?? static function (string $s): void {};
     if (!is_array($p)) return null;
@@ -248,9 +248,114 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
         'what' => mb_substr($what, 0, 80), 'quote' => mb_substr($quote, 0, 160),
         'when_said' => mb_substr($whenS, 0, 40), 'due' => $due,
         'formed' => (int)($now['epoch'] ?? 0), 'state' => 'open',
-    ] + ($heardAs !== '' ? ['heard_as' => $heardAs] : []), JSON_UNESCAPED_UNICODE));
+    ] + ($heardAs !== '' ? ['heard_as' => $heardAs] : [])
+      // WHO PROMISED. Absent means the user, which is every expectation this
+      // engine has ever written — v1 pointed only at the person at the centre
+      // because they were the only one who could let anybody down. A cast
+      // handle here is a promise between two people in the town, which the
+      // room's draw has had a dormant, tested notch waiting for.
+      + ($of !== null && $of !== '' ? ['of' => $of] : []), JSON_UNESCAPED_UNICODE));
     $note('expectations: ' . xeric_world_name($t, $listener) . ' now expects — ' . $what);
     return $key;
+}
+
+/**
+ * Promises made between two people in the town, out of a scene they had.
+ *
+ * v1 pointed only at the user, and the reason was honest: they were the only
+ * one who could let anybody down. But a duet and a room are the town talking
+ * to itself, and "I'll bring the truck round Thursday" said across a table is
+ * the same sentence with the same fuse — so the same code gate reads it. The
+ * model is never asked whether a promise was made; the words are, exactly as
+ * they are for the person at the centre.
+ *
+ * WHO HEARS IT is everybody else who was in the room, because a promise made
+ * in front of three people is owed to the one it was said to and remembered
+ * by all of them — but only the ADDRESSED party gets the expectation, and
+ * addressing is the room's own test (the name in the sentence). With two
+ * people there is no ambiguity and the other one is the listener.
+ *
+ * Nothing here is asked of a model and nothing here can throw: a scene that
+ * produced a promise is a better scene, and a scene that did not is a scene.
+ *
+ * @param array $lines [{handle, name, text}, …] as the duet and the room emit
+ * @return string[] the arc keys formed
+ */
+function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?callable $onNote = null): array
+{
+    if (!xeric_expect_armed($t)) return [];
+
+    $present = [];
+    foreach ($lines as $l) {
+        $h = (string)($l['handle'] ?? '');
+        if ($h !== '') $present[$h] = true;
+    }
+    if (count($present) < 2) return [];
+
+    $formed = [];
+    foreach ($lines as $l) {
+        $speaker = (string)($l['handle'] ?? '');
+        $text    = trim((string)($l['text'] ?? ''));
+        if ($speaker === '' || $text === '') continue;
+
+        // The same two gates, in the same order, on the verbatim words: a
+        // hedge is not a promise, and a promise with no when is a sentiment.
+        if (xeric_promise_hedged($text)) continue;
+        if (xeric_promise_when_phrase($text) === '') continue;
+
+        // Who it was said TO. Named in the sentence outranks; with two people
+        // in the room the other one is the answer and no test is needed.
+        $others = array_values(array_diff(array_keys($present), [$speaker]));
+        if ($others === []) continue;
+        $listener = '';
+        if (count($others) === 1) {
+            $listener = $others[0];
+        } else {
+            // Named in the sentence. Tested locally rather than through
+            // chat.php's xeric_age_mentions(), because chat.php requires THIS
+            // file and a construct reaching back up into the chat layer would
+            // invert the dependency for one word match.
+            foreach ($others as $o) {
+                $c = xeric_world_character($t, $o) ?? [];
+                $names = array_filter([xeric_world_name($t, $o), (string)($c['short_name'] ?? ''), $o]);
+                foreach ($names as $n) {
+                    $n = trim((string)$n);
+                    if ($n === '') continue;
+                    $first = (string)(preg_split('/\s+/u', $n)[0] ?? '');
+                    if ($first !== '' && preg_match('/(?<![\p{L}])' . preg_quote($first, '/') . '(?![\p{L}])/ui', $text)) {
+                        $listener = $o; break 2;
+                    }
+                }
+            }
+        }
+        if ($listener === '') continue;   // said to the room is said to nobody in particular
+
+        $key = xeric_expect_form($t, $db, $listener, [
+            'quote' => $text,
+            'what'  => mb_substr($text, 0, 60),
+            'when'  => xeric_promise_when_phrase($text),
+        ], $now, $onNote, $speaker);
+        if ($key !== null) $formed[] = $key;
+    }
+    return $formed;
+}
+
+/**
+ * The when-phrase inside a spoken line, or '' — the half of the promise test
+ * that chat gets handed by the extractor and a scene has to find for itself.
+ *
+ * Deliberately the same vocabulary xeric_promise_when() can already place on
+ * a calendar: anything it cannot place forms nothing, so this never promises
+ * the fuse a date the fuse cannot burn to.
+ */
+function xeric_promise_when_phrase(string $text): string
+{
+    $t = mb_strtolower($text);
+    foreach (['tomorrow', 'tonight', 'this evening', 'in the morning', 'later today',
+              'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as $w) {
+        if (preg_match('/(?<![a-z])' . preg_quote($w, '/') . '(?![a-z])/u', $t)) return $w;
+    }
+    return '';
 }
 
 /** Every expectation this character holds, parsed, oldest first. */
@@ -299,7 +404,14 @@ function xeric_expect_owed(array $t, PDO $db, string $handle): string
 {
     $rows = xeric_expects_for($db, $handle);
     if ($rows === []) return '';
-    $user = trim((string)($t['user']['name'] ?? '')) ?: 'them';
+    $userName = trim((string)($t['user']['name'] ?? '')) ?: 'them';
+    // Whoever actually promised: the person at the centre, or somebody in
+    // the town. A line that said "Neil" about a promise Harlan made would be
+    // the one sentence in this block that could not be true.
+    $who = function (array $e) use ($t, $userName): string {
+        $of = trim((string)($e['of'] ?? ''));
+        return $of === '' ? $userName : (xeric_world_name($t, $of) ?: $of);
+    };
     $tz   = null;
     try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); } catch (Throwable $e) {}
     $day = static function (int $epoch) use ($tz): string {
@@ -311,20 +423,20 @@ function xeric_expect_owed(array $t, PDO $db, string $handle): string
     foreach ($rows as $e) {
         switch ($e['state']) {
             case 'open':
-                $lines[] = '- ' . $user . ' said "' . $e['quote'] . '" — you are expecting them ' . $day($e['due'])
+                $lines[] = '- ' . $who($e) . ' said "' . $e['quote'] . '" — you are expecting them ' . $day($e['due'])
                     . ' (' . $e['what'] . ').' . (isset($e['heard_as']) ? ' You heard it as ' . $e['heard_as'] . '.' : '');
                 break;
             case 'missed':
-                $lines[] = '- ' . $user . ' said "' . $e['quote'] . '" and did not come ' . $day($e['due'])
+                $lines[] = '- ' . $who($e) . ' said "' . $e['quote'] . '" and did not come ' . $day($e['due'])
                     . ', and has not said why. It stung more than you let on. You never narrate this; '
                     . 'it shows in small ways — what your hands do, what you leave unsaid, how long you take to answer.';
                 break;
             case 'repaired':
-                $lines[] = '- ' . $user . ' missed ' . $e['what'] . ' ' . $day($e['due'])
+                $lines[] = '- ' . $who($e) . ' missed ' . $e['what'] . ' ' . $day($e['due'])
                     . ' but told you why. How settled that is between you is yours to carry, in your own way.';
                 break;
             case 'hardened':
-                $lines[] = '- ' . $user . ' never did say anything about missing ' . $e['what']
+                $lines[] = '- ' . $who($e) . ' never did say anything about missing ' . $e['what']
                     . '. You have stopped waiting for the explanation. That has a weight of its own.';
                 break;
         }
@@ -381,6 +493,14 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
         foreach (xeric_expects_for($db, $h) as $e) {
             if ($e['state'] === 'open' && $epoch > $e['due'] + XERIC_EXPECT_GRACE) {
                 $name  = xeric_world_name($t, $h);
+                // WHO DID NOT COME. Absent means the person at the centre;
+                // a cast handle means one of the town let another down, and
+                // everything below has to say so — the memory the waiter
+                // keeps, the trust that moves, and the why-trail the
+                // inspector reads. Only the EVENT stays the same, because
+                // what anybody saw is a person watching a door either way.
+                $of      = trim((string)($e['of'] ?? ''));
+                $whoName = $of === '' ? $user : (xeric_world_name($t, $of) ?: $of);
                 $place = xeric_world_who_is_where($t, xeric_world_now($t, $e['due']))[$h]['where'] ?? null;
                 $at    = $place !== null ? ' at ' . xeric_world_place_name($t, (string)$place) : '';
                 $hhmm  = xeric_world_now($t, $e['due'])['hhmm'] ?? '';
@@ -391,12 +511,15 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
                         $place !== null ? (string)$place : null, [$h],
                         $name . ' kept half an eye on the door' . $at . ' past ' . $hhmm
                         . '. Left later than usual, and did not say why.');
-                    xeric_memory_add($db, $h, $user . ' said "' . $e['quote'] . '" and did not come.',
-                        'construct', ['expect' => $e['key']], $e['due']);
+                    xeric_memory_add($db, $h, $whoName . ' said "' . $e['quote'] . '" and did not come.',
+                        'construct', ['expect' => $e['key']] + ($of !== '' ? ['of' => $of] : []), $e['due']);
                     // Through the earned path, which is bounded at the far
                     // ends: a broken promise is one of the things ordinary
                     // conversation cannot undo (engine/trust.php).
-                    xeric_trust_earn($db, $h, -1);
+                    // Against the person who actually missed: a townsperson
+                    // standing somebody up must never cost the PLAYER their
+                    // standing (engine/trust.php's two rows).
+                    xeric_trust_earn($db, $h, -1, null, $of !== '' ? $of : null);
                     $e['state'] = 'missed'; $e['missed_at'] = $epoch;
                     $row = $e; unset($row['key']);
                     xeric_arc_set($db, $h, $e['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
@@ -405,8 +528,8 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
                     // being moody; this one can.
                     xeric_world_state_set($db, 'why:event:' . $eid, json_encode([
                         'kind' => 'missed_promise',
-                        'why'  => $name . ' expected ' . $user . ' (' . $e['what'] . ' — "' . $e['quote'] . '"). '
-                                . $user . ' did not come. The event states only what anyone could see; '
+                        'why'  => $name . ' expected ' . $whoName . ' (' . $e['what'] . ' — "' . $e['quote'] . '"). '
+                                . $whoName . ' did not come. The event states only what anyone could see; '
                                 . 'the feeling rides ' . $name . '\'s own prompt, not the record.',
                     ], JSON_UNESCAPED_UNICODE));
                     $db->commit();
@@ -415,7 +538,7 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
                     throw $ex;
                 }
                 $out['missed']++;
-                $note('expectations: ' . $name . ' waited, and ' . $user . ' did not come');
+                $note('expectations: ' . $name . ' waited, and ' . $whoName . ' did not come');
             } elseif ($e['state'] === 'missed' && $epoch > ($e['missed_at'] ?? $e['due']) + XERIC_EXPECT_REPAIR_WINDOW) {
                 $name = xeric_world_name($t, $h);
                 xeric_memory_add($db, $h,
@@ -464,6 +587,11 @@ function xeric_expect_repair(array $t, PDO $db, string $handle, array $now, ?cal
     $best = null;
     foreach (xeric_expects_for($db, $handle) as $e) {
         if ($e['state'] !== 'missed') continue;
+        // THEIR OWN, and only their own. This is the user explaining
+        // themselves; a miss owed by somebody in the town is not theirs to
+        // apologise for, and repairing it here would hand the player credit
+        // for Harlan turning up.
+        if (trim((string)($e['of'] ?? '')) !== '') continue;
         if ($best === null || ($e['missed_at'] ?? $e['due']) > ($best['missed_at'] ?? $best['due'])) $best = $e;
     }
     if ($best === null) return null;
