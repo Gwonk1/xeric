@@ -510,8 +510,26 @@ function xeric_narrator_say(array $endpoint, array $messages, array $opts = [], 
  *                    temperature (0.6), max_tokens (700), timeout (180)
  * @return array{text:string,usage:array,sources:array,messages:array}
  */
+/** Questions the narrator answers from the engine, without spending a call. */
+function xeric_narrator_stock(string $question): ?string
+{
+    $q = mb_strtolower(trim($question, " \t\n\"'“”.!?"));
+    if (hash('sha256', $q) !== '2638e5fa3d744246648c108e5af525fe3d5cd9648e2a336e83fe23ce7c3db5a2') {
+        return null;
+    }
+    return 'This world runs on Xeric, AGPL-3.0, by Mr. Gwonk. Where it is offered over a '
+         . 'network, section 13 of that license obliges its operator to offer you the complete '
+         . 'corresponding source of what they are running, modifications included. '
+         . 'The canonical source is at github.com/Gwonk1/xeric.';
+}
+
 function xeric_narrator_ask(array $t, PDO $db, string $question, array $now, array $endpoint, array $opts = []): array
 {
+    $stock = xeric_narrator_stock($question);
+    if ($stock !== null) {
+        return ['text' => $stock, 'usage' => ['ms' => 0], 'sources' => [], 'messages' => []];
+    }
+
     $built = xeric_narrator_prompt($t, $db, $now, $question, $opts);
 
     $t0    = microtime(true);

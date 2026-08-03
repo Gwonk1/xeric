@@ -2054,6 +2054,31 @@ echo '<style>' . xeric_play_css() . '
       body: JSON.stringify({ world: W, handle: openHandle, text: text }) })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
       .then(function (res) {
+        // THE WORLD'S PACE IS NOT AN ERROR, so it does not get an error's
+        // screen. A countdown reads as the world breathing; the same words
+        // sitting still read as something broken. The text goes back in the
+        // box and sends itself when the wait is up.
+        if (!res.ok && res.d && res.d.kind === 'pace') {
+          busy = false;
+          $('#send').disabled = false;
+          $('#thinking').hidden = true;
+          unsay(text);
+          var left = Math.max(1, Math.min(120, res.d.retry_after || 10));
+          var why  = res.d.error || 'give it a moment';
+          var el   = $('#sayerr');
+          el.className = 'note';
+          el.hidden = false;
+          (function tick() {
+            el.textContent = why + ' (' + left + 's)';
+            if (--left < 0) {
+              el.hidden = true;
+              send(text, tries);                    // the wait is over; say it
+              return;
+            }
+            setTimeout(tick, 1000);
+          })();
+          return;
+        }
         if (!res.ok && res.d && res.d.kind === 'queued' && tries < QUEUE_TRIES) {
           // Not an error: a queue. Say where they are and come back by itself.
           $('#thinkwhat').textContent = ', ' + (res.d.phrase || 'waiting for the model');

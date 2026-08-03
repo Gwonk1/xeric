@@ -958,5 +958,9 @@ ok('cli: the audit hands a faded beat back under its own header, cited by number
 
 // ---------------------------------------------------------------------------
 
+ok('ask: an ordinary question is nobody\'s but the model\'s',
+    xeric_narrator_stock('where is everyone tonight') === null
+    && xeric_narrator_stock('') === null);
+
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";
 exit($FAILED === 0 ? 0 : 1);
