@@ -576,6 +576,13 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now): stri
     $why = xeric_panel_block($t, $handle, $db);
     if ($why !== '') $blocks[] = $why;
 
+    // And whether there is anybody else at the centre — silent in every world
+    // until somebody is actually invited, which is every world today. A guest
+    // the cast cannot see is a person being talked past.
+    require_once __DIR__ . '/guest.php';
+    $else = xeric_guest_block($db, $t);
+    if ($else !== '') $blocks[] = $else;
+
     $talk = xeric_gossip_block($t, $db, $handle);
     if ($talk !== '') $blocks[] = $talk;
     return implode("\n\n", $blocks);
