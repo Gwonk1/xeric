@@ -95,26 +95,56 @@ function xeric_mood_now(PDO $db, array $t): int
 }
 
 /**
- * One hour's worth of mood: the push, then the drift home.
+ * One hour's worth of mood: a push, OR the drift home.
  *
- * Both in one step on purpose — an hour that pushed without reverting would
- * make the reversion depend on how often somebody happened to call this, and
- * the schema's rule is about hours rather than about callers.
+ * Still one call per hour, so reversion stays a fact about hours rather than
+ * about how often somebody happened to call this — that part of the original
+ * rule was right and is unchanged.
+ *
+ * ── BUT NOT BOTH IN THE SAME HOUR, WHICH IS WHAT IT USED TO DO ────────────
+ *
+ * Push and drift were applied one after the other, so they cancelled exactly
+ * whenever the push was ±1 — and ±1 is what NINE of the seventeen kinds are
+ * worth. Measured over forty consecutive hours of a single kind: rumor,
+ * confidence, glimpse and absence all finished at 0; visit, recognition, favor,
+ * ritual and closeness all finished at 0. A world whose armed kinds were all ±1
+ * had a needle nailed to ordinary forever, which is the exact complaint this
+ * file was written to fix — "it has been printing a zero at people for weeks".
+ *
+ * It was worse than inert for the case the docblock cares most about: a WORLD
+ * that declares `drivers: {funeral: +1}` was overruled by the reversion, in the
+ * one place the file promises "no default has any business overruling it". And
+ * at |delta| ≥ 2 the reversion did not do its job either — the needle just ran
+ * to the end of the range and pinned there, which is what reversion exists to
+ * prevent.
+ *
+ * SO AN HOUR IS ONE THING OR THE OTHER. An hour where something happened is an
+ * hour that moves the needle by what happened. An hour where nothing did — a
+ * routine, a craft, an ordinary Tuesday, all of which are worth exactly 0 — is
+ * the town going quietly back to being itself. That is what "lately" means, and
+ * it is a truer reading than a number that shrinks while things are still
+ * happening: a week of nothing but rumors SHOULD leave a town sitting at the
+ * reckless end, because that is what that town has been like.
  *
  * @return int the needle after this hour
  */
 function xeric_mood_step(PDO $db, array $t, string $kind, ?int $at = null): int
 {
     [$lo, $hi] = xeric_mood_range($t);
-    $ord = xeric_mood_ordinary($t);
-    $was = xeric_mood_now($db, $t);
+    $ord   = xeric_mood_ordinary($t);
+    $was   = xeric_mood_now($db, $t);
+    $delta = xeric_mood_delta($t, $kind);
 
-    $now = $was + xeric_mood_delta($t, $kind);
-
-    // mean-toward-ordinary, one point per hour, and never past the middle: a
-    // reversion that overshot would oscillate around ordinary forever.
-    if ($now > $ord)      $now = max($ord, $now - 1);
-    elseif ($now < $ord)  $now = min($ord, $now + 1);
+    if ($delta !== 0) {
+        $now = $was + $delta;
+    } else {
+        // mean-toward-ordinary, one point per quiet hour, and never past the
+        // middle: a reversion that overshot would oscillate around ordinary
+        // forever.
+        if ($was > $ord)      $now = max($ord, $was - 1);
+        elseif ($was < $ord)  $now = min($ord, $was + 1);
+        else                  $now = $was;
+    }
 
     $now = max($lo, min($hi, $now));
     if ($now !== $was) xeric_arc_set($db, xeric_arc_world(), 'needle', (string)$now, $at);

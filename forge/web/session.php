@@ -330,7 +330,12 @@ function xeric_session_player(string $slug, ?string $sid = null): ?int
     if (xeric_session_owns($slug, $sid)) return 1;              // XERIC_PLAYER_FIRST
 
     $s = xeric_web_session_read($sid);
-    $id = (int)((array)($s['joined'] ?? []))[$slug] ?? 0;
+    // PARENTHESES: the cast binds tighter than `??`, so `(int)$a[$k] ?? 0` gave
+    // the coalesce a `(int)null` that is already 0 and can never be null — the
+    // default was dead code, and the array access was no longer the direct
+    // operand of `??`, which is the one thing that exempts it from the
+    // undefined-index warning. Every chat turn from a non-owner logged one.
+    $id = (int)(((array)($s['joined'] ?? []))[$slug] ?? 0);
     return $id > 1 ? $id : null;
 }
 
@@ -581,8 +586,32 @@ function xeric_session_fork_clear(string $path): bool
         // damage was confined and still wrong.) skip:underway is a stamp for a
         // worker this fork does not have.
         "DELETE FROM world_state WHERE key = 'learn.pending' OR key LIKE 'why:%' OR key LIKE 'proactive:%'"
-            . " OR key LIKE 'skip:%'",
+            . " OR key LIKE 'skip:%'"
+            // AND THE OWNER'S OTHER PEOPLE. This list was written before
+            // players.php, guest.php and pair.php existed, so a fork inherited
+            // the whole co-op layer: the roster, the high-water mark of issued
+            // ids, every guest row, and the outstanding pairing codes.
+            //
+            // The roster alone would be bookkeeping about somebody who has not
+            // arrived. The guest row is worse, because it REACHES A PROMPT: a
+            // written-in guest carries a model-written sentence placing a real
+            // third party in the world ("Corey is Neil's cousin from Omaha, down
+            // for the funeral"), and xeric_guest_block() puts it into EVERY
+            // character's system message along with an instruction to talk to
+            // them. A stranger who has never met the owner opened a copy and
+            // found the whole cast addressing somebody who is not there, by
+            // name. And the pairing codes are live credentials to the OWNER'S
+            // world — short-lived, but no part of a stranger's copy.
+            . " OR key = 'players' OR key = 'players.issued'"
+            . " OR key LIKE 'guest.%' OR key LIKE 'pair.%'",
         'DELETE FROM signals',
+        // The owner's outstanding message-photos are jobs about their own private
+        // thread — whose text this fork has just deleted. Left behind they are
+        // counted as the stranger's pending work on the play screen, and the
+        // reaper renders them, spending a GPU or somebody's API key on the
+        // owner's conversation. Portraits and places are re-offered idempotently
+        // by the backfill, so only the message ones need clearing.
+        "DELETE FROM photo_jobs WHERE kind = 'message'",
     ];
 
     try {
@@ -621,6 +650,20 @@ function xeric_session_fork_is_clear(string $path): bool
                 xeric_web_log('fork: ' . basename($path) . " still holds $n rows in $t, not handing it over");
                 return false;
             }
+        }
+        // AND THE OWNER'S OTHER PEOPLE, read back for the same reason the
+        // transcript is: a guest row is the one piece of this that reaches a
+        // stranger's PROMPT rather than just their database, naming a real third
+        // party to every character in the world.
+        try {
+            $n = (int)$db->query("SELECT COUNT(*) FROM world_state WHERE key = 'players'"
+                . " OR key = 'players.issued' OR key LIKE 'guest.%' OR key LIKE 'pair.%'")->fetchColumn();
+            if ($n > 0) {
+                xeric_web_log('fork: ' . basename($path) . " still holds $n co-op row(s), not handing it over");
+                return false;
+            }
+        } catch (Throwable $e) {
+            // No world_state at all is a world too old to have had a roster.
         }
         return true;
     } catch (Throwable $e) {

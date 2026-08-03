@@ -169,9 +169,32 @@ $pk = xeric_confide_form($T, $p, 'ruth', 'what happened in Omaha', $NOW, '', XER
 ok('centre: they can tell somebody something', $pk !== null);
 ok('centre: and it warms that person toward THEM, not toward a handle',
     xeric_arc_int($p, 'ruth', 'trust.warmth', 0) > 0);
-xeric_confide_break($T, $p, 'ruth', $pk, $NOW);
-ok('centre: and letting it out costs the carrier their standing with them',
-    xeric_trust_of($p, 'ruth', null, XERIC_PLAYER_FIRST) === -XERIC_CONFIDE_BROKEN);
+$warmWas = xeric_arc_int($p, 'ruth', 'trust.warmth', 0);
+$trustWas = xeric_trust_of($p, 'ruth', null, XERIC_PLAYER_FIRST);
+ok('centre: it breaks like any other', xeric_confide_break($T, $p, 'ruth', $pk, $NOW) === true);
+ok('centre: and the row says so', (xeric_confides_for($p, 'ruth')[0]['state'] ?? '') === 'broken');
+
+// THE CORRECTION. This used to assert "costs the carrier their standing with
+// them" and the code wrote `trust.p1` ON RUTH — which trust.php defines as what
+// RUTH HAS DECIDED ABOUT YOU. So the engine was writing: Ruth told everybody
+// your secret, therefore Ruth trusts you three less. The NPC branch does the
+// opposite, correctly, and the two disagreed for as long as both existed.
+//
+// The row it wanted — what YOU now think of Ruth — does not exist and should
+// not. The engine keeps the minds of the town; the one mind it must not presume
+// to keep is the mind of the person playing. You do think less of her; that
+// happens in your head, not in a column.
+ok('centre: no number moves, because the mind that changed is not the town\'s',
+    xeric_trust_of($p, 'ruth', null, XERIC_PLAYER_FIRST) === $trustWas
+    && xeric_arc_int($p, 'ruth', 'trust.warmth', 0) === $warmWas);
+ok('centre: and it never says she thinks less of YOU because SHE talked',
+    xeric_trust_of($p, 'ruth', null, XERIC_PLAYER_FIRST) >= 0,
+    (string)xeric_trust_of($p, 'ruth', null, XERIC_PLAYER_FIRST));
+// The cost is the row and the town: her own prompt reads it back to her, and the
+// ripple that detected it is already repeating the thing she was trusted with.
+ok('centre: what it costs her is the sentence she now carries',
+    str_contains(xeric_confide_block($T, $p, 'ruth'), 'it got out')
+    && str_contains(xeric_confide_block($T, $p, 'ruth'), 'how that looks'));
 
 $p2 = fresh('player2');
 xeric_player_add($p2, $T, 'Corey');

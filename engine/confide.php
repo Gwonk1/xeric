@@ -162,16 +162,34 @@ function xeric_confide_break(array $t, PDO $db, string $told, string $key, array
     xeric_arc_set($db, $told, $key, json_encode($row, JSON_UNESCAPED_UNICODE), $at);
 
     $by = (string)($row['by'] ?? '');
-    $p  = (int)($row['p'] ?? 0);
     if ($by !== '') {
         // The teller thinks less of the person who let it out.
         xeric_trust_earn($db, $by, -XERIC_CONFIDE_BROKEN, $at, $told);
-    } elseif ($p >= XERIC_PLAYER_FIRST) {
-        // Somebody at the centre told them, and they let it out: what THEY
-        // think of the town's carrier is not a row this engine keeps, so what
-        // moves is the carrier's standing with the person they betrayed.
-        xeric_trust_earn($db, $told, -XERIC_CONFIDE_BROKEN, $at, null, $p);
     }
+    // AND WHEN THE TELLER WAS SOMEBODY AT THE CENTRE, NOTHING ON THIS AXIS
+    // MOVES — which is a correction, not an omission.
+    //
+    // This branch used to write `xeric_trust_earn($db, $told, -3, …, null, $p)`,
+    // and the comment beside it said that was "the carrier's standing with the
+    // person they betrayed". It is not. That row is keyed `trust.p<N>` ON THE
+    // CARRIER, and trust.php defines it as what THIS PERSON HAS DECIDED ABOUT
+    // YOU. So the sentence the engine was actually writing was: Ruth told
+    // everybody your secret, therefore Ruth trusts you three less. The branch
+    // three lines up does the opposite of that, correctly, and the two disagreed
+    // about direction for as long as both existed.
+    //
+    // The row it wanted — what the PLAYER now thinks of Ruth — does not exist,
+    // and should not: the engine keeps the minds of the town, and the one mind
+    // it must never presume to keep is the mind of the person playing. You do
+    // think less of her. That is yours, and it happens in your head, not in a
+    // column.
+    //
+    // So the cost is not a number here. It is the row itself, which is now
+    // `broken` and which her own prompt reads back to her every turn — "you know
+    // how that looks" — and it is the town, which is repeating the thing she was
+    // trusted with, because that is how this was detected in the first place.
+    // Reputation is emergent in this engine by design, and this is exactly the
+    // case that design was for.
     return true;
 }
 

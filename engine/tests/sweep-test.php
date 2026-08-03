@@ -1944,6 +1944,43 @@ for ($i = 0; $i < 30; $i++) xeric_mood_step($mdDb, $mdT, 'routine');
 ok('mood: quiet hours bring it home — mean-toward-ordinary, and it STOPS there',
     xeric_mood_now($mdDb, $mdT) === xeric_mood_ordinary($mdT), (string)xeric_mood_now($mdDb, $mdT));
 
+// AN HOUR IS A PUSH *OR* A DRIFT, NEVER BOTH.
+//
+// They used to be applied one after the other in the same call, so they
+// cancelled exactly whenever the push was ±1 — and ±1 is what NINE of the
+// seventeen kinds are worth. Forty consecutive hours of `rumor` finished at
+// zero. Forty of `visit` finished at zero. A world whose armed kinds were all
+// ±1 had a needle nailed to ordinary forever, which is the exact complaint
+// engine/mood.php was written to fix.
+$mdOne = fresh_db('mood-one');
+xeric_state_seed($mdOne, $mdT);
+$mdOrd = xeric_mood_ordinary($mdT);
+ok('mood: a single point of tension is a point, not a rounding error',
+    xeric_mood_step($mdOne, $mdT, 'rumor') === $mdOrd + 1);
+for ($i = 0; $i < 5; $i++) xeric_mood_step($mdOne, $mdT, 'rumor');
+ok('mood: and a run of them keeps climbing', xeric_mood_now($mdOne, $mdT) > $mdOrd + 1);
+
+$mdWarm = fresh_db('mood-warm');
+xeric_state_seed($mdWarm, $mdT);
+for ($i = 0; $i < 6; $i++) xeric_mood_step($mdWarm, $mdT, 'visit');
+ok('mood: the gentle kinds move it the other way, which they could not before',
+    xeric_mood_now($mdWarm, $mdT) < $mdOrd, (string)xeric_mood_now($mdWarm, $mdT));
+
+// The case the file cares most about: a WORLD that declares its own driver.
+// "No default has any business overruling it" — and the reversion was.
+$mdOwn = $mdT;
+$mdOwn['world_mood']['drivers'] = [['on' => 'vigil', 'delta' => 1]];
+$mdOwnDb = fresh_db('mood-own');
+xeric_state_seed($mdOwnDb, $mdOwn);
+ok('mood: a world that says a vigil is worth one point gets one point',
+    xeric_mood_delta($mdOwn, 'vigil') === 1
+    && xeric_mood_step($mdOwnDb, $mdOwn, 'vigil') === xeric_mood_ordinary($mdOwn) + 1);
+
+// And the drift is still there, on the hours that are actually quiet.
+for ($i = 0; $i < 30; $i++) xeric_mood_step($mdOne, $mdT, 'ordinary');
+ok('mood: nothing happening is still what brings a town back to itself',
+    xeric_mood_now($mdOne, $mdT) === $mdOrd, (string)xeric_mood_now($mdOne, $mdT));
+
 // The reading is in the world's words, not a number with a label on it.
 for ($i = 0; $i < 8; $i++) xeric_mood_step($mdDb, $mdT, 'loss');
 $mdRead = xeric_mood_read($mdDb, $mdT);

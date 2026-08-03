@@ -916,10 +916,38 @@ xeric_world_state_set($cdb, 'why:event:1', '{"why":"the owner asked"}');
 xeric_world_state_set($cdb, 'world_mood_drift', 'kept');
 $autoBefore = (int)$cdb->query("SELECT COUNT(*) c FROM memories WHERE source='auto'")->fetchAll()[0]['c'];
 
+// AND THE OWNER'S OTHER PEOPLE. The clearing list predates players.php,
+// guest.php and pair.php, so a fork inherited the whole co-op layer. The roster
+// alone is bookkeeping about somebody who has not arrived; the GUEST row is the
+// one piece that reaches a stranger's PROMPT, naming a real third party to
+// every character in the world.
+require_once dirname(__DIR__, 3) . '/engine/players.php';
+require_once dirname(__DIR__, 3) . '/engine/guest.php';
+require_once dirname(__DIR__, 3) . '/engine/pair.php';
+$coopP = xeric_player_add($cdb, $LT, 'Corey');
+xeric_guest_arrive($cdb, $LT, $coopP);
+xeric_world_state_set($cdb, 'guest.p' . $coopP,
+    json_encode(['way' => 'written_in', 'line' => 'Corey is the cousin from Omaha, down for the funeral.']));
+xeric_pair_new($cdb, 'Corey');
+$coopBefore = xeric_guest_block($cdb, $LT, XERIC_PLAYER_FIRST);
+ok('the owner\'s world really does put their guest in every prompt',
+    $coopBefore !== '' && str_contains($coopBefore, 'Corey'), $coopBefore);
+
 $S = sid();
 xeric_session_use($S);
 $fk = xeric_play_open('lived-in');
 ok('a stranger opening a lived-in world is forked', $fk['forked'] === true);
+
+ok('fork: the roster does not come with it',
+    xeric_world_state_get($fk['db'], 'players') === null
+    && xeric_world_state_get($fk['db'], 'players.issued') === null);
+ok('fork: nor the guest — nobody in a stranger\'s copy is told about Corey',
+    xeric_guest_block($fk['db'], $LT, XERIC_PLAYER_FIRST) === '',
+    xeric_guest_block($fk['db'], $LT, XERIC_PLAYER_FIRST));
+ok('fork: and the owner\'s live pairing codes are not handed over with it',
+    xeric_world_state_get($fk['db'], 'pair.codes') === null);
+ok('fork: the owner still has all of it, because a fork is a COPY',
+    xeric_guest_block($cdb, $LT, XERIC_PLAYER_FIRST) === $coopBefore);
 
 $fdb = $fk['db'];
 $convs = (int)$fdb->query('SELECT COUNT(*) c FROM conversations')->fetchAll()[0]['c'];
