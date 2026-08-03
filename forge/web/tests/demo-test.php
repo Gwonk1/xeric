@@ -1968,6 +1968,22 @@ ok('a model that asks for the strongest rating at every pass still builds at the
 ok('and the session ceiling closes it a second time, inside the forge',
     xeric_forge_rating(['rating' => $TOP], xeric_session_ceiling($str)) === $WEAK);
 
+// -- AND SOMETHING ACTUALLY HANDS IT DOWN ------------------------------------
+//
+// The assertion above proves the ceiling WORKS. It did that while no production
+// path passed one: xeric_session_ceiling() had a docblock describing the gate it
+// covers, a test proving it closes, and not one caller. A gate nothing is wired
+// to is a comment. Both builders now hand it down — worker.php for a first
+// forge, review-lib.php for a redraft, each after forcing the requesting sid.
+$wireW = (string)file_get_contents(dirname(__DIR__) . '/worker.php');
+$wireR = (string)file_get_contents(dirname(__DIR__) . '/review-lib.php');
+ok('ceiling: the first forge hands the session ceiling to the builder',
+    str_contains($wireW, "'rating_ceiling' => xeric_session_ceiling()"));
+ok('ceiling: and so does a redraft, which re-forges from answers off disk',
+    str_contains($wireR, "'rating_ceiling' => xeric_session_ceiling()"));
+ok('ceiling: a redraft also re-runs those answers through the funnel',
+    str_contains($wireR, 'xeric_web_clean_answers($answers, $interview)'));
+
 // -- the affirmation itself ---------------------------------------------------
 
 $grown = sid();

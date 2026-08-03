@@ -329,6 +329,53 @@ $reAgain = xeric_review_reaim_walls($reOut, ['family', 'congregation']);
 ok('reaim: a second pass is a no-op — nothing re-clones',
     count($reAgain['knowledge_walls']) === count($reOut['knowledge_walls']));
 
+// ---------------------------------------------------------------------------
+// THE DICE, AND WHOSE FIELD IT IS ROLLING.
+//
+// xeric_review_roll() told the model the WORLD's rating. Every other surface
+// that writes a character derives the subject's own ceiling first, so rolling a
+// line on the twelve-year-old announced the world's adult rating and then asked
+// for something in that register. The clamp is xeric_viewer_rating() through
+// xeric_viewer(), the same pair the prompt builder uses, so there is one answer
+// to "what may this person be written at" and not a second one here.
+// ---------------------------------------------------------------------------
+
+$TR = ['meta' => ['name' => 'Milldale', 'rating' => 'mature'],
+       'setting' => ['locale' => 'a river town', 'era' => '1973'],
+       'cast' => ['characters' => [
+           ['handle' => 'ruth', 'display_name' => 'Ruth Amberg', 'age' => 52,
+            'one_line' => 'She runs the diner.'],
+           ['handle' => 'theo', 'display_name' => 'Theo Vance', 'age' => 12,
+            'one_line' => 'He is twelve.'],
+           ['handle' => 'nameless', 'display_name' => 'Someone'],   // no age at all
+       ]],
+       'places' => ['diner' => ['name' => 'The Diner']]];
+
+$rollSeen = '';
+$rollStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) use (&$rollSeen): array {
+    $rollSeen = implode("\n", array_map(fn($m) => (string)$m['content'], $msgs));
+    return ['value' => 'something'];
+}];
+$rated = static function (string $path) use ($TR, $rollStub, &$rollSeen): string {
+    xeric_review_roll($TR, $path, 'a line', $rollStub);
+    return preg_match('/Content rating: ([^.\s]+)/', $rollSeen, $m) === 1 ? $m[1] : '';
+};
+
+$floor = xeric_ratings()[0];
+ok('dice: an adult is written at the world\'s rating', $rated('cast.characters.0.voice') === 'mature');
+ok('dice: a child is written at the floor, whatever the world is rated',
+    $rated('cast.characters.1.voice') === $floor, $rollSeen);
+ok('dice: and so is somebody whose age the template does not yet say',
+    $rated('cast.characters.2.voice') === $floor);
+ok('dice: a nested field on a child is still the child\'s field',
+    $rated('cast.characters.1.psyche.sore_spot') === $floor);
+ok('dice: and a list index under one too',
+    $rated('cast.characters.1.tells.2') === $floor);
+ok('dice: a place is not a person, and keeps the world\'s rating',
+    $rated('places.diner.name') === 'mature');
+ok('dice: a cast path that names nobody falls closed rather than open',
+    $rated('cast.characters.9.voice') === $floor);
+
 rmtree($tmp);
 
 echo "\n" . ($FAILED === 0 ? "all review tests passed\n" : "$FAILED review test(s) FAILED\n");

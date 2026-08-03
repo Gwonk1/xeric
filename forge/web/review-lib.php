@@ -1213,11 +1213,21 @@ function xeric_review_reroll(array $w, array $o, ?callable $note = null): array
         // fold is skipped on purpose (a redraft is a new draft, not a merge),
         // and the back cover is kept, because the build just wrote one that
         // matches. One save, so ↺ is the whole old draft back.
+        // THROUGH THE FUNNEL AGAIN, because a redraft is a forge and the answers
+        // it runs on came off disk. They were cleaned when the world was first
+        // built — by whichever session built it. This one may not be the same
+        // session, and affirmation is a per-session yes about content: a world
+        // forged mature on Tuesday must not re-forge mature on Friday for
+        // somebody who has not said yes. The pin covers the rating that was
+        // asked for; the ceiling covers the one the forge picks for itself.
+        $interview = xeric_forge_interview(XERIC_WEB_LIB . '/forge/interview.json');
+        $answers   = xeric_web_clean_answers($answers, $interview);
         $out = xeric_forge_build($answers, $endpoint, [
-            'interview' => xeric_forge_interview(XERIC_WEB_LIB . '/forge/interview.json'),
+            'interview' => $interview,
             'places'    => max(1, count((array)($t['places'] ?? []))),
             'cast'      => max(1, count((array)($t['cast']['characters'] ?? []))),
             'seed'      => true,
+            'rating_ceiling' => xeric_session_ceiling(),
         ], $say);
         $t2 = xeric_review_mark_pending($out['template']);
         xeric_review_save($w['slug'], $t2, (array)$out['seed']);
@@ -1738,7 +1748,23 @@ function xeric_review_roll(array $t, string $path, string $label, array $endpoin
 
     $name  = (string)($t['meta']['name'] ?? 'this place');
     $where = trim((string)($t['setting']['locale'] ?? '') . ' ' . (string)($t['setting']['era'] ?? ''));
+
+    // AND WHOSE FIELD IT IS. The world's rating is the room's ceiling, not this
+    // person's: every other surface that writes a character derives the
+    // SUBJECT's effective rating first, and the dice was handing the model the
+    // world's — so rolling a line on the twelve-year-old announced the world's
+    // adult rating and then asked for something in that register.
+    //
+    // Through xeric_viewer(), which fails closed: a path whose handle has been
+    // cleared mid-edit, or a character whose age is still an empty box, both
+    // resolve to a minor and get the floor. The one case this must never get
+    // wrong is the one where the template does not yet say.
     $rating = (string)($t['meta']['rating'] ?? 'clean');
+    if (preg_match('/^cast\.characters\.(\d+)(?:\.|$)/', $path, $subj) === 1) {
+        $who    = (array)($t['cast']['characters'][(int)$subj[1]] ?? []);
+        $rating = xeric_viewer_rating($rating,
+            xeric_viewer($t, ['handle' => (string)($who['handle'] ?? '')]));
+    }
 
     $msgs = [
         ['role' => 'system', 'content' =>

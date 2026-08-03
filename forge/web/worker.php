@@ -158,6 +158,14 @@ try {
         'cast'   => (int)($cfg['cast'] ?? 12),
         'seed'   => true,
         'fill'   => $fill,
+        // THE SECOND HALF OF THE AFFIRMATION GATE, which had never been wired.
+        // xeric_web_clean_answers() pins the rating somebody ASKS for; this
+        // covers the one the forge decides on for itself, afterwards, from the
+        // shape of the answers. xeric_session_ceiling() has existed for exactly
+        // this and had no caller anywhere — the docblock described a gate that
+        // was not standing. The sid is forced above, so this reads the session
+        // that asked for the build and not the worker's own absence of one.
+        'rating_ceiling' => xeric_session_ceiling(),
         'timeout' => XERIC_WEB_BUILD_CALL_TIMEOUT,
         'guard'   => $stop,
     ], $onNote);
