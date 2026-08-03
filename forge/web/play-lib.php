@@ -1301,6 +1301,44 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
              . '</p>';
     }
 
+    // WHO IS AT THE CENTRE, AND THE WAY IN. Above the rooms, because it is a
+    // fact about the table rather than about the town — and because the door
+    // was buried in the cog, which is where you put a setting, not where you
+    // put an invitation. Somebody in the same house should be able to see that
+    // letting a person in is a thing this program does.
+    //
+    // Shown for the owner always (there is always a way in to offer) and for a
+    // guest only when there is somebody besides themselves, so a guest's panel
+    // is not a permanent reminder of whose house they are in.
+    require_once XERIC_WEB_LIB . '/engine/pair.php';
+    $people = xeric_players($db, $t);
+    if ($mine || count($people) > 1) {
+        $out .= xeric_play_sideblock('who', 'who is here', count($people), count($people) > 1);
+        $out .= '<ul class="atcentre">';
+        foreach ($people as $pid => $p) {
+            $g = xeric_guest($db, $pid);
+            $out .= '<li><span class="pn">' . h((string)$p['name']) . '</span>'
+                  . ($pid === XERIC_PLAYER_FIRST
+                      ? '<span class="pw">whose world it is</span>'
+                      : '<span class="pw">' . h($g === null ? 'here too'
+                          : ($g['way'] === 'stranger'
+                              ? 'a stranger, so far'
+                              : 'came with ' . xeric_player_name($db, (int)$g['via'], $t))) . '</span>')
+                  . '</li>';
+        }
+        $out .= '</ul>';
+        if ($mine) {
+            $waiting = count(xeric_pair_open($db));
+            $out .= '<button type="button" class="sinv" data-invite="1">'
+                  . ($waiting > 0 ? 'show the code again' : 'let somebody in')
+                  . '</button>'
+                  . '<p class="sinvhint">a code for somebody else in the house to scan. They join '
+                  . 'THIS world, not a copy.</p>'
+                  . '<div class="sinvbox" id="sinvbox" hidden></div>';
+        }
+        $out .= '</div></details>';
+    }
+
     // Open by default — this is the panel the sidebar was built for, and the one
     // section that answers the question only a xeric can be asked.
     $out .= xeric_play_sideblock('where', 'where everybody is', $standing, true)
@@ -3909,6 +3947,21 @@ summary.sh:focus-visible{outline:1px solid var(--accent);outline-offset:2px;bord
    motif trails after in the same voice the sky is written in */
 .swx b{font-weight:600;font-style:normal;color:var(--fg)}
 .swx i{font-weight:400;color:var(--fg-far)}
+/* WHO IS AT THE CENTRE, and the way in. A door, not a setting — which is why
+   it is here and not only under the cog. */
+.atcentre{list-style:none;padding:0;margin:0 0 .5rem}
+.atcentre li{display:flex;gap:.4rem;align-items:baseline;padding:.18rem 0;font-size:.82rem}
+.atcentre .pn{font-weight:600}
+.atcentre .pw{color:var(--fg-far);font-size:.74rem}
+.sinv{width:100%;font:inherit;font-size:.8rem;padding:.4rem;border-radius:.35rem;
+  border:1px solid var(--line);background:transparent;color:var(--fg-dim);cursor:pointer}
+.sinv:hover{color:var(--fg)}
+.sinv:disabled{opacity:.5;cursor:default}
+.sinvhint{margin:.35rem 0 0;font-size:.7rem;color:var(--fg-far);line-height:1.45}
+.sinvbox{margin:.5rem 0 0;text-align:center}
+.sinvbox svg{width:100%;max-width:11rem;height:auto}
+.sinvcode{margin:.4rem 0 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:1.05rem;letter-spacing:.18em;font-weight:600}
 /* the one-word "home" mark beside a name standing under their own roof */
 .whome{margin-left:.4rem;font-size:.6rem;letter-spacing:.06em;text-transform:uppercase;
   color:var(--fg-far);border:1px solid var(--line-2);border-radius:.5rem;padding:0 .3rem}

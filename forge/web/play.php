@@ -2779,6 +2779,42 @@ echo '<style>' . xeric_play_css() . '
     show('xeric');
   });
 
+  // THE WAY IN, from the sidebar. Same code the cog mints, shown where a person
+  // actually looks for it — and delegated on the container because the sidebar
+  // repaints itself and a listener bound to the button would not survive it.
+  if (sideBox) sideBox.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-invite]') : null;
+    if (!b) return;
+    var box = document.getElementById('sinvbox');
+    if (!box) return;
+    b.disabled = true;
+    box.hidden = false;
+    box.textContent = 'making a code…';
+    fetch('play.php?a=invite&w=' + encodeURIComponent(W), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        b.disabled = false;
+        box.textContent = '';
+        if (!d || d.error) { box.textContent = (d && d.error) || 'no code came back'; return; }
+        if (d.svg) box.insertAdjacentHTML('beforeend', d.svg);
+        // The code in words as well as in a picture: half the time the camera
+        // will not focus, and reading eight characters out is faster than
+        // walking across the room.
+        var p = document.createElement('p');
+        p.className = 'sinvcode';
+        p.textContent = d.code;
+        box.appendChild(p);
+        var s = document.createElement('p');
+        s.className = 'sinvhint';
+        s.textContent = d.lan
+          ? 'scan it, or open ' + d.url.replace(/&c=.*$/, '') + ' and type the code · five minutes'
+          : (d.note || '');
+        box.appendChild(s);
+      })
+      .catch(function () { b.disabled = false; box.textContent = 'no code came back'; });
+  });
+
   // The cog beside a cast row. Delegated for the same reason.
   if (castBox) castBox.addEventListener('click', function (e) {
     var g = e.target.closest ? e.target.closest('.pgear') : null;

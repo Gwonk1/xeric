@@ -170,14 +170,20 @@ foreach ($pages as [$path, $what, $needle]) {
 // opposite of an error, and somebody who is already in goes into the world
 // rather than at a form telling them their code is spent.
 [$joinDom, ] = $visit('/join.php?w=smoke-town&c=NOTACODE');
+// Anchored to the FORM, not to prose: the first version of this matched the
+// words "The code", which also appear in a source comment on the page it
+// redirects to, so it failed on a page that was behaving perfectly.
 ok('somebody already in this world is sent into it, not shown a code form',
-    !str_contains($joinDom, 'The code'),
+    !str_contains($joinDom, 'class="joinform"'),
     mb_substr(preg_replace('/\s+/', ' ', strip_tags($joinDom)) ?? '', 0, 120));
 [$joinGone, ] = $visit('/join.php?w=no-such-world&c=NOTACODE');
 ok('and a code for a world this machine does not have says so plainly',
     str_contains($joinGone, 'no xeric here'));
 
 [$playDom, ] = $visit('/play.php?w=smoke-town');
+ok('the sidebar carries the way in', str_contains($playDom, 'data-invite')
+    || str_contains($playDom, 'let somebody in'),
+    'the door is only under the cog, where a setting goes');
 foreach ([
     'the pace switch'   => 'data-pace',
     'the shape switch'  => 'xcshape',

@@ -2944,6 +2944,32 @@ $sbn = function (string $k) use ($chunks): ?int {
 ok('sidebar: all three sections render as collapsible blocks',
     isset($chunks['where'], $chunks['away'], $chunks['recent']), implode(',', array_keys($chunks)));
 
+// THE WAY IN. Buried under the cog it was a setting; in the sidebar it is a
+// door, which is what it actually is — somebody in the same house should be
+// able to SEE that letting a person in is a thing this program does.
+ok('sidebar: the owner is always shown a way to let somebody in',
+    isset($chunks['who']) && str_contains($chunks['who']['html'], 'let somebody in'));
+ok('sidebar: with who is already at the centre, and whose world it is',
+    str_contains($chunks['who']['html'], 'whose world it is'));
+ok('sidebar: and it arrives folded while there is nobody but you',
+    ($chunks['who']['open'] ?? true) === false);
+
+// A GUEST IS NOT SHOWN THE DOOR, and while they are the only other person the
+// panel is not a permanent reminder of whose house they are in.
+$guestSide = xeric_play_side_html($wT, $wdb, $TUEW, 'watch-town', false);
+ok('sidebar: a guest is offered no way to invite anybody',
+    !str_contains($guestSide, 'let somebody in'));
+
+// With somebody actually in, both of them are named and it opens on its own.
+$gid = xeric_player_add($wdb, $wT, 'Corey');
+xeric_guest_arrive($wdb, $wT, $gid);
+$side2 = xeric_play_side_html($wT, $wdb, $TUEW, 'watch-town', true);
+ok('sidebar: once somebody is in, they are named and it opens itself',
+    str_contains($side2, 'Corey') && str_contains($side2, 'came with')
+    && preg_match('~data-sb="who" open~', $side2) === 1);
+ok('sidebar: and a guest can see who else is at the centre with them',
+    str_contains(xeric_play_side_html($wT, $wdb, $TUEW, 'watch-town', false), 'Corey'));
+
 // The old markup is gone entirely. A half-migration — one block folded, two
 // still bare headings — reads as a rendering bug rather than a design.
 ok('sidebar: no bare <h3> heading survives the migration',
