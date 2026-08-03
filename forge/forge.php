@@ -1737,6 +1737,8 @@ function xeric_forge_person(array $answers, array $concept, array $places, array
                     . "REQUIRED ANGLE: {$lineBrief}. Say it like gossip, not a citation — never open "
                     . "with 'The only' and never make them the best at anything\",\n"
                     . "  \"appearance\": \"one sentence, what you see first\",\n"
+                    . "  \"build\": \"how they are put together, 2-6 words — tall and stooped, "
+                    . "broad through the shoulders, small and quick\",\n"
                     . "  \"wears\": [\"3-4 things they are wearing on an ordinary day, 2-5 words each, "
                     . "era-true — what a stranger at ten feet would see\"],\n"
                     . "  \"carries\": [\"2-4 things in their pockets or hands most days, 2-5 words each — "
@@ -2154,6 +2156,9 @@ function xeric_forge_character_from(array $flat, array $ctx, array $taken): arra
         // dossier, so it may never be derived from voice or pull.
         'surface' => 'someone from ' . $ctx['orbit_label'],
         'appearance' => xeric_forge_str($flat['appearance'] ?? '', '', 300),
+        // The frame the face sits in — a photo needs a body as much as a face,
+        // and "what you see first" is usually neither. Blank stays blank.
+        'build' => xeric_forge_str($flat['build'] ?? '', '', 80),
         // THE INVENTORY, both halves of it: worn and carried. COMMONS by rule —
         // what somebody wears and carries IS what a bystander sees, so these
         // ride the public presence read without touching a wall, and nothing
@@ -2182,7 +2187,12 @@ function xeric_forge_character_from(array $flat, array $ctx, array $taken): arra
         ],
         'relationships' => ['roommates' => [], 'friend_pairs' => [], 'attraction_seeds' => (object)[]],
         'limits' => ['hard' => [], 'soft' => []],
-        'photos' => ['enabled' => true, 'face_seed' => random_int(100000000, 999999999)],
+        // Two seeds, minted together and never apart: the face and the frame
+        // it sits in. engine/photo.php derives one for pre-photos worlds, but
+        // a minted pair beats a derived one — it survives a rename.
+        'photos' => ['enabled' => true,
+                     'face_seed' => random_int(100000000, 999999999),
+                     'body_seed' => random_int(100000000, 999999999)],
     ];
 }
 

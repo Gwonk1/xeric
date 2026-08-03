@@ -2059,6 +2059,76 @@ ok('egress: a nameless ping stays a doorbell',
     xeric_notify_ping_body([]) === 'Somebody texted you.');
 
 // ---------------------------------------------------------------------------
+// Photos — composed here, rendered elsewhere, dormant until a machine exists.
+// The identity block keeps a face the same face across months; the prompt
+// composer folds a model's ASK in as a clause and appends the rating cap in
+// code AFTER it; a minor in frame forces the floor whatever anyone proposed.
+// ---------------------------------------------------------------------------
+
+require_once __DIR__ . '/../photo.php';
+
+echo "\n# photos\n";
+
+$phT = $T;
+foreach ($phT['cast']['characters'] as $i => $c) {
+    if (($c['handle'] ?? '') === 'ruth') {
+        $phT['cast']['characters'][$i]['build']   = 'small and quick';
+        $phT['cast']['characters'][$i]['wears']   = ['a grey work apron'];
+        $phT['cast']['characters'][$i]['carries'] = ['a pocket notebook'];
+    }
+}
+
+ok('photo: no endpoint configured means dormant, not broken',
+    getenv('XERIC_IMAGE_BASE') === false && xeric_image_endpoint() === null);
+
+$phId = xeric_photo_identity($phT, 'ruth');
+ok('photo: an identity carries face and body seeds, and they hold still',
+    $phId !== null && $phId['face_seed'] > 0 && $phId['body_seed'] > 0
+    && $phId == xeric_photo_identity($phT, 'ruth'));
+ok('photo: every garment and object carries its own derived seed',
+    ($phId['wears'][0]['seed'] ?? 0) > 0 && ($phId['carries'][0]['seed'] ?? 0) > 0
+    && $phId['wears'][0]['seed'] !== $phId['carries'][0]['seed']);
+ok('photo: a pre-photos world still photographs — seeds derive when none were minted',
+    ($noSeed = xeric_photo_identity($T, 'dot')) !== null && $noSeed['face_seed'] > 0);
+ok('photo: nobody is nobody', xeric_photo_identity($phT, 'no_such_person') === null);
+
+$phNow = xeric_world_now($phT, ep('2026-08-02 10:00'));
+$phP = xeric_photo_prompt($phT, 'message', [
+    'handle' => 'ruth', 'place' => 'bluebird', 'now' => $phNow,
+    'ask' => 'a selfie by the coffee urn, laughing at something off-frame',
+]);
+ok('photo: the prompt carries the person, the clothes, the room and the day',
+    str_contains($phP['prompt'], 'small and quick')
+    && str_contains($phP['prompt'], 'grey work apron')
+    && str_contains($phP['prompt'], 'Bluebird')
+    && str_contains($phP['prompt'], rtrim(xeric_weather_line($phT, $phNow), '.')), $phP['prompt']);
+ok('photo: the model\'s ask rides as a clause, and the rating cap lands AFTER it',
+    strpos($phP['prompt'], 'laughing at something') < strpos($phP['prompt'], 'wholesome'));
+ok('photo: era-true is structural — the world\'s own period is in every frame',
+    str_contains($phP['prompt'], 'period-true') || str_contains($phP['prompt'], 'nothing anachronistic')
+    || trim(xeric_text($phT['setting']['era'] ?? '')) === '', $phP['prompt']);
+
+// THE AGE RULE. theo is twelve; whatever the world's rating and whatever the
+// ask, his frame is forced wholesome in code — the punchlist's own decision,
+// never delegated to a provider's classifier.
+$phX = $phT;
+$phX['meta']['rating'] = 'explicit';
+$phKid = xeric_photo_prompt($phX, 'message', ['handle' => 'theo', 'ask' => 'moody artistic shot']);
+ok('photo: a minor in frame forces the floor, whatever the world is rated',
+    $phKid['rating'] === 'sfw'
+    && str_contains($phKid['prompt'], 'family album'), $phKid['prompt']);
+$phAdult = xeric_photo_prompt($phX, 'message', ['handle' => 'ruth', 'ask' => '']);
+ok('photo: and an adult in the same world keeps the world\'s own ceiling',
+    $phAdult['rating'] === 'explicit');
+
+// The narrator's establishing shot: a place, nobody in frame, same furniture
+// and sky as the arrival beat and the sweep.
+$phPlace = xeric_photo_prompt($phT, 'place', ['place' => 'bluebird', 'now' => $phNow]);
+ok('photo: a place shot has a room and a sky and no face seed',
+    str_contains($phPlace['prompt'], 'Bluebird') && !isset($phPlace['seeds']['face'])
+    && isset($phPlace['seeds']['place']));
+
+// ---------------------------------------------------------------------------
 // The inventory — worn and carried, as data. Commons by rule (a bystander
 // sees both), validated like a room's interior, and rendered byte-stable in
 // the wearer's own identity because it is template data like the voice.
