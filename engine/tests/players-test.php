@@ -205,6 +205,85 @@ ok('two: the money dial is a way of PLAYING and belongs to the world, not a pers
 ok('two: and what Ruth thinks of Harlan has nobody at the centre in it',
     xeric_trust_key('harlan', 1) === xeric_trust_key('harlan', 2));
 
+// ---------------------------------------------------------------------------
+// 5. A TURN BELONGS TO WHOEVER TOOK IT.
+//
+// Shipping guests turned an old assumption into a live bug: expectations were
+// written when there was one person at the centre and the definite article was
+// safe, so a guest breaking their word charged the OWNER. Same sentence as the
+// cast-to-cast fix, one row further out.
+// ---------------------------------------------------------------------------
+
+echo "\n# a turn belongs to whoever took it\n";
+
+require_once dirname(__DIR__) . '/constructs.php';
+
+// array_merge, not `+`: the union operator keeps the LEFT side's keys, so a
+// `forge` override written with `+` over a template that already has one is
+// silently ignored — which is how the first version of this section tested a
+// world where expectations were never armed.
+$Tp = array_merge($T, ['forge' => ['armed' => ['expectations']], 'meta' => ['name' => 'Milldale']]);
+$d = fresh('turns');
+xeric_player_add($d, $Tp, 'Corey');
+
+$thu = ['epoch' => (new DateTimeImmutable('2026-08-03 09:00', new DateTimeZone('UTC')))->getTimestamp()];
+$made = xeric_expect_form($Tp, $d, 'ruth',
+    ['quote' => 'I will bring the truck round Thursday', 'what' => 'the truck', 'when' => 'Thursday'],
+    $thu, null, null, 2);
+ok('turn: a promise made by a guest forms', $made !== null);
+ok('turn: and the row knows which of them said it',
+    (int)(xeric_expects_for($d, 'ruth')[0]['p'] ?? 1) === 2);
+
+// The miss must land on the person who actually promised.
+// The fuse is xeric_constructs_tick, not the block — the block renders what is
+// already known, the tick is what makes a miss happen.
+$late = ['epoch' => $thu['epoch'] + 8 * 86400];
+xeric_constructs_tick($Tp, $d, $late);
+ok('turn: a guest breaking their word costs the GUEST their standing',
+    xeric_trust_of($d, 'ruth', null, 2) < 0);
+ok('turn: and costs the owner, who did nothing, exactly nothing',
+    xeric_trust_of($d, 'ruth', null, 1) === 0);
+
+// And explaining yourself repairs your own misses and nobody else's.
+ok('turn: the owner cannot apologise for a promise the guest broke',
+    xeric_expect_repair($Tp, $d, 'ruth', $late, null, 1) === null);
+ok('turn: the person who broke it can',
+    xeric_expect_repair($Tp, $d, 'ruth', $late, null, 2) !== null
+    && xeric_trust_of($d, 'ruth', null, 2) === 0);
+
+// A single-player world writes no player marker at all, so every expectation
+// already on disk keeps meaning what it meant.
+$solo = fresh('solo-turn');
+xeric_expect_form($Tp, $solo, 'ruth',
+    ['quote' => 'I will be there Thursday', 'what' => 'the thing', 'when' => 'Thursday'], $thu);
+ok('turn: the first person\'s promises carry no marker, so old rows are unchanged',
+    !array_key_exists('p', xeric_expects_for($solo, 'ruth')[0]));
+
+// AND THE CHARACTER KNOWS WHICH OF THEM THEY ARE TALKING TO. The most visible
+// half: a prompt that told Ruth she was texting the owner while a guest typed
+// would put the wrong name in her mouth on the first line.
+require_once dirname(__DIR__) . '/prompt.php';
+
+$np = fresh('name');
+xeric_player_add($np, $Tp, 'Corey');
+$forOwner = xeric_prompt_rules($Tp, 'ruth', 'sfw');
+$forGuest = xeric_prompt_rules($Tp, 'ruth', 'sfw', 'Corey');
+ok('name: texting the owner names the owner',
+    str_contains(implode(' ', $forOwner), 'texting Neil'));
+ok('name: and texting a guest names the guest',
+    str_contains(implode(' ', $forGuest), 'texting Corey')
+    && !str_contains(implode(' ', $forGuest), 'texting Neil'));
+
+// And the room is told who ELSE is about — which is everybody at the centre
+// except the person being spoken to, because they are not "somebody else".
+require_once dirname(__DIR__) . '/guest.php';
+xeric_guest_arrive($np, $Tp, 2);
+ok('name: talking to the guest, the room is told the owner is about too',
+    str_contains(xeric_guest_block($np, $Tp, 2), 'Neil')
+    && !str_contains(xeric_guest_block($np, $Tp, 2), 'Corey is here'));
+ok('name: and talking to the owner, it is told about the guest',
+    str_contains(xeric_guest_block($np, $Tp, 1), 'Corey'));
+
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

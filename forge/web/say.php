@@ -61,6 +61,11 @@ if (mb_strlen($text) > 2000)      $text = mb_substr($text, 0, 2000);
 // visitor's own copy of the database (session.php), made on first entry.
 try {
     $w = xeric_play_open($slug);
+    // WHO IS ASKING. The owner is the first person at the centre; anybody who
+    // came through a pairing code is their own. Resolved once, here, because
+    // everything below — the promise, the warmth, the name a character is
+    // texting — is a fact about a particular human rather than about the world.
+    $player = xeric_session_player($slug) ?? XERIC_PLAYER_FIRST;
 } catch (Throwable $e) {
     xeric_web_json(['error' => $e->getMessage()], 404);
 }
@@ -182,6 +187,11 @@ try {
         // marker never emits one, so an unconsented world spends nothing and
         // strips nothing.
         'photos'      => (string)(xeric_world_state_get($db, 'photos.approved') ?? '') === '1',
+        // WHICH PERSON AT THE CENTRE IS TALKING. One in every world until
+        // somebody is invited; once two people share a xeric, the promise, the
+        // warmth and the name the character is texting all have to land on
+        // whoever actually typed it.
+        'player'      => $player,
     ]);
 } catch (Throwable $e) {
     // Never the engine's own sentence: it is written for a log and its tail is
@@ -280,7 +290,7 @@ $harvested = null;
 $convId    = (int)$out['conversation_id'];
 if ($took < XERIC_PLAY_EXTRACT_UNDER && xeric_chat_should_extract($db, $handle, $convId, 6)) {
     try {
-        $harvested = xeric_chat_extract($T, $db, $handle, $convId, $endpoint, $now);
+        $harvested = xeric_chat_extract($T, $db, $handle, $convId, $endpoint, $now, $player);
     } catch (Throwable $e) {
         $harvested = null;                  // she answered. the bookkeeping is ours to lose.
     }

@@ -59,6 +59,7 @@ require_once __DIR__ . '/death.php';    // and who is not standing anywhere any 
 require_once __DIR__ . '/renderers/bible.php';
 require_once __DIR__ . '/renderers/economy.php';
 require_once __DIR__ . '/weather.php';  // the day's sky, derived, day-coarse, RIGHT NOW only
+require_once __DIR__ . '/players.php';  // and which person at the centre it is for
 
 /**
  * @param array $now  from xeric_world_now() — injected, never fetched here
@@ -80,7 +81,9 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
         'role'    => 'system',
         // The epoch goes in for one reason only: a boon that has already gone
         // stale must not be listed as owed. It never prints a time.
-        'content' => xeric_prompt_system($t, $db, $speakerHandle, $eff, (int)($opts['memory_limit'] ?? 12), (int)($now['epoch'] ?? 0) ?: null, $walls),
+        'content' => xeric_prompt_system($t, $db, $speakerHandle, $eff, (int)($opts['memory_limit'] ?? 12),
+            (int)($now['epoch'] ?? 0) ?: null, $walls,
+            max(XERIC_PLAYER_FIRST, (int)($opts['player'] ?? XERIC_PLAYER_FIRST))),
     ]];
 
     // ---- the conversation, as real chat turns ---------------------------
@@ -167,7 +170,7 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
  * @param ?array $walls the speaker's walls when the caller already resolved them;
  *                      resolved here when null, never skipped.
  */
-function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $eff, int $memoryLimit = 12, ?int $epoch = null, ?array $walls = null): string
+function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $eff, int $memoryLimit = 12, ?int $epoch = null, ?array $walls = null, int $player = XERIC_PLAYER_FIRST): string
 {
     $viewer = ['handle' => $speakerHandle];
     $who    = xeric_viewer($t, $viewer);
@@ -184,7 +187,8 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     $eff = xeric_viewer_rating($eff, $who);
 
     $parts[] = implode("\n", xeric_prompt_voice($t, $speakerHandle, $eff));
-    $parts[] = implode("\n", xeric_prompt_rules($t, $speakerHandle, $eff));
+    $parts[] = implode("\n", xeric_prompt_rules($t, $speakerHandle, $eff,
+        $player > XERIC_PLAYER_FIRST ? xeric_player_name($db, $player, $t) : ''));
 
     $bible = xeric_render_bible($t, $viewer, $eff);
     if (trim($bible) !== '') $parts[] = rtrim($bible);
@@ -201,7 +205,10 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     // the text changes only when a state changes, so the prefix cache survives
     // every ordinary turn and pays one rebuild at each real transition.
     require_once __DIR__ . '/constructs.php';
-    $owed = xeric_expect_block($t, $db, $speakerHandle, ['epoch' => $epoch ?? 0]);
+    // WHICH person at the centre this prompt is for. One in every world until
+    // somebody is invited; once there are two, what this character is owed, and
+    // who else is standing in the room, are different answers per person.
+    $owed = xeric_expect_block($t, $db, $speakerHandle, ['epoch' => $epoch ?? 0], $player);
     if ($owed !== '') $parts[] = $owed;
 
     $story = xeric_prompt_story($t, $speakerHandle);
@@ -436,9 +443,9 @@ function xeric_prompt_fixture_voice(array $t, array $f): array
 }
 
 /** Static behaviour rules. Sit next to the voice block because they are as fixed as it is. */
-function xeric_prompt_rules(array $t, string $speakerHandle, string $eff = ''): array
+function xeric_prompt_rules(array $t, string $speakerHandle, string $eff = '', string $who = ''): array
 {
-    $userName = trim((string)($t['user']['name'] ?? '')) ?: 'him';
+    $userName = $who !== '' ? $who : (trim((string)($t['user']['name'] ?? '')) ?: 'him');
     $out = [
         'HOW YOU ANSWER',
         // THE RATING IS A STYLE, not only a gate (owner, 2026-08-02): a TV-PG

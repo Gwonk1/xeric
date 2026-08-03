@@ -46,6 +46,7 @@
  */
 
 require_once __DIR__ . '/world.php';
+require_once __DIR__ . '/players.php';   // which person at the centre is talking
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/prompt.php';
 require_once __DIR__ . '/seed.php';      // xeric_seed_norm(), shared by the deduper
@@ -91,6 +92,11 @@ const XERIC_SEXUAL_NEAR = 48;
  */
 function xeric_chat_turn(array $template, PDO $db, string $speaker, string $userText, array $now, array $endpoint, array $opts = []): array
 {
+    // WHICH PERSON AT THE CENTRE IS TALKING. One in every world until somebody
+    // is invited, and the default keeps every existing caller correct without
+    // being touched — but once there are two, a promise, a warmth and a memory
+    // all have to land on the person who actually said the thing.
+    $player = max(XERIC_PLAYER_FIRST, (int)($opts['player'] ?? XERIC_PLAYER_FIRST));
     $userText = trim($userText);
     if ($userText === '') throw new RuntimeException('chat: there is nothing to send');
 
@@ -896,7 +902,8 @@ function xeric_remind_fire(PDO $db, array $notify, string $world = '', ?int $rea
  * @throws RuntimeException when the model fails. Nothing is written in that
  *         case: the parse and the dedupe both finish before the first INSERT.
  */
-function xeric_chat_extract(array $template, PDO $db, string $speaker, int $convId, array $endpoint, array $now): int
+function xeric_chat_extract(array $template, PDO $db, string $speaker, int $convId, array $endpoint,
+                            array $now, int $player = XERIC_PLAYER_FIRST): int
 {
     $name = xeric_chat_speaker_name($template, $speaker);
     if ($name === null) throw new RuntimeException("chat: cannot harvest memories for '$speaker', nobody by that name");
@@ -999,8 +1006,9 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // soft — a malformed proposal forms nothing, and an explanation with no
     // repairable miss repairs nothing — so the memory path above never pays
     // for their problems.
-    xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null, $now);
-    if (!empty($raw['explained'])) xeric_expect_repair($template, $db, $speaker, $now);
+    xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null,
+                      $now, null, null, $player);
+    if (!empty($raw['explained'])) xeric_expect_repair($template, $db, $speaker, $now, null, $player);
 
     return count($keep);
 }

@@ -554,7 +554,8 @@ function xeric_expects_for(PDO $db, string $handle): array
  * learn a second name. The gossip lines ride below what she is owed —
  * ledger first, talk second, which is also how a person holds them.
  */
-function xeric_expect_block(array $t, PDO $db, string $handle, array $now): string
+function xeric_expect_block(array $t, PDO $db, string $handle, array $now,
+                            int $player = XERIC_PLAYER_FIRST): string
 {
     $blocks = [];
     $owed   = xeric_expect_owed($t, $db, $handle);
@@ -573,7 +574,7 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now): stri
     // unless a world has a roster AND somebody turned the money dial up off
     // `none`, so it costs nothing in every world that is not about a job.
     require_once __DIR__ . '/work.php';
-    $job = xeric_work_block($db, $t);
+    $job = xeric_work_block($db, $t, $player);
     if ($job !== '') $blocks[] = $job;
 
     // AND, IN A DISCUSSION ROOM, WHY THEY ARE IN IT. Adjoins here rather than
@@ -587,7 +588,10 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now): stri
     // until somebody is actually invited, which is every world today. A guest
     // the cast cannot see is a person being talked past.
     require_once __DIR__ . '/guest.php';
-    $else = xeric_guest_block($db, $t);
+    // Excluding whoever this prompt is FOR: a character texting Corey is told
+    // who else is standing about, not told that Corey is here — she is the one
+    // they are talking to.
+    $else = xeric_guest_block($db, $t, $player);
     if ($else !== '') $blocks[] = $else;
 
     $talk = xeric_gossip_block($t, $db, $handle);
