@@ -1342,8 +1342,39 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         }, function (e) { fail(action + ' could not be reached, ' + e.message); });
     }
 
+    // ── RUN UNTIL IT IS CLEAR, AND PROVE IT CANNOT RUN FOREVER ──────────────
+    //
+    // Owner: the button should run until there are no contradictions. It stopped
+    // at three rounds and reported what was left, which is not what a button
+    // called "Clear All Contradictions" promises.
+    //
+    // "Until clear" needs a termination argument or it is a hang with a spinner.
+    // There are four ways this ends, and only the first is success:
+    //
+    //   1. CLEAR — a round finds no contradictions. Done.
+    //   2. STUCK — a round fixes nothing AND comes back with the same set it
+    //      went in with. More rounds cannot help; the model has said its piece.
+    //   3. THRASHING — a finding that was verified closed keeps coming back.
+    //      That is the spiral, and it is reported AS a spiral rather than as a
+    //      shrug, because it means two rewrites are undoing each other.
+    //   4. BUDGET — a hard ceiling on rounds and on model calls. Nothing here
+    //      can spend forever even if every round looks like progress.
+    //
+    // FASTER, NOT JUST LONGER, which is the part the round count got wrong.
+    // Attempts are counted PER FINDING ACROSS ALL ROUNDS, so round five does not
+    // hand a stubborn line a fresh pair of tries — the old shape re-ran the same
+    // two attempts on the same line every round and called it progress. A
+    // finding that has spent its attempts is set down and the rounds move on to
+    // the ones that are still moving.
+    var CALL_CAP = 240;          // model calls for one press, hard
     function clearAll(maxRounds) {
-      var ROUNDS = maxRounds || 3, round = 0, anyFixed = false;
+      // A CALLER THAT ASKS FOR N ROUNDS IS NOT OUT OF BUDGET WHEN IT USES THEM.
+      // xericSweepAfterReroll asks for exactly one, on purpose; reporting that
+      // as "stopped at the limit" would call a routine pass a failure.
+      var BOUNDED = !!maxRounds;
+      var ROUNDS = maxRounds || 24, round = 0, anyFixed = false;
+      var calls = 0, stop = '';
+      var lastSig = '', movedThisRound = false, thrash = 0;
       LG = {};
       lock(true);
       box.hidden = true;
@@ -1364,11 +1395,30 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         // other end never got cleared — for the human, like a `hand`, but it
         // says WHICH line to look at rather than "the rewriter gave up".
         var left = c.hand + c.pair;
-        var head = left === 0
-          ? 'All contradictions clear' + (bits.length ? ': ' + bits.join(', ') + '.' : '.')
-          : 'Clear except ' + left + ': ' + (bits.length ? bits.join(', ') + ', ' : '')
-            + left + ' flagged for you.';
+        // WHY IT STOPPED, in the sentence. "Flagged for you" told somebody a
+        // number and nothing about whether the machine had finished, given up,
+        // or gone in circles — three completely different things to be told.
+        var head;
+        if (left === 0) {
+            head = 'All contradictions clear' + (bits.length ? ': ' + bits.join(', ') + '.' : '.');
+        } else if (stop === 'thrash') {
+            head = 'Stopped: ' + left + ' contradiction' + (left === 1 ? '' : 's')
+                 + ' keep coming back after being fixed — two rewrites are undoing '
+                 + 'each other, so more passes will not settle it. '
+                 + (bits.length ? bits.join(', ') + '. ' : '')
+                 + 'Each one below has a fix it.';
+        } else if (stop === 'budget') {
+            head = 'Stopped at the limit (' + calls + ' model calls) with ' + left + ' left. '
+                 + (bits.length ? bits.join(', ') + '. ' : '')
+                 + 'Press it again to keep going, or fix them below by hand.';
+        } else {
+            head = 'As clear as it gets: ' + (bits.length ? bits.join(', ') + ', ' : '')
+                 + left + ' the editor could not settle. Each one below has a fix it.';
+        }
         st.textContent = head + (extra ? '  ' + extra : '');
+        // A spiral is a fault, not a result: it says so where a fault is said.
+        if (stop === 'thrash' || stop === 'budget') st.classList.add('bad');
+        else st.classList.remove('bad');
         if (anyFixed) writeCover(true);
       }
 
@@ -1387,22 +1437,28 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
                    e.why || 'this end reads correctly; its twin is what disagrees');
           cb(); return;
         }
-        var tries = e.fixed ? 1 : 0;   // the sweep already spent one rewrite on it
+        // ACROSS ALL ROUNDS, not per round. Restarting the clock every round is
+        // how the old shape spent three rounds re-trying the same two rewrites
+        // on the same stubborn line while the rounds it could have used on
+        // moving findings ran out.
+        if (e.tries === undefined) e.tries = e.fixed ? 1 : 0;
         var noise = 0;
         (function judge() {
           setState(k, 'open', 'judging…');
+          calls++;
           jfetch('verify', { path: e.path, say: e.say }, function (v) {
             if (!v.still) {
-              if (e.fixed || tries > 0) { setState(k, 'resolved', '✓ verified closed', v.why); cb(); return; }
+              if (e.fixed || e.tries > 0) { setState(k, 'resolved', '✓ verified closed', v.why); cb(); return; }
               noise++;
               if (noise >= 2) { setState(k, 'noise', 'judged not real', v.why); cb(); return; }
               setState(k, 'open', 'judging again…');
               judge();                                   // a second, independent no
               return;
             }
-            if (tries >= 2) { setState(k, 'hand', 'needs a hand', v.why); cb(); return; }
-            tries++;
+            if (e.tries >= 3) { setState(k, 'hand', 'needs a hand', v.why); cb(); return; }
+            e.tries++;
             setState(k, 'open', 'rewriting…', v.why);
+            calls++;
             jfetch('refix', { path: e.path, say: e.say, why: v.why }, function (r) {
               if (r.teaser_stale) anyFixed = true;
               if (r.noop) {
@@ -1413,6 +1469,7 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
               }
               if (!r.fixed) { setState(k, 'hand', 'needs a hand', r.note || 'no usable rewrite'); cb(); return; }
               e.fixed = true;
+              movedThisRound = true;                     // a line actually changed
               judge();                                   // the rewrite faces the same judge
             }, function (msg) { setState(k, 'hand', 'needs a hand', msg); cb(); });
           }, function (msg) { setState(k, 'hand', 'needs a hand', msg); cb(); });
@@ -1421,29 +1478,62 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
 
       (function nextRound() {
         round++;
-        if (round > ROUNDS) { finish('(' + ROUNDS + ' rounds)'); return; }
-        st.textContent = 'round ' + round + ': the editor is reading…';
+        // THE CEILINGS. Neither is the intended way to end — they are the proof
+        // that "until clear" cannot mean "forever" on a machine somebody is
+        // paying for by the token.
+        if (round > ROUNDS || calls >= CALL_CAP) {
+            stop = (BOUNDED && calls < CALL_CAP) ? '' : 'budget';
+            finish(); return;
+        }
+        st.textContent = 'round ' + round + ': the editor is reading…'
+                       + (round > 3 ? '  (' + calls + ' model calls so far)' : '');
         // `pair` is deliberately NOT settled: the finding is real and its cure
         // is on the other line, so freezing this one would stop the next round
         // from noticing when that cure lands.
         var settled = [];
         for (var k in LG) if (LG[k].state !== 'open' && LG[k].state !== 'pair') settled.push(LG[k].path);
         repassOnce(function (d) {
-          if (d.fixed) anyFixed = true;
+          calls++;
+          if (d.fixed) { anyFixed = true; movedThisRound = true; }
           var work = [];
           (d.findings || []).forEach(function (f) {
             if (f.kind !== 'consistency') return;
             var k = fp(f);
             // `pair` is the one non-open state that comes back for another
             // look — its cure is on a line this finding does not own.
-            if (LG[k] && LG[k].state !== 'open' && LG[k].state !== 'pair') return;
+            // A FINDING THAT WAS VERIFIED CLOSED AND CAME BACK is the spiral.
+            // Two rewrites undoing each other look exactly like progress from
+            // inside a single round — each one fixes the thing the other broke —
+            // so it has to be counted across rounds or it never ends.
+            if (LG[k] && LG[k].state === 'resolved') {
+                LG[k].revived = (LG[k].revived || 0) + 1;
+                if (LG[k].revived >= 2) {
+                    thrash++;
+                    setState(k, 'hand', 'keeps coming back',
+                        'this was corrected and the next pass found it again — the fix and '
+                        + 'something else are undoing each other, so it wants a person');
+                    return;
+                }
+            }
+            if (LG[k] && LG[k].state !== 'open' && LG[k].state !== 'pair'
+                && LG[k].state !== 'resolved') return;
             if (!LG[k]) LG[k] = { path: f.path, say: f.say, about: f.about, fixed: !!f.fixed,
                                   noop: !!f.noop, state: 'open' };
             else { LG[k].fixed = LG[k].fixed || !!f.fixed; LG[k].noop = !!f.noop; LG[k].state = 'open'; }
             ledgerRow(k);
             work.push(k);
           });
-          if (!work.length) { finish(round === 1 ? '' : '(round ' + round + ' found nothing new)'); return; }
+          if (!work.length) { finish(round === 1 ? '' : '(settled in ' + round + ' rounds)'); return; }
+
+          // NO PROGRESS: the same set came back and nothing moved. More rounds
+          // cannot help — the model has said its piece, and spending another
+          // twenty passes to be told the same thing is the waste this cap
+          // exists to prevent.
+          var sig = work.slice().sort().join('\u0001');
+          if (sig === lastSig && !movedThisRound) { finish('(nothing moved)'); return; }
+          lastSig = sig;
+          movedThisRound = false;
+          if (thrash > 0) { stop = 'thrash'; finish(); return; }
           var i = 0;
           (function step() {
             if (i >= work.length) { nextRound(); return; }

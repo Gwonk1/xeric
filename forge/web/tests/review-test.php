@@ -397,6 +397,28 @@ ok('dice: a cast path that names nobody falls closed rather than open',
 // half-corrected draft, with no way back to the version that was about to be
 // right.
 $rv = (string)file_get_contents(dirname(__DIR__) . '/review.php');
+// IT RUNS UNTIL CLEAR, AND CANNOT RUN FOREVER. Four ways out, and only the
+// first is success: clear, stuck (a round that moved nothing and came back with
+// the same set), thrashing (a finding verified closed that keeps returning —
+// two rewrites undoing each other), and a hard ceiling on rounds and calls.
+ok('clear-all: it keeps going instead of stopping at three rounds',
+    preg_match('/ROUNDS = maxRounds \|\| 24/', $rv) === 1);
+ok('clear-all: with a hard ceiling on model calls, so "until clear" is not "forever"',
+    str_contains($rv, 'CALL_CAP') && preg_match('/calls >= CALL_CAP/', $rv) === 1);
+ok('clear-all: a round that moves nothing and repeats itself ends the run',
+    str_contains($rv, "if (sig === lastSig && !movedThisRound)"));
+ok('clear-all: a finding that keeps coming back after being fixed is called a spiral',
+    str_contains($rv, "stop = 'thrash'") && str_contains($rv, "LG[k].revived"));
+ok('clear-all: and a spiral or a ceiling reads as a fault, not as a result',
+    str_contains($rv, "st.classList.add('bad')"));
+// Attempts are counted per finding across ALL rounds — the old shape restarted
+// the clock every round and spent them re-trying the same stubborn line.
+ok('clear-all: a stubborn line does not get a fresh pair of tries every round',
+    str_contains($rv, 'if (e.tries === undefined)') && str_contains($rv, 'e.tries >= 3'));
+// And a caller that asks for one round is not "out of budget" when it uses it.
+ok('clear-all: a deliberately bounded pass is not reported as a failure',
+    str_contains($rv, 'BOUNDED && calls < CALL_CAP'));
+
 ok('contradictions: a flagged finding offers a way to fix it',
     str_contains($rv, "go.textContent = 'fix it';"));
 ok('contradictions: which takes you to the line and puts the cursor in it',
