@@ -67,6 +67,7 @@ require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/prompt.php';
 require_once __DIR__ . '/chat.php';
+require_once __DIR__ . '/clock.php';    // xeric_chatter_run defaults to xeric_clock_now
 require_once __DIR__ . '/room.php';     // the floor draw, the reply hygiene, the walls idiom
 require_once __DIR__ . '/learn.php';
 require_once __DIR__ . '/death.php';

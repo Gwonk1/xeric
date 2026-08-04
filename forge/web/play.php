@@ -641,11 +641,17 @@ if ($action !== '') {
     // Saying something into a room.
     //
     // The line lands whatever happens next — it is what the person said, and a
-    // model that will not answer does not un-say it. Then the room is asked for
-    // a short answer at the busy rate, because somebody standing there talking
-    // is the definition of a busy room (chatter.php).
+    // model that will not answer does not un-say it. Then the FLOOR decides who
+    // answers (floor.php): the named head first and obliged, everyone else
+    // invited with license to pass, silence landed as a narrator line. The
+    // count of replies is an outcome now, not the old three-on-a-timer.
     if ($action === 'roomsay') {
-        require_once XERIC_WEB_LIB . '/engine/chatter.php';
+        require_once XERIC_WEB_LIB . '/engine/floor.php';
+        // Up to XERIC_FLOOR_ASKS calls on one GPU can outlive mod_php's default
+        // thirty seconds; the lines would land (the channel saves as it goes)
+        // but the response would die, which reads as an outage. say.php's
+        // number, same argument.
+        @set_time_limit(150);
         $in2   = xeric_web_input();
         $place = trim((string)($in2['place'] ?? ''));
         $text  = trim((string)($in2['text'] ?? ''));
@@ -687,16 +693,21 @@ if ($action !== '') {
                             'note' => 'the model is busy; they will pick it up on the beat']);
         }
         try {
-            $r = xeric_chatter_run($T2, $db2, $place, $endpoint,
-                ['force' => true, 'user_here' => true, 'now' => $now2, 'max_lines' => 3]);
+            $r = xeric_floor_answer($T2, $db2, $place, $text, $endpoint, ['now' => $now2]);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
             xeric_web_json(['error' => $e->getMessage(), 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
-        xeric_web_json(['ok' => true, 'lines' => array_map(
-            fn($l) => ['name' => (string)$l['name'], 'text' => (string)$l['text']],
-            (array)($r['lines'] ?? []))]);
+        xeric_web_json(['ok' => true,
+            'lines'   => array_map(
+                fn($l) => ['name' => (string)$l['name'], 'text' => (string)$l['text']],
+                (array)($r['lines'] ?? [])),
+            // The room declining to pick it up is a real answer, in the
+            // engine's own sentence — with one person in it, it is theirs by
+            // name — and it is already in the scrollback as a narrator line.
+            'silence' => (bool)($r['silence'] ?? false),
+            'note'    => (string)($r['note'] ?? '')]);
     }
 
     // -- a room, as a channel ------------------------------------------------
@@ -2471,8 +2482,10 @@ echo '<style>' . xeric_play_css() . '
         }
         (res.d.lines || []).forEach(function (l) { addMsg('them', l.text, '', null, l.name); });
         // A room that heard you and said nothing is a real answer, and silence
-        // with no explanation reads as a broken page.
-        if (!(res.d.lines || []).length) addMsg('narr', 'Nobody picks it up.', '');
+        // with no explanation reads as a broken page. The engine's sentence
+        // when it sent one — it names the one person in a one-person room —
+        // and the old generic line when it did not.
+        if (!(res.d.lines || []).length) addMsg('narr', res.d.note || 'Nobody picks it up.', '');
       })
       .catch(function () {
         busy = false;
