@@ -61,6 +61,7 @@ require_once __DIR__ . '/why-lib.php';
 $slug = xeric_web_slug((string)($_GET['w'] ?? ''));
 $handle = trim((string)($_GET['h'] ?? ''));
 $eventId = (int)($_GET['e'] ?? 0);
+$room = trim((string)($_GET['room'] ?? ''));
 
 // Before the open, not after: opening a stranger's world forks a copy of its
 // database into this session, and a page about to refuse leaves nothing behind.
@@ -363,6 +364,89 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     }
 
 // ===========================================================================
+// The floor's last beat in one room — who was reached, who spoke, who let it
+// pass. The trail floor.php stores under why:floor:<place>: dice with
+// receipts, and the receipts are this page. "Why did she answer?" and "why
+// did nobody?" are the same question a sweep's trail answers for hours.
+// ===========================================================================
+} elseif ($room !== '') {
+    $pn  = xeric_world_place_name($T, $room);
+    $raw = xeric_world_state_get($db, 'why:floor:' . $room);
+    $tr  = $raw !== null ? json_decode($raw, true) : null;
+    if ($pn === '') {
+        echo '<h1>No such room</h1><p class="note bad">Nothing on this xeric\'s map answers to that key.</p>';
+    } elseif (!is_array($tr) || $tr === []) {
+        echo '<h1>' . h($pn) . '</h1><p class="note warn">Nobody has spoken into this room yet — the floor '
+            . 'keeps a trail from the moment somebody does, and there is nothing to read before that.</p>';
+    } else {
+        // One sentence per head: what the floor did about them, reconstructed
+        // from the same lists the beat wrote. Names only — the trail never
+        // carries a secret or a spoken line, and neither does this page.
+        $spoke   = (array)($tr['spoke'] ?? []);
+        $passed  = (array)($tr['passed'] ?? []);
+        $balked  = (array)($tr['balked'] ?? []);
+        $asked   = (array)($tr['asked'] ?? []);
+        $address = (array)($tr['addressed'] ?? []);
+        $weights = (array)($tr['weights'] ?? []);
+        $dropped = [];
+        foreach ((array)($tr['dropped'] ?? []) as $dd) $dropped[(string)$dd['who']] = (string)$dd['why'];
+        $dropWhy = ['call'  => 'the model did not answer for them',
+                    'empty' => 'what came back was unusable',
+                    'age'   => 'the age floor refused the line',
+                    'wall'  => 'the line would have put a protected listener next to the thing they must not know'];
+        $fate = function (string $h) use ($spoke, $passed, $balked, $asked, $dropped, $dropWhy): string {
+            if (in_array($h, $spoke, true))  return 'answered';
+            if (in_array($h, $balked, true)) return 'was named, and would not answer — the floor moved on';
+            if (in_array($h, $passed, true)) return 'let it pass, by their own choice';
+            if (isset($dropped[$h]))         return 'spoke, and the line was refused: ' . ($dropWhy[$dropped[$h]] ?? $dropped[$h]);
+            if (in_array($h, $asked, true))  return 'was reached, and nothing usable came of it';
+            return 'was never reached — the beat ended before the floor got to them';
+        };
+        // Asked order first, then whoever the beat never got to.
+        $order = array_values(array_unique(array_merge($asked, (array)($tr['present'] ?? []))));
+        ?>
+  <h1><?= h($pn) ?></h1>
+  <p class="sub">the last time somebody spoke into this room
+    · <?= h(date('M j, H:i', (int)($tr['at'] ?? 0))) ?>
+    · <?= h(number_format(((int)($tr['ms'] ?? 0)) / 1000, 1)) ?>s
+    · ran at <code><?= h((string)($tr['rating'] ?? '')) ?></code></p>
+
+  <?php if (!empty($tr['silence'])): ?>
+  <p class="note warn">The room let it sit — everyone reached chose silence, and the shrug went into the
+    channel as a line anybody can scroll back to. Silence chosen is an answer, and this is its receipt.</p>
+  <?php endif; ?>
+
+  <h2>the floor, head by head</h2>
+  <p class="quiet">Being named outranks everything; among the unnamed the draw is weighted by reach and by
+    how much unsettled material each head carries about whoever spoke — a heavier weight buys a better
+    chance of going first and nothing more.</p>
+  <ul class="sys">
+    <?php foreach ($order as $hh): $hn = xeric_world_name($T, (string)$hh); ?>
+    <li><span class="k"><?= h($hn) ?><?= in_array($hh, $address, true) ? ' · named' : '' ?>
+        <?php if (isset($weights[$hh])): ?><br><span class="quiet">weight <?= h(number_format((float)$weights[$hh], 2)) ?></span><?php endif; ?></span>
+      <span class="v"><?= h($fate((string)$hh)) ?></span></li>
+    <?php endforeach; ?>
+  </ul>
+
+  <?php $disc = (array)($tr['discretion'] ?? []); if ($disc !== []): ?>
+  <h2>discretion</h2>
+  <p class="quiet">Said to the speaker before the call, so the model steers instead of being censored.
+    The reminder names the person, never the secret — and neither does this page.</p>
+  <ul class="sys">
+    <?php foreach ($disc as $sp => $whos): foreach ((array)$whos as $ph): ?>
+    <li><span class="k"><?= h(xeric_world_name($T, (string)$sp)) ?></span>
+      <span class="v">was reminded that <?= h(xeric_world_name($T, (string)$ph)) ?> was standing right
+        there, and what may not be said in front of them</span></li>
+    <?php endforeach; endforeach; ?>
+  </ul>
+  <?php endif; ?>
+
+  <p class="jump"><a href="why.php?w=<?= h(rawurlencode($w['slug'])) ?>">every character and every event →</a>
+    · <a href="play.php?w=<?= h(rawurlencode($w['slug'])) ?>">back to the xeric</a></p>
+        <?php
+    }
+
+// ===========================================================================
 // What it has learned
 // ===========================================================================
 } elseif (!empty($_GET['learn'])) {
@@ -550,6 +634,34 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
         <span class="po"><?= h(mb_substr((string)$e['prose'], 0, 110)) ?><?= mb_strlen((string)$e['prose']) > 110 ? '…' : '' ?></span>
         <span class="pw<?= $kept ? '' : ' off' ?>"><?= h(xeric_play_stamp($T, (int)$e['world_epoch'])) ?>
           · <?= $kept ? 'decision trail kept' : 'seed history, nothing chose it' ?></span></span>
+        <span class="pgo">›</span></a></li>
+      <?php endforeach; ?>
+    </ul>
+  <?php endif; ?>
+
+  <h2>the last word in every room</h2>
+  <?php
+    // Every place the floor has kept a beat for. Read straight off the key
+    // prefix — the trail is one row per room, newest beat wins, so this list
+    // is exactly "which rooms have been spoken into".
+    $floorRows = $db->query("SELECT key, value, updated_at FROM world_state
+                             WHERE key LIKE 'why:floor:%' ORDER BY updated_at DESC")->fetchAll();
+    if ($floorRows === []): ?>
+    <p class="quiet">Nobody has spoken into a room yet. Walk somewhere in the xeric and say something —
+      the floor keeps its dice from the first word.</p>
+  <?php else: ?>
+    <ul class="cast">
+      <?php foreach ($floorRows as $fr):
+        $fp = substr((string)$fr['key'], strlen('why:floor:'));
+        $ft = json_decode((string)$fr['value'], true) ?: [];
+        $fn = xeric_world_place_name($T, $fp);
+        if ($fn === '') continue;                      // a rerolled place; its old beat is nobody's map
+        $fs = array_map(fn($hh) => xeric_world_name($T, (string)$hh), (array)($ft['spoke'] ?? [])); ?>
+      <li><a class="person" href="why.php?w=<?= h(rawurlencode($w['slug'])) ?>&amp;room=<?= h(rawurlencode($fp)) ?>">
+        <span><span class="pn"><?= h($fn) ?></span>
+        <span class="po"><?= !empty($ft['silence']) ? 'the room let it sit'
+            : ($fs !== [] ? h(implode(' and ', $fs)) . ' answered' : 'a beat was run') ?></span>
+        <span class="pw"><?= h(date('M j, H:i', (int)($ft['at'] ?? 0))) ?> · who answered, who passed, and why →</span></span>
         <span class="pgo">›</span></a></li>
       <?php endforeach; ?>
     </ul>
