@@ -310,6 +310,21 @@ ok('tic: the third call names the first line\'s opener and retires it',
     && str_contains($volT(2), 'do not start with those words'));
 
 // ---------------------------------------------------------------------------
+// 9. More than one person at the centre — user rows carry who typed them
+// ---------------------------------------------------------------------------
+
+$dbP  = fresh_db('players');
+$neil = xeric_player_add($dbP, $T, 'Neil');
+$convP = xeric_chatter_conversation($T, $dbP, 'bluebird');
+xeric_message_append($dbP, $convP, 'user', null, 'first person talking.', 0);
+xeric_message_append($dbP, $convP, 'user', xeric_player_key('@you', $neil), 'second person talking.', 0);
+$backP = xeric_chatter_scrollback($T, $dbP, $convP, 10);
+ok('players: the bare user row is the first person\'s — the no-migration rule',
+    $backP[0]['role'] === 'user' && $backP[0]['name'] === 'Walt', $backP[0]['name']);
+ok('players: a marked user row is labeled with that person\'s own name',
+    $backP[1]['role'] === 'user' && $backP[1]['name'] === 'Neil', $backP[1]['name']);
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
 

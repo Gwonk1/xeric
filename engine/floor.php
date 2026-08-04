@@ -124,6 +124,8 @@ const XERIC_FLOOR_MAX_CHARS = 400;
  *                         and the age floor read it; it is never re-written
  * @param array  $opts     now, real_now, seed, temperature, timeout, max_chars,
  *                         interject (0..1), effective_rating, model_rating,
+ *                         player (which person at the centre spoke — the coach
+ *                         and the mention heat follow whoever actually typed),
  *                         on_line(handle,name,text), on_why(kind,handle,detail)
  * @return array{said:int,lines:array<int,array{handle:string,name:string,text:string}>,
  *               silence:bool,note:string,place:string,rating:string,
@@ -160,7 +162,12 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
     $conv  = xeric_chatter_conversation($t, $db, $place);
     $names = [];
     foreach ($present as $h) $names[$h] = xeric_world_name($t, $h);
-    $userName = trim((string)($t['user']['name'] ?? '')) ?: 'you';
+    // WHICH PERSON AT THE CENTRE SPOKE. The coach names them, the mention heat
+    // counts memories about THEM, and the cleaner guards their name — a guest's
+    // question answered as if the owner asked it is the transcript lying
+    // (say.php's rule, arrived here).
+    $player   = (int)($opts['player'] ?? XERIC_PLAYER_FIRST);
+    $userName = xeric_player_name($db, $player, $t);
 
     // THE CEILING IS THE LOWEST PERSON STANDING IN IT — folded once, before a
     // single call, never re-raised (the sweep's sentence, every screen's fold).

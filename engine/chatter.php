@@ -229,6 +229,14 @@ function xeric_chatter_present(array $t, PDO $db, string $place, array $now): ar
  * and the rows themselves for the turn builder. The player's own lines are in
  * here as a speaker like anybody else — that is the point of the whole file.
  *
+ * MORE THAN ONE PERSON AT THE CENTRE: a user row whose handle carries the
+ * player marker (`@you.p<n>`, the suffix discipline players.php already owns)
+ * is labeled with THAT person's name. The bare row — every row on disk before
+ * guests existed — stays the first player's, which is the same no-migration
+ * rule as every other per-person key. Without this, a guest's line reads back
+ * to the whole cast as the owner speaking, which in a world occupied by more
+ * than one person is not a display bug, it is the transcript lying.
+ *
  * @return array<int,array{handle:?string,name:string,text:string,role:string}>
  */
 function xeric_chatter_scrollback(array $t, PDO $db, int $conversationId, int $limit): array
@@ -239,7 +247,13 @@ function xeric_chatter_scrollback(array $t, PDO $db, int $conversationId, int $l
     foreach ($rows as $r) {
         $role = (string)$r['role'];
         if ($role === 'user') {
-            $out[] = ['handle' => null, 'name' => $userName, 'text' => (string)$r['content'], 'role' => 'user'];
+            $h    = (string)($r['handle'] ?? '');
+            $name = $userName;
+            if (preg_match('/^@you\.p(\d+)$/', $h, $m)) {
+                $name = xeric_player_name($db, (int)$m[1], $t);
+            }
+            $out[] = ['handle' => $h !== '' ? $h : null, 'name' => $name,
+                      'text' => (string)$r['content'], 'role' => 'user'];
         } elseif ($role === 'character') {
             $h = (string)($r['handle'] ?? '');
             if ($h === '') continue;
@@ -287,6 +301,15 @@ function xeric_chatter_system(array $t, PDO $db, string $me, array $others, stri
           . ' arrive labeled the same way. Talk to them like somebody standing there.'
         : '- ' . $userName . ' is not in the room at the moment, but this is a room in your town'
           . ' and not a private one. What gets said here is said. People repeat things.';
+    // MORE THAN ONE PERSON AT THE CENTRE. Said only when it is true (the
+    // roster stays implicit until somebody joins, so ordinary worlds never
+    // carry the sentence), because a transcript with a name the system never
+    // introduced reads as the model being tested.
+    if (count(xeric_players($db, $t)) > 1) {
+        $out[] = '- ' . $userName . ' does not live here alone: other people share the centre of'
+               . ' this world, and their lines arrive labeled with their own names.'
+               . ' Talk to whoever actually spoke.';
+    }
 
     $out[] = '';
     $out[] = 'HOW PEOPLE TALK WHEN NOTHING IS HAPPENING';

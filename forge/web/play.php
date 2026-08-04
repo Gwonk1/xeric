@@ -679,8 +679,15 @@ if ($action !== '') {
             xeric_web_json(['error' => 'There is nobody in there to hear it.', 'kind' => 'empty'], 409);
         }
 
+        // WHO IS ASKING — say.php's question, asked here too. The first person
+        // keeps the bare row (the no-migration rule); anybody who came through
+        // a pairing code is stamped onto their line so the scrollback, the
+        // prompts, and the screen all name whoever actually spoke.
+        $player = xeric_session_player($slug) ?? XERIC_PLAYER_FIRST;
         $conv = xeric_chatter_conversation($T2, $db2, $place);
-        xeric_message_append($db2, $conv, 'user', null, $text, (int)($now2['epoch'] ?? 0));
+        xeric_message_append($db2, $conv, 'user',
+            $player > XERIC_PLAYER_FIRST ? xeric_player_key('@you', $player) : null,
+            $text, (int)($now2['epoch'] ?? 0));
 
         try { $endpoint = xeric_play_endpoint($sid); }
         catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
@@ -693,7 +700,8 @@ if ($action !== '') {
                             'note' => 'the model is busy; they will pick it up on the beat']);
         }
         try {
-            $r = xeric_floor_answer($T2, $db2, $place, $text, $endpoint, ['now' => $now2]);
+            $r = xeric_floor_answer($T2, $db2, $place, $text, $endpoint,
+                ['now' => $now2, 'player' => $player]);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
             xeric_web_json(['error' => $e->getMessage(), 'kind' => 'model'], 502);
@@ -743,10 +751,17 @@ if ($action !== '') {
             foreach (xeric_messages_recent($db2, (int)$conv['id'], 60) as $m) {
                 $role = (string)$m['role'];
                 $h    = (string)($m['handle'] ?? '');
+                // A user row carrying the player marker is labeled with THAT
+                // person's name — the scrollback rule (xeric_chatter_scrollback),
+                // kept here too so the screen and the prompts tell one story.
+                $uname = trim((string)($T2['user']['name'] ?? '')) ?: 'you';
+                if ($role === 'user' && preg_match('/^@you\.p(\d+)$/', $h, $pm)) {
+                    $uname = xeric_player_name($db2, (int)$pm[1], $T2);
+                }
                 $msgs[] = [
                     'role'   => $role,
                     'handle' => $h,
-                    'name'   => $role === 'user' ? (trim((string)($T2['user']['name'] ?? '')) ?: 'you')
+                    'name'   => $role === 'user' ? $uname
                                                  : ($h !== '' ? xeric_world_name($T2, $h) : ''),
                     'text'   => (string)$m['content'],
                     'when'   => '',

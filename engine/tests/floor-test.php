@@ -429,6 +429,39 @@ ok('tic: the second beat names her first opener and retires it',
     && str_contains(call_volatile($calls2, 0), 'do not start with those words'));
 
 // ---------------------------------------------------------------------------
+// 11. More than one person at the centre: the beat names who actually spoke
+// ---------------------------------------------------------------------------
+
+$db   = fresh_db('guest');
+$neil = xeric_player_add($db, $T, 'Neil');
+$gcnv = xeric_chatter_conversation($T, $db, 'first_lutheran');
+xeric_message_append($db, $gcnv, 'user', xeric_player_key('@you', $neil),
+    'hello in here.', (int)$SUN['epoch']);
+$calls = [];
+xeric_floor_answer($T, $db, 'first_lutheran', 'hello in here.',
+    stub_script(['Afternoon.'], $calls),
+    ['now' => $SUN, 'seed' => 7, 'interject' => 0.0, 'player' => $neil]);
+ok('guest: the coach names who actually spoke',
+    str_contains(call_volatile($calls, 0), 'Neil said that out loud'));
+ok('guest: the transcript labels the line with the guest\'s name',
+    str_contains(call_volatile($calls, 0), 'Neil: hello in here.'));
+ok('guest: the system says the centre is shared',
+    str_contains(call_system($calls, 0), 'does not live here alone'));
+
+// And the bare row stays the first person's — the no-migration rule.
+$db = fresh_db('owner-default');
+say_into($T, $db, 'first_lutheran', 'me again.', $SUN);
+$calls = [];
+xeric_floor_answer($T, $db, 'first_lutheran', 'me again.',
+    stub_script(['Hello, Walt.'], $calls),
+    ['now' => $SUN, 'seed' => 7, 'interject' => 0.0]);
+ok('owner: the default path still speaks for the first person',
+    str_contains(call_volatile($calls, 0), 'Walt said that out loud')
+    && str_contains(call_volatile($calls, 0), 'Walt: me again.'));
+ok('owner: an unshared centre carries no companions sentence',
+    !str_contains(call_system($calls, 0), 'does not live here alone'));
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $x) @unlink($x);
 
