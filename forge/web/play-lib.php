@@ -229,8 +229,17 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
     // not set — a per-world stop, a worker's, a repair — and starting a world
     // again is a decision somebody makes on the model page, not a side effect of
     // looking at it.
+    //
+    // AND ONLY YOUR OWN COPY. This read the OPENER's session for a machine and
+    // paused whatever they opened — which, for a paired guest or an agent seat
+    // standing on the owner's canonical db, was the owner's world: a friend
+    // walking in with no model attached stopped the family's clock. Whether a
+    // world has a machine is a fact about its OWNER's session (or about the
+    // fork's own visitor, whose copy is genuinely theirs); a machineless guest
+    // is just a guest who has not attached one yet.
     try {
-        if (!xeric_web_connected(xeric_web_model()) && !xeric_clock_is_paused($db)) {
+        if (((bool)$pick['mine'] || !empty($pick['forked']))
+            && !xeric_web_connected(xeric_web_model()) && !xeric_clock_is_paused($db)) {
             xeric_clock_pause($db);
         }
     } catch (Throwable $e) {
