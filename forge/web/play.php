@@ -152,6 +152,38 @@ if ($action !== '') {
                         'note' => 'Takes effect from the next hour and the next reply.']);
     }
 
+    // -- a different face ------------------------------------------------------
+    // The owner's reroll for one character's photographic identity: a fresh
+    // face_seed into the template (through the review save door, so the
+    // prev-copy undo holds like any edit), and the portrait job back to
+    // pending so the heart's next develop replaces the picture. The body seed
+    // derives from the face seed, so identity and build reroll together —
+    // one person, one new look, every future frame agreeing with itself.
+    if ($action === 'face') {
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner recasts a face.'], 403);
+        $in = xeric_web_input();
+        $h  = trim((string)($in['h'] ?? ''));
+        if (xeric_world_character($w['template'], $h) === null) {
+            xeric_web_json(['error' => 'nobody by that name'], 400);
+        }
+        $t2 = $w['template'];
+        foreach ($t2['cast']['characters'] as &$c2) {
+            if ((string)($c2['handle'] ?? '') === $h) {
+                $c2['photos']['face_seed'] = random_int(1, 2147483646);
+                break;
+            }
+        }
+        unset($c2);
+        xeric_review_save((string)$w['slug'], $t2);
+        // Same filename when it redevelops, so every consumer of the portrait
+        // picks the new face up without being told anything changed.
+        $w['db']->prepare("UPDATE photo_jobs SET status = 'pending', file = '', tries = 0,
+                           done_at = NULL WHERE kind = 'portrait' AND subject = ?")
+                ->execute([$h]);
+        xeric_web_json(['ok' => true,
+            'note' => 'A different face. The next development replaces the portrait.']);
+    }
+
     // -- how much money is allowed to matter ----------------------------------
     // Beside pace, and a dial for the same reason: most worlds are not about
     // money, and a wage counter in a xeric about a wake is a nag. It lives in
@@ -835,10 +867,6 @@ if ($action !== '') {
             // they said to you is the whole reason the row is still on the roster.
             'dead' => $gone !== null,
             'how'  => $gone !== null ? (string)$gone['how'] : '',
-            // The portrait, at last, where you actually talk to them — the cog
-            // had the only copy, and a face that exists should be above the
-            // conversation it belongs to.
-            'photo' => (string)(xeric_photo_of($w['db'], 'portrait', $handle)['status'] ?? '') === 'done',
             'one_line' => (string)($c['one_line'] ?? '')] + $th);
     }
 
@@ -2478,10 +2506,10 @@ echo '<style>' . xeric_play_css() . '
     });
   }
 
-  // The header's photograph: a portrait above a thread, the place above a
-  // room. Prepended into the h1 so nothing about the bar's layout moves when
-  // there is no photo — most worlds never say yes to the camera, and their
-  // header is exactly what it always was.
+  // The header's photograph: a place above its room, and nothing above a
+  // thread — portraits live behind the cog, by the owner's ruling. Prepended
+  // into the h1 so nothing about the bar's layout moves when there is no
+  // photo; called with '' to clear when the screen changes hands.
   function headerPhoto(kind, subject) {
     var old = document.querySelector('.tportrait');
     if (old) old.remove();
@@ -2651,9 +2679,10 @@ echo '<style>' . xeric_play_css() . '
       .then(function (d) {
         if (!d.ok) { $('#sayerr').textContent = d.error || 'that thread will not open'; $('#sayerr').hidden = false; return; }
         $('#tname').textContent = d.name;
-        // The developed portrait, worn by the header. textContent above wiped
-        // any previous one, so a thread without a photo simply has a name.
-        headerPhoto(d.photo ? 'portrait' : '', handle);
+        // No portrait here, by the owner's ruling: faces live behind the cog,
+        // threads keep their name. The call still runs to clear a place photo
+        // left by whichever room this screen showed last.
+        headerPhoto('', handle);
         $('#tone').textContent = d.one_line || '';
         $('#thinkwho').textContent = d.name + ' is typing';
         if (d.dead) {
@@ -3400,7 +3429,9 @@ echo '<style>' . xeric_play_css() . '
         // what it always secretly was.
         var pline = '<div class="cportrait"><img src="photo.php?w=' + encodeURIComponent(W)
           + '&k=portrait&s=' + encodeURIComponent(h) + '" alt="' + escA(d.photo_caption || '')
-          + '"></div>';
+          + '"><button type="button" class="nbtn ghost cface" data-h="' + escA(h)
+          + '" title="A fresh photographic identity — face and build reroll together; every future frame follows">'
+          + 'a different face</button></div>';
         $('#cmodal').innerHTML =
             '<h2><span class="av" style="--hue:' + (d.face ? d.face.hue : 0) + '">'
           + esc(d.face ? d.face.txt : '?') + '</span>' + esc(d.name) + '</h2>'
@@ -3414,8 +3445,22 @@ echo '<style>' . xeric_play_css() . '
         // hidden from here rather than from an attribute.
         var cimg = $('#cmodal .cportrait img');
         if (cimg) cimg.addEventListener('error', function () {
-            var box = this.closest('.cportrait');
-            if (box) box.hidden = true;
+            // The IMAGE folds away; the reroll button stays — a face that has
+            // not developed yet is exactly the face somebody may want rerolled.
+            this.hidden = true;
+        });
+        var cfb = $('#cmodal .cface');
+        if (cfb) cfb.addEventListener('click', function () {
+          cfb.disabled = true;
+          fetch('play.php?a=face&w=' + encodeURIComponent(W), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ h: cfb.dataset.h }) })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              cfb.disabled = false;
+              toast(d.ok ? (d.note || 'a different face') : (d.error || 'that did not take'));
+            })
+            .catch(function () { cfb.disabled = false; toast('that did not reach the world'); });
         });
         bindPronounSelects();
 

@@ -154,9 +154,20 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
     // (opts['photos'], the web layer's read of photos.approved). It rides the
     // volatile block, not the system message, because consent can flip — and
     // a model never told about the marker never emits one to strip.
+    //
+    // TWO VOLUMES. Unasked, the camera stays rare — a character who documents
+    // their own life is an influencer, not a neighbour. But "show me" is a
+    // request, and answering it with prose about the thing is the model not
+    // having been told the request was heard. Detected in code, answered as a
+    // proper offer — and still THEIR choice, both what is in frame and
+    // whether they reach for the camera at all.
     if (!empty($opts['photos'])) {
-        $volatile .= "\nYou can send a photo with your message: end it with [photo: what the "
-            . 'picture shows]. Rarely, and only when you would actually reach for your camera.';
+        $volatile .= xeric_prompt_wants_photo((string)($opts['user_message'] ?? ''))
+            ? "\nThey just asked to SEE something. If you are willing, and it is something you"
+              . ' could photograph from where you stand, end your message with [photo: what the'
+              . ' picture shows] — what is in frame is your choice, and so is whether you do it.'
+            : "\nYou can send a photo with your message: end it with [photo: what the "
+              . 'picture shows]. Rarely, and only when you would actually reach for your camera.';
     }
     $incoming = trim((string)($opts['user_message'] ?? ''));
 
@@ -561,6 +572,28 @@ function xeric_prompt_turn(array $m): array
     // the model to narrate in her voice, which is the one habit hardest to undo.
     if ($role === 'narrator')  return ['role' => 'user', 'content' => '(what happened) ' . $content];
     return ['role' => 'user', 'content' => $content];
+}
+
+/**
+ * Did this message ask to SEE something? The code-side half of the camera:
+ * a request phrased any of the ways people actually phrase it flips the
+ * volatile offer from "rarely" to "they asked". Deliberately generous —
+ * a false positive costs one over-eager offer the model is free to decline,
+ * a false negative is a request the character was never told about.
+ */
+function xeric_prompt_wants_photo(string $text): bool
+{
+    $t = mb_strtolower($text);
+    if ($t === '') return false;
+    // No bare "picture of" alternate on purpose: "that picture of us from
+    // years ago" is reminiscing, not a request. The verb forms carry every
+    // real ask — a picture wanted is a picture somebody asks to be SENT,
+    // SHOWN, or TAKEN.
+    return (bool)preg_match(
+        '/\b(?:show\s+(?:me|us)|(?:send|snap|take|shoot|got)\s+(?:me\s+|us\s+)?(?:a\s+|another\s+|the\s+)?'
+        . '(?:pic(?:ture)?s?|photos?|selfies?|snapshots?|shots?)|(?:can|could|may)\s+i\s+see'
+        . '|le[mt]{1,2}\w*\s+see|what\s+do(?:es)?\s+[^.?!]{0,40}look\s+like'
+        . '|send\s+(?:it|one)\s+over)\b/u', $t);
 }
 
 // ---------------------------------------------------------------------------

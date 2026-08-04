@@ -206,12 +206,13 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
     $bits  = [];
     $seeds = [];
 
-    // The aesthetic first: the world's own light. Era-true is the one rule an
-    // image cannot cheat quietly — a phone in an 1873 hand is a broken photo.
-    if ($locale !== '') $bits[] = $locale;
-    if ($era !== '')    $bits[] = 'period-true to ' . $era . ', nothing anachronistic in frame';
+    // THE OWNER'S THREE TIERS, in the owner's order: (1) who this is — identity
+    // and body, the anchored part; (2) where they are — locale, era, the room,
+    // the sky; (3) everything else belongs to the model, granted outright below,
+    // with physics as the one law. The rating cap still lands last and is still
+    // not up for negotiation — free will ends where the floor begins.
 
-    // The subject, when the frame has one.
+    // Tier one: the subject, when the frame has one.
     $who = null;
     if (($opts['handle'] ?? '') !== '') {
         $who = xeric_photo_identity($t, (string)$opts['handle']);
@@ -232,9 +233,13 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
                   'things' => array_merge($who['wears'], $who['carries'])];
     }
 
-    // The background: the room and the day, the same data every other surface
-    // reads, so the photo agrees with the arrival beat and the sweep about
-    // which chairs exist and what the sky is doing.
+    // Tier two: the location background. The world's own light first — era-true
+    // is the one rule an image cannot cheat quietly; a phone in an 1873 hand is
+    // a broken photo — then the room and the day, the same data every other
+    // surface reads, so the photo agrees with the arrival beat and the sweep
+    // about which chairs exist and what the sky is doing.
+    if ($locale !== '') $bits[] = $locale;
+    if ($era !== '')    $bits[] = 'period-true to ' . $era . ', nothing anachronistic in frame';
     $placeName = '';
     if (($opts['place'] ?? '') !== '') {
         $p = xeric_world_place($t, (string)$opts['place']);
@@ -260,6 +265,21 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
     // language lands AFTER it and is not up for negotiation.
     $ask = trim((string)($opts['ask'] ?? ''));
     if ($ask !== '') $bits[] = rtrim($ask, '.');
+
+    // Tier three: the model's own frame. Everything the first two tiers did
+    // not pin is granted, out loud — pose, expression, angle, light, mood,
+    // the moment itself — because a prompt that specifies everything gets the
+    // average of everything. Physics is the one limitation on that freedom,
+    // and saying so doubles as the anti-artifact language: the things image
+    // models get wrong are, to a one, violations of physics.
+    $bits[] = $who !== null
+        ? 'everything else in the frame is the photograph\'s own choice — pose, expression,'
+          . ' angle, light, mood, the moment itself; the one law is physics: gravity holds,'
+          . ' bodies have their right number of parts, nothing floats and nothing bends that'
+          . ' should not'
+        : 'everything else in the frame is the photograph\'s own choice — angle, light, mood,'
+          . ' the moment itself; the one law is physics: gravity holds, nothing floats and'
+          . ' nothing bends that should not';
 
     // THE LORA LAYER — aesthetic, never identity. Harvested trigger words fold
     // in here, BEFORE the rating language, so the cap still gets the last
