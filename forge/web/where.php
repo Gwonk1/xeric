@@ -54,9 +54,18 @@ if (!$post) {
     xeric_web_json(['ok' => true] + xeric_travel_map($w['template'], $w['db'], null, $player));
 }
 
-// Reading the map is everybody's; WALKING is the owner's, and only when this
-// is their real world — a stranger moves around their own fork freely.
-xeric_play_owner_only($w, 'walking about the place');
+// Reading the map is everybody's. WALKING used to be the owner's alone, and
+// the rule was right when it was written: there was ONE body, so a guest
+// walking would have moved the owner's feet. Every seat has its own body now
+// (travel.php's suffix discipline) — a guest walks their own, a stranger
+// still moves around their own fork freely. What survives of the old rule is
+// its OTHER half: a trip burns world-minutes for everybody (time is a world
+// fact), so a guest's walking rides the same meter a skip does — pacing the
+// street is not a free fast-forward for somebody else's world.
+if (xeric_play_is_guest($w)) {
+    xeric_limit_guard(xeric_limit_check('skip', ['sid' => $sid]));
+    xeric_limit_note('skip', ['sid' => $sid]);
+}
 
 // -- go -----------------------------------------------------------------------
 // `to` absent, null or empty means leaving the map: going off on your own time
