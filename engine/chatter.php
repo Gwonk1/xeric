@@ -483,6 +483,15 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
             continue;
         }
 
+        // THE AGE FLOOR, the line with the one it answers, over everyone
+        // standing in the room — the same belt the scene and the floor wear.
+        // An idle room with a child in it is still a room with a child in it,
+        // and this was the one line-writing path of the three without it.
+        if (xeric_age_floor($t, $present, [$lastText, $text]) !== null) {
+            if (!empty($opts['on_why'])) ($opts['on_why'])('age', $me, mb_substr($text, 0, 120));
+            continue;
+        }
+
         // THE WALLS, PER LINE, OVER WHO IS PRESENT. A line that puts a protected
         // listener next to the thing they must not know is dropped — and unlike
         // the scene, which could re-draw within its beat budget, a dropped line

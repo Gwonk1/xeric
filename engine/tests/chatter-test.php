@@ -260,6 +260,28 @@ ok('ceiling: and that is lower than what was asked for',
     (string)$rM['rating'] !== (string)$rA['rating']);
 
 // ---------------------------------------------------------------------------
+// 7. The age floor — the same belt the scene and the floor wear
+// ---------------------------------------------------------------------------
+
+// Sat 10:00 at the hardware store: harlan (66) and theo (12). An idle line
+// that turns sexual is dropped with a child standing in the room, whoever
+// spoke it — this was the one line-writing path of the three without the belt.
+$dbA  = fresh_db('age-floor');
+$whys = [];
+$lewd = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) {
+    return $tag === 'chat' ? 'We made love till three, if you want the details.' : ['memories' => []];
+}];
+$rF = xeric_chatter_run($T, $dbA, 'beck_hardware', $lewd,
+    ['now' => $SAT, 'force' => true, 'max_lines' => 2,
+     'on_why' => function ($k, $h, $d) use (&$whys) { $whys[] = $k; }]);
+ok('age floor: the line is dropped with a child in the room',
+    (int)$rF['said'] === 0 && in_array('age', $whys, true),
+    'said=' . (int)$rF['said'] . ' whys=' . implode(',', $whys));
+$convA = xeric_conversation_find($dbA, 'beck_hardware', 'room');
+ok('age floor: nothing reached the channel',
+    $convA === null || xeric_messages_recent($dbA, (int)$convA['id'], 10) === []);
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
 
