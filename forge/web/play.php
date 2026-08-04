@@ -796,6 +796,9 @@ if ($action !== '') {
             'who'   => array_map(fn($h) => ['h' => $h, 'name' => xeric_world_name($T2, $h)], $here),
             'why'   => $why,
             'can_say' => $why === '',
+            // A developed photograph of the place itself, when the reaper has
+            // one — the header wears it the way a thread wears a portrait.
+            'photo' => (string)(xeric_photo_of($db2, 'place', $place)['status'] ?? '') === 'done',
             'messages' => $msgs,
         ]);
     }
@@ -832,6 +835,10 @@ if ($action !== '') {
             // they said to you is the whole reason the row is still on the roster.
             'dead' => $gone !== null,
             'how'  => $gone !== null ? (string)$gone['how'] : '',
+            // The portrait, at last, where you actually talk to them — the cog
+            // had the only copy, and a face that exists should be above the
+            // conversation it belongs to.
+            'photo' => (string)(xeric_photo_of($w['db'], 'portrait', $handle)['status'] ?? '') === 'done',
             'one_line' => (string)($c['one_line'] ?? '')] + $th);
     }
 
@@ -1111,6 +1118,9 @@ echo '<style>' . xeric_play_css() . '
 .cportrait img { max-width:100%; max-height:240px; border-radius:8px; display:block; }
 /* a photo in a thread bubble: the picture, its caption underneath */
 .mphoto { display:block; max-width:100%; max-height:280px; border-radius:.6rem; margin:0 0 .25rem; }
+/* the header photograph: a portrait beside the name, a place above its room */
+.tportrait { width:40px; height:40px; border-radius:50%; object-fit:cover;
+             vertical-align:-11px; margin-right:.5rem; display:inline-block; }
 .mcap { display:block; font-size:.72rem; font-style:italic; opacity:.75; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
@@ -2468,6 +2478,23 @@ echo '<style>' . xeric_play_css() . '
     });
   }
 
+  // The header's photograph: a portrait above a thread, the place above a
+  // room. Prepended into the h1 so nothing about the bar's layout moves when
+  // there is no photo — most worlds never say yes to the camera, and their
+  // header is exactly what it always was.
+  function headerPhoto(kind, subject) {
+    var old = document.querySelector('.tportrait');
+    if (old) old.remove();
+    if (!kind) return;
+    var img = document.createElement('img');
+    img.className = 'tportrait';
+    img.alt = '';
+    img.src = 'photo.php?w=' + encodeURIComponent(W) + '&k=' + encodeURIComponent(kind)
+            + '&s=' + encodeURIComponent(subject);
+    img.onerror = function () { img.remove(); };   // a 404 is a header with a name, not a broken frame
+    $('#tname').prepend(img);
+  }
+
   // Saying something in a room.
   //
   // Not say.php: that path is one person answering one person, with their own
@@ -2555,6 +2582,7 @@ echo '<style>' . xeric_play_css() . '
           return;
         }
         $('#tname').textContent = d.name;
+        headerPhoto(d.photo ? 'place' : '', place);
         (d.who || []).forEach(function (p) { ROOMFACE[p.name] = p.h; });
 
         // WHO IS STANDING IN IT, where a person's thread puts their one line.
@@ -2623,6 +2651,9 @@ echo '<style>' . xeric_play_css() . '
       .then(function (d) {
         if (!d.ok) { $('#sayerr').textContent = d.error || 'that thread will not open'; $('#sayerr').hidden = false; return; }
         $('#tname').textContent = d.name;
+        // The developed portrait, worn by the header. textContent above wiped
+        // any previous one, so a thread without a photo simply has a name.
+        headerPhoto(d.photo ? 'portrait' : '', handle);
         $('#tone').textContent = d.one_line || '';
         $('#thinkwho').textContent = d.name + ' is typing';
         if (d.dead) {

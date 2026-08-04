@@ -196,6 +196,25 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             $say($slug . ': reminded, ' . (string)$r['text']);
         }
 
+        // -- the film develops ---------------------------------------------
+        // One frame per world per tick, before the pause gate on purpose: a
+        // stopped clock is a fact about world-time and a darkroom runs on
+        // real time. This was the missing half of the reaper story — backfill
+        // enqueues every portrait and place on open, but only the banner's
+        // one press and a character sending a photo ever developed anything,
+        // so a consented world with a live image machine sat on its film
+        // forever. xeric_photo_reap gates itself on consent and on the image
+        // machine answering, so a world that never said yes spends nothing
+        // here; the text-queue courtesy is the GPU being one card.
+        if (!xeric_queue_busy()) {
+            try {
+                $pr = xeric_photo_reap($T, $db, dirname((string)$w['db_path']) . '/photos', null, 1);
+                if ((int)$pr['done'] > 0) $say($slug . ': developed a photograph');
+            } catch (Throwable $e) {
+                // Photos owe the heart nothing.
+            }
+        }
+
         if (xeric_clock_is_paused($db)) continue;         // stopped means stopped
 
         // -- the rooms talk ------------------------------------------------
