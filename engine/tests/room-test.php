@@ -675,6 +675,38 @@ ok('mapping: the scene seats them in the room the schedule agreed on',
     str_contains((string)$m21d[count($m21d) - 1]['content'], 'First Lutheran'));
 
 // ---------------------------------------------------------------------------
+// THE NARRATOR'S HAND ON THE SKY REACHES A SCENE — the duet's bug, at N.
+//
+// xeric_room_messages() passed `$db` to xeric_prompt_now_block() and had no
+// such parameter, so PHP handed it null. The derived sky was fine without it;
+// `$db` is what carries xeric_weather_told(), the day the narrator set, which
+// is the one thing allowed to beat the derivation. Five people standing in
+// the narrator's rain were talking about hazy heat.
+// ---------------------------------------------------------------------------
+
+$wxDb = fresh_db('weather');
+$wxNow   = xeric_world_now($T, ep('2026-08-02 10:00'));
+$wxWalls = xeric_viewer_walls($T, xeric_viewer($T, ['handle' => 'ruth']));
+$wxNames = [];
+foreach (['ruth', 'dot', 'harlan'] as $h) $wxNames[$h] = xeric_world_name($T, $h);
+$wxTold = 'Rain since before light, and it has not let up.';
+xeric_world_state_set($wxDb, 'weather:' . substr((string)$wxNow['iso'], 0, 10), $wxTold);
+
+$wxMsgs = fn(?PDO $d): string => json_encode(xeric_room_messages(
+    $T, 'ruth', ['dot', 'harlan'], 'SYS', [], [], $wxNow, $wxWalls, [], $wxNames,
+    true, false, '', $d));
+
+ok('weather: a scene given no database cannot hear the narrator',
+    !str_contains($wxMsgs(null), 'Rain since'));
+ok('weather: and one given the database stands in the rain the narrator called for',
+    str_contains($wxMsgs($wxDb), 'Rain since'));
+ok('weather: the derived sky was never the thing missing — it is there either way',
+    xeric_weather_line($T, $wxNow, null) !== ''
+    && str_contains($wxMsgs(null), xeric_weather_line($T, $wxNow, null)));
+// And the real caller passes it, which is the wiring rather than the function.
+ok('weather: the room loop hands its own database down',
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/room.php'),
+        "or let it be.' : '', \$db);"));
 
 foreach ($DBFILES as $f) {
     foreach ([$f, $f . '-wal', $f . '-shm'] as $p) @unlink($p);

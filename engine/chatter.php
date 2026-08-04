@@ -432,10 +432,10 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
         $coach  = xeric_chatter_material($t, $db, $me, $others);
         $coach[] = 'Say one thing. Short. It does not have to be about anything.';
 
-        // $db IS PASSED. room.php's own builder references a $db its signature
-        // does not have, so every scene line has been assembled with a null
-        // where the weather goes — which is exactly the material this feature
-        // was asked to talk about.
+        // $db IS FOR THE WEATHER — it carries the narrator's told sky
+        // (xeric_weather_told), the one thing allowed to beat the derivation.
+        // The duet and the scene both once read it out of thin air; all three
+        // builders now hand it down.
         $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, null,
                                            $deaths, 0, $db);
 

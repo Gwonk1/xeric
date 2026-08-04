@@ -338,7 +338,7 @@ function xeric_room(array $t, PDO $db, array $handles, array $now, array $endpoi
         $messages = xeric_room_messages($t, $speaker, array_values(array_diff($handles, [$speaker])),
             $system[$speaker], $lines, $tails[$speaker], $roomNow, $walls[$speaker], $deaths, $names,
             $lines === [], $i === $beats - 1,
-            $notice !== null ? $names[$notice] . ' has not said a word in a while. You may notice that, or let it be.' : '');
+            $notice !== null ? $names[$notice] . ' has not said a word in a while. You may notice that, or let it be.' : '', $db);
 
         $u  = [];
         $t0 = microtime(true);
@@ -809,10 +809,21 @@ function xeric_room_scene(array $t, string $me, array $others, array $room, arra
  * its presence line and the transcript agree about who is still here — and
  * lastSpoke 0, because a room is one continuous scene (header). The player
  * is deliberately nowhere in it: the room is the world talking to itself.
+ *
+ * $db IS FOR THE WEATHER, and this builder had the duet's exact bug: the
+ * call below has always passed `$db` as xeric_prompt_now_block()'s last
+ * argument, and this function had no such parameter — so PHP handed it
+ * null. What that cost, precisely (the duet's accounting holds here too):
+ * the DERIVED sky still ran, so a scene always had weather; `$db` is what
+ * carries xeric_weather_told(), the day the narrator set, which is the one
+ * thing allowed to beat the derivation. A narrator could put rain over the
+ * town and five people standing in it would talk about hazy heat. Optional
+ * so the signature stays back-compatible; the one real caller has a
+ * database in hand and now passes it.
  */
 function xeric_room_messages(array $t, string $me, array $others, string $system, array $lines,
                              array $scene, array $now, array $walls, array $deaths, array $names,
-                             bool $opening, bool $closing, string $notice): array
+                             bool $opening, bool $closing, string $notice, ?PDO $db = null): array
 {
     $coach = $scene;
     if ($notice !== '') $coach[] = $notice;
