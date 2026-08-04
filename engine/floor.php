@@ -357,6 +357,30 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
         }
     }
 
+    // -- a promise made to somebody's face -----------------------------------
+    // The scene's code gate (constructs.php), on the words and never a model's
+    // opinion of them, and it runs whether or not anybody answered — "I'll fix
+    // your porch tomorrow, Dot" is heard by Dot even when Dot lets it sit.
+    // The PLAYER's line first: the addressed head (or the only one here) now
+    // expects them, stamped to whoever actually made the promise. Said to a
+    // full room with no name on it, it forms nothing — the scene's own rule:
+    // said to the room is said to nobody in particular. Then the landed
+    // replies, which in a room can carry a promise between two of the cast
+    // (xeric_expect_from_scene — cast-to-cast, the same gates).
+    $expects = [];
+    $ear = $order['addressed'][0] ?? (count($present) === 1 ? $present[0] : '');
+    if ($ear !== '' && !xeric_promise_hedged($userText)
+        && xeric_promise_when_phrase($userText) !== ''
+        && xeric_age_floor($t, $present, [$userText]) === null) {
+        $k = xeric_expect_form($t, $db, $ear, [
+            'quote' => $userText,
+            'what'  => mb_substr($userText, 0, 60),
+            'when'  => xeric_promise_when_phrase($userText),
+        ], $now, null, null, $player);
+        if ($k !== null) $expects[] = $ear . ':' . $k;
+    }
+    foreach (xeric_expect_from_scene($t, $db, $out['lines'], $now) as $k) $expects[] = $k;
+
     // The channel was just answered; the idle beat should not pile on in the
     // same minute. Same watermark the chatter stamps, same reason.
     xeric_world_state_set($db, 'chatter:' . $place, (string)$realNow, $realNow);
@@ -376,6 +400,7 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
         'balked'     => $balked,
         'dropped'    => $dropped,
         'discretion' => array_map('array_values', $discreet),   // names only, never the secret
+        'expects'    => $expects,                               // arc keys a promise formed
         'silence'    => $out['silence'],
         'rating'     => $eff,
         'ms'         => (int)round((microtime(true) - $t0) * 1000),

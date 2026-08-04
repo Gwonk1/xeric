@@ -462,6 +462,66 @@ ok('owner: an unshared centre carries no companions sentence',
     !str_contains(call_system($calls, 0), 'does not live here alone'));
 
 // ---------------------------------------------------------------------------
+// 12. A promise made to somebody's face leaves an arc
+// ---------------------------------------------------------------------------
+
+$db = fresh_db('promise');
+$say2 = 'Ruth, I\'ll bring the ladder back tomorrow.';
+say_into($T, $db, 'first_lutheran', $say2, $SUN);
+$r = xeric_floor_answer($T, $db, 'first_lutheran', $say2,
+    stub_script(['Mind the rungs, Walt.'], $calls),
+    ['now' => $SUN, 'seed' => 9, 'interject' => 0.0]);
+$exR = array_values(array_filter(xeric_expects_for($db, 'ruth'), fn($e) => ($e['state'] ?? '') === 'open'));
+ok('promise: the addressed head now expects the player',
+    count($exR) === 1 && str_contains((string)$exR[0]['quote'], 'ladder'),
+    json_encode($exR));
+ok('promise: the first player writes no marker — the bare case',
+    !isset($exR[0]['p']) && !isset($exR[0]['of']));
+ok('promise: the trail carries the arc it formed',
+    ($r['trail']['expects'] ?? []) !== []);
+
+// A guest's promise is stamped to the guest.
+$db = fresh_db('promise-guest');
+$neil2 = xeric_player_add($db, $T, 'Neil');
+$gcnv2 = xeric_chatter_conversation($T, $db, 'first_lutheran');
+xeric_message_append($db, $gcnv2, 'user', xeric_player_key('@you', $neil2),
+    'Ruth, I\'ll shovel your walk tomorrow.', (int)$SUN['epoch']);
+xeric_floor_answer($T, $db, 'first_lutheran', 'Ruth, I\'ll shovel your walk tomorrow.',
+    stub_script(['That is kind, Neil.'], $calls),
+    ['now' => $SUN, 'seed' => 9, 'interject' => 0.0, 'player' => $neil2]);
+$exG = array_values(array_filter(xeric_expects_for($db, 'ruth'), fn($e) => ($e['state'] ?? '') === 'open'));
+ok('promise: a guest\'s promise carries the guest\'s number',
+    count($exG) === 1 && (int)($exG[0]['p'] ?? 0) === $neil2, json_encode($exG));
+
+// The gates: a hedge is not a promise, a promise with no when is a sentiment,
+// and said to a full room with no name on it is said to nobody in particular.
+foreach ([
+    ['hedge',   'Ruth, I might come by tomorrow.'],
+    ['no-when', 'Ruth, I\'ll fix it.'],
+    ['no-name', 'I\'ll bring donuts tomorrow.'],
+] as [$tag, $line]) {
+    $db = fresh_db('promise-' . $tag);
+    say_into($T, $db, 'first_lutheran', $line, $SUN);
+    xeric_floor_answer($T, $db, 'first_lutheran', $line,
+        stub_script(['Mm.'], $calls), ['now' => $SUN, 'seed' => 9, 'interject' => 0.0]);
+    $none = array_filter(array_merge(
+        xeric_expects_for($db, 'ruth'), xeric_expects_for($db, 'pastor_dale'),
+        xeric_expects_for($db, 'janelle')), fn($e) => ($e['state'] ?? '') === 'open');
+    ok("promise: $tag forms nothing", $none === [], json_encode(array_values($none)));
+}
+
+// Alone with one person, no name needed — and it forms even when she lets it
+// sit, because a promise is heard whether or not it is answered.
+$db = fresh_db('promise-solo');
+say_into($T, $db, 'bluebird', 'I\'ll come back at nine tomorrow.', $SAT);
+$r = xeric_floor_answer($T, $db, 'bluebird', 'I\'ll come back at nine tomorrow.',
+    stub_script(['(stays quiet)', '(stays quiet)', '(stays quiet)'], $calls),
+    ['now' => $SAT, 'seed' => 5, 'interject' => 0.0]);
+$exD = array_values(array_filter(xeric_expects_for($db, 'dot'), fn($e) => ($e['state'] ?? '') === 'open'));
+ok('promise: the only one in the room is the listener, even through her silence',
+    $r['silence'] && count($exD) === 1, json_encode($exD));
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $x) @unlink($x);
 
