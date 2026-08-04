@@ -92,7 +92,13 @@ function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, 
     $rota = (int)(xeric_world_state_get($db, 'chatter_rota', '0') ?? 0);
     xeric_world_state_set($db, 'chatter_rota', (string)(($rota + 1) % max(1, count($rooms))), $realNow);
 
-    $youAt  = xeric_player_where($t, $db);
+    // Every body at the centre, not just the first: a room with ANY of them
+    // standing in it opens the way a room with the owner in it always did.
+    $bodies = [];
+    foreach (array_keys(xeric_players($db, $t)) as $pid) {
+        $at = xeric_player_where($t, $db, (int)$pid);
+        if ($at !== null) $bodies[$at] = true;
+    }
     $budget = XERIC_HEART_CHATTER_LINES;
     $said   = 0;
 
@@ -102,7 +108,7 @@ function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, 
             $r = xeric_chatter_run($t, $db, $place, $endpoint, [
                 'now'       => $now,
                 'real_now'  => $realNow,
-                'user_here' => $youAt !== null && $youAt === $place,
+                'user_here' => isset($bodies[$place]),
                 'max_lines' => $budget,
             ]);
         } catch (Throwable $e) {

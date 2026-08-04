@@ -386,6 +386,65 @@ foreach ([
         ($got[XERIC_PLAYER_FIRST]['name'] ?? '') === 'Neil', json_encode($got));
 }
 
+// ---------------------------------------------------------------------------
+// EVERY PERSON AT THE CENTRE HAS THEIR OWN BODY.
+//
+// Position rides the suffix discipline exactly like wages: the bare key is the
+// first person's — every world on disk already correct — and a guest walking
+// somewhere moves THEIR feet and nobody else's. The clock a trip burns stays
+// the world's: two people in one world had better agree what time it is.
+// ---------------------------------------------------------------------------
+
+require_once dirname(__DIR__) . '/travel.php';
+
+$d  = fresh('position');
+$TP = $T;
+$TP['places'] = [
+    ['key' => 'bluebird', 'name' => 'The Bluebird', 'kind' => 'diner', 'at' => ['x' => 10, 'y' => 10]],
+    ['key' => 'the_mill', 'name' => 'The Mill',     'kind' => 'site',  'at' => ['x' => 90, 'y' => 90]],
+];
+$TP['setting'] = ['travel' => ['minutes_across' => 30, 'how' => 'on foot']];
+
+xeric_player_move($d, 'bluebird', 100);
+$wren = xeric_player_add($d, $TP, 'Wren');
+xeric_player_move($d, 'the_mill', 200, $wren);
+
+ok('body: the bare key is the first person\'s',
+    xeric_player_where($TP, $d) === 'bluebird');
+ok('body: the second body is its own row',
+    xeric_player_where($TP, $d, $wren) === 'the_mill');
+ok('body: the stored keys are the suffix discipline\'s',
+    (string)xeric_world_state_get($d, 'player.where') === 'bluebird'
+    && (string)xeric_world_state_get($d, 'player.where.p' . $wren) === 'the_mill',
+    (string)xeric_world_state_get($d, 'player.where.p' . $wren));
+ok('body: since is per body too',
+    xeric_player_since($d) === 100 && xeric_player_since($d, $wren) === 200);
+
+$map1 = xeric_travel_map($TP, $d);
+$map2 = xeric_travel_map($TP, $d, null, $wren);
+$hereOf = function (array $map): string {
+    foreach ((array)$map['places'] as $p) if (!empty($p['here'])) return (string)$p['key'];
+    return '';
+};
+ok('map: each viewer\'s map marks their own here',
+    $hereOf($map1) === 'bluebird' && $hereOf($map2) === 'the_mill',
+    $hereOf($map1) . '/' . $hereOf($map2));
+ok('map: and carries their own name',
+    ($map1['you']['name'] ?? '') === 'Neil' && ($map2['you']['name'] ?? '') === 'Wren',
+    ($map2['you']['name'] ?? ''));
+
+$before = (int)xeric_clock_now($d, $TP)['epoch'];
+$trip   = xeric_travel_go($TP, $d, 'bluebird', $wren);
+ok('trip: the walker arrives', ($trip['ok'] ?? false) === true
+    && xeric_player_where($TP, $d, $wren) === 'bluebird', (string)($trip['error'] ?? ''));
+ok('trip: it cost real minutes', (int)$trip['minutes'] > 0, (string)$trip['minutes']);
+ok('trip: the first person\'s feet never moved',
+    (string)xeric_world_state_get($d, 'player.where') === 'bluebird'
+    && xeric_player_since($d) === 100);
+ok('trip: the clock it burned is everybody\'s',
+    (int)$trip['now']['epoch'] >= $before + (int)$trip['minutes'] * 60,
+    ($trip['now']['epoch'] - $before) . 's');
+
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

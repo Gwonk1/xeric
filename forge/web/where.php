@@ -45,8 +45,13 @@ try {
     xeric_web_json(['error' => $e->getMessage()], 404);
 }
 
+// WHOSE FEET. Anybody who came through a pairing code walks their own body
+// (the suffix discipline); the map's 'here', the trip, and the arrival all
+// belong to whoever is actually asking.
+$player = xeric_session_player($slug, $sid) ?? XERIC_PLAYER_FIRST;
+
 if (!$post) {
-    xeric_web_json(['ok' => true] + xeric_travel_map($w['template'], $w['db']));
+    xeric_web_json(['ok' => true] + xeric_travel_map($w['template'], $w['db'], null, $player));
 }
 
 // Reading the map is everybody's; WALKING is the owner's, and only when this
@@ -70,7 +75,7 @@ if ($to !== null && strlen($to) > 64) {
     xeric_web_json(['error' => 'There is no such place in this world.', 'kind' => 'travel'], 400);
 }
 
-$trip = xeric_travel_go($w['template'], $w['db'], $to === '' ? null : $to);
+$trip = xeric_travel_go($w['template'], $w['db'], $to === '' ? null : $to, $player);
 
 if (!$trip['ok']) {
     xeric_web_json(['error' => (string)$trip['error'], 'kind' => 'travel'], 400);
@@ -97,4 +102,4 @@ xeric_web_json([
         // is nothing to say, and the client falls back to its plain line.
         'scene'   => (string)($trip['scene'] ?? ''),
     ],
-] + xeric_travel_map($w['template'], $w['db'], $trip['now']));
+] + xeric_travel_map($w['template'], $w['db'], $trip['now'], $player));

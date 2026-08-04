@@ -1340,10 +1340,11 @@ function xeric_play_sideblock(string $key, string $title, int $n, bool $open): s
  * and until now the only way to see what came of that was to open the book. It
  * is the sidebar's other half: the last few things this xeric did without you.
  */
-function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slug = '', bool $mine = true): string
+function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slug = '', bool $mine = true,
+                              int $player = XERIC_PLAYER_FIRST): string
 {
     $now ??= xeric_clock_now($db, $t);
-    $map  = xeric_travel_map($t, $db, $now);
+    $map  = xeric_travel_map($t, $db, $now, $player);
     $dead = xeric_deaths($db);
 
     // One face per handle, so every name in this panel wears the same disc the
@@ -1544,7 +1545,7 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     // Which rooms have said something you have not read. The threads list has
     // this already; the map is where a person actually looks for a place, so
     // the dot belongs on both.
-    $youAt   = xeric_player_where($t, $db);
+    $youAt   = xeric_player_where($t, $db, $player);
     $unheard = [];
     foreach ($threads as $tr) {
         if ((string)($tr['kind'] ?? '') === 'room' && (int)($tr['unread'] ?? 0) > 0) {
@@ -2018,8 +2019,11 @@ function xeric_play_state(array $w, ?string $sid = null): array
     // Position repaints with everything else, because everything else can move
     // it: a skip changes who is in the room you are standing in, and a room that
     // silently kept saying Dot was there would be the same class of lie as a
-    // stale clock.
-    $map = xeric_travel_map($t, $db, $now);
+    // stale clock. WHOSE position: the session's own player — a guest's repaint
+    // showing the owner's feet is the same class of lie again.
+    $vp  = $sid !== null ? (xeric_session_player((string)($w['slug'] ?? ''), $sid) ?? XERIC_PLAYER_FIRST)
+                         : XERIC_PLAYER_FIRST;
+    $map = xeric_travel_map($t, $db, $now, $vp);
 
     return [
         'clock' => [
@@ -5837,7 +5841,7 @@ function xeric_watch_say(array $w, array &$s, string $text,
     $me = $player > XERIC_PLAYER_FIRST
         ? xeric_player_name($db, $player, $t)
         : (trim((string)($t['user']['name'] ?? '')) ?: 'you');
-    $where = xeric_player_where($t, $db);
+    $where = xeric_player_where($t, $db, $player);
 
     $s['lines'][] = ['handle' => XERIC_WATCH_PLAYER, 'name' => $me, 'text' => $text];
     $s['player']  = [

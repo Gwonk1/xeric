@@ -80,6 +80,7 @@ require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/clock.php';
 require_once __DIR__ . '/death.php';    // the dead are in no room, on no map
+require_once __DIR__ . '/players.php';  // more than one body: the suffix discipline
 // For xeric_sweep_place_open() alone — the one reader of the free-form hours bag,
 // and duplicating it here is how the map and the sweeps would eventually
 // disagree about whether the diner is open. sweeps.php pulls the model seam in
@@ -289,10 +290,20 @@ function xeric_travel_skipping(PDO $db, ?int $realNow = null): bool
  *
  * Almost every caller wants xeric_player_where() instead. This one exists so the
  * validating reader has something to validate.
+ *
+ * EVERY PERSON AT THE CENTRE HAS THEIR OWN BODY. Position rides the suffix
+ * discipline like wages and trust (players.php): the bare key is the first
+ * person's — every world on disk is already correct — and `.p<n>` is
+ * everybody after them. Before this, a guest stood wherever the owner stood,
+ * which made "you have to be standing in it" a rule about somebody else's
+ * feet. What stays SHARED is the clock: a trip burns world-minutes for
+ * everyone, because two people in one world had better agree what time it is
+ * (players.php's own line), and a world where only the walker aged would be
+ * two worlds wearing one name.
  */
-function xeric_player_where_raw(PDO $db): ?string
+function xeric_player_where_raw(PDO $db, int $player = XERIC_PLAYER_FIRST): ?string
 {
-    $v = trim((string)(xeric_world_state_get($db, 'player.where') ?? ''));
+    $v = trim((string)(xeric_world_state_get($db, xeric_player_key('player.where', $player)) ?? ''));
     return $v === '' ? null : $v;
 }
 
@@ -312,9 +323,9 @@ function xeric_player_where_raw(PDO $db): ?string
  * inside a house that is not in the story yet is a position the map no longer
  * lists — the ghost-room problem wearing a front door.
  */
-function xeric_player_where(array $t, PDO $db): ?string
+function xeric_player_where(array $t, PDO $db, int $player = XERIC_PLAYER_FIRST): ?string
 {
-    $k = xeric_player_where_raw($db);
+    $k = xeric_player_where_raw($db, $player);
     if ($k === null) return null;
     if (xeric_world_place($t, $k) === null || xeric_travel_unstaged($t, $k)) return null;
     return $k;
@@ -327,17 +338,20 @@ function xeric_player_where(array $t, PDO $db): ?string
  * home, a test place them without burning six hours, and a future room-turn move
  * them mid-scene, all without either of those having to know what a trip costs.
  */
-function xeric_player_move(PDO $db, ?string $key, ?int $worldEpoch = null): void
+function xeric_player_move(PDO $db, ?string $key, ?int $worldEpoch = null,
+                           int $player = XERIC_PLAYER_FIRST): void
 {
     $key = ($key === null) ? '' : trim($key);
-    xeric_world_state_set($db, 'player.where', $key);
-    if ($worldEpoch !== null) xeric_world_state_set($db, 'player.where_since', (string)$worldEpoch);
+    xeric_world_state_set($db, xeric_player_key('player.where', $player), $key);
+    if ($worldEpoch !== null) {
+        xeric_world_state_set($db, xeric_player_key('player.where_since', $player), (string)$worldEpoch);
+    }
 }
 
 /** When the player got where they are, on the world clock. 0 when never set. */
-function xeric_player_since(PDO $db): int
+function xeric_player_since(PDO $db, int $player = XERIC_PLAYER_FIRST): int
 {
-    return (int)(xeric_world_state_get($db, 'player.where_since') ?? '0');
+    return (int)(xeric_world_state_get($db, xeric_player_key('player.where_since', $player)) ?? '0');
 }
 
 // ---------------------------------------------------------------------------
@@ -362,10 +376,10 @@ function xeric_player_since(PDO $db): int
  *         AFTER the clock moves — the whole point being that the twenty minutes
  *         it took to drive out there are twenty minutes in which she left.
  */
-function xeric_travel_go(array $t, PDO $db, ?string $to): array
+function xeric_travel_go(array $t, PDO $db, ?string $to, int $player = XERIC_PLAYER_FIRST): array
 {
     $to   = ($to === null || trim($to) === '') ? null : trim($to);
-    $from = xeric_player_where($t, $db);
+    $from = xeric_player_where($t, $db, $player);
 
     $fail = function (string $why) use ($t, $db, $from): array {
         return ['ok' => false, 'error' => $why, 'from' => $from, 'to' => $from, 'minutes' => 0,
@@ -422,7 +436,9 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
         return $fail('This world is stopped, so nothing takes any time. Attach a machine and it '
             . 'starts again where it was.');
     }
-    xeric_player_move($db, $to, (int)$now['epoch']);
+    // The WALKER's body moves; the clock that just advanced is everybody's
+    // (header on xeric_player_where_raw — time is a world fact, feet are not).
+    xeric_player_move($db, $to, (int)$now['epoch'], $player);
 
     $presence = $to === null ? [] : xeric_world_who_is_where($t, $now, xeric_dead_handles($db));
     $who      = $to === null ? [] : xeric_world_who_is_at($presence, $to);
@@ -600,10 +616,10 @@ function xeric_travel_open(array $t, string $key, array $now, ?array $dark = nul
  * "this world has no layout" from "this place is at the origin" — `mapped` says
  * which case it is in one boolean so nothing has to count nulls to find out.
  */
-function xeric_travel_map(array $t, PDO $db, ?array $now = null): array
+function xeric_travel_map(array $t, PDO $db, ?array $now = null, int $player = XERIC_PLAYER_FIRST): array
 {
     $now      ??= xeric_clock_now($db, $t);
-    $here      = xeric_player_where($t, $db);
+    $here      = xeric_player_where($t, $db, $player);
     $presence  = xeric_world_who_is_where($t, $now, xeric_dead_handles($db));
     $dark      = xeric_dark_places($db);
 
@@ -651,10 +667,14 @@ function xeric_travel_map(array $t, PDO $db, ?array $now = null): array
             'phase' => (string)($now['phase'] ?? ''),
         ],
         'you' => [
-            'name'    => xeric_text($t['user']['name'] ?? '') ?: 'you',
+            // Whose map this is: the viewer's own name and body, not the
+            // template's. For the first person the two are the same string.
+            'name'    => $player > XERIC_PLAYER_FIRST
+                             ? xeric_player_name($db, $player, $t)
+                             : (xeric_text($t['user']['name'] ?? '') ?: 'you'),
             'where'   => $here,
             'place'   => $here !== null ? xeric_world_place_name($t, $here) : '',
-            'since'   => xeric_player_since($db),
+            'since'   => xeric_player_since($db, $player),
             // Going home is a place on the list like any other, and the only one
             // that is not a place. A client renders it as a button; it does not
             // have to know it is special.

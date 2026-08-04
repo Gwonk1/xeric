@@ -425,7 +425,8 @@ if ($action !== '') {
             'beat'      => $beat,
             'tokens'    => xeric_web_tokens_by($sid),
             'side'      => xeric_play_side_html($w['template'], $w['db'], $nowW,
-                (string)$w['slug'], (bool)$w['mine']),
+                (string)$w['slug'], (bool)$w['mine'],
+                xeric_session_player((string)$w['slug'], $sid) ?? XERIC_PLAYER_FIRST),
             // The compass reads live numbers and lives above the sidebar's body,
             // so it repaints on its own or it is a photograph of the first hour.
             'compass'   => xeric_play_compass_html($w['template'], $w['db'], $nowW),
@@ -659,10 +660,13 @@ if ($action !== '') {
 
         $T2 = $w['template'];
         $db2 = $w['db'];
+        // WHO IS ASKING, resolved before the standing check reads anybody's
+        // feet: a guest stands where THEIR body is, not where the owner's is.
+        $player = xeric_session_player($slug) ?? XERIC_PLAYER_FIRST;
         // YOU HAVE TO BE STANDING IN IT. Reading a channel from across town is
         // what a channel is for; talking into one is not — you cannot call out
         // to the diner from your own kitchen.
-        $youAt = xeric_player_where($T2, $db2);
+        $youAt = xeric_player_where($T2, $db2, $player);
         if (!xeric_chatter_readable($T2, $place, $youAt)) {
             xeric_web_json(['error' => 'that is not a room in this xeric'], 400);
         }
@@ -679,11 +683,9 @@ if ($action !== '') {
             xeric_web_json(['error' => 'There is nobody in there to hear it.', 'kind' => 'empty'], 409);
         }
 
-        // WHO IS ASKING — say.php's question, asked here too. The first person
-        // keeps the bare row (the no-migration rule); anybody who came through
-        // a pairing code is stamped onto their line so the scrollback, the
-        // prompts, and the screen all name whoever actually spoke.
-        $player = xeric_session_player($slug) ?? XERIC_PLAYER_FIRST;
+        // The first person keeps the bare row (the no-migration rule); anybody
+        // who came through a pairing code is stamped onto their line so the
+        // scrollback, the prompts, and the screen all name whoever spoke.
         $conv = xeric_chatter_conversation($T2, $db2, $place);
         xeric_message_append($db2, $conv, 'user',
             $player > XERIC_PLAYER_FIRST ? xeric_player_key('@you', $player) : null,
@@ -730,7 +732,7 @@ if ($action !== '') {
         $place = trim((string)($_GET['p'] ?? ''));
         $T2  = $w['template'];
         $db2 = $w['db'];
-        $youAt = xeric_player_where($T2, $db2);
+        $youAt = xeric_player_where($T2, $db2, xeric_session_player($slug) ?? XERIC_PLAYER_FIRST);
         if (!xeric_chatter_readable($T2, $place, $youAt)) {
             xeric_web_json(['error' => xeric_chatter_is_place($T2, $place)
                 ? 'That is somebody\'s home. You would have to be standing in it.'
@@ -1223,7 +1225,8 @@ echo '<style>' . xeric_play_css() . '
     <!-- The compass: three readings that move, so the sidebar says where this
          story stands and not only what it was called. -->
     <div id="scompass"><?= xeric_play_compass_html($T, $w['db']) ?></div>
-    <div id="sidebody"><?= xeric_play_side_html($T, $w['db'], $now, (string)$w['slug'], (bool)$w['mine']) ?></div>
+    <div id="sidebody"><?= xeric_play_side_html($T, $w['db'], $now, (string)$w['slug'], (bool)$w['mine'],
+        xeric_session_player((string)$w['slug'], $sid) ?? XERIC_PLAYER_FIRST) ?></div>
     <div class="sfoot">
       <button type="button" class="person narrator" id="asknarr2">
         <span class="pn">the narrator</span>

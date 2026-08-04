@@ -146,7 +146,8 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
     foreach ($history as $m) $lastSpoke = max($lastSpoke, (int)($m['world_epoch'] ?? 0));
 
     $volatile = xeric_prompt_now_block($t, $speakerHandle, $now, (string)($opts['tail'] ?? ''), $walls,
-        array_key_exists('player_where', $opts) ? $opts['player_where'] : xeric_player_where($t, $db),
+        array_key_exists('player_where', $opts) ? $opts['player_where']
+            : xeric_player_where($t, $db, max(XERIC_PLAYER_FIRST, (int)($opts['player'] ?? XERIC_PLAYER_FIRST))),
         xeric_deaths($db), $lastSpoke, $db);
 
     // The camera, offered only where the world consented to photographs
