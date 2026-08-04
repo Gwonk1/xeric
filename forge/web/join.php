@@ -30,8 +30,24 @@ $code = strtoupper(trim((string)($_GET['c'] ?? ($_POST['c'] ?? ''))));
 $name = trim((string)($_POST['name'] ?? ''));
 $sid  = xeric_session_id();
 
+// THE AGENT DOOR'S HALF OF THIS PAGE. ?json=1 turns the whole flow into one
+// POST that answers in JSON — the same code, the same claim, the same seat a
+// phone gets, no HTML and no redirect. It REQUIRES the session header
+// (boot.php: mint 32 hex yourself, send it on every request), because on a
+// solo install a cookieless caller without one IS the machine's own identity,
+// and an agent claiming a seat as the owner would be the door opening onto
+// the wrong side of the house.
+$json = !empty($_GET['json']) || !empty($_POST['json']);
+if ($json && !preg_match('/^[a-f0-9]{32}$/',
+        trim((string)($_SERVER['HTTP_X_XERIC_SESSION'] ?? '')))) {
+    xeric_web_json(['error' => 'An agent join needs an X-Xeric-Session header: mint 32 lowercase '
+        . 'hex characters once, send them on this request and every request after — that id IS '
+        . 'your seat.'], 400);
+}
+
 $dir = xeric_web_worlds_dir() . '/' . $slug;
 if ($slug === '' || !is_file($dir . '/world-template.json')) {
+    if ($json) xeric_web_json(['error' => 'No xeric by that name is on this machine.'], 404);
     xeric_web_head('Xeric: join');
     echo '<style>' . xeric_play_css() . xeric_join_css() . '</style>';
     echo '<main><div class="top"><p class="wordmark">XERIC</p><span class="kicker">join</span></div>';
@@ -49,6 +65,10 @@ $world = trim((string)($T['meta']['name'] ?? $slug));
 // code is spent — being already through the door is the opposite of an error.
 $already = xeric_session_player($slug, $sid);
 if ($already !== null) {
+    if ($json) {
+        xeric_web_json(['ok' => true, 'sid' => $sid, 'player' => $already,
+                        'world' => $world, 'already' => true]);
+    }
     header('Location: play.php?w=' . rawurlencode($slug));
     exit;
 }
@@ -68,11 +88,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $code !== '') {
         xeric_state_migrate($db);
         $player = xeric_pair_claim($db, $T, $code, $name);
         xeric_session_join($slug, $player, $sid);
+        if ($json) {
+            // The seat, in one object: the id to keep sending, the player
+            // number it bought, and the world it is a seat in. Everything
+            // after this is the same JSON the phone already speaks — say,
+            // roomsay, room, where, tick — with this one header on it.
+            xeric_web_json(['ok' => true, 'sid' => $sid, 'player' => $player, 'world' => $world]);
+        }
         header('Location: play.php?w=' . rawurlencode($slug));
         exit;
     } catch (Throwable $e) {
         $error = xeric_pair_plain($e->getMessage());
     }
+}
+if ($json) {
+    // JSON mode never falls through to the form: an agent cannot type into it.
+    xeric_web_json(['error' => $error !== '' ? $error
+        : 'POST this page form-encoded: c=<the code>, name=<what they should call you>, json=1.'], 400);
 }
 
 xeric_web_head('Xeric: join ' . $world);

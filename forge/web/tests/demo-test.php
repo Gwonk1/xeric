@@ -567,13 +567,22 @@ foreach ([
     'power'  => 'the clock and the learning switch',
     'fate'   => 'ending the world',
     'photo'  => 'photo consent and the spend behind it',
-    'where'  => 'walking the owner\'s character',
     'tick'   => 'taking back the last skip',
 ] as $page => $why) {
     ok("guest: $page.php asks before it writes — $why",
         str_contains((string)file_get_contents(dirname(__DIR__) . '/' . $page . '.php'),
             'xeric_play_owner_only('));
 }
+// where.php LEFT this list on purpose the day every seat grew its own body
+// (travel.php's suffix discipline): there is no "walking the owner's
+// character" any more — a guest walks their own feet. What must still be
+// true is the rule that replaced the door: a guest's trip burns the world's
+// shared minutes, so it rides the skip meter instead of walking free.
+ok('guest: where.php walks a guest on their own feet, on the skip meter',
+    !str_contains((string)file_get_contents(dirname(__DIR__) . '/where.php'),
+        'xeric_play_owner_only(')
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/where.php'),
+        "xeric_limit_check('skip'"));
 ok('guest: power.php asks TWICE, because the clock and the switch are two doors',
     substr_count((string)file_get_contents(dirname(__DIR__) . '/power.php'),
         'xeric_play_owner_only(') === 2);
@@ -3858,6 +3867,31 @@ ok('identity: an emptied identity file is repaired, not inherited as nothing',
 ok('identity: and the repair sticks — the next request adopts it rather than minting again',
     trim((string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($rcDir)
         . ' php ' . escapeshellarg($rcDir . '/who.php'))) === $repaired);
+
+// ---------------------------------------------------------------------------
+// THE AGENT DOOR. A presented X-Xeric-Session header IS the session — it
+// outranks the cookie and, on a solo install, the machine identity, because
+// without that an agent on a solo box could never be anybody but the owner.
+// A malformed one is a NOBODY, never a fallthrough to anything with standing.
+// ---------------------------------------------------------------------------
+
+$agentSid = str_repeat('ab', 16);
+$_SERVER['HTTP_X_XERIC_SESSION'] = $agentSid;
+ok('door: a presented session header IS the session', xeric_web_sid() === $agentSid);
+
+$_COOKIE[XERIC_WEB_COOKIE] = str_repeat('cd', 16);
+ok('door: and it outranks a cookie riding the same request', xeric_web_sid() === $agentSid);
+unset($_COOKIE[XERIC_WEB_COOKIE]);
+
+$_SERVER['HTTP_X_XERIC_SESSION'] = 'DEADBEEF-not-a-session';
+$nobody = xeric_web_sid();
+ok('door: a malformed claim is a nobody with a well-formed id, not a refusal and not the owner',
+    preg_match('/^[a-f0-9]{32}$/', $nobody) === 1 && $nobody !== $agentSid);
+ok('door: and the nobody holds still within the request',
+    xeric_web_sid() === $nobody);
+unset($_SERVER['HTTP_X_XERIC_SESSION']);
+ok('door: with no header the request is whoever it always was',
+    xeric_web_sid() !== $nobody && xeric_web_sid() !== $agentSid);
 
 rmtree($tmp);
 

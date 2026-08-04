@@ -790,6 +790,26 @@ function xeric_web_machine_id(): string
 
 function xeric_web_sid(): string
 {
+    // THE AGENT DOOR. A client with no cookie jar — an agent loop, a script,
+    // a headless occupant — presents its session outright: one header, the
+    // same 32-hex id the cookie would have carried, MINTED BY THE CLIENT
+    // (mint once, send always; a bearer id the client made up has exactly the
+    // guessing space of one the server did). An explicit credential outranks
+    // every default, INCLUDING solo's machine identity, which is the door's
+    // whole value on a solo install: without it every cookieless caller IS
+    // the owner, and an agent could never hold a seat of its own.
+    //
+    // A malformed one is a NOBODY — a fresh unpersisted id, never a
+    // fallthrough to anything with standing — because the only caller who
+    // sends this header is claiming to be somebody, and a bad claim is not an
+    // anonymous visit, it is a bad claim.
+    static $nobody = null;
+    $hdr = trim((string)($_SERVER['HTTP_X_XERIC_SESSION'] ?? ''));
+    if ($hdr !== '') {
+        if (preg_match('/^[a-f0-9]{32}$/', $hdr)) return $hdr;
+        return $nobody ??= bin2hex(random_bytes(16));
+    }
+
     // ONE IDENTITY PER INSTALL, unless a host has asked for visitors.
     if (xeric_web_solo()) return xeric_web_machine_id();
 
