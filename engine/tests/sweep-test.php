@@ -2613,6 +2613,123 @@ $favAsk = static function (string $key) use ($TF, $favNow): string {
 ok('favor: and the prompt only asks for it on the kind whose shape says it is owed',
     str_contains($favAsk('favor'), '"favor"') && !str_contains($favAsk('ordinary'), '"favor"'));
 
+// ---------------------------------------------------------------------------
+// THE DIVERGENCE CHECK'S SIBLING: an hour has to leave something changed.
+// The live skip that proved the thirty systems work also wrote an hour whose
+// memories were "he watched a crow land" and engine-oil grit — a still life
+// that passed every gate. It must not pass this one.
+// ---------------------------------------------------------------------------
+
+$TW = world(['shared_meals']);
+
+ok('still: a crow landing is scenery, and scenery is refused',
+    xeric_sweep_still($TW, [
+        'harlan' => 'He watched a single crow land on the rusted rim of the feed bin.',
+        'theo'   => 'Dust settled across the scarred wood of the counter.',
+    ]) !== null);
+ok('still: one said-something saves the whole hour — quiet on purpose stays legal',
+    xeric_sweep_still($TW, [
+        'harlan' => 'He watched a single crow land on the rusted rim of the feed bin.',
+        'theo'   => 'Theo counted the till twice and said nothing about the missing five.',
+    ]) === null);
+ok('still: naming somebody else is a relationship moving, even with no verb on any list',
+    xeric_sweep_still($TW, [
+        'harlan' => 'The scar on Ruth\'s knuckle was all he could think about.',
+        'theo'   => 'Dust settled across the scarred wood of the counter.',
+    ]) === null);
+ok('still: rather-than is a decision',
+    xeric_sweep_still($TW, [
+        'harlan' => 'He stood in the rain rather than share an umbrella.',
+        'theo'   => 'Dust settled across the scarred wood of the counter.',
+    ]) === null);
+
+// Compose hands a still life back once with the flaw named, and takes the
+// corrected hour — the divergence retry's exact shape, second verse.
+$chosenStill = ['kind' => ['key' => 'ordinary', 'shape' => 'an ordinary hour'],
+                'handles' => ['harlan', 'theo'], 'where' => 'beck_hardware',
+                'on_spine' => false, 'why' => 'test seating'];
+$stillCalls = 0;
+$stillThenChanged = function (array $handles) use (&$stillCalls): array {
+    $stillCalls++;
+    $mem = [];
+    foreach (array_values($handles) as $i => $h) {
+        $mem[$h] = $stillCalls === 1
+            ? ($i === 0 ? 'He watched a crow land on the rusted rim of the feed bin.'
+                        : 'Dust settled across the scarred wood of the counter.')
+            : ($i === 0 ? 'He agreed to cover the early shift and shook on it.'
+                        : 'The new hours went up on the noticeboard in pen, in his writing.');
+    }
+    return $mem;
+};
+$seenStill = null;
+$c = xeric_sweep_compose($TW, fresh_db('still-retry'), stub_event($stillThenChanged, $seenStill),
+    xeric_world_now($TW, ep('2026-07-30 10:00')), $chosenStill, ['seed' => 3]);
+ok('still: the flaw is handed back once, named, and the corrected hour is taken',
+    (int)$c['usage']['attempts'] === 2 && $stillCalls === 2
+    && str_contains(implode(' ', $c['notes']), 'scenery')
+    && str_contains(json_encode($seenStill), 'Nothing happened in that hour'),
+    json_encode($c['notes']));
+
+$alwaysStill = fn(array $handles): array => array_combine($handles, array_map(
+    fn($i) => $i === 0 ? 'He watched a crow land on the rusted rim of the feed bin.'
+                       : 'Dust settled across the scarred wood of the counter ' . $i . '.',
+    array_keys(array_values($handles))));
+$msg = err(fn() => xeric_sweep_compose($TW, fresh_db('still-refuse'),
+    stub_event($alwaysStill), xeric_world_now($TW, ep('2026-07-30 10:00')),
+    $chosenStill, ['seed' => 3]));
+ok('still: an hour that stays a still life is refused, and the refusal says why',
+    str_contains($msg, 'an hour has to leave something changed'), $msg);
+
+// ---------------------------------------------------------------------------
+// THE SWEEP'S OWN OPENER TIC — the newest hour's opening words are named in
+// the prompt and retired, exactly as the spoken-line tic does it.
+// ---------------------------------------------------------------------------
+
+ok('opener: the first eight words, wrap and trailing punctuation stripped',
+    xeric_sweep_opener('Dust motes drifted through the shafts of light piercing the burlap-heavy air.')
+        === 'Dust motes drifted through the shafts of light',
+    xeric_sweep_opener('Dust motes drifted through the shafts of light piercing the burlap-heavy air.'));
+ok('opener: an empty prose bans nothing', xeric_sweep_opener('') === '');
+
+$TO  = world(['shared_meals']);
+$dbO = fresh_db('opener');
+$r1 = xeric_sweep_run($TO, $dbO, stub_event(),
+    xeric_world_now($TO, ep('2026-07-30 10:00')), ['chance' => 1.0, 'seed' => 7]);
+ok('opener: the first hour landed to have an opener at all', $r1['events'] !== []);
+$seenO = null;
+xeric_sweep_run($TO, $dbO, stub_event(null, $seenO),
+    xeric_world_now($TO, ep('2026-07-30 11:00')), ['chance' => 1.0, 'seed' => 8]);
+ok('opener: the second hour is told the first one\'s opening words and told to retire them',
+    str_contains(json_encode($seenO), 'opened \"The last of the coffee went at half\"')
+    && str_contains(json_encode($seenO), 'its own light and its own props'),
+    mb_substr(json_encode($seenO), 0, 0));
+
+// ---------------------------------------------------------------------------
+// TWICE-RUNNING COSTS WEIGHT — the chooser's thumb against the hour before.
+// ---------------------------------------------------------------------------
+
+// Sunday 10:00: three people share First Lutheran, so more than one plausible
+// grouping is on the table (the pairs and the triple).
+$TN  = world(['shared_meals']);
+$SUN = xeric_world_now($TN, ep('2026-08-02 10:00'));
+mt_srand(5);
+$ch = xeric_sweep_choose($TN, $SUN, xeric_sweep_kinds_for($TN), [
+    'last' => ['handles' => ['ruth', 'pastor_dale', 'janelle'], 'where' => 'first_lutheran'],
+]);
+ok('echo: with last hour\'s exact room on the table, the thumb presses',
+    $ch !== null && ($ch['trail']['echo_thumb'] ?? null) === true
+    && array_key_exists('echo_won', $ch['trail']));
+mt_srand(5);
+$ch2 = xeric_sweep_choose($TN, $SUN, xeric_sweep_kinds_for($TN), [
+    'last' => ['handles' => ['dot', 'harlan'], 'where' => 'bluebird'],
+]);
+ok('echo: a last hour that is not on the table presses nothing',
+    $ch2 !== null && ($ch2['trail']['echo_thumb'] ?? null) === false);
+mt_srand(5);
+$ch3 = xeric_sweep_choose($TN, $SUN, xeric_sweep_kinds_for($TN), []);
+ok('echo: no last hour, no thumb — the draw everybody always got',
+    $ch3 !== null && ($ch3['trail']['echo_thumb'] ?? null) === false);
+
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);
 

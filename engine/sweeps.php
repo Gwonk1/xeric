@@ -733,6 +733,17 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
     // have to agree about who was alive for it.
     $opts['dead'] = xeric_dead_handles($db);
 
+    // And the hour BEFORE this one, for the chooser's twice-running thumb —
+    // read here for the same reason the dead are: the chooser deliberately
+    // takes no database, which is what keeps it testable against a world that
+    // does not exist.
+    if (!array_key_exists('last', $opts)) {
+        $lastEv = xeric_events_recent($db, 1)[0] ?? null;
+        $opts['last'] = $lastEv === null ? []
+            : ['handles' => (array)$lastEv['participants'],
+               'where'   => $lastEv['place'] !== null ? (string)$lastEv['place'] : null];
+    }
+
     $chosen = xeric_sweep_choose($t, $now, $order, $opts);
     if ($chosen === null && $order !== $kinds) $chosen = xeric_sweep_choose($t, $now, $kinds, $opts);
     if ($chosen === null) {
@@ -1209,6 +1220,37 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
             }
         }
 
+        // TWICE-RUNNING COSTS WEIGHT. Two consecutive hours with the same
+        // people in the same room read as a world stuck on one scene — the
+        // live skip that proved the thirty systems work also produced Elias
+        // and Caleb at the Feed & Seed twice in a row. A thumb, never a ban:
+        // every OTHER plausible grouping is weighted up when the previous
+        // hour's exact room is on the table again, and a town whose only
+        // grouping IS that room gets its long afternoon undisturbed.
+        $lastEv = (array)($opts['last'] ?? []);
+        $lastH  = array_map('strval', (array)($lastEv['handles'] ?? []));
+        sort($lastH);
+        $echoThumb = false;
+        if ($lastH !== [] && count($groups) > 1) {
+            $fresh = [];
+            foreach ($groups as $i => $g2) {
+                $gh = array_map('strval', (array)($g2['handles'] ?? []));
+                sort($gh);
+                if ($gh === $lastH
+                    && (string)($g2['where'] ?? '') === (string)($lastEv['where'] ?? '')) {
+                    $groups[$i]['echo'] = true;
+                } else {
+                    $fresh[] = $i;
+                }
+            }
+            if ($fresh !== [] && count($fresh) < count($groups)) {
+                foreach ($fresh as $i) {
+                    $groups[$i]['weight'] = max(1, (int)($groups[$i]['weight'] ?? 1)) * 3;
+                }
+                $echoThumb = true;
+            }
+        }
+
         $g = xeric_sweep_weighted($groups);
         return [
             'kind'     => $kind,
@@ -1233,6 +1275,11 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
                 'chose'        => (string)$g['why'],
                 'weight'       => (int)($g['weight'] ?? 1),
                 'protagonist'  => $star !== '' && in_array($star, (array)$g['handles'], true),
+                // The twice-running thumb: whether it pressed this hour, and
+                // whether last hour's room won anyway — dice, not destiny, and
+                // the inspector should be able to say which happened.
+                'echo_thumb'   => $echoThumb,
+                'echo_won'     => !empty($g['echo']),
                 // The lean, when one touched this hour — by NUMBER, never by
                 // text. The trail is kept and printed, and an intent's words in
                 // it would be the plan riding beside the record it is a plan
@@ -1561,20 +1608,25 @@ function xeric_sweep_compose(array $t, PDO $db, array $endpoint, array $now, arr
         }
 
         $collision = xeric_sweep_collision($parsed['memories']);
-        if ($collision === null) { $best = $parsed; break; }
+        $still     = $collision === null ? xeric_sweep_still($t, $parsed['memories']) : null;
+        if ($collision === null && $still === null) { $best = $parsed; break; }
 
         $best   = $parsed;
-        $notes[] = 'attempt ' . ($attempt + 1) . ': ' . $collision['why'];
+        $notes[] = 'attempt ' . ($attempt + 1) . ': ' . ($collision['why'] ?? $still['why']);
         if ($attempt === $retries) break;
 
-        // Hand it back its own two sentences and say what is wrong with them.
+        // Hand it back its own sentences and say what is wrong with them.
         // Cheaper and far more effective than asking harder up front.
         $messages[] = ['role' => 'assistant', 'content' => json_encode($raw, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)];
-        $messages[] = ['role' => 'user', 'content' =>
-            $collision['names'] . ' remembered the same thing in the same words. Two people at the same '
-            . "hour do not do that.\nWrite the whole object again. Keep the event. Give each of them a "
-            . "DIFFERENT PART of it, different detail, different thing noticed, different thing they were "
-            . 'left holding. Neither memory may contain the other one.'];
+        $messages[] = ['role' => 'user', 'content' => $collision !== null
+            ? $collision['names'] . ' remembered the same thing in the same words. Two people at the same '
+              . "hour do not do that.\nWrite the whole object again. Keep the event. Give each of them a "
+              . "DIFFERENT PART of it, different detail, different thing noticed, different thing they were "
+              . 'left holding. Neither memory may contain the other one.'
+            : 'Nothing happened in that hour — every memory is scenery. Keep the event and the room. '
+              . "Write the whole object again, and by the end of it something has been SAID, decided, "
+              . 'handed over, owed, broken, or begun — and at least one memory carries exactly that. '
+              . 'Dust, light, and weather are the setting of an hour, never its content.'];
     }
 
     $collision = xeric_sweep_collision($best['memories']);
@@ -1583,6 +1635,17 @@ function xeric_sweep_compose(array $t, PDO $db, array $endpoint, array $now, arr
         // people with one shared memory costs the illusion, permanently.
         throw new RuntimeException('sweep: refused, ' . $collision['why']
             . ' (divergent memories are the point of a sweep)');
+    }
+    // THE DIVERGENCE CHECK'S SIBLING, written at last: the engine refused an
+    // hour whose memories collapse into one, and never an hour in which nobody
+    // did anything — and a still life passes divergence easily, because two
+    // people can notice different objects. Same place, same shape, same
+    // economics: refusing costs an hour, and an hour nobody would remember was
+    // not an hour.
+    $still = xeric_sweep_still($t, $best['memories']);
+    if ($still !== null) {
+        throw new RuntimeException('sweep: refused, ' . $still['why']
+            . ' (an hour has to leave something changed)');
     }
 
     $ms = (int)round((microtime(true) - $t0) * 1000);
@@ -1828,6 +1891,17 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
         $lines[] = '';
         $lines[] = 'ALREADY HAPPENED (do not repeat, do not resolve)';
         foreach ($recent as $e) $lines[] = '- ' . trim((string)$e['title']);
+        // THE SWEEP'S OWN OPENER TIC — the live skip wrote two consecutive
+        // hours both opening "Dust motes drifted through the shafts of
+        // light...": each landed event sits in ALREADY HAPPENED feeding the
+        // prior that wrote it. Same cure as the spoken-line tic
+        // (xeric_chat_tic_line): name the exact words and retire them once.
+        $opener = xeric_sweep_opener((string)($recent[0]['prose'] ?? ''));
+        if ($opener !== '') {
+            $lines[] = '- The newest of those opened "' . $opener . '" — do not open this hour with'
+                     . ' those words or that image, and do not reuse its furniture. This hour has'
+                     . ' its own light and its own props.';
+        }
     }
 
     $keys = [];
@@ -1864,6 +1938,9 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     $lines[] = '  THE IMPORTANT PART: they do not remember the same thing. Give each of them a different';
     $lines[] = '  half, a different detail, a different thing noticed, a different thing they were left';
     $lines[] = '  holding. If one memory could be swapped for the other, both are wrong.';
+    $lines[] = '  AND THE HOUR LEAVES SOMETHING CHANGED: a thing said, decided, handed over, owed,';
+    $lines[] = '  broken, or begun — at least one memory carries the change. A crow landing on a';
+    $lines[] = '  feed bin is scenery, and scenery is nobody\'s memory of an hour.';
     $lines[] = '- Invent no new people and no new places. Nothing is explained, resolved or concluded.';
     // WHICH WAY THE FAVOUR WENT — asked for on favour hours only, because it is
     // the one fact about this kind that code genuinely cannot read out of the
@@ -2078,6 +2155,64 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
 
     return ['title' => $title, 'prose' => $prose, 'overheard' => $overheard,
             'memories' => $ordered, 'favor' => $favor, 'notes' => $notes];
+}
+
+/**
+ * Did anything change in this hour? null when it did; the reason when it is a
+ * still life.
+ *
+ * The bar is deliberately LOW and deliberately real: at least ONE memory must
+ * carry either a change — something said, decided, handed over, owed, broken,
+ * begun (a verb list, matched as word stems) — or another person, because a
+ * memory that names somebody else is a relationship moving even when no verb
+ * on any list can say how. "He watched a single crow land on the rusted rim
+ * of the feed bin" carries neither, and that sentence is why this function
+ * exists. The quiet defence stands on the other side of the bar: a routine
+ * hour where "Mabel counted the till twice and said nothing about the missing
+ * five" passes on 'said' — quiet ON PURPOSE was always legal, and the only
+ * thing refused is an hour nobody would remember at all.
+ *
+ * Deliberately wrong in the safe direction, like every code gate here: an
+ * over-generous verb ("caught the light") passes an hour that maybe should
+ * not — cheap, the world stays alive. Refusing a real hour costs the hour.
+ *
+ * @return array{why:string}|null
+ */
+function xeric_sweep_still(array $t, array $memories): ?array
+{
+    static $verbs = 'said|says|told|tells|asked|asks|answer\w*|replied|agreed|promised|refused'
+        . '|admitted|confessed|offered|warned|argued|snapped|whispered|muttered|joked|lied'
+        . '|denied|decided|chose|resolved|gave|handed|took|paid|owed|lent|borrowed|traded'
+        . '|sold|bought|left|arrived|returned|stormed|slammed|broke|burned|burnt|dropped'
+        . '|spilled|served|swapped|placed|put|kept|stayed|fixed|mended|built|moved|carried'
+        . '|opened|closed|locked|won|lost|found|forgot|learned|taught|showed|hid|stole'
+        . '|caught|helped|invited|hugged|shook|wrote|sent|called|began|begun|started'
+        . '|stopped|finished|ended|changed|rather than';
+    foreach ($memories as $me => $text) {
+        $text = trim((string)$text);
+        if ($text === '') continue;
+        if (preg_match('/\b(?:' . $verbs . ')\b/iu', $text)) return null;
+        foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+            $h = (string)($c['handle'] ?? '');
+            if ($h === '' || $h === (string)$me) continue;
+            if (xeric_age_mentions($text, $h, xeric_world_name($t, $h))) return null;
+        }
+    }
+    return ['why' => 'every memory is scenery — nothing was said, decided, handed over, or owed,'
+        . ' and nobody but the rememberer is in any of them'];
+}
+
+/**
+ * The opening words of an hour's prose, for the sweep's own opener-tic ban —
+ * enough of them to name an image ("Dust motes drifted through the shafts
+ * of..."), few enough that the ban names an opening and not a paragraph.
+ */
+function xeric_sweep_opener(string $prose, int $words = 8): string
+{
+    $w = preg_split('/\s+/u', trim($prose)) ?: [];
+    $opener = implode(' ', array_slice($w, 0, $words));
+    $opener = trim($opener, " \t\n\r\0\x0B\"'“”‘’*_([)]");
+    return rtrim($opener, ',.;:—–…!?-');
 }
 
 /**
