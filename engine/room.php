@@ -827,6 +827,15 @@ function xeric_room_messages(array $t, string $me, array $others, string $system
 {
     $coach = $scene;
     if ($notice !== '') $coach[] = $notice;
+    // THE OPENER TIC (xeric_chat_tic_line): three beats a head means every
+    // speaker reads their own last line back before writing the next one, and
+    // the prior compounds; name the opener and retire it.
+    $mine = '';
+    foreach (array_reverse($lines) as $l) {
+        if (($l['kind'] ?? '') === 'line' && (string)$l['handle'] === $me) { $mine = (string)$l['text']; break; }
+    }
+    $tic = xeric_chat_tic_line($mine);
+    if ($tic !== '') $coach[] = $tic;
     if ($opening) {
         $coach[] = 'You speak first. Start in the middle of the moment, off the thing in front of you'
                  . ' or the thing you have been meaning to say to one of them. A line or three, out loud.';

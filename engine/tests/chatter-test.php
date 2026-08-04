@@ -282,6 +282,34 @@ ok('age floor: nothing reached the channel',
     $convA === null || xeric_messages_recent($dbA, (int)$convA['id'], 10) === []);
 
 // ---------------------------------------------------------------------------
+// 8. The opener tic — a head drawn twice in one fire is coached off its opener
+// ---------------------------------------------------------------------------
+
+// Two people in the room means strict alternation (the draw excludes the last
+// speaker), so line three is line one's speaker again — and their second call
+// must carry the ban naming their first opener. A user line first makes the
+// room warm (eventful) so three lines are guaranteed under max_lines.
+$dbT  = fresh_db('tic');
+$convT = xeric_chatter_conversation($T, $dbT, 'beck_hardware');
+xeric_message_append($dbT, $convT, 'user', null, 'howdy.', (int)$SAT['epoch']);
+$callsT = [];
+$rT = xeric_chatter_run($T, $dbT, 'beck_hardware', stub_chat($callsT),
+    ['now' => $SAT, 'force' => true, 'max_lines' => 3]);
+$volT = function (int $i) use (&$callsT): string {
+    $last = '';
+    foreach ($callsT[$i]['msgs'] as $m) if ($m['role'] === 'user') $last = (string)$m['content'];
+    return $last;
+};
+ok('tic: three lines landed in a two-person room', (int)$rT['said'] === 3,
+   'said=' . (int)$rT['said']);
+ok('tic: the first two calls carry no ban',
+    !str_contains($volT(0), 'do not start with those words')
+    && !str_contains($volT(1), 'do not start with those words'));
+ok('tic: the third call names the first line\'s opener and retires it',
+    str_contains($volT(2), 'started "line 1, about"')
+    && str_contains($volT(2), 'do not start with those words'));
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
 

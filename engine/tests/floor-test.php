@@ -407,6 +407,28 @@ ok('trail: stored under the inspector\'s key, and it matches',
     is_array($stored) && $stored['spoke'] === ['ruth'] && $stored['at'] === $trail['at']);
 
 // ---------------------------------------------------------------------------
+// 10. The opener tic: the second beat retires the first beat's opener
+// ---------------------------------------------------------------------------
+
+$db = fresh_db('tic');
+say_into($T, $db, 'first_lutheran', 'Ruth, how are you?', $SUN);
+$calls = [];
+xeric_floor_answer($T, $db, 'first_lutheran', 'Ruth, how are you?',
+    stub_script(['Well, sure, can\'t complain.'], $calls),
+    ['now' => $SUN, 'seed' => 9, 'interject' => 0.0]);
+ok('tic: a first line gets no coaching',
+    !str_contains(call_volatile($calls, 0), 'do not start with those words'));
+
+say_into($T, $db, 'first_lutheran', 'Ruth, you sure about that?', $SUN);
+$calls2 = [];
+xeric_floor_answer($T, $db, 'first_lutheran', 'Ruth, you sure about that?',
+    stub_script(['No. But it passes the time.'], $calls2),
+    ['now' => $SUN, 'seed' => 9, 'interject' => 0.0]);
+ok('tic: the second beat names her first opener and retires it',
+    str_contains(call_volatile($calls2, 0), 'started "Well, sure, can\'t"')
+    && str_contains(call_volatile($calls2, 0), 'do not start with those words'));
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $x) @unlink($x);
 

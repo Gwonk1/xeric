@@ -215,6 +215,16 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
             $discreet[$me][] = $ph;
         }
 
+        // THE OPENER TIC (xeric_chat_tic_line): the channel window is the very
+        // transcript feeding the prior, so name the words this head came in on
+        // last time and retire them.
+        $prev = '';
+        foreach (array_reverse($back) as $l) {
+            if ($l['role'] === 'character' && $l['handle'] === $me) { $prev = (string)$l['text']; break; }
+        }
+        $tic = xeric_chat_tic_line($prev);
+        if ($tic !== '') $coach[] = $tic;
+
         $coach[] = $userName . ' said that out loud, to the room, just now. This is the moment after.';
         $coach[] = $licensed
             ? 'Answer if it is yours to answer. If it genuinely is not — not aimed at you, nothing'

@@ -516,6 +516,30 @@ ok('weather: and so does the watch surface',
     str_contains((string)file_get_contents(dirname(__DIR__, 2) . '/forge/web/play-lib.php'),
         "\$pw !== '' ? \$pw : null, \$db);"));
 
+// ---------------------------------------------------------------------------
+// THE OPENER TIC AT THE BUILDER — strict alternation means every turn past the
+// second reads the speaker's own last line back; the coach names the opener
+// and retires it (xeric_chat_tic_line).
+// ---------------------------------------------------------------------------
+
+$ticVol = function (array $msgs): string {
+    $last = '';
+    foreach ($msgs as $m) if ($m['role'] === 'user') $last = (string)$m['content'];
+    return $last;
+};
+$ticLines = [
+    ['handle' => 'ruth', 'text' => 'Well, sure, suit yourself.'],
+    ['handle' => 'dot',  'text' => 'I will, thank you.'],
+];
+ok('tic: a duet speaker is coached off their own last opener',
+    str_contains($ticVol(xeric_duet_messages($T, 'ruth', 'dot', 'SYS', $ticLines, [],
+        $TUE, $wxWalls, [], false, false, null, null)),
+        'started "Well, sure, suit"'));
+ok('tic: an opening speaker has no opener to retire',
+    !str_contains($ticVol(xeric_duet_messages($T, 'ruth', 'dot', 'SYS', [], [],
+        $TUE, $wxWalls, [], true, false, null, null)),
+        'do not start with those words'));
+
 foreach ($DBFILES as $f) {
     foreach ([$f, $f . '-wal', $f . '-shm'] as $p) @unlink($p);
 }

@@ -708,6 +708,30 @@ ok('weather: the room loop hands its own database down',
     str_contains((string)file_get_contents(dirname(__DIR__) . '/room.php'),
         "or let it be.' : '', \$db);"));
 
+// ---------------------------------------------------------------------------
+// THE OPENER TIC AT THE BUILDER — three beats a head means every speaker reads
+// their own last line back before writing the next one; the coach names the
+// opener and retires it (xeric_chat_tic_line).
+// ---------------------------------------------------------------------------
+
+$ticVol = function (array $msgs): string {
+    $last = '';
+    foreach ($msgs as $m) if ($m['role'] === 'user') $last = (string)$m['content'];
+    return $last;
+};
+$ticLines = [
+    ['handle' => 'ruth', 'name' => $wxNames['ruth'], 'text' => 'Well, sure, the pie is fine.', 'kind' => 'line'],
+    ['handle' => 'dot',  'name' => $wxNames['dot'],  'text' => 'Glad to hear it.',             'kind' => 'line'],
+];
+ok('tic: a scene speaker is coached off their own last opener',
+    str_contains($ticVol(xeric_room_messages($T, 'ruth', ['dot', 'harlan'], 'SYS', $ticLines, [],
+        $wxNow, $wxWalls, [], $wxNames, false, false, '', null)),
+        'started "Well, sure, the"'));
+ok('tic: a speaker with no line yet is not coached',
+    !str_contains($ticVol(xeric_room_messages($T, 'harlan', ['dot', 'ruth'], 'SYS', $ticLines, [],
+        $wxNow, $wxWalls, [], $wxNames, false, false, '', null)),
+        'do not start with those words'));
+
 foreach ($DBFILES as $f) {
     foreach ([$f, $f . '-wal', $f . '-shm'] as $p) @unlink($p);
 }

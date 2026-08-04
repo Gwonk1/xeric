@@ -656,6 +656,15 @@ function xeric_duet_messages(array $t, string $me, string $other, string $system
     $partner = xeric_world_name($t, $other);
 
     $coach = $scene;
+    // THE OPENER TIC (xeric_chat_tic_line): strict alternation means every
+    // turn past the second reads the speaker's own last line back; name the
+    // opener and retire it.
+    $mine = '';
+    foreach (array_reverse($lines) as $l) {
+        if ((string)$l['handle'] === $me) { $mine = (string)$l['text']; break; }
+    }
+    $tic = xeric_chat_tic_line($mine);
+    if ($tic !== '') $coach[] = $tic;
     if ($opening) {
         $coach[] = 'You speak first. Start in the middle of the moment, off the thing in front of you'
                  . ' or the thing you have been meaning to say to ' . $partner . '. A line or three, out loud.';

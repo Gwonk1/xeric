@@ -430,6 +430,15 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
         $system = xeric_chatter_system($t, $db, $me, $others, $place, $eff, $epoch, $walls,
                                        XERIC_CHATTER_KEEP, $userHere);
         $coach  = xeric_chatter_material($t, $db, $me, $others);
+        // THE OPENER TIC (xeric_chat_tic_line): $back carries this run's own
+        // landed lines too, so a head drawn twice in one fire is coached off
+        // its first opener before it repeats it.
+        $prev = '';
+        foreach (array_reverse($back) as $l) {
+            if ($l['role'] === 'character' && $l['handle'] === $me) { $prev = (string)$l['text']; break; }
+        }
+        $tic = xeric_chat_tic_line($prev);
+        if ($tic !== '') $coach[] = $tic;
         $coach[] = 'Say one thing. Short. It does not have to be about anything.';
 
         // $db IS FOR THE WEATHER — it carries the narrator's told sky

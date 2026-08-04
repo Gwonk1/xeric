@@ -810,6 +810,49 @@ function xeric_chat_aliases(string $name, string $handle = ''): array
     return $out;
 }
 
+/** How many opening words make an opener. Two catches "Well, sure"; three
+ *  catches "You know what" without banning half the sentence. */
+const XERIC_CHAT_TIC_WORDS = 3;
+
+/**
+ * The opener of a spoken line: its first few words, stripped of wrapping and
+ * trailing punctuation so a ban names words rather than commas.
+ */
+function xeric_chat_opener(string $text): string
+{
+    $words  = preg_split('/\s+/u', trim($text)) ?: [];
+    $opener = implode(' ', array_slice($words, 0, XERIC_CHAT_TIC_WORDS));
+    $opener = trim($opener, " \t\n\r\0\x0B\"'“”‘’*_([)]");
+    return rtrim($opener, ',.;:—–…!?-');
+}
+
+/**
+ * One coach line against the opener tic, or '' when there is nothing to coach.
+ *
+ * THE TIC: a model's prior makes a speaker open consecutive lines the same way
+ * — live at the church, one visit, the pastor twice out of "Well, sure," —
+ * because each landed line strengthens the pattern in the very transcript the
+ * next call reads. The forge's de-duplicator covers interiors at BUILD time;
+ * nothing covered lines at SPEAK time, and every multi-line surface (channel,
+ * floor, scene, duet) inherits the disease from the same place.
+ *
+ * PREVENTION, NOT CENSORSHIP — the discretion argument again. Dropping or
+ * rewriting a good line over a cosmetic repeat is worse than the repeat (in
+ * the floor it would change WHO answers; in a scene it would cost a beat), so
+ * this steers instead: name the exact words the speaker opened with last time,
+ * in the volatile block, and ban them once. It fires whenever the speaker has
+ * a previous line in the window — banning only the immediate reuse of one
+ * opener leaves every deliberate voice pattern alone — and it costs no cache,
+ * because the block it rides is the one allowed to change every message.
+ */
+function xeric_chat_tic_line(string $prev): string
+{
+    $opener = xeric_chat_opener($prev);
+    if (mb_strlen($opener) < 2) return '';
+    return 'Your last line started "' . $opener . '" — do not start with those words again.'
+         . ' Come in differently this time.';
+}
+
 // ---------------------------------------------------------------------------
 // Memory extraction
 // ---------------------------------------------------------------------------

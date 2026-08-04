@@ -914,6 +914,24 @@ xeric_remind_done($dbR2, $rid3, $rNow);
 ok('remind: one already claimed elsewhere is not reported as sent',
     xeric_remind_fire($dbR1, [], 'Milldale', $rNow) === []);
 
+// ---------------------------------------------------------------------------
+// The opener tic — the words a ban names, and when there is nothing to ban
+// ---------------------------------------------------------------------------
+
+ok('opener: the first three words, trailing punctuation stripped',
+    xeric_chat_opener('Well, sure, it\'s got that river chill to it.') === "Well, sure, it's",
+    xeric_chat_opener('Well, sure, it\'s got that river chill to it.'));
+ok('opener: a two-word line is its own opener', xeric_chat_opener('Not today.') === 'Not today');
+ok('opener: stage wrap does not survive into the ban',
+    xeric_chat_opener('*Fine.*') === 'Fine', xeric_chat_opener('*Fine.*'));
+ok('opener: empty is empty', xeric_chat_opener('   ') === '');
+
+ok('tic: the coach line names the opener and bans it',
+    str_contains(xeric_chat_tic_line('Well, sure, the weather holds.'), '"Well, sure, the"')
+    && str_contains(xeric_chat_tic_line('Well, sure, the weather holds.'), 'do not start with those words'));
+ok('tic: no previous line, no coaching', xeric_chat_tic_line('') === '');
+ok('tic: a one-letter fragment is not worth a ban', xeric_chat_tic_line('I') === '');
+
 $dbR1 = $dbR2 = null;
 
 $dbS = null;
