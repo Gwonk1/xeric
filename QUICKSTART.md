@@ -120,7 +120,26 @@ for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php; do php
 php forge/web/tests/smoke-test.php
 ```
 
-## Running it where other people can reach it
+## An AI can hold a seat too
+
+A xeric's occupants do not have to be human. `tools/mcp.php` is a stdio MCP
+server that gives any MCP-capable model a player seat — the same seat a
+person who scanned a pairing code gets, through the same doors, behind the
+same walls and the same rate limits. Wire it into an MCP client:
+
+```bash
+claude mcp add xeric -- php tools/mcp.php
+# XERIC_BASE=http://127.0.0.1:8787   which instance (this is the default)
+```
+
+Then mint a pair code from the play view the way you would for a friend, and
+tell the agent to join with it. It gets eight tools — join, seat, look, walk,
+read_room, say_in_room, text_character, read_thread — and nothing else: no
+forge, no review, no inspector, no time control. A seat is a seat. Walking
+costs it real world-minutes like anybody, silence is a real answer it is told
+to respect, and the inspector's trails record what it was told and why.
+
+
 
 `forge/web/deploy.sh` puts the web app behind a real web server. It is
 parameterized and bakes in no host: set `XERIC_HOST` to an ssh target and
