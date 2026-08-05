@@ -51,6 +51,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../engine/world.php';   // xeric_world_validate(), the gate
 require_once __DIR__ . '/../engine/llm.php';     // the only thing that talks HTTP
 require_once __DIR__ . '/../engine/walls.php';   // the quotation test the forge checks its own output against
+require_once __DIR__ . '/../engine/opening.php'; // the first page: scene pick + the dead-battery default
 require_once __DIR__ . '/../engine/shape.php';   // the shape library, and the checker that disposes of an invented one
 
 // ---------------------------------------------------------------------------
@@ -6150,6 +6151,29 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
         $note('seed: ' . count($seed['events']) . ' events, ' . count($seed['memories']) . ' memories');
     }
 
+    // The first page, after the seed on purpose: "Recently, …" is written about
+    // a past that exists. Optional the way the walls are — a failure of BOTH
+    // arms would be a note and a world that opens the old way — but the
+    // fallback arm is deterministic prose that cannot fail, so in practice
+    // every world forged from today carries its opening.
+    $guard();
+    $opening = xeric_forge_attempt('opening',
+        fn() => xeric_forge_pass_opening($template, $seed, $endpoint, $note),
+        fn() => xeric_opening_default($template, $seed), $note);
+    if (trim((string)($opening['prose'] ?? '')) !== '') {
+        $withOpening = $template;
+        $withOpening['opening'] = $opening;
+        try {
+            xeric_world_validate($withOpening, 'forged');
+            $template = $withOpening;
+            $note('opening: the first page is written'
+                . (($opening['scene']['place'] ?? '') !== ''
+                    ? ', curtain up at ' . (string)$opening['scene']['place'] : ''));
+        } catch (Throwable $e) {
+            $note('opening: did not validate (' . $e->getMessage() . ') — this world opens the old way');
+        }
+    }
+
     // The back cover, last, because a blurb is written about a finished book.
     // Optional twice over: a failure is a note, and the result screen falls
     // back to meta.description, which is what it showed before blurbs existed.
@@ -6158,6 +6182,94 @@ function xeric_forge_build(array $answers, array $endpoint, array $opts = [], ?c
     if ($blurb !== '') { $template['meta']['teaser'] = $blurb; $note('back cover: written'); }
 
     return ['template' => $template, 'seed' => $seed, 'notes' => $notes];
+}
+
+/**
+ * The opening: the first page of the book, in the owner's shape (2026-08-04) —
+ * "You are Judy, a ____. You live in ____. Recently, ____." Who you are, what
+ * pulls you, what has recently happened, and the scene it all starts on — so
+ * nobody is dropped into a world to figure EVERYTHING out.
+ *
+ * SPOILER-SAFE BY STARVATION, exactly like the teaser: the prompt is built
+ * from the commons (roster lines, places, the rumor) plus the SEED — which is
+ * commons too, it is the past the whole town can talk about — filtered through
+ * xeric_seed_touches_secret() so a walled thing never rides in on an event
+ * title. Walls, drives, secrets and psyches are simply never handed over.
+ *
+ * THE SCENE IS PICKED BY CODE, OFFERED TO THE MODEL. xeric_opening_scene_pick()
+ * reads the week's own schedules for the fullest public hour — that is a fact
+ * about the world, and models are bad at facts about timetables. The model
+ * writes the PROSE around that moment, and may write the curtain line; it does
+ * not get to move the curtain.
+ */
+function xeric_forge_pass_opening(array $template, array $seed, array $endpoint, ?callable $onNote = null): array
+{
+    $u     = (array)($template['user'] ?? []);
+    $user  = xeric_forge_str($u['name'] ?? '', 'you', 60);
+    $world = xeric_forge_str($template['meta']['name'] ?? '', 'here', 60);
+
+    $castLines = [];
+    foreach ((array)($template['cast']['characters'] ?? []) as $c) {
+        $castLines[] = '- ' . $c['display_name'] . ' — ' . (string)($c['one_line'] ?? '');
+    }
+    $recent = [];
+    foreach (array_slice((array)($seed['events'] ?? []), 0, 4) as $e) {
+        $line = (string)($e['title'] ?? '') . ': ' . (string)($e['prose'] ?? '');
+        if (!empty($e['on_spine']) || xeric_seed_touches_secret($template, $line)) continue;
+        $recent[] = '- ' . $line;
+    }
+    $rumor = trim((string)($template['mystery']['rumor'] ?? ''));
+    $fc    = xeric_world_character($template, (string)($template['cast']['first_contact'] ?? ''));
+
+    $scene = xeric_opening_scene_pick($template);
+    $sceneLine = $scene === null ? '' :
+        'It begins at ' . xeric_world_place_name($template, $scene['place'])
+        . ' on ' . ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][$scene['dow'] ?? 0]
+        . ' around ' . $scene['hhmm'] . '. ' . $scene['line'];
+
+    xeric_forge_note($onNote, 'opening: writing the first page');
+
+    $goals = [];
+    foreach ((array)($u['goals'] ?? []) as $g) {
+        $g = trim((string)(is_array($g) ? ($g['text'] ?? '') : $g));
+        if ($g !== '') $goals[] = $g;
+    }
+
+    $raw = xeric_forge_ask($endpoint, 'opening', [
+        ['role' => 'system', 'content' =>
+            'You write the first page of a novel, addressed to its protagonist in the second person. '
+            . 'Plain, concrete, warm. Reply with ONE JSON object and nothing else.'],
+        ['role' => 'user', 'content' =>
+            "World: $world.\n"
+            . "The protagonist: $user"
+            . (($j = trim((string)($u['occupation']['title'] ?? ''))) !== '' ? ", $j" : '')
+            . (($loc = trim((string)($u['location'] ?? ''))) !== '' ? ", living in $loc" : '') . ".\n"
+            . (trim((string)($u['motivation'] ?? '')) !== ''
+                ? 'What they want: ' . trim((string)$u['motivation']) . ".\n" : '')
+            . ($goals !== [] ? 'What they mean to do: ' . implode('; ', array_slice($goals, 0, 2)) . ".\n" : '')
+            . "\nPeople they will meet:\n" . implode("\n", $castLines)
+            . ($fc !== null ? "\nThe one they see most days: " . (string)($fc['display_name'] ?? '') . "\n" : "\n")
+            . ($recent !== [] ? "\nWhat recently happened:\n" . implode("\n", $recent) . "\n" : '')
+            . ($rumor !== '' ? "\nWhat the town says: $rumor\n" : '')
+            . ($sceneLine !== '' ? "\nWhere this story opens: $sceneLine\n" : '')
+            . "\nWrite the page: 120-180 words, second person, present tense. The shape is: who you are, "
+            . "where you live, what you want, what has recently happened (\"Recently, …\"), and the scene "
+            . "this opens on — do not move the scene, it is where the story starts. No spoilers, no "
+            . "questions, no lists. Then one sentence of curtain-up: what is happening at that place as "
+            . "$user arrives.\n"
+            . "{ \"prose\": \"the page, paragraphs separated by blank lines\", \"curtain\": \"one sentence, "
+            . "present tense\" }\nNo prose outside the JSON."],
+    ], ['temperature' => 0.9, 'max_tokens' => 700], $onNote);
+
+    $prose = xeric_forge_str($raw['prose'] ?? '', '', 2400);
+    if (mb_strlen($prose) < 200) {
+        throw new RuntimeException('the page came back ' . mb_strlen($prose) . ' characters');
+    }
+    if ($scene !== null) {
+        $curtain = xeric_forge_str($raw['curtain'] ?? '', '', 300);
+        if ($curtain !== '' && !xeric_seed_touches_secret($template, $curtain)) $scene['line'] = $curtain;
+    }
+    return ['prose' => $prose, 'scene' => $scene];
 }
 
 /**

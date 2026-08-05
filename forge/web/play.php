@@ -184,6 +184,15 @@ if ($action !== '') {
             'note' => 'A different face. The next development replaces the portrait.']);
     }
 
+    // -- the first page, turned -----------------------------------------------
+    // The splash marks itself read for whoever is holding it. No owner gate:
+    // every player turns their own first page, and the key carries the player.
+    if ($action === 'opened') {
+        $player = xeric_session_player($slug, $sid) ?? XERIC_PLAYER_FIRST;
+        xeric_world_state_set($w['db'], xeric_player_key('opening.seen', $player), '1');
+        xeric_web_json(['ok' => true]);
+    }
+
     // -- how much money is allowed to matter ----------------------------------
     // Beside pace, and a dial for the same reason: most worlds are not about
     // money, and a wage counter in a xeric about a wake is a nag. It lives in
@@ -1080,7 +1089,7 @@ if (!xeric_review_launched($w['template'])) {
         . '<form method="post" action="review.php?a=launch&amp;w=' . h(rawurlencode($w['slug'])) . '">'
         . '<button class="btn ghost wide" id="skiplaunch" type="submit">Skip the review, launch it and go in</button>'
         . '</form>'
-        . '<script nonce="<?= h(xeric_web_nonce()) ?>">document.getElementById("skiplaunch").addEventListener("click",function(e){e.preventDefault();'
+        . '<script nonce="' . h(xeric_web_nonce()) . '">document.getElementById("skiplaunch").addEventListener("click",function(e){e.preventDefault();'
         . 'fetch("review.php?a=launch",{method:"POST",headers:{"Content-Type":"application/json"},'
         . 'body:JSON.stringify({xeric:' . js($w['slug']) . '})}).then(function(r){return r.json()})'
         . '.then(function(d){if(d.ok){window.location=d.url}else{alert(d.error||"that xeric would not launch")}})'
@@ -1102,6 +1111,16 @@ $resume = xeric_play_job_of($sess, $w['slug']);
 $userName = trim((string)($T['user']['name'] ?? '')) ?: 'you';
 $userJob  = trim((string)($T['user']['occupation']['title'] ?? ''));
 $userWork = xeric_world_place_name($T, (string)($T['user']['occupation']['workplace_key'] ?? ''));
+
+// THE FIRST PAGE (owner, 2026-08-04): the opening, shown once per player as a
+// page over the play UI — the setup, so nobody is dropped into a world to
+// figure everything out. Seen is a fact about THIS player, not the world: a
+// paired guest gets their own first read of the owner's world, a stranger
+// theirs of their fork.
+$openingPage = xeric_opening($T);
+$openingSeen = $openingPage === null
+    || xeric_world_state_get($db, xeric_player_key('opening.seen',
+        xeric_session_player((string)$w['slug'], $sid) ?? XERIC_PLAYER_FIRST)) !== null;
 
 xeric_web_head('Xeric: ' . (string)$T['meta']['name']);
 echo '<style>' . xeric_play_css() . '
@@ -1152,8 +1171,58 @@ echo '<style>' . xeric_play_css() . '
 .mcap { display:block; font-size:.72rem; font-style:italic; opacity:.75; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
+/* THE FIRST PAGE. Once per player, over everything, before the play UI is
+   looked at. A page rather than a dialog: the serif the book prints in, the
+   world name as the title, one act at the bottom. Opaque on purpose — the UI
+   underneath is the thing this exists to come before. */
+#opening { position:fixed; inset:0; z-index:60; overflow-y:auto; background:var(--bg);
+  display:flex; align-items:flex-start; justify-content:center; transition:opacity .45s ease;
+  padding:max(1.5rem,env(safe-area-inset-top)) 1.2rem max(2rem,env(safe-area-inset-bottom)); }
+#opening.turning { opacity:0; pointer-events:none; }
+.opage { max-width:33rem; margin:auto 0; }
+.opage .okick { font-size:.72rem; letter-spacing:.18em; text-transform:uppercase;
+  color:var(--accent); margin:0 0 .4rem; }
+.opage h1 { font-family:Georgia,serif; font-size:1.65rem; margin:0 0 1.1rem; }
+.oprose { font-family:Georgia,serif; font-size:1.02rem; line-height:1.7; }
+.oprose p { margin:0 0 .9rem; }
+.oprose p:first-of-type::first-letter { font-size:2.6em; float:left; line-height:.85;
+  padding:.06em .08em 0 0; color:var(--accent); }
+.obegin { margin-top:1.2rem; }
+.oagain { display:block; margin-top:.7rem; font-size:.78rem; color:var(--fg-dim); }
 </style>';
 ?>
+<?php if (!$openingSeen): ?>
+<!-- THE FIRST PAGE, first in the document so it is first on the glass: the
+     whole setup — who you are, where you live, what recently happened — read
+     once, before the play UI is looked at. Begin marks it seen for THIS
+     player and lets the page underneath through; the prose itself stays
+     available in the book as front matter, so closing this loses nothing. -->
+<div id="opening"><div class="opage" role="dialog" aria-modal="true" aria-label="how this begins">
+  <p class="okick">Xeric</p>
+  <h1><?= h((string)$T['meta']['name']) ?></h1>
+  <div class="oprose"><?php
+    foreach (preg_split('/\n{2,}/', (string)$openingPage['prose']) ?: [] as $par) {
+        $par = trim($par);
+        if ($par !== '') echo '<p>' . h($par) . '</p>';
+    }
+  ?></div>
+  <button type="button" class="btn obegin" id="obegin">Begin →</button>
+  <span class="oagain">This page stays in the book, if you ever want to read it again.</span>
+</div></div>
+<script nonce="<?= h(xeric_web_nonce()) ?>">
+(function () {
+  var ov = document.getElementById('opening');
+  document.getElementById('obegin').addEventListener('click', function () {
+    // Fire-and-forget: a mark that fails to write costs one extra read of a
+    // page that was worth reading, never a stuck overlay.
+    fetch('play.php?w=' + encodeURIComponent(<?= js($w['slug']) ?>) + '&a=opened',
+      {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).catch(function () {});
+    ov.classList.add('turning');
+    setTimeout(function () { ov.remove(); }, 500);
+  });
+})();
+</script>
+<?php endif; ?>
 <!-- THE CHIP BAR, ACROSS THE WHOLE WINDOW. Everybody, always, so a thread is a
      thing you switch rather than a page you leave. It used to live inside main,
      which meant the people were confined to the pane right of the sidebar and

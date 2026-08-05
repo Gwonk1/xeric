@@ -94,6 +94,24 @@ echo '<style>' . xeric_play_css() . xeric_book_css() . '</style>';
   <p class="bsub">the days as they happened, most recent first ·
     <?= h(xeric_play_date_line($T, $now)) ?></p>
 
+<?php
+  // FRONT MATTER (owner, 2026-08-04): the opening — the same page the splash
+  // showed before the play UI — printed where a book prints it. On the cover
+  // page only (?from= turns pages; front matter does not follow you into
+  // chapter twelve). Commons text by construction, so nothing here loosens
+  // what this page may never print.
+  $opening = xeric_opening($T);
+  if ($opening !== null && $from === ''):
+?>
+  <section class="bopen">
+    <h2 class="dayh">how this begins</h2>
+    <?php foreach (preg_split('/\n{2,}/', (string)$opening['prose']) ?: [] as $par):
+        $par = trim($par); if ($par === '') continue; ?>
+    <p><?= h($par) ?></p>
+    <?php endforeach; ?>
+  </section>
+<?php endif; ?>
+
 <?php if ($book['days'] === []): ?>
   <p class="bempty">Nothing has been set down in these days. A xeric writes its book as it lives —
     press the time control and there will be a page here, or turn back to where the story was.</p>

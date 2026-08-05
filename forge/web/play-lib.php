@@ -38,6 +38,7 @@ require_once __DIR__ . '/ui.php';                       // → boot.php → forg
 require_once XERIC_WEB_LIB . '/engine/state.php';
 require_once XERIC_WEB_LIB . '/engine/clock.php';
 require_once XERIC_WEB_LIB . '/engine/seed.php';
+require_once XERIC_WEB_LIB . '/engine/opening.php';     // the first page, and the moment it starts on
 require_once XERIC_WEB_LIB . '/engine/chat.php';
 require_once XERIC_WEB_LIB . '/engine/sweeps.php';
 require_once XERIC_WEB_LIB . '/engine/proactive.php';
@@ -257,6 +258,16 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
     $now   = xeric_clock_now($db, $t);
     xeric_state_seed($db, $t, xeric_state_time());
     $seeded = xeric_seed_apply($db, $t, xeric_seed_load($dir), $now['epoch']);
+
+    // THE CURTAIN GOES UP ONCE, and only on a world whose first moment this is.
+    // A world that lived before openings existed keeps its past exactly as
+    // lived — injecting "it begins tonight" into month three would be a lie
+    // with a timestamp. Marker-guarded inside, so the first request wins and
+    // a double open writes nothing twice.
+    if ($fresh) {
+        try { xeric_opening_apply($db, $t, $now); }
+        catch (Throwable $e) { /* a world opens with or without its curtain line */ }
+    }
 
     // The pictures this world owes itself, enqueued on every open — idempotent
     // (one row per subject, however many opens), which is also the whole

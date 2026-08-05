@@ -543,6 +543,46 @@ if ($action !== '') {
         }
         unset($t['forge']['review_pending']);
         $t['forge']['launched_at'] = gmdate('c');
+
+        // THE OPENING, BACKFILLED AT THE DOOR (owner, 2026-08-04). A world
+        // forged before openings existed launches through here too, and the
+        // splash it is about to owe the player needs a page to show. One model
+        // call when a machine is up, the dead-battery default when not, and
+        // never a reason a launch fails: worst case the world opens the old
+        // way, which is every way it ever opened before today.
+        if (xeric_opening($t) === null) {
+            $dir  = xeric_review_dir($slug);
+            $page = null;
+            try {
+                $seed = xeric_seed_load($dir);
+                try {
+                    $endpoint = xeric_review_pick_endpoint((array)($in['model'] ?? []));
+                    if (!xeric_llm_up($endpoint, 4)) throw new RuntimeException('model not answering');
+                    $endpoint['timeout'] = 60;
+                    $page = xeric_forge_pass_opening($t, $seed, $endpoint);
+                } catch (Throwable $e) {
+                    $page = xeric_opening_default($t, $seed);
+                }
+                $withPage = $t;
+                $withPage['opening'] = $page;
+                xeric_world_validate($withPage, 'this xeric');
+                $t = $withPage;
+            } catch (Throwable $e) {
+                // No page, no scene — the launch is still a launch.
+            }
+        }
+
+        // WHEN IT BEGINS: the scene's own hour, not whatever one in the morning
+        // the owner happens to press the button at. Only when the template does
+        // not already declare a start (a 1973 world keeps its 1973), and only
+        // while nothing has been lived — clock_begin() runs at first open, so a
+        // db on disk means this string is already spent.
+        if (trim((string)($t['setting']['starts'] ?? '')) === ''
+            && !is_file(xeric_review_dir($slug) . '/world.db')) {
+            $starts = xeric_opening_starts($t);
+            if ($starts !== null) $t['setting']['starts'] = $starts;
+        }
+
         try {
             xeric_review_save($slug, $t);
         } catch (Throwable $e) {

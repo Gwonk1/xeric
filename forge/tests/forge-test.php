@@ -150,6 +150,12 @@ function stub_good(): array
                 ]];
             case 'seed_memories':
                 return ['memories' => ['One thing already known.', 'Another thing already owed.', 'A third, smaller.']];
+            case 'opening':
+                return ['prose' => "You are Rae, a night editor, and you live in Ostrander, "
+                        . "a printing town on a cold river where nobody admits to reading the paper.\n\n"
+                        . 'Recently, the retraction nobody printed got argued about and then got dropped, '
+                        . 'and a favour went unmentioned that has not come up since. The presses still run at eleven.',
+                        'curtain' => 'The tavern is loud already, and the late shift has not come in yet.'];
         }
         return [];
     }];

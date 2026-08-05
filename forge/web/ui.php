@@ -1281,6 +1281,12 @@ main.book .btitle{margin:1.6rem 0 .25rem;font-size:1.75rem;font-weight:600;text-
 main.book .bsub{margin:0 0 2.4rem;text-align:center;font-size:.88rem;color:var(--fg-dim);
   font-family:ui-sans-serif,system-ui,sans-serif}
 
+/* front matter: the opening, printed before the chapters begin */
+.bopen{margin:0 0 3rem;padding:0 0 2rem;border-bottom:1px solid var(--line)}
+.bopen p{margin:0 0 .9rem}
+.bopen p:first-of-type::first-letter{font-size:2.6em;float:left;line-height:.85;
+  padding:.06em .08em 0 0;color:var(--accent)}
+
 /* a chapter is a day; its heading is world time and nothing else */
 .bday{margin:0 0 2.6rem}
 .dayh{margin:2.1rem 0 1rem;font-size:1.08rem;font-weight:600;text-align:center;font-style:normal}
