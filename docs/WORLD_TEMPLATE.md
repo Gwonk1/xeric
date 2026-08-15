@@ -3,10 +3,18 @@
 The world as data. Everything a world knows — its people, places, economies,
 and the walls between what they know — expressed as a file you own. The engine
 (sweeps, crons, prompt assembly, photo pipeline, temperature physics) stays
-code; everything it currently *knows* lives in separated documents:
+code; everything it currently *knows* lives outside it:
 
-1. **engine.json** — machine config. Models, ports, image recipes. Per-install.
-2. **user.json** — who the human is. Name, job, hours, goals. Per-person.
+1. **the environment** — machine config, and deliberately NOT a file. The
+   launchers (`./xeric`, `xeric.cmd`) work everything out once in
+   `bootstrap.php` — which PHP, which port, where the data lives — and pass it
+   as `XERIC_*` environment variables, which `forge/web/boot.php` reads. Model
+   endpoints are addresses the install keeps and you pick between. A
+   `config.local.php` exists only on deployed hosts, written by `deploy.sh`;
+   a machine somebody owns has nothing to hand-edit or get out of date.
+2. **`user`** — who the human is. Name, pronouns, timezone, occupation, goals,
+   motivation. A block inside the template rather than a file beside it,
+   because the forge builds the whole world around this particular person.
 3. **world-template.json** — the world itself. Cast, places, economies, mood
    physics, walls. Forgeable, shareable, the unit people would trade.
 4. **seed.json** — the past the world arrives with. Written by the forge next to
@@ -14,10 +22,11 @@ code; everything it currently *knows* lives in separated documents:
 5. **story-`<key>`.json** — a literary overlay: a plot laid over the world, which
    ENDS while the world does not. Zero or many, beside the template, composed on
    top at load and never written into it. [STORY.md](STORY.md) is the schema.
-6. **rating** — not a file: `effective_rating = min(template.meta.rating,
-   engine.model_rating)`. A wholesome template stays wholesome on any model; an
-   explicit template degrades gracefully to mature/sfw pools on a censored
-   model. The rating keys pools, packs, and sweep content everywhere.
+6. **rating** — not a file: `effective_rating = min(template.meta.rating, what
+   the loaded model will do)` — `xeric_world_rating()`, computed at runtime
+   from the model actually answering. A wholesome template stays wholesome on
+   any model; an explicit template degrades gracefully to mature/sfw pools on a
+   censored model. The rating keys pools, packs, and sweep content everywhere.
 
 Every example on this page is Milldale — `engine/fixtures/milldale.json`, the
 engine's test world. It is fictional, sfw, and small enough to read in one
@@ -426,19 +435,20 @@ Design principles, learned the hard way:
   },
 
   // ── knowledge walls: who may know what ─────────────────────────────────
-  // `hidden` paths come from xeric_wall_vocabulary() in engine/walls.php. A
-  // path hides itself and everything under it, one-directionally: hiding
+  // `hidden` paths come from xeric_wall_vocabulary() in engine/walls.php —
+  // that list is the single authority on what a wall may name. A path hides
+  // itself and everything under it, one-directionally: hiding
   // "economies.thursday_pot" removes that one ledger and leaves the rest
-  // standing. Keys the renderers own no path for ("what_dad_does_on_thursdays")
-  // are inert — they still bring their shown_as framing, and they document the
-  // intent for a human reading the file.
+  // standing. A key outside the vocabulary is refused at validation rather
+  // than carried silently — a wall that quietly fails to take hold is a
+  // secret told to the wrong person. Free-form intent belongs in shown_as,
+  // where a human reads it.
   "knowledge_walls": [
     {
       "key": "family_innocence",
       "audience": { "role": "child" },      // {role|orbit|circle|handle}, ANDed
       "hidden": ["cast_dossiers", "secrets", "drives.*",
-                 "economies.thursday_pot", "mystery.rumor",
-                 "what_dad_does_on_thursdays"],
+                 "economies.thursday_pot", "mystery.rumor"],
       // shown_as is read BY the walled viewer, so write it in second person.
       "shown_as": "your father's Milldale is church, the diner and the hardware store, and the people in it are neighbors"
     },
@@ -451,7 +461,7 @@ Design principles, learned the hard way:
     {
       "key": "circle_discretion",
       "audience": { "circle": "pinochle" },
-      "hidden": ["what_walt_is_to_each_of_you"],
+      "hidden": ["relationships"],
       "shown_as": "what Walt is to any one of you is not circle knowledge unless somebody spills it"
     }
   ],
@@ -658,12 +668,15 @@ Design principles, learned the hard way:
     "video": { "enabled": false }           // overnight queue, optional
   },
 
-  // ── engine.json lives NEXT TO this, not in it ──────────────────────────
-  // { "chat_model": {...local}, "forge_model": {...remote allowed — the
-  //   "remote model for setup" pattern: big model builds the world once,
-  //   small model lives in it daily},
-  //   "image_model": {..., "rating": "explicit"},   ← rating lives HERE
-  //   "temps": { "floor": 0.55, "ceiling": 1.65, "room_share": 0.85 } }
+  // ── machine config lives NEXT TO this, and is not a file ───────────────
+  // Which model answers, where it listens, what it will render: none of that
+  // is world data. The launchers pass it as XERIC_* environment (bootstrap.php
+  // decides, forge/web/boot.php reads); model endpoints are addresses the
+  // install keeps, and the "remote model for setup" pattern — big model builds
+  // the world once, small model lives in it daily — is a choice made per pass,
+  // not a config key. A model's rating is the model's own property (an sfw
+  // image model simply is one). A template never names a machine, which is
+  // what keeps it shareable.
 }
 ```
 

@@ -36,7 +36,8 @@ session.
 
 **Beta.** The engine runs end to end: the forge builds a world from an
 interview, the review step lets you edit or reroll any of it, and the play view
-is a world you can talk to and skip time inside. Nine test suites, all green.
+is a world you can talk to and skip time inside. Twenty-five test suites, all
+green.
 
 Start with [`QUICKSTART.md`](QUICKSTART.md) — what you need, how to start it,
 and how to read the inspector when something surprises you.
@@ -50,11 +51,17 @@ fictional world the engine is tested with.
 | Piece | What it does |
 |---|---|
 | **world-template.json** | The world as data: cast, places, orbits, economies, walls, mood physics. Forgeable, shareable. |
-| **user.json** | You: name, timezone, work hours, motivation, goals. The world builds around your actual life. |
+| **the `user` block** | You: name, timezone, work hours, motivation, goals — inside the template, because the world builds around your actual life. |
 | **engine** | PHP + SQLite + cron sweeps. Prompt assembly, event generation, proactive contact, photo pipeline, temperature physics. |
 | **setup forge** | A one-time pass by a capable model (remote or local) that writes your world. Runtime then runs on small local models. |
 | **story overlay** | An optional mystery laid over a finished world as a sidecar file: beats, who is wrong about what, and an ending the world survives. |
 | **media** *(planned)* | Optional image generation (identity-stable characters via seed + appearance anchoring), optional overnight video. The template already carries the fields — `photos.enabled`, `face_seed` — but no pipeline ships in this tree. |
+
+There is no config file. The launchers (`./xeric`, `xeric.cmd`) work out which
+PHP, which port, and where the data lives — once, in `bootstrap.php` — and pass
+it all as environment; a `config.local.php` exists only on deployed hosts,
+written by `deploy.sh`. An install on a machine you own has nothing to
+hand-edit, get out of date, or silently disagree with the app it sits next to.
 
 ## License
 

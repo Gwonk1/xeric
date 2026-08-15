@@ -33,6 +33,155 @@ Three things it will not do:
 
 ---
 
+## The room — three-way conversation
+
+`engine/room.php`. Three to five characters hold one conversation while you
+watch, and the law it was designed around survived contact with the build:
+**the one-call shortcut is fatal and will look right.** One call, five voices,
+perfect overlap, a fifth of the price — and every wall in the world collapsing
+silently into a single point of view. So every spoken line is its own model
+call from that speaker's own assembly, and the only thing that crosses between
+heads is what was actually SAID, carried as labeled turns. That is not an
+optimisation to revisit.
+
+The questions that were open are answered in code, and inspectably:
+
+- **Who answers.** A weighted draw per beat. Being addressed by name outranks
+  everything — a question with your name on it is not a suggestion — then
+  whoever holds the most unsettled material about the last speaker, resolved
+  as a weighted shuffle rather than a ranking, because the hottest person
+  taking every beat is how a room becomes one character and some furniture.
+  Every beat's candidate weights are written into the why-trail.
+- **Who stays silent.** Silence is a seat at the table, and the engine counts
+  it: a long enough streak of being present-and-quiet licenses the next
+  speaker to notice it — once, and never anything stronger. The quiet are
+  never forced to speak, never handed a turn they did not draw, and never
+  spoken for.
+- **Who leaves.** A scene takes time and schedules do not pause for it:
+  presence is re-read as the scene clock advances, and anyone the schedule
+  moves out of the room departs as a stage direction in observables only —
+  everyone saw them go; where they went may be behind a wall. Fewer than two
+  left ends the scene, because a room of one is somebody standing in a room.
+
+`room-cli.php` is the acceptance surface. Nobody arrives mid-scene: who may
+join a room is the Director's question, below.
+
+## Death, revival, and permadeath
+
+`engine/death.php`, with `forge/web/fate.php` as the web surface. **Death is a state,
+not a deletion.** A dead person stays in the template, stays resolvable by
+handle, stays in every memory that names them and every wall they were
+behind; what changes is one row in the world's database saying they are gone.
+All three modes ship: a death the engine can undo, a catastrophe big enough
+to end a whole world and be restored from, and **permanent** — the engine
+really will not bring them back.
+
+Permanent is frozen into the database at the first death — editable until it
+has cost somebody, locked after — and an unreadable setting resolves to
+revivable, the one dial in the engine that fails toward the recoverable
+state, because deleting a world's cast for good over a typo is not caution.
+And it is not DRM: the world is a file its owner owns, and anybody with a
+text editor can resurrect anybody, forever. What `permanent` means is that
+THE ENGINE will not do it — no button, no command, no endpoint — which is
+enough, because the stakes were always enforced by the author having decided,
+never by the software.
+
+**Revival is not a rewind.** The death still happened, the events still
+happened, and everyone who watched still remembers. People who saw somebody
+die and then see them at the diner is not a bug to paper over; it is the best
+scene this engine can produce. This also retroactively unlocked story
+overlays that kill: an overlay can now end a cast member without editing the
+template, which is the one thing an overlay may not do, kept.
+
+## Social constructs — expectations, and gossip through the walls
+
+`engine/constructs.php`. The reusable shape held exactly as written: *trigger
+→ a small arc with epochs → renders as coarse state, never a timer → licenses
+a sweep or a proactive line → residue becomes an ordinary memory.* No
+construct ever renders a countdown — a timer would change every message and
+bust the one prefix cache the engine is disciplined around.
+
+The first construct is **expectations**. One forms when a character hears the
+user commit with no weasel words and a real when — the model proposes the
+quote, but the gate is code, run on the verbatim words, because a linguistic
+rule enforced by instruction is a hope and enforced by regex is a fact. A
+miss lands in three places: trust, one notch, silently; the body, as a
+licensed stage-direction line, never narrated feelings; and the record, as an
+event written in observables only. An explanation inside the repair window is
+a real move and returns the notch — how well it lands is the person's, not
+the system's. Fuses burn in world time, skips included. v1 scope: they point
+at the user, who is the only one who can let anybody down.
+
+The second is the **gossip ripple**, and it runs through the walls, or it
+would be a leak engine with a folksy name. What travels is what was SEEN —
+the event's own commons words, coarsened in code, never enriched — one hop at
+a time between people who actually share a place and an hour. No model, no
+teleporting news. Attribution thins as it travels, a hop past third-hand has
+nothing left to pass on, old news dies in six world-days, and a wall blocks
+the hop, so the ripple flows around the protected, never through.
+
+## The player has a body
+
+`engine/travel.php`. The advice this file used to give held: start with
+travel time, not the map. A trip advances the world clock by the minutes it
+takes, on the same offset the time control writes — which is what turns
+schedule data the engine has had since day one into a puzzle: *she is off at
+two and I cannot get there by two.* `null` is a real position — being nowhere
+on the map is the same state as a character being off shift, and prints the
+same way. You may walk to a closed place and find the chain still on the
+gate, because refusing the trip would be a menu telling you what the world
+would have contained. Unknown geometry costs the default, never zero, so a
+world forged before coordinates existed is flat, not free. And distance never
+gates the phone: the phone is the product and it works from anywhere.
+
+## Story overlays
+
+**The story ends; the world does not — and this ships.**
+[docs/STORY.md](docs/STORY.md) is the schema, `engine/story.php` validates,
+composes and paces it, and the forge has a story door: describe the story you
+want in your own words and it lands as a legal overlay, or hand-write the
+JSON, or reshape an existing one — which writes a new file, because moving
+walls under a running world has no sensible answer. A story is a sidecar
+beside the template, composed on top at load and never written into it. It is
+multi-injection: a world can take another later, and more than one can be
+live at once — campaign modules on a persistent town rather than a campaign
+that *is* the town.
+
+**A mystery is a wall structure**, which is what made this cheap: one
+character knows the truth, several hold partial truths, and the pacing
+decides when those walls come down. The genuinely new mechanic — the **red
+herring**, a character who sincerely believes something false — shipped as
+its own field, with what was actually going on stored where no prompt ever
+reads it. Overlays are paced against a story curve rather than escalating
+forever or going slack — a steep opening, a build, a taper to a deliberate
+false calm, then a crescendo down into resolution — and an overlay that
+carries no curve of its own inherits the world's.
+
+## The Narrator — three of its four powers
+
+`engine/narrator.php`, with `narrator-cli.php` as the author's console. The
+other god of the world: full canon, no walls, the only voice you can ask
+*why*. **Ask** answers questions about the world and its history and writes
+nothing — asking must be exactly as safe as reading the files.
+**Investigate** audits the lived record for the failures that accumulate
+quietly: dropped threads, absent characters, contradictions. **Write ahead**
+records an intended beat the sweeps then lean toward — intent as a pull,
+never a script, written as one shape of row that no prompt ever reads
+directly. The play view's hint lane speaks in the narrator's voice; the
+console is where investigate and write-ahead live today.
+
+**The narrator has secrets too**, and the discretion shipped as two tiers.
+The authorial answers — a story's truth, a herring's *actually*, an unspilled
+beat — are never assembled into its prompt at all, because
+instruction-following is probabilistic and absence is arithmetic: a model
+that never read the secret cannot say it. In-world hidden facts are present
+under stated discretion — point at the door, never open it — because
+answering at the right altitude requires knowing the secret exists. Straight
+about the machine, discreet about the story; refusals in voice, never as a
+system message.
+
+---
+
 ## Known limitations, stated plainly
 
 These are real, they are deliberate as of today, and they are the first things
@@ -46,115 +195,35 @@ you will notice.
 
 ## Next
 
-### The Narrator
+### The Narrator's fourth power, and the Director
 
-The other god of the world: full canon, no walls, the only voice you can ask
-*why*. Four powers, in increasing order of risk — **ask** (read-only, worth
-building on its own), **investigate** (audits for dropped threads, absent
-characters, contradictions), **write ahead** (intended beats that the sweeps
-bias toward — intent as a pull, never a script), and **author** (validated,
-undoable world changes).
+**Author** — validated, undoable world changes — is the power still missing,
+and the riskiest of the four. With it belongs a fuller web surface: the play
+view can ask, but investigation reports and write-ahead beats live in a
+terminal today, and they should not have to.
 
-**The narrator has secrets too.** Full knowledge is not full disclosure. It
-never unravels a mystery, never says where something hidden is, never spoils its
-own write-ahead beats, and does not hand over a character's secret just because
-it knows it. Straight about the machine, discreet about the story; refusals in
-voice, never as a system message.
+**The Director** is the narrator's counterweight. Everything else in the
+engine pushes toward autonomy, and free will left alone produces drift —
+everyone doing their own plausible thing forever. The Director **changes the
+set, never the performance**: it can put two people in the same room, it
+cannot decide what they say there. Who may join a running scene is its
+question too — the room deliberately seats no newcomers on its own.
 
-**The Director** is its counterweight. Everything else in the engine pushes
-toward autonomy, and free will left alone produces drift — everyone doing their
-own plausible thing forever. The Director **changes the set, never the
-performance**: it can put two people in the same room, it cannot decide what
-they say there.
+### Cast-to-cast expectations
 
-### Giving the player a body
-
-The world already has geography. Places carry hours, aliases and residents;
-every character's week says where they are; the engine resolves all of it to a
-room at any minute of the clock. What is missing is one field — there is no
-`user.where`, so **the player is a disembodied phone hovering over the county**.
-
-**Do not start with the map. Start with travel time.** A map you click that
-teleports you is a menu with a nicer background; what makes geography real is
-that moving costs a turn. Walk to the diner, four minutes. Drive out to the
-mill, twenty. The moment that is true, schedule data the engine has had since
-day one stops being a status line and becomes a puzzle — *she is off at two and
-I cannot get there by two.*
-
-`null` is a real position: being nowhere on the map is the same state as a
-character being off shift, and prints the same way.
-
-### The room — three-way conversation
-
-**The one-call shortcut is fatal and will look right.** The obvious build asks
-the model for the whole exchange at once: everybody's lines, one call, perfect
-pacing, cheap. It cannot be done. Each character's prompt is *their* bible,
-through *their* walls, with *their* memories; one call means one point of view,
-and every wall in the world collapses into it silently. The output would read
-beautifully. **N people is N calls, and that is not an optimisation to revisit.**
-
-So the open questions are all about who and when: who answers (not everybody —
-and who stays silent is information), whether the room talks without you (in a
-real bar, yes, and that is the single thing that would make a room feel unlike a
-chat window), and timing, since two replies landing at once is wrong.
-
-### Death, revival, and permadeath
-
-**Death is a state, not a deletion.** A dead person stays in the template, stays
-resolvable by handle, stays in every memory that names them and every wall they
-were behind. Delete them instead and you break everything pointing at them — and
-you lose the only thing death is *for*, which is that the rest of the cast goes
-on remembering somebody who is not there.
-
-Three modes: a mark you can revive from, something big enough to end a whole
-world and be revived from, and permanent — they really die.
-
-**This retroactively unlocks story overlays.** A story could not previously kill
-a cast member, because that would mean editing the template when a story is
-injected and putting it back when it closes — the one thing an overlay may not
-do. That constraint dissolves the moment death is a row in the database.
-
-### Social constructs — relationships need obligations
-
-A relationship that cannot be let down cannot be kept either. Today the cast has
-history; it has no **expectations**. The seed idea: a person expects you, it
-fades over 24–72 hours, and missing it is a real event.
-
-The reusable shape is: *trigger → a small arc with epochs → renders as coarse
-state, never a timer → licenses a sweep or a proactive line → residue becomes an
-ordinary memory.* Siblings sorted by fuse length: anticipation, news-to-tell,
-worry, felt debt, repair windows, grudges, gossip ripple (**which must run
-through the walls or it is a leak engine**), rituals, confidences (a
-user-created wall — betrayal is the highest-stakes event available), vouching,
-milestones.
-
-Each needs a name the engine can switch on, so an open-ended motivation can arm
-it, and each needs an inspector answer — a grudge that cannot explain itself
-reads as the model being moody.
+Expectations today point only at the user: characters can be let down only by
+the person at the center. The construct shape was built to be reused between
+characters, fed by sweeps instead of chat, and the room already reads the
+field for it through a tested, dormant seam — so the day it lights up is not
+the day it is discovered broken. Anticipation, news-to-tell, worry, felt
+debt, repair windows, grudges, rituals, confidences, vouching, milestones:
+the siblings sorted by fuse length are all still ahead, and each needs an
+inspector answer, because a grudge that cannot explain itself reads as the
+model being moody.
 
 ---
 
 ## Later
-
-### Story overlays
-
-**The story ends; the world does not.** A story is an overlay on a living world.
-When the question is answered the story closes and the world keeps running, with
-the same people who simply no longer have that between them. It is
-multi-injection: a world can take another later, and more than one can be live
-at once — campaign modules on a persistent town rather than a campaign that *is*
-the town.
-
-**A mystery is a wall structure**, which is what makes this cheap: one character
-knows the truth, several hold partial truths, and the pacing decides when those
-walls come down. The genuinely new mechanic is the **red herring** — walls
-currently hide things that are true, and a character who sincerely believes
-something false is a new field. That is what makes a mystery work rather than
-unspool.
-
-Overlays are paced against a story curve rather than escalating forever or going
-slack: a steep opening, a build, a taper to a deliberate false calm, then a
-crescendo down into resolution. Every knob it turns already exists.
 
 ### A world can start in 1873
 

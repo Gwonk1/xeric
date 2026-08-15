@@ -507,10 +507,17 @@ file with a new key.** Reshaping a live story in place would move walls under a
 running world, and there is no sensible answer to "what happens to a beat that
 was already spilled".
 
-**When the model is dead or useless**, `xeric_story_default()` builds a minimal
-valid overlay from the cast — one holder, one piece, one herring, an accusation
-— the way `xeric_forge_default_seed()` does. A world forged offline still gets a
-playable story.
+**When the model is dead or useless**, the pass falls back to its built-in
+plot: `xeric_forge_default_parts()` assembles a deterministic story from the
+cast — a stock victim chosen stably per world, the dullest available adult as
+culprit, a piece per bystander, one sincerely wrong lead — and
+`xeric_forge_attempt()` hands that back whenever the draft call dies, the way
+the seed pass falls back to `xeric_forge_default_seed()`. Whatever survives is
+held to the real validator by `xeric_forge_story_checked()`: a draft that will
+not validate becomes the built-in plot, and if even that fails the pass returns
+**no story at all** — an unloadable overlay is a world that throws every
+morning, where no story is a world that carries on exactly as it did. A world
+forged offline still gets a playable story.
 
 Two things the pass owes regardless of door:
 
