@@ -316,10 +316,19 @@ ok('sweep: THE POINT — the two participants remember different things',
         return $a !== $b && xeric_chat_similar($a, $b) < XERIC_SWEEP_DIVERGE;
     })(), json_encode($E['memories']));
 
+// The divergence instruction moved INTO the system message with the rest of
+// the field spec (the prompt.php split: invariant bytes before volatile ones,
+// so a catchup's calls share a cached prefix past the instructions). The room
+// and the shape stay in the user turn — they are the volatile half.
 ok('sweep: the model was told who was in the room, what shape of thing this was, and to diverge',
     str_contains($seen[1]['content'] ?? '', 'WHO WAS THERE')
     && str_contains($seen[1]['content'] ?? '', 'WHAT KIND OF THING HAPPENED')
-    && str_contains($seen[1]['content'] ?? '', 'they do not remember the same thing'));
+    && str_contains($seen[0]['content'] ?? '', 'they do not remember the same thing'));
+ok('sweep: the invariant spec sits before every volatile line, and the ask with the keys sits last',
+    !str_contains($seen[1]['content'] ?? '', 'they do not remember the same thing')
+    && str_contains($seen[1]['content'] ?? '', 'WRITE ONE JSON OBJECT')
+    && strpos($seen[1]['content'] ?? '', 'WRITE ONE JSON OBJECT')
+        > strpos($seen[1]['content'] ?? '', 'WHO WAS THERE'));
 
 // THE STILL-LIFE REGRESSION. The prose rules once ended in what a small model
 // took for a subject list — "Hands, objects, weather, money, doors" — and it
@@ -329,8 +338,8 @@ ok('sweep: the model was told who was in the room, what shape of thing this was,
 // pins that sentence so a later rewording cannot quietly hand the hours back
 // to the furniture.
 ok('sweep: the model is told the people ARE the hour, so a still-life is off spec',
-    str_contains($seen[1]['content'] ?? '', 'The people named above are IN it')
-    && str_contains($seen[1]['content'] ?? '', 'an hour with nobody in it is wrong'));
+    str_contains($seen[0]['content'] ?? '', 'The people named under WHO WAS THERE are IN it')
+    && str_contains($seen[0]['content'] ?? '', 'an hour with nobody in it is wrong'));
 
 // Nobody is ever at a thing they could not have been at.
 $MID = xeric_world_now($T2, ep('2026-07-30 10:00'));       // Thursday mid-morning: two people at work
@@ -2614,6 +2623,75 @@ ok('favor: and the prompt only asks for it on the kind whose shape says it is ow
     str_contains($favAsk('favor'), '"favor"') && !str_contains($favAsk('ordinary'), '"favor"'));
 
 // ---------------------------------------------------------------------------
+// WHO TOLD WHOM — the confidence hour's report, through the favour's own seam.
+// The `secrets` system armed confidence-shaped hours from the day the kinds
+// were written, and the arc machinery (engine/confide.php) recorded nothing
+// from any of them: its only writer had no production caller, so the gossip
+// sweep iterated an always-empty list. The model reports the direction, code
+// disposes, and confide.php's own rules (adults, armed, one row per thing)
+// stand between the report and the row.
+// ---------------------------------------------------------------------------
+
+echo "\n# the direction of a confidence\n";
+
+$TCf = world(['secrets', 'daily_rhythms']);
+$cfRaw = static fn(array $confided): array => [
+    'title'    => 'what got said at the counter',
+    'prose'    => 'Harlan said more than he was going to and Ruth put the cloth down.',
+    'memories' => [
+        'harlan' => 'Harlan told Ruth about the note and went quiet over the register.',
+        'ruth'   => 'Ruth carried what Harlan said out of the room and locked the till.',
+    ],
+] + ($confided === [] ? [] : ['confided' => $confided]);
+$chosenCf = ['handles' => ['harlan', 'ruth'], 'kind' => ['key' => 'confidence']];
+
+$pc = xeric_sweep_parse($TCf, fresh_db('confide-dir'), $cfRaw(
+    ['from' => 'harlan', 'to' => 'ruth', 'what' => 'about the note behind the register']), $chosenCf);
+ok('confide: the model reports who told whom and the direction survives the parse',
+    ($pc['confided']['from'] ?? '') === 'harlan' && ($pc['confided']['to'] ?? '') === 'ruth'
+    && ($pc['confided']['what'] ?? '') === 'about the note behind the register');
+ok('confide: a telling with no content is not one — there is no default "what" to match gossip against',
+    (xeric_sweep_parse($TCf, fresh_db('confide-empty'), $cfRaw(
+        ['from' => 'harlan', 'to' => 'ruth', 'what' => '  ']), $chosenCf)['confided'] ?? null) === null);
+ok('confide: told to somebody who was not in the room, it is dropped in silence',
+    (xeric_sweep_parse($TCf, fresh_db('confide-out'), $cfRaw(
+        ['from' => 'harlan', 'to' => 'somebody_else', 'what' => 'x']), $chosenCf)['confided'] ?? null) === null);
+ok('confide: volunteered on an hour that was not one, it is not read at all',
+    (xeric_sweep_parse($TCf, fresh_db('confide-kind'), $cfRaw(
+        ['from' => 'harlan', 'to' => 'ruth', 'what' => 'x']),
+        ['handles' => ['harlan', 'ruth'], 'kind' => ['key' => 'ordinary']])['confided'] ?? null) === null);
+ok('confide: and the prompt only asks for it on the confidence kind',
+    str_contains($favAsk('confidence'), '"confided"') && !str_contains($favAsk('ordinary'), '"confided"'));
+
+// End to end through the run: the hour lands AND the row lands, inside the
+// same transaction, on the person now carrying it. Bounded seed walk because
+// the chooser may seat a child or a pair confide.php refuses — which is the
+// machinery working, not the wiring failing.
+$cfStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs) {
+    $h = stub_handles($msgs);
+    $mem = [];
+    foreach ($h as $x) $mem[$x] = ucfirst(str_replace('_', ' ', $x)) . ' ' . stub_half() . '.';
+    return ['title' => 'what got said at the counter',
+            'prose' => 'One of them said more than the hour needed and the other put the cloth down.',
+            'memories' => $mem]
+        + (count($h) >= 2 ? ['confided' => ['from' => $h[0], 'to' => $h[1], 'what' => 'about the mill note']] : []);
+}];
+$cfNow = xeric_world_now($TCf, ep('2026-07-30 18:30'));
+$cfFormed = [];
+for ($i = 0; $i < 40 && $cfFormed === []; $i++) {
+    $dcf = fresh_db('confide-run' . $i);
+    $rcf = xeric_sweep_run($TCf, $dcf, $cfStub, $cfNow, ['chance' => 1.0, 'seed' => 3000 + $i]);
+    if ($rcf['events'] === []) continue;
+    foreach ($TCf['cast']['characters'] as $c) {
+        foreach (xeric_confides_for($dcf, (string)$c['handle']) as $row) $cfFormed[] = $row;
+    }
+}
+ok('confide: a confidence hour lands its row through the run, kept, with a teller on it',
+    count($cfFormed) === 1 && ($cfFormed[0]['state'] ?? '') === 'kept'
+    && ($cfFormed[0]['by'] ?? '') !== '' && ($cfFormed[0]['what'] ?? '') === 'about the mill note',
+    json_encode($cfFormed));
+
+// ---------------------------------------------------------------------------
 // THE DIVERGENCE CHECK'S SIBLING: an hour has to leave something changed.
 // The live skip that proved the thirty systems work also wrote an hour whose
 // memories were "he watched a crow land" and engine-oil grit — a still life
@@ -2690,6 +2768,20 @@ ok('opener: the first eight words, wrap and trailing punctuation stripped',
         === 'Dust motes drifted through the shafts of light',
     xeric_sweep_opener('Dust motes drifted through the shafts of light piercing the burlap-heavy air.'));
 ok('opener: an empty prose bans nothing', xeric_sweep_opener('') === '');
+// THE SELF-SUSTAINING WEDGE. The opener comes off recent[0], and recent[0]
+// never changes while every sweep fails — so when the byte-based trim turned
+// a leading '…' into invalid UTF-8, json_encode of every following sweep
+// prompt returned false, forever. The round-trip IS the regression.
+ok('opener: an hour that opens on an ellipsis stays valid UTF-8 and json-encodes',
+    xeric_sweep_opener('…the same eight words it opened with last hour, again')
+        === '…the same eight words it opened with last'
+    && json_encode(xeric_sweep_opener('…the same eight words it opened with last hour, again')) !== false
+    && mb_check_encoding(xeric_sweep_opener('…the same eight words it opened with last hour, again'), 'UTF-8'),
+    var_export(xeric_sweep_opener('…the same eight words it opened with last hour, again'), true));
+ok('opener: an em-dash opening survives whole too',
+    json_encode(xeric_sweep_opener('—and nobody said a word about the till.')) !== false
+    && mb_check_encoding(xeric_sweep_opener('—and nobody said a word about the till.'), 'UTF-8'),
+    var_export(xeric_sweep_opener('—and nobody said a word about the till.'), true));
 
 $TO  = world(['shared_meals']);
 $dbO = fresh_db('opener');
@@ -2729,6 +2821,163 @@ mt_srand(5);
 $ch3 = xeric_sweep_choose($TN, $SUN, xeric_sweep_kinds_for($TN), []);
 ok('echo: no last hour, no thumb — the draw everybody always got',
     $ch3 !== null && ($ch3['trail']['echo_thumb'] ?? null) === false);
+
+// ---------------------------------------------------------------------------
+// THE WRITE-AHEAD LEAN REACHES THE CATCHUP PATH. The chooser has carried the
+// intent arithmetic since the write-ahead shipped, and not one catchup caller
+// ever loaded the rows — xeric_sweep_leans() is the loader, and catchup
+// derives it whenever the caller did not pass `intents` (an explicit opt,
+// including [], passes through untouched).
+// ---------------------------------------------------------------------------
+
+require_once __DIR__ . '/../narrator.php';
+
+$TI    = world(['daily_rhythms']);                      // 'routine' is the one armed kind
+$dbI   = fresh_db('intent-lean');
+xeric_state_seed($dbI, $TI);
+$iFrom = ep('2026-07-28 07:00');                        // Tue 07:30 mid-window: ruth + dot at the bluebird
+$iTo   = $iFrom + 3600;
+
+$madeI = xeric_narrator_intend($TI, $dbI, 'ruth and dot share a routine hour at the bluebird', [
+    'epoch' => $iFrom - 3600, 'kind' => 'routine',
+    'participants' => ['ruth', 'dot'], 'place' => 'bluebird',
+]);
+ok('lean: the intent went down with its hints read',
+    ($madeI['intent']['kind'] ?? '') === 'routine'
+    && $madeI['intent']['participants'] === ['ruth', 'dot']
+    && xeric_world_state_get($dbI, 'intent_seq') !== null);
+
+$rI = xeric_sweep_catchup($TI, $dbI, stub_event(), $iFrom, $iFrom,
+    ['clock' => $iTo, 'chance' => 1.0, 'seed' => 9]);
+$evI = $rI['events'][0] ?? null;
+ok('lean: the catchup path lived the hour at all', $evI !== null, json_encode($rI['notes']));
+$leanI = (array)($evI['trail']['lean'] ?? []);
+ok('lean: a stored intent biases the chooser, and the trail shows the lean',
+    $leanI !== [] && ($leanI['kind'] ?? false) === true
+    && in_array(1, (array)($leanI['intents'] ?? []), true),
+    json_encode($evI['trail'] ?? []));
+ok('lean: the kind\'s weight carries the bounded ×2, no more',
+    abs((float)($evI['trail']['kind_weight'] ?? 0) - 2.0) < 0.001,
+    (string)($evI['trail']['kind_weight'] ?? 'missing'));
+
+// The record realizes the intent, so the NEXT lean load settles it and the
+// world stops leaning — the loader runs xeric_narrator_leans, which settles
+// first by its own contract.
+ok('lean: the hour that realized the beat retires it on the next load',
+    xeric_sweep_leans($TI, $dbI, $iTo) === []
+    && (xeric_narrator_intents($dbI)[1]['state'] ?? '') === 'done');
+
+// An explicit opt is an instruction: [] switches the lean off entirely.
+$dbI2 = fresh_db('intent-lean-off');
+xeric_state_seed($dbI2, $TI);
+xeric_narrator_intend($TI, $dbI2, 'ruth and dot share a routine hour at the bluebird', [
+    'epoch' => $iFrom - 3600, 'kind' => 'routine',
+    'participants' => ['ruth', 'dot'], 'place' => 'bluebird',
+]);
+$rI2  = xeric_sweep_catchup($TI, $dbI2, stub_event(), $iFrom, $iFrom,
+    ['clock' => $iTo, 'chance' => 1.0, 'seed' => 9, 'intents' => []]);
+$evI2 = $rI2['events'][0] ?? null;
+ok('lean: an explicit empty intents opt passes through untouched — no lean, weight ×1',
+    $evI2 !== null && ($evI2['trail']['lean'] ?? null) === null
+    && abs((float)($evI2['trail']['kind_weight'] ?? 0) - 1.0) < 0.001,
+    json_encode($evI2['trail'] ?? []));
+
+// And a world that has never met the narrator answers with one cheap read.
+ok('lean: a world with no intents loads nothing and leans nothing',
+    xeric_sweep_leans($TI, fresh_db('intent-none'), $iTo) === []);
+
+// ---------------------------------------------------------------------------
+// THE PINNED VOICE REACHES THE PING. proactive.php takes an optional
+// `endpoint_for` resolver (handle → endpoint) and consults it only when a
+// character speaks as themselves; a pinned handle's ping comes off the
+// resolver's endpoint, an unpinned one off the run's own, and a resolver
+// that throws degrades to the default rather than silencing anybody.
+// ---------------------------------------------------------------------------
+
+$TV    = world(['daily_rhythms']);
+$NOWV  = xeric_world_now($TV, ep('2026-07-30 18:30'));
+$EVV   = ['id' => 41, 'title' => 'the urn ran out early', 'prose' => 'The last of the coffee went at half past.',
+          'participants' => ['ruth'], 'memories' => ['ruth' => 'Ruth counted the chairs twice.']];
+
+$pinned  = stub_says_text('from the pinned machine');
+$default = stub_says_text('from the default engine');
+
+$dbV = fresh_db('voice-pinned');
+xeric_state_seed($dbV, $TV);
+$pV = xeric_proactive_check($TV, $dbV, $default, $NOWV, [
+    'event' => $EVV, 'chance' => 1.0, 'involves_user' => true, 'seed' => 4,
+    'endpoint_for' => fn(string $h) => $h === 'ruth' ? $pinned : $default,
+], $notes);
+ok('voice: a pinned handle\'s ping goes through the resolver\'s endpoint',
+    $pV !== null && $pV['handle'] === 'ruth' && $pV['text'] === 'from the pinned machine',
+    json_encode([$pV['text'] ?? null, $notes]));
+
+$dbV2 = fresh_db('voice-default');
+xeric_state_seed($dbV2, $TV);
+$pV2 = xeric_proactive_check($TV, $dbV2, $default, $NOWV, [
+    'event' => $EVV, 'chance' => 1.0, 'involves_user' => true, 'seed' => 4,
+    'endpoint_for' => fn(string $h) => $default,          // unpinned resolves to the run's own
+], $notes);
+ok('voice: an unpinned handle rides the default endpoint exactly as today',
+    $pV2 !== null && $pV2['text'] === 'from the default engine', json_encode($notes));
+
+$dbV3 = fresh_db('voice-broken');
+xeric_state_seed($dbV3, $TV);
+$pV3 = xeric_proactive_check($TV, $dbV3, $default, $NOWV, [
+    'event' => $EVV, 'chance' => 1.0, 'involves_user' => true, 'seed' => 4,
+    'endpoint_for' => function (string $h): array { throw new RuntimeException('resolver died'); },
+], $notes);
+ok('voice: a resolver that throws degrades to the default — a pin cannot silence anybody',
+    $pV3 !== null && $pV3['text'] === 'from the default engine', json_encode($notes));
+
+// ---------------------------------------------------------------------------
+// OUT IS OUT, EVERYWHERE. A character who has not entered (enter.php) is not
+// placed, not cast, and never speaks first — fail closed on every surface,
+// including the records an old event could hand back.
+// ---------------------------------------------------------------------------
+
+$TOut = world(['daily_rhythms']);
+foreach ($TOut['cast']['characters'] as $iC => $cC) {
+    if ((string)$cC['handle'] === 'dot') $TOut['cast']['characters'][$iC]['out'] = true;
+}
+$TUEo = xeric_world_now($TOut, ep('2026-07-28 07:30'));   // the hour dot would share with ruth
+
+ok('out: xeric_world_who_is_where declines to place an unentered character at all',
+    !array_key_exists('dot', xeric_world_who_is_where($TOut, $TUEo)));
+
+$outGroups = xeric_sweep_groups($TOut, $TUEo);
+$outCast   = false;
+foreach ($outGroups as $g) {
+    if (in_array('dot', array_map('strval', (array)$g['handles']), true)) $outCast = true;
+}
+ok('out: no sweep grouping ever seats them', !$outCast, json_encode($outGroups));
+
+$dbOut = fresh_db('out-ping');
+xeric_state_seed($dbOut, $TOut);
+$pOut = xeric_proactive_check($TOut, $dbOut, stub_says_text('must not be sent'), $NOWV, [
+    'event' => ['id' => 51, 'title' => 'seed history', 'prose' => 'an hour from before the reroll',
+                'participants' => ['dot'], 'memories' => ['dot' => 'Dot remembered it.']],
+    'chance' => 1.0, 'involves_user' => true, 'seed' => 4,
+], $notes);
+ok('out: an old record naming them cannot make them text first',
+    $pOut === null && xeric_conversations_count($dbOut) === 0, json_encode($notes));
+
+// The dream rung walks the whole cast, so it needs the same closed door: give
+// ONLY the out character a genuine two-sided thread and a night to dream in.
+$TOut['proactive']['dreams']['window'] = '01:00-06:00';
+$dbDr = fresh_db('out-dream');
+xeric_state_seed($dbDr, $TOut);
+$cidDr = xeric_conversation_for($dbDr, 'dot', 'chat');
+$nightO = xeric_world_now($TOut, ep('2026-07-31 03:00'));
+xeric_message_append($dbDr, $cidDr, 'user', null, 'you up?', (int)$nightO['epoch'] - 5 * 86400);
+xeric_message_append($dbDr, $cidDr, 'character', 'dot', 'always.', (int)$nightO['epoch'] - 5 * 86400);
+xeric_memory_add($dbDr, 'dot', 'Dot kept thinking about the hour at the counter.', 'event',
+    ['event_id' => 9], (int)$nightO['epoch'] - 86400);
+$notes = [];
+$drOut = xeric_proactive_dream($TOut, $dbDr, stub_says_text('must not be dreamed'), $nightO,
+    ['dream_chance' => 1.0, 'seed' => 4], $notes);
+ok('out: nor can they wake and dream at you',
+    $drOut === null && xeric_messages_count($dbDr, $cidDr) === 2, json_encode($notes));
 
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);

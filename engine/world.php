@@ -154,12 +154,29 @@ function xeric_effective_rating(string $worldRating, array $character): string
 /**
  * Read, decode and validate a world template.
  *
+ * LOADING TOLERATES WHAT SAVING REFUSES — for the `hidden` lists, and only for
+ * them. The old contract said a free-form hidden entry was legal-but-inert, and
+ * worlds on disk carry them; a fatal lint on THIS path made such a world
+ * unopenable everywhere, including the review door that could fix it. So the
+ * load passes $strictHidden = false and collects the lint as NOTES, while every
+ * caller in front of a WRITE (review saves, forge output, staging a character)
+ * keeps xeric_world_validate()'s strict default and refuses. The lint's value
+ * survives where it matters: a typo'd wall still refuses at authoring time.
+ *
+ * @param ?array $notes filled with the hidden-entry notes a tolerant load
+ *                      collected — empty for a clean world. A caller that does
+ *                      not take the basket gets them in the error log instead;
+ *                      an inert entry ignored SILENTLY would never be fixed.
  * @throws RuntimeException on unreadable file, bad JSON, or any validation failure.
  */
-function xeric_world_load(string $path): array
+function xeric_world_load(string $path, ?array &$notes = null): array
 {
+    $collected = func_num_args() >= 2;
     $t = xeric_template_load($path);           // walls.php: read + json_decode
-    xeric_world_validate($t, basename($path));
+    $notes = xeric_world_validate($t, basename($path), false);
+    if (!$collected) {
+        foreach ($notes as $n) error_log($n);
+    }
     return $t;
 }
 
@@ -168,14 +185,33 @@ function xeric_world_load(string $path): array
  *
  * @param string $label what to call this template in error messages — a filename
  *                      when there is one, so a stack of worlds is tellable apart.
+ * @param bool $strictHidden the contract split, in one flag. TRUE (the default)
+ *                      is the authoring gate: an unknown `hidden` entry is fatal,
+ *                      exactly like every other refusal below — the right answer
+ *                      wherever validation stands in front of a write. FALSE is
+ *                      the load gate xeric_world_load() uses: the same entries
+ *                      come back as notes, because a world already on disk under
+ *                      the old free-form contract must stay openable long enough
+ *                      to be fixed. Nothing else in the validator softens.
+ * @return string[] the hidden-entry notes a tolerant pass collected; always
+ *                      empty when $strictHidden is true, because those threw.
  * @throws RuntimeException naming the offending path, e.g.
  *         "xeric: milldale.json: cast.characters[2].orbit 'firm' is not a declared orbit"
  */
-function xeric_world_validate(array $t, string $label = 'template'): void
+function xeric_world_validate(array $t, string $label = 'template', bool $strictHidden = true): array
 {
     $bad = function (string $path, string $problem) use ($label): void {
         throw new RuntimeException("xeric: $label: $path $problem");
     };
+
+    // The hidden lint's second temper: same sentence, delivered as a note. Only
+    // the `hidden` checks ever receive this callable — see $strictHidden above.
+    $notes   = [];
+    $noteBad = $strictHidden ? $bad
+        : function (string $path, string $problem) use (&$notes, $label): void {
+            $notes[] = "xeric: $label: $path $problem (inert under the old contract"
+                     . ' — this world still loads, and the next save will refuse it until it is fixed)';
+        };
 
     // -- required top-level keys ------------------------------------------
     // setting / economies / boons / mystery / world_mood / events / proactive
@@ -343,6 +379,14 @@ function xeric_world_validate(array $t, string $label = 'template'): void
                 }
             }
         }
+    }
+
+    // Collected here, with the other declarations, because the hidden-list
+    // lint below needs them before the boons' own checks run.
+    $boons = [];
+    foreach ((array)($t['boons'] ?? []) as $b) {
+        $k = (string)($b['key'] ?? '');
+        if ($k !== '') $boons[$k] = true;
     }
 
     $people = $chars + $fixtures;   // anyone a name can point at
@@ -574,6 +618,27 @@ function xeric_world_validate(array $t, string $label = 'template'): void
     // -- knowledge walls --------------------------------------------------
     foreach ((array)($t['knowledge_walls'] ?? []) as $i => $w) {
         $wk = (string)($w['key'] ?? '');
+
+        // THE HIDDEN LIST IS LINTED, NOT TRUSTED. xeric_hidden() walks silently
+        // past a key it does not own — the correct posture for a read, and a
+        // fatal one for an author: a typo'd path hides NOTHING, quietly,
+        // forever, which is a wall that fails OPEN. That is the same shape as
+        // the unknown audience selector below, and it gets the same answer.
+        // xeric_wall_vocabulary() is the single authority on what a wall may
+        // name; a dotted path under one of its dynamic heads must also resolve
+        // to something the template declared, or "economies.thursday_pit" is a
+        // ledger-shaped hole in the fence. Free-form intent belongs in
+        // shown_as, where a human reads it.
+        //
+        // $noteBad, NOT $bad — the one check in this validator with two
+        // tempers. The old contract called a free-form entry legal-but-inert,
+        // so a fatal answer on the LOAD path bricked every world already
+        // carrying one; the strict default still refuses it at every write.
+        foreach ((array)($w['hidden'] ?? []) as $j => $hp) {
+            xeric_world_check_hidden((string)$hp, "knowledge_walls[$i].hidden[$j]",
+                $places, $orbits, $chars, $economies, $boons, $noteBad);
+        }
+
         if (!isset($w['audience'])) {
             // A wall handed out by name only is the explicit case and fine. A
             // wall that nobody is handed and that matches nobody is a wall in an
@@ -623,6 +688,8 @@ function xeric_world_validate(array $t, string $label = 'template'): void
         $pk = (string)($m['place_key'] ?? '');
         if ($pk !== '' && !isset($places[$pk])) $bad('mystery.place_key', "'$pk' is not a declared place");
     }
+
+    return $notes;
 }
 
 /** Selector strings ("orbit:x", "cast_minus:a,b", bare handle) used by boards. */
@@ -652,6 +719,62 @@ function xeric_world_check_selector(string $sel, string $path, array $roles, arr
         default:
             if (!isset($people[$sel])) $bad($path, "'$sel' names neither a character nor a fixture");
     }
+}
+
+/**
+ * One `hidden` entry against xeric_wall_vocabulary(). Bad entries go to $bad —
+ * fatal at every write gate, a note on load (see $strictHidden on the
+ * validator): the entry was legal-but-inert under the old contract, and a
+ * world already carrying one has to stay openable long enough to be fixed.
+ *
+ * The vocabulary itself is parsed rather than copied: its bare words are the
+ * exact set, and its `<key>`/`<handle>` entries name the heads whose suffix
+ * must resolve against the template — a second hand-kept list here is exactly
+ * the drift xeric_wall_interior_fields() documents killing once already.
+ * `story.<key>` is the one head whose suffix cannot be resolved from a bare
+ * template (overlays arrive later, and story.php validates its own keys), so
+ * anything under `story.` passes whole.
+ */
+function xeric_world_check_hidden(string $entry, string $path, array $places, array $orbits,
+                                  array $chars, array $economies, array $boons, callable $bad): void
+{
+    $h = trim($entry);
+    if (str_ends_with($h, '.*')) $h = substr($h, 0, -2);   // decoration, exactly as xeric_hidden() reads it
+    if ($h === '') { $bad($path, 'is empty'); return; }
+    if ($h === '*') return;
+
+    $exact = [];
+    $dyn   = [];
+    foreach (xeric_wall_vocabulary() as $wv) {
+        if (str_contains($wv, '<')) $dyn[(string)strstr($wv, '.', true)] = true;
+        else                        $exact[$wv] = true;
+    }
+    if (isset($exact[$h])) return;
+
+    if (str_contains($h, '.')) {
+        [$head, $rest] = explode('.', $h, 2);
+        if ($head === 'story' && $rest !== '') return;
+        $sets = [
+            'places'        => [$places,    'a declared place'],
+            'orbits'        => [$orbits,    'a declared orbit'],
+            'economies'     => [$economies, 'a declared economy'],
+            'boons'         => [$boons,     'a declared boon'],
+            'secrets'       => [$chars,     'a declared character'],
+            'drives'        => [$chars,     'a declared character'],
+            'psyche'        => [$chars,     'a declared character'],
+            'cast_dossiers' => [$chars,     'a declared character'],
+        ];
+        if (isset($sets[$head], $dyn[$head])) {
+            if (!isset($sets[$head][0][$rest])) {
+                $bad($path, "'$entry' hides nothing — '$rest' is not " . $sets[$head][1]);
+            }
+            return;
+        }
+        $bad($path, "'$entry' is not a path the engine owns (see xeric_wall_vocabulary), so it would hide nothing — a wall that hides nothing is a leak");
+        return;
+    }
+
+    $bad($path, "'$entry' is not a path the engine owns (see xeric_wall_vocabulary), so it would hide nothing — say free-form things in shown_as instead");
 }
 
 /** Every rating_min in the tree, as [dotted.path, value] pairs. */

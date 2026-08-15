@@ -290,6 +290,25 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
             'stories' => $stories, 'story_notes' => $notes];
 }
 
+/**
+ * The template AS THE FILE HOLDS IT — for every save path on the play screen.
+ *
+ * $w['template'] is the COMPOSED template: xeric_play_open() lays every live
+ * story overlay onto it (convictions into voices, protect roles into
+ * special_roles, held pieces into secrets) and clamps meta.rating to this
+ * session's ceiling. Both are per-request dress, and xeric_review_save()
+ * writes whole files — so a cog that saved $w['template'] baked a story's
+ * composed lines (and a guest session's clamp) into the base template
+ * permanently, and the overlay could never again be taken back out. Every
+ * play-screen setting that persists re-reads the file and folds ONLY its own
+ * field in: the same fold-don't-overwrite discipline the review screen's
+ * rerolls use (xeric_review_fold_onto_disk).
+ */
+function xeric_play_base_template(array $w): array
+{
+    return xeric_world_load((string)$w['dir'] . '/world-template.json');
+}
+
 // ---------------------------------------------------------------------------
 // Whose world this is
 // ---------------------------------------------------------------------------
@@ -562,6 +581,99 @@ function xeric_play_endpoint(?string $sid = null): array
 }
 
 // ---------------------------------------------------------------------------
+// The walk's hours — a trip lived like a skip
+// ---------------------------------------------------------------------------
+
+/**
+ * The stretch a finished trip owes the sweeps.
+ *
+ * MEASURED BACKWARD, because travel is the one clock-mover that advances
+ * before any worker runs (engine/travel.php): by the time anybody can sweep,
+ * the world already stands at the far end of the walk. So the stretch is
+ * [now − span, now], and the caller pins `clock` to its far edge so the
+ * in-progress hour is sampled at the minute the walker actually arrived,
+ * never past it — the same edge-of-the-world rule every catchup obeys.
+ *
+ * @return array{from:int,to:int}
+ */
+function xeric_play_trip_stretch(int $toEpoch, int $spanSeconds): array
+{
+    return ['from' => $toEpoch - max(0, $spanSeconds), 'to' => $toEpoch];
+}
+
+/**
+ * Start the worker that lives a landed trip's hours — or decline, silently.
+ *
+ * THE WALK NEVER WAITS ON THIS. Every refusal in here is a null, not an
+ * error: the trip has already happened by the time this is asked, and "the
+ * hours could not be lived just now" is the heart's next tick's problem, not
+ * the walker's. The worker itself takes the normal ticket path, so a busy
+ * model queues the sweep behind whoever is talking — a refused or queued
+ * sweep surfaces as a note in the stream, never as a blocked trip.
+ *
+ * Declined outright when the walk never crossed a sweep window (most trips
+ * are minutes inside one hour, and a process per footstep would discover
+ * nothing to do), and when no machine is attached (the worker would only
+ * start to say so).
+ *
+ * AND METERED LIKE THE SKIP IT IS, FOR EVERYBODY. The worker this starts is
+ * real model calls — the same spend a skip's is, and tick.php meters every
+ * skip unconditionally — so a walk that will spawn one consults the skip
+ * budget whoever is walking: owner, guest, or a stranger on their own fork.
+ * The check used to sit inside where.php's guest gate, which let everybody
+ * else spawn workers with no limit consulted at all. What is metered is the
+ * MODEL SPEND, never the movement: the trip has already landed by the time
+ * this is asked, and a walker over budget still arrives — the hours simply
+ * pass quietly, and the returned note says so in the limiter's own sentence.
+ * The seat is kept only once the worker is genuinely away (note after the
+ * spawn), so a spawn that dies costs nobody anything.
+ *
+ * @return array{job:string,stream:string}|array{note:string}|null
+ */
+function xeric_play_trip_job(array $w, array $trip, string $sid): ?array
+{
+    try {
+        $span = (int)($trip['minutes'] ?? 0) * 60;
+        if ($span <= 0) return null;
+
+        $to = (int)($trip['now']['epoch'] ?? 0);
+        $r  = xeric_play_trip_stretch($to, $span);
+        if (xeric_sweep_windex($r['from'], XERIC_SWEEP_WINDOW)
+            === xeric_sweep_windex($r['to'], XERIC_SWEEP_WINDOW)) return null;
+
+        if (!xeric_web_connected(xeric_web_model($sid))) return null;
+
+        // The skip meter, consulted only for a walk that would actually spawn
+        // (the declines above cost nothing and meter nothing).
+        $gate = xeric_limit_check('skip', ['sid' => $sid]);
+        if (!($gate['ok'] ?? false)) {
+            return ['note' => 'You still arrive — walking is never refused — but the hours you '
+                . 'walked will pass quietly this time. ' . (string)($gate['message'] ?? '')];
+        }
+
+        $job = xeric_web_job_new();
+        xeric_web_spawn($job, [
+            'slug'   => (string)$w['slug'],
+            'sid'    => $sid,
+            'db'     => (string)$w['db_path'],
+            'span'   => $span,
+            'walked' => true,           // the clock already moved — tick-worker.php
+            // The trip's landing epoch, so the worker anchors the walked
+            // stretch to THIS walk's own far edge rather than to a fresh
+            // clock read a second walk may already have moved.
+            'landed' => $to,
+            'adult'  => xeric_session_adult($sid),
+        ], 'tick-worker.php');
+        // Charged on delivery: the worker is away, so the seat the check took
+        // is kept. A throw anywhere above hands it back when the request ends.
+        xeric_limit_note('skip', ['sid' => $sid]);
+        return ['job' => $job, 'stream' => 'progress.php?job=' . rawurlencode($job)];
+    } catch (Throwable $e) {
+        return null;   // a walk whose hours could not be lived through is still a walk
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The clock, as three buttons
 // ---------------------------------------------------------------------------
 
@@ -705,16 +817,6 @@ function xeric_play_stamp(array $t, int $epoch): string
     try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); }
     catch (Throwable $e) { $tz = new DateTimeZone('UTC'); }
     return (new DateTimeImmutable('@' . $epoch))->setTimezone($tz)->format('D H:i');
-}
-
-/** "3 hours ago" — for the world list, where exact minutes help nobody. */
-function xeric_play_ago(int $then, ?int $now = null): string
-{
-    $d = max(0, ($now ?? time()) - $then);
-    if ($d < 90)     return 'just now';
-    if ($d < 5400)   return intdiv($d, 60) . ' minutes ago';
-    if ($d < 172800) return intdiv($d, 3600) . ' hours ago';
-    return intdiv($d, 86400) . ' days ago';
 }
 
 // ---------------------------------------------------------------------------
@@ -1366,6 +1468,9 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     $now ??= xeric_clock_now($db, $t);
     $map  = xeric_travel_map($t, $db, $now, $player);
     $dead = xeric_deaths($db);
+    // Where the VIEWER is standing — read once, up here, because both the
+    // thread rows and the map rows gate a home's channel on it.
+    $youAt = xeric_player_where($t, $db, $player);
 
     // One face per handle, so every name in this panel wears the same disc the
     // chips and the thread do.
@@ -1481,11 +1586,21 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         // The place, the last thing said in it, and whether it is unread — which
         // is the whole point of a channel you were not standing in. It opens the
         // room view, which is the person-thread screen pointed at a place.
+        //
+        // BEHIND THE SAME GATE THE a=room ENDPOINT KEEPS. A home is a room only
+        // to somebody standing in it (xeric_chatter_readable), and the map rows
+        // below already ask that gate before offering the channel — but these
+        // rows rendered every kind='room' conversation's last line regardless,
+        // so a viewer across town read a home's last spoken sentence out of a
+        // sidebar the endpoint would have refused them. An unreadable room's
+        // row drops whole: the row IS the channel here, and a door plus a
+        // snippet the server refuses is a click that lies twice.
         $roomRows = '';
         foreach ($threads as $tr) {
             if ((string)($tr['kind'] ?? '') !== 'room') continue;
             $k = (string)($tr['handle'] ?? '');
             if ($k === '') continue;
+            if (!xeric_chatter_readable($t, $k, $youAt)) continue;
             $name = trim((string)($tr['title'] ?? '')) ?: xeric_world_place_name($t, $k);
             $snip = trim(preg_replace('/\s+/u', ' ', (string)($tr['last'] ?? '')) ?? '');
             if (mb_strlen($snip) > 64) $snip = rtrim(mb_substr($snip, 0, 64)) . '…';
@@ -1564,11 +1679,13 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
 
     // Which rooms have said something you have not read. The threads list has
     // this already; the map is where a person actually looks for a place, so
-    // the dot belongs on both.
-    $youAt   = xeric_player_where($t, $db, $player);
+    // the dot belongs on both. Readable rooms only, the same gate the rows
+    // above kept: even a DOT on a home you are not standing in says somebody
+    // spoke in it, which is one bit more than the endpoint would tell you.
     $unheard = [];
     foreach ($threads as $tr) {
-        if ((string)($tr['kind'] ?? '') === 'room' && (int)($tr['unread'] ?? 0) > 0) {
+        if ((string)($tr['kind'] ?? '') === 'room' && (int)($tr['unread'] ?? 0) > 0
+            && xeric_chatter_readable($t, (string)($tr['handle'] ?? ''), $youAt)) {
             $unheard[(string)($tr['handle'] ?? '')] = true;
         }
     }
@@ -2341,8 +2458,7 @@ function xeric_play_cast_html(array $cast, string $slug = '', bool $mine = true)
             // and say the same sentence without deriving either a second time.
             . ((string)$mk['glyph'] !== ''
                 ? ' data-mark="' . h((string)$mk['glyph']) . '" data-say="' . h((string)$mk['say']) . '"' : '')
-            . (!empty($mk['slow']) ? ' data-slow="1"' : '')
-            . ($dead ? ' data-dead="1"' : '') . '>'
+            . (!empty($mk['slow']) ? ' data-slow="1"' : '') . '>'
             . '<span class="pdot' . ($c['unread'] ? ' on' : '') . ($dead ? ' x' : '') . '">'
             . ($dead ? '×' : '') . '</span>'
             . '<span class="av" style="--hue:' . (int)$f['hue'] . '" aria-hidden="true">' . h((string)$f['txt']) . '</span>'
@@ -3401,41 +3517,6 @@ function xeric_play_tile_face(string $slug, array $scene): string
              . '\');background-size:cover;background-position:center"></span>';
     }
     return xeric_play_tile_svg($slug, $scene);
-}
-
-/** Retired: the colour-field fallback, kept only so nothing breaks mid-deploy. */
-function xeric_play_tile_css(string $slug): string
-{
-    if (xeric_play_tile_file($slug) !== null) {
-        return "background-image:url('tile.php?w=" . h(rawurlencode($slug)) . "');background-size:cover;"
-             . 'background-position:center';
-    }
-
-    $h = crc32($slug);
-    // 200° of the wheel starting at 8: clay → ochre → sage → teal → river blue.
-    // Stops before magenta on purpose. A band this wide is the difference
-    // between a shelf and a shelf where four things are the same green; a band
-    // any wider is a shelf with a bug on it.
-    $hue  = 8 + ($h % 200);
-    $hue2 = ($hue + 28 + (($h >> 8) % 40)) % 360;
-    $x1   = 18 + (($h >> 3)  % 55);
-    $y1   = 14 + (($h >> 7)  % 40);
-    $x2   = 30 + (($h >> 11) % 60);
-    $y2   = 50 + (($h >> 15) % 45);
-    $tilt = (($h >> 19) % 60) - 30;
-
-    // Weighted like a PHOTOGRAPH, not like a tint. The first version of this sat
-    // at 82–95% lightness and every tile read as a white card with a stain on
-    // it — which is the failure mode a fallback has to avoid above all others,
-    // because a shelf of near-empty rectangles looks like art that failed to
-    // load rather than art that was never made. Mid-lightness, real saturation,
-    // and a vignette, so a tile has the same visual weight as the image that
-    // will one day replace it and the grid does not reflow when it does.
-    return 'background-image:'
-        . 'radial-gradient(120% 100% at 50% 120%, rgba(20,18,14,.20) 0%, rgba(20,18,14,0) 60%),'
-        . "radial-gradient(66% 60% at {$x1}% {$y1}%, hsl($hue 52% 78%) 0%, hsl($hue 46% 62% / 0) 72%),"
-        . "radial-gradient(58% 54% at {$x2}% {$y2}%, hsl($hue2 46% 55%) 0%, hsl($hue2 42% 48% / 0) 74%),"
-        . "linear-gradient({$tilt}deg, hsl($hue 40% 72%) 0%, hsl($hue2 36% 56%) 100%)";
 }
 
 /**
@@ -4752,8 +4833,11 @@ body{min-height:var(--app-h,100dvh)}
 .note.rule{border-color:var(--accent-dim);color:var(--fg)}
 
 /* what a turn moved, and where a story ended --------------------------- */
-.msgs .moved{justify-content:center}
-.msgs .moved .b{max-width:100%;background:none;border:0;font-size:.79rem;color:var(--accent-dim);
+/* #feed too: a story frame landing mid-skip wears the thread's own story-line
+   dress in the skip feed, so the world's line reads the same on both surfaces. */
+.msgs .moved,#feed .moved{justify-content:center}
+#feed .moved{display:flex;margin:0 0 .8rem}
+.msgs .moved .b,#feed .moved .b{max-width:100%;background:none;border:0;font-size:.79rem;color:var(--accent-dim);
   text-align:center;padding:.15rem 0}
 .msgs .ended{display:block}
 .ended .ec{border:1px solid var(--accent);border-radius:.6rem;background:var(--sel);padding:.85rem .9rem;
@@ -5674,6 +5758,19 @@ function xeric_watch_start(array $w, string $a, string $b, ?array $now = null): 
 
     $order = xeric_duet_order($db, $a, $b, []);
 
+    // THE SYSTEM, ASSEMBLED ONCE AND PINNED — the same pattern as the epoch,
+    // eff and room pinned above. Recomputing it per line read live DB state
+    // (arcs, lessons, the expect block, memories all move under the heart's
+    // 60s tick), so a scene watched across several HTTP requests shredded its
+    // own prefix cache mid-scene. One string per speaker, because the system
+    // is per-voice; the pair itself cannot change inside a scene (a and b are
+    // fixed at this door), so there is no regeneration path to build.
+    $sys = [];
+    foreach ([[$a, $b], [$b, $a]] as [$me, $other]) {
+        $sys[$me] = xeric_duet_system($t, $db, $me, $other, $eff, (int)$now['epoch'],
+            xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $me])), 12);
+    }
+
     return [
         'v'        => 1,
         'slug'     => (string)$w['slug'],
@@ -5684,6 +5781,7 @@ function xeric_watch_start(array $w, string $a, string $b, ?array $now = null): 
         'epoch'    => (int)$now['epoch'],
         'eff'      => $eff,
         'minor'    => $minor,
+        'sys'      => $sys,
         'first'    => (string)$order['first'],
         'turns'    => (int)$order['turns'],
         'extended' => (bool)$order['extended'],
@@ -5730,10 +5828,15 @@ function xeric_watch_public(array $s): array
  * same order, same sentences. Mutates $s (the caller owns writing it back) and
  * touches the database not at all.
  *
- * The assemblies are rebuilt per line rather than carried in the state file:
- * nothing writes during a scene, so they come out byte-identical to what one
- * process would have cached, and a prompt does not get persisted to disk for
- * the privilege of saving a rebuild.
+ * THE SYSTEM COMES OFF THE SCENE FILE, assembled once at xeric_watch_start()
+ * and pinned there beside the epoch, eff and room. The old claim — "nothing
+ * writes during a scene, so a rebuild is byte-identical" — was false: the
+ * heart's 60s tick moves arcs, lessons, the expect block and memories under a
+ * running scene, so a per-request rebuild changed bytes mid-scene and threw
+ * the speaker's whole prefix out of cache. Only the VOLATILE end (material,
+ * scene tail, the now-block) is rebuilt per line, which is where changing
+ * state belongs. A scene file from before the pin is healed in place: the
+ * system is assembled once on first use and pinned then.
  *
  * The charge is here, not at the door: a watched line is a model call and
  * spends like one (say.php's own ordering — the caller has held the slot and
@@ -5759,7 +5862,14 @@ function xeric_watch_line(array $w, array &$s, array $endpoint, string $sid = ''
 
     $protected = xeric_sweep_protected($t);
     $walls     = xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $speaker]));
-    $system    = xeric_duet_system($t, $db, $speaker, $partner, (string)$s['eff'], $epoch, $walls, 12);
+    // Pinned at the scene's door (xeric_watch_start) so every line of the
+    // scene reads the same bytes — see the docblock above. A pre-pin scene
+    // file gets its one assembly here, and it is pinned from then on.
+    if (!isset($s['sys'][$speaker]) || (string)$s['sys'][$speaker] === '') {
+        $s['sys'][$speaker] = xeric_duet_system($t, $db, $speaker, $partner,
+            (string)$s['eff'], $epoch, $walls, 12);
+    }
+    $system    = (string)$s['sys'][$speaker];
     $material  = xeric_duet_material($t, $db, $speaker, $partner, $protected);
     $tail      = xeric_duet_scene($t, $speaker, $partner, (array)$s['room'], $walls, $material);
 

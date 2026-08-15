@@ -84,9 +84,13 @@ function xeric_seed_applied(PDO $db): bool
  * @param int $nowEpoch the WORLD's launch moment. Every days_ago is measured
  *                      back from here, so the past lands behind the present the
  *                      first prompt will describe.
- * @return array{events:int,memories:int,skipped:int,applied:bool}
+ * @return array{events:int,memories:int,skipped:int,floored:int,applied:bool}
  *         `applied` is false on the second and every later call; the counts are
  *         then the ones the first call wrote, read back from the marker.
+ *         `skipped` is rows that resolve to nobody and nowhere — the forge's
+ *         model misnaming things — and `floored` is rows the age floor
+ *         refused. Two counts because they are two different answers to why a
+ *         past is shorter than its file, and one number used to hold both.
  * @throws RuntimeException if a write fails — in which case nothing is written
  *         at all and the marker is not set, so the caller may simply try again.
  */
@@ -100,6 +104,7 @@ function xeric_seed_apply(PDO $db, array $template, array $seed, int $nowEpoch):
             'events'   => (int)($p['events'] ?? 0),
             'memories' => (int)($p['memories'] ?? 0),
             'skipped'  => (int)($p['skipped'] ?? 0),
+            'floored'  => (int)($p['floored'] ?? 0),   // absent on old markers, which held one merged count
             'applied'  => false,
         ];
     }
@@ -115,9 +120,16 @@ function xeric_seed_apply(PDO $db, array $template, array $seed, int $nowEpoch):
         if ($k !== '') $places[$k] = true;
     }
 
-    $events = 0;
-    $mems   = 0;
-    $skip   = 0;
+    $events  = 0;
+    $mems    = 0;
+    // TWO COUNTS, NOT ONE. `$skip` is a row that resolves to nobody and
+    // nowhere — the forge's model misnaming things, which is a defect in the
+    // file. `$floored` is a row the engine understood perfectly and REFUSED
+    // under the age floor, which is the engine working. One counter used to
+    // hold both, and the CLI then reported the engine's own refusals as
+    // "unusable rows", which is the wrong thing to say about either of them.
+    $skip    = 0;
+    $floored = 0;
 
     // All of it or none of it: a half-applied past with the marker unset would
     // double on the retry, and with the marker set would be permanently short.
@@ -149,8 +161,9 @@ function xeric_seed_apply(PDO $db, array $template, array $seed, int $nowEpoch):
             // here would take the whole past down with it and the visitor would
             // get a world with no history and no way to ask for one. One line of
             // a seed is worth less than every other line in it, so the row is
-            // skipped and counted like any other row that could not be stored.
-            if (xeric_age_floor($template, $who, [$title, $prose]) !== null) { $skip++; continue; }
+            // skipped and counted — under its own count, because "refused by
+            // the floor" and "could not be resolved" are different facts.
+            if (xeric_age_floor($template, $who, [$title, $prose]) !== null) { $floored++; continue; }
 
             $place = (string)($e['place'] ?? '');
             $place = ($place !== '' && isset($places[$place])) ? $place : null;
@@ -179,14 +192,15 @@ function xeric_seed_apply(PDO $db, array $template, array $seed, int $nowEpoch):
             // Same floor, same drop. A memory is the more direct of the two
             // leaks: it is written INTO somebody's head and rendered into their
             // system prompt from turn one.
-            if (xeric_age_floor($template, [$who], [$text]) !== null) { $skip++; continue; }
+            if (xeric_age_floor($template, [$who], [$text]) !== null) { $floored++; continue; }
 
             xeric_memory_add($db, $who, $text, 'seed', ['seeded' => true],
                 xeric_seed_epoch($nowEpoch, $m['days_ago'] ?? 7), $at);
             $mems++;
         }
 
-        $counts = ['events' => $events, 'memories' => $mems, 'skipped' => $skip, 'at' => $at, 'now' => $nowEpoch];
+        $counts = ['events' => $events, 'memories' => $mems, 'skipped' => $skip,
+                   'floored' => $floored, 'at' => $at, 'now' => $nowEpoch];
         xeric_world_state_set($db, XERIC_SEED_MARKER, json_encode($counts, JSON_UNESCAPED_SLASHES), $at);
         $db->commit();
     } catch (Throwable $e) {
@@ -194,7 +208,8 @@ function xeric_seed_apply(PDO $db, array $template, array $seed, int $nowEpoch):
         throw new RuntimeException('xeric: seed could not be applied, ' . $e->getMessage(), 0, $e);
     }
 
-    return ['events' => $events, 'memories' => $mems, 'skipped' => $skip, 'applied' => true];
+    return ['events' => $events, 'memories' => $mems, 'skipped' => $skip,
+            'floored' => $floored, 'applied' => true];
 }
 
 /**

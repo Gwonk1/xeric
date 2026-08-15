@@ -124,6 +124,12 @@ try {
 
     $endpoint['timeout'] = XERIC_WEB_ADDCHAR_CALL_TIMEOUT;
 
+    // THE SNAPSHOT COMES AFTER THE WAIT. This worker used to read the template
+    // before joining the queue and write the whole thing back after the wait
+    // plus a model call — silently discarding any hand edit made in between.
+    // The read above was only for the hello line and the ownership check.
+    $w = xeric_review_open($slug, $sid);
+
     // ---- 1. who ------------------------------------------------------------
     $t      = $w['template'];
     $chars  = array_values((array)($t['cast']['characters'] ?? []));
@@ -158,9 +164,23 @@ try {
     $deduped = xeric_forge_dedupe_cast(array_merge($chars, [$new]), $places, $say);
     $new     = $deduped[count($deduped) - 1];
 
-    $t['cast']['characters'] = array_values(array_merge($chars, [$new]));
+    // FOLD, DON'T OVERWRITE. The model call above took real time; add the
+    // newcomer to the template as it stands NOW, so a hand edit made while the
+    // model was writing survives. Adding a person is additive — the only
+    // collision possible is the handle, so re-key it if somebody claimed it
+    // while we were away.
+    $t = xeric_review_open($slug, $sid)['template'];
+    $onDisk = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) $onDisk[(string)$c['handle']] = true;
+    if (isset($onDisk[(string)$new['handle']])) {
+        $new['handle'] = xeric_forge_key((string)$new['display_name'], $onDisk);
+    }
+    $t['cast']['characters'] = array_values(array_merge(
+        array_values((array)($t['cast']['characters'] ?? [])), [$new]));
     $t = xeric_review_reseat_residents($t);
     xeric_review_save($slug, $t, null);
+    $chars = array_values(array_filter((array)$t['cast']['characters'],
+        fn($c) => (string)$c['handle'] !== (string)$new['handle']));
 
     $handle = (string)$new['handle'];
     $name   = (string)$new['display_name'];

@@ -169,11 +169,6 @@ if (!xeric_llm_up($endpoint, 6)) {
 $now = xeric_clock_now($db, $T);
 $t0  = microtime(true);
 
-// The slot is held and the model is up, so this turn is genuinely happening:
-// charged here rather than at the door, where a 404 or a dead endpoint would
-// have taken one of the visitor's thirty for nothing.
-xeric_limit_note('message', ['sid' => $sid]);
-
 try {
     // The overlays go in as well as the composed template ($T): a held beat opens
     // and spills in a CONVERSATION and an accusation closes in one, so a turn
@@ -204,6 +199,13 @@ try {
     // rule in the same bucket the model-health numbers are counted out of. So it
     // gets its own kind and a 4xx: the request was understood and will not be
     // carried out, which is a fact about the message and not about the machine.
+    //
+    // Either way — a rule refusing or the model failing — nothing was delivered,
+    // so the seat the door reserved goes back NOW rather than at the end of the
+    // request, and the visitor's hour is exactly as long as it was. A refused
+    // turn used to cost a message; a rule must not spend the budget it exists
+    // to protect.
+    xeric_limit_cancel('message', ['sid' => $sid]);
     $refused = xeric_play_say_refused($e->getMessage());
     $done([
         'error' => xeric_play_say_error($e->getMessage(), $speakerName),
@@ -212,6 +214,15 @@ try {
     return;
 }
 $took = microtime(true) - $t0;
+
+// CHARGED ON DELIVERY, NOT ON INTENT. The check at the door RESERVED the seat —
+// which is what keeps eight parallel POSTs honest about a cap, because a seat
+// reserved is a seat counted against everybody else while she is thinking —
+// and keeping it is decided here, once she has actually answered. Every path
+// that stopped the turn above (a 404, a dead endpoint, a full line, the age
+// floor refusing) leaves the seat unnoted, and limits.php hands an unnoted
+// seat back when the request ends.
+xeric_limit_note('message', ['sid' => $sid]);
 
 // The provenance canary answered instead of the world: nothing was written,
 // there is no conversation to mark, no thread for the story to speak into and
@@ -310,11 +321,15 @@ $done([
     // already in the thread, and the browser draws it without waiting for the
     // repaint. The image itself arrives whenever the reaper develops it.
     'photo'     => $photoMsg,
-    // What an overlay made of the turn, relayed rather than rendered. The scene
-    // question — who says the line a dead lead leaves behind — is answered above
-    // and written down; this is the same movement handed to the page so it can
-    // put it on the screen in the moment it happened, without re-reading the
-    // thread. Empty for every world carrying no story.
-    'story'     => (array)($out['story'] ?? []),
+    // What an overlay made of the turn, relayed rather than rendered — and
+    // FILTERED, never verbatim (xeric_web_story_relay). The scene question —
+    // who says the line a dead lead leaves behind — is answered above and
+    // written down; this is the same movement handed to the page so it can put
+    // it on the screen in the moment it happened, without re-reading the
+    // thread. The engine's `why` never rides along: for a right guess not yet
+    // shown it is the wink the page refuses to give, and devtools is a screen
+    // too. Empty for every world carrying no story. (The rows under `state`
+    // are xeric_play_stories()'s, already cut to the player-visible fields.)
+    'story'     => xeric_web_story_relay((array)($out['story'] ?? [])),
     'state'     => xeric_play_state($w, $sid),
 ]);

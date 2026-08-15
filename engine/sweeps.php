@@ -879,6 +879,19 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
                 (string)($written['overheard'] ?? '')], $now, $at);
         } catch (Throwable $e) { /* a kept secret is not worth losing an hour over */ }
 
+        // AND WHAT WAS TOLD, if the hour was a confidence and the model
+        // reported it straight. AFTER the ripple above on purpose: the sweep
+        // breaks what the town is already repeating, and a thing told in this
+        // hour must not be broken by the very hour that formed it.
+        // confide.php owns every rule worth having — armed worlds only,
+        // adults only, one row per thing — so a refusal there is a null and
+        // never an error, and the hour lands either way.
+        if (($written['confided'] ?? null) !== null) {
+            xeric_confide_form($t, $db, (string)$written['confided']['to'],
+                (string)$written['confided']['what'], $now,
+                (string)$written['confided']['from'], 0, $at);
+        }
+
         // AND THE NIGHT'S MONEY, if the hour was a game. Inside the event's
         // transaction on purpose: the pot and the hour that describes it land
         // together or neither does.
@@ -949,6 +962,37 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
 }
 
 /**
+ * The narrator's write-ahead leans, loaded for a catchup that was handed none.
+ *
+ * WHY THE LOWER LAYER REACHES UP, AND HOW LITTLE. The lean is consumed here —
+ * xeric_sweep_choose() has carried the `intents` arithmetic since the write-
+ * ahead shipped — but the rows are the narrator's (`intent:<n>` in
+ * world_state, narrator.php), and none of the three catchup callers ever
+ * loaded them, so the whole feature was dead in every execution path. Making
+ * each caller load them is three copies of one call and a fourth the day a
+ * new caller forgets; deriving the default HERE covers them all. The layering
+ * cost is kept to almost nothing: one world_state read answers for every
+ * world that has never met the narrator CLI (`intent_seq` is written by the
+ * first intent ever recorded and never removed), and narrator.php is required
+ * lazily, at call time, only past that gate — narrator.php requires THIS file
+ * at its top, so a top-level require here would be a cycle, and a runtime one
+ * is the same resolution seed.php already documents.
+ *
+ * xeric_narrator_leans() settles first, by its own contract, so a beat the
+ * record has already realized stops pulling the moment any catchup looks.
+ */
+function xeric_sweep_leans(array $t, PDO $db, int $epoch): array
+{
+    if (xeric_world_state_get($db, 'intent_seq') === null) return [];
+    require_once __DIR__ . '/narrator.php';
+    try {
+        return xeric_narrator_leans($t, $db, $epoch);
+    } catch (Throwable $e) {
+        return [];   // a lean is a thumb, and a thumb that cannot be read presses nothing
+    }
+}
+
+/**
  * Run the sweeps for a stretch of world time that has just gone by.
  *
  * This is what a time control calls after it advances the clock, and what a cron
@@ -987,6 +1031,16 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
     // An hour the clock has not entered at all is not late, it is next: left
     // alone, and left out of the watermark, so the following call still has it.
     if ($clock !== null && $clock <= $last * $windowSize) $last--;
+
+    // THE WRITE-AHEAD LEAN RIDES EVERY CATCHUP. An explicit opt is an
+    // instruction and passes through untouched — a test hands its own list, or
+    // an empty one to switch the lean off — and only the ABSENT key is
+    // derived, the same precedence `chance` gets. Loaded once per call, at the
+    // moment the world is standing on, so a faded intent stops pulling on the
+    // hour it fades rather than on the hour somebody re-reads the code.
+    if (!array_key_exists('intents', $opts)) {
+        $opts['intents'] = xeric_sweep_leans($t, $db, $clock ?? max($fromEpoch, $toEpoch));
+    }
 
     // The per-window guard makes one HOUR happen once; this makes one STRETCH
     // happen once. Without it, a catch-up that stopped at max_events would leave
@@ -1650,11 +1704,20 @@ function xeric_sweep_compose(array $t, PDO $db, array $endpoint, array $now, arr
 
     $ms = (int)round((microtime(true) - $t0) * 1000);
     return [
-        'title'    => $best['title'],
-        'prose'    => $best['prose'],
-        'memories' => $best['memories'],
-        'usage'    => ['ms' => $ms, 'attempts' => $attempt + 1],
-        'notes'    => array_merge($notes, $best['notes']),
+        'title'     => $best['title'],
+        'prose'     => $best['prose'],
+        'memories'  => $best['memories'],
+        // THE PARSED HALVES THE RUN READS, carried through instead of dropped.
+        // The parser validated `overheard` and `favor` and this return then
+        // silently lost both, so the run's `$written['favor'] ?? null` was
+        // always null: favour hours formed no debts and no hour ever stored
+        // its audible surface. `confided` rides the same seat it was wired
+        // into, so it cannot re-enact the same drop.
+        'overheard' => (string)($best['overheard'] ?? ''),
+        'favor'     => $best['favor'] ?? null,
+        'confided'  => $best['confided'] ?? null,
+        'usage'     => ['ms' => $ms, 'attempts' => $attempt + 1],
+        'notes'     => array_merge($notes, $best['notes']),
     ];
 }
 
@@ -1904,14 +1967,17 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
         }
     }
 
-    $keys = [];
-    foreach ($chosen['handles'] as $h) $keys[] = '"' . $h . '": "…"';
-
-    $lines[] = '';
-    $lines[] = 'WRITE ONE JSON OBJECT';
-    $lines[] = '{ "title": "…", "prose": "…", "overheard": "…", "memories": { ' . implode(', ', $keys) . ' } }';
-    $lines[] = '';
-    $lines[] = '- title: six words or fewer, lower case, no full stop. Name the thing, do not summarise it.';
+    // THE SPEC RIDES THE SYSTEM MESSAGE. Every field-by-field sentence below is
+    // the same bytes for every hour this world ever sweeps, and the whole block
+    // used to sit at the BOTTOM of the user turn — after the clock, the room,
+    // the cast and ALREADY HAPPENED, which is everything that changes per call,
+    // so the prefix cache died at "WHEN AND WHERE" and re-read fifty lines of
+    // instructions on every hour of every catchup. prompt.php's split, applied
+    // here: invariant first, volatile last. What stays in the user tail is the
+    // per-hour half — the exact memory keys, the favour and confidence asks,
+    // and the room's own rating ceiling, which one child in the room clamps.
+    $spec = [];
+    $spec[] = '- title: six words or fewer, lower case, no full stop. Name the thing, do not summarise it.';
     // THE STILL-LIFE FAILURE. This list used to end with "Hands, objects,
     // weather, money, doors" — written to keep interiority out, and a small
     // model read it as a subject list: it evicted the cast and wrote the room.
@@ -1921,27 +1987,37 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
     // different author — the seed pass hands its model a cast and asks what
     // HAPPENED, so people arrive as the subjects for free. Here they have to be
     // asked for outright, and the scenery told its place in the same breath.
-    $lines[] = '- prose: 2-4 sentences, past tense, third person, concrete.';
-    $lines[] = '  The people named above are IN it, by name, doing things. This is their hour, not the room\'s.';
-    $lines[] = '  No dialogue and no quotation marks, say what was DONE, not what was said.';
-    $lines[] = '  No "she felt", no "he realised". Their hands on objects, weather, money, doors.';
-    $lines[] = '  Weather and furniture may set the scene, never carry it: an hour with nobody in it is wrong.';
+    $spec[] = '- prose: 2-4 sentences, past tense, third person, concrete.';
+    $spec[] = '  The people named under WHO WAS THERE are IN it, by name, doing things. This is their hour, not the room\'s.';
+    $spec[] = '  No dialogue and no quotation marks, say what was DONE, not what was said.';
+    $spec[] = '  No "she felt", no "he realised". Their hands on objects, weather, money, doors.';
+    $spec[] = '  Weather and furniture may set the scene, never carry it: an hour with nobody in it is wrong.';
     // THE AUDIBLE SURFACE — the one exception to "no dialogue" above, fenced
     // into its own field so the prose stays observables. This is what an
     // arrival quotes when somebody walks in mid-hour: real talk, tied to the
     // heartbeat, one exchange, cheap because it rides this same call.
-    $lines[] = '- overheard: ONE audible exchange from the hour, as it would reach a doorway —';
-    $lines[] = '  \'Name: "…" / Name: "…"\', two short spoken lines at most, or "" for an hour';
-    $lines[] = '  with no talk worth catching. Speech only, things a stranger could HEAR.';
-    $lines[] = '- memories: one line for EACH handle above, keyed exactly as written in the brackets.';
-    $lines[] = '  Third person, past tense, naming them. One sentence, under 25 words.';
-    $lines[] = '  THE IMPORTANT PART: they do not remember the same thing. Give each of them a different';
-    $lines[] = '  half, a different detail, a different thing noticed, a different thing they were left';
-    $lines[] = '  holding. If one memory could be swapped for the other, both are wrong.';
-    $lines[] = '  AND THE HOUR LEAVES SOMETHING CHANGED: a thing said, decided, handed over, owed,';
-    $lines[] = '  broken, or begun — at least one memory carries the change. A crow landing on a';
-    $lines[] = '  feed bin is scenery, and scenery is nobody\'s memory of an hour.';
-    $lines[] = '- Invent no new people and no new places. Nothing is explained, resolved or concluded.';
+    $spec[] = '- overheard: ONE audible exchange from the hour, as it would reach a doorway —';
+    $spec[] = '  \'Name: "…" / Name: "…"\', two short spoken lines at most, or "" for an hour';
+    $spec[] = '  with no talk worth catching. Speech only, things a stranger could HEAR.';
+    $spec[] = '- memories: one line for EACH handle under WHO WAS THERE, keyed exactly as written in the brackets.';
+    $spec[] = '  Third person, past tense, naming them. One sentence, under 25 words.';
+    $spec[] = '  THE IMPORTANT PART: they do not remember the same thing. Give each of them a different';
+    $spec[] = '  half, a different detail, a different thing noticed, a different thing they were left';
+    $spec[] = '  holding. If one memory could be swapped for the other, both are wrong.';
+    $spec[] = '  AND THE HOUR LEAVES SOMETHING CHANGED: a thing said, decided, handed over, owed,';
+    $spec[] = '  broken, or begun — at least one memory carries the change. A crow landing on a';
+    $spec[] = '  feed bin is scenery, and scenery is nobody\'s memory of an hour.';
+    $spec[] = '- Invent no new people and no new places. Nothing is explained, resolved or concluded.';
+
+    // THE PER-HOUR TAIL: the ask itself, with this hour's exact keys, closest
+    // to where the model writes — the freshest truth last, the same way the
+    // chat path ends on RIGHT NOW.
+    $keys = [];
+    foreach ($chosen['handles'] as $h) $keys[] = '"' . $h . '": "…"';
+
+    $lines[] = '';
+    $lines[] = 'WRITE ONE JSON OBJECT';
+    $lines[] = '{ "title": "…", "prose": "…", "overheard": "…", "memories": { ' . implode(', ', $keys) . ' } }';
     // WHICH WAY THE FAVOUR WENT — asked for on favour hours only, because it is
     // the one fact about this kind that code genuinely cannot read out of the
     // prose. Everything else the sweep needs it takes from its own chosen row;
@@ -1954,11 +2030,23 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
         $lines[] = '  who did the good turn, who it was done FOR, and four words for what it was.';
         $lines[] = '  Handles exactly as written above. Leave it out if neither of them did the other one.';
     }
+    // WHO TOLD WHOM — the confidence hour's own report, the same seam as the
+    // favour's and for the same reason: the kind's shape says something held
+    // back came out, and which way it went is a direction code cannot read out
+    // of the prose. The model REPORTS; the arc machinery disposes
+    // (engine/confide.php — adults only, armed worlds only, one row per thing,
+    // all enforced there and not here).
+    if ((string)($chosen['kind']['key'] ?? '') === 'confidence') {
+        $lines[] = '- Also include "confided": {"from": "<handle>", "to": "<handle>", "what": "…"} —';
+        $lines[] = '  who told the thing, who is now carrying it, and a few words for what it was.';
+        $lines[] = '  Handles exactly as written above. Leave it out if nothing was actually told.';
+    }
     // Against a NAMED tier, never a bare integer. `>= 1` was written when rank
     // 1 meant `mature`; the broadcast ladder made rank 1 `pg`, and for one
     // evening every TV-PG and TV-14 world was told adult content is permitted
     // four lines under the style sentence saying the camera cuts away. A named
-    // tier survives the next ladder change too.
+    // tier survives the next ladder change too. In the TAIL, not the spec: one
+    // child in the room clamps $eff, so this line is per-hour, not per-world.
     $lines[] = xeric_rating_rank($eff) >= xeric_rating_rank('mature')
         ? '- Adult content is allowed where the hour honestly calls for it; it is never the point.'
         : '- Keep it clean: nothing sexual, nothing graphic.';
@@ -1968,7 +2056,8 @@ function xeric_sweep_prompt(array $t, PDO $db, array $now, array $chosen, array 
         ['role' => 'system', 'content' =>
             'You write down what happened in one small corner of a lived-in world while nobody was watching. '
             . 'You are not telling a story: you are recording an hour. Small, physical, unresolved. '
-            . 'Reply with ONE JSON object and nothing else.'],
+            . 'Reply with ONE JSON object and nothing else.'
+            . "\n" . implode("\n", $spec)],
         ['role' => 'user', 'content' => implode("\n", $lines)],
     ];
 }
@@ -2134,14 +2223,17 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
     // expectation machinery, which has a promise and a due date attached.
     // Anything else here is dropped in silence: a missing debt is an hour that
     // simply did not turn out to be a favour, which is a thing that happens.
+    // One resolver for every directed field: handle first, then the same index
+    // the seeder uses, so "Maren Voss" and maren_voss are one person here too.
+    $name = static function ($v) use ($want, $index): ?string {
+        $v = (string)$v;
+        if (isset($want[$v])) return $v;
+        $h = xeric_seed_resolve($v, $index);
+        return ($h !== '' && isset($want[$h])) ? $h : null;
+    };
+
     $favor = null;
     if ((string)($chosen['kind']['key'] ?? '') === 'favor' && is_array($raw['favor'] ?? null)) {
-        $name = static function ($v) use ($want, $index): ?string {
-            $v = (string)$v;
-            if (isset($want[$v])) return $v;
-            $h = xeric_seed_resolve($v, $index);   // "Maren Voss" and maren_voss are one person
-            return ($h !== '' && isset($want[$h])) ? $h : null;
-        };
         $from = $name($raw['favor']['from'] ?? '');
         $to   = $name($raw['favor']['to'] ?? '');
         if ($from !== null && $to !== null && $from !== $to
@@ -2153,8 +2245,27 @@ function xeric_sweep_parse(array $t, PDO $db, array $raw, array $chosen): array
         }
     }
 
+    // WHO TOLD WHOM, under the favour's rules: both in the room, two different
+    // people, dropped in silence otherwise — an hour that did not turn out to
+    // be a telling is a thing that happens. Unlike the favour there is no
+    // default `what`: a confidence with no content is not one, and the row
+    // machinery it feeds (engine/confide.php) matches on those very words.
+    $confided = null;
+    if ((string)($chosen['kind']['key'] ?? '') === 'confidence' && is_array($raw['confided'] ?? null)) {
+        $from = $name($raw['confided']['from'] ?? '');
+        $to   = $name($raw['confided']['to'] ?? '');
+        $what = trim((string)($raw['confided']['what'] ?? ''));
+        if ($from !== null && $to !== null && $from !== $to && $what !== ''
+            && isset($ordered[$from], $ordered[$to])) {
+            $confided = ['from' => $from, 'to' => $to, 'what' => $what];
+        } elseif ($from !== null || $to !== null) {
+            $notes[] = 'a confidence that did not name two people in the room';
+        }
+    }
+
     return ['title' => $title, 'prose' => $prose, 'overheard' => $overheard,
-            'memories' => $ordered, 'favor' => $favor, 'notes' => $notes];
+            'memories' => $ordered, 'favor' => $favor, 'confided' => $confided,
+            'notes' => $notes];
 }
 
 /**
@@ -2206,13 +2317,14 @@ function xeric_sweep_still(array $t, array $memories): ?array
  * The opening words of an hour's prose, for the sweep's own opener-tic ban —
  * enough of them to name an image ("Dust motes drifted through the shafts
  * of..."), few enough that the ban names an opening and not a paragraph.
+ * The cleanup is xeric_chat_opener_trim(): this used to carry its own copy of
+ * those two trim lines, so it carried its own copy of the byte-trim bug that
+ * turned a leading '…' into invalid UTF-8 and wedged every following sweep.
  */
 function xeric_sweep_opener(string $prose, int $words = 8): string
 {
     $w = preg_split('/\s+/u', trim($prose)) ?: [];
-    $opener = implode(' ', array_slice($w, 0, $words));
-    $opener = trim($opener, " \t\n\r\0\x0B\"'“”‘’*_([)]");
-    return rtrim($opener, ',.;:—–…!?-');
+    return xeric_chat_opener_trim(implode(' ', array_slice($w, 0, $words)));
 }
 
 /**

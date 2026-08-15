@@ -111,10 +111,20 @@ const XERIC_TRAVEL_MAX = 240;
 const XERIC_TRAVEL_SPAN = 141.4213562373095;
 
 /** How long a `skip:underway` stamp is believed, in real seconds. The tick
- *  worker's model hold is hard-capped at 420s (forge/web/queue.php) and its
- *  janitor allows a minute of grace past that, so anything older than this is a
- *  worker that died without its finally — and a dead worker must not leave a
- *  world nobody can walk across. */
+ *  worker stamps when it takes the clock and REFRESHES the stamp at every
+ *  between-window checkpoint, again the moment the window loop ends, and
+ *  between the proactive candidates that follow it (tick-worker.php) — never
+ *  mid-call. So a live skip's stamp is never older than the longest stretch
+ *  between two of those checkpoints: one window's worth of work (at most two
+ *  240-second model calls, the event and its one diverge retry), or, in the
+ *  post-loop tail, one 180-second proactive candidate plus the distil pass's
+ *  60 — both inside this margin. The tail matters: the worker is still inside
+ *  its rewind-mark-to-commit span there, and a walk waved in by an aged-out
+ *  stamp would land its writes in the skip's manifest. Anything older than
+ *  this IS a worker that died without its finally, and a dead worker must
+ *  not leave a world nobody can walk across. (The queue's own 420s hold cap,
+ *  forge/web/queue.php, is checked at the same checkpoints; it bounds how
+ *  long the whole skip may run, not how stale a live stamp can get.) */
 const XERIC_TRAVEL_SKIP_STALE = 600;
 
 // ---------------------------------------------------------------------------

@@ -102,8 +102,22 @@ $T = xeric_story_compose($T, $stories, $db);
 fwrite(STDOUT, $T['meta']['name'] . ', ' . xeric_world_day_name($now['dow']) . ' ' . $now['phase']
     . ', ' . $now['hhmm'] . '  ·  ' . basename($dbPath) . "\n");
 if ($fresh) {
-    fwrite(STDOUT, '  seeded: ' . $seedCounts['events'] . ' events, ' . $seedCounts['memories'] . ' memories'
-        . ($seedCounts['skipped'] ? ', ' . $seedCounts['skipped'] . ' unusable rows dropped' : '') . "\n");
+    fwrite(STDOUT, '  seeded: ' . $seedCounts['events'] . ' events, ' . $seedCounts['memories'] . " memories\n");
+    // TWO COUNTS, TWO SENTENCES. `skipped` is rows the forge's model wrote
+    // that resolve to nobody and nowhere; `floored` is rows the engine
+    // understood and refused under the age floor. One sum used to print as
+    // "unusable rows dropped", which is the wrong thing to say about a row
+    // that was refused on purpose.
+    if (!empty($seedCounts['skipped'])) {
+        fwrite(STDOUT, '  ' . $seedCounts['skipped'] . ' row'
+            . ((int)$seedCounts['skipped'] === 1 ? ' named' : 's named')
+            . " nobody or nowhere and could not be stored.\n");
+    }
+    if (!empty($seedCounts['floored'])) {
+        fwrite(STDOUT, '  ' . $seedCounts['floored'] . ' row'
+            . ((int)$seedCounts['floored'] === 1 ? ' was' : 's were')
+            . " refused by the age floor and never written.\n");
+    }
 }
 
 // -- the cast, for a caller who does not know the handles -------------------

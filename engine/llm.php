@@ -186,6 +186,31 @@ function xeric_llm_meter($sink = null): ?callable
     return $fn;
 }
 
+/**
+ * The last look before the wire, for a host that wants one.
+ *
+ * THE SAME PLUG SHAPE AS THE METER, for the same reason: the engine keeps zero
+ * web dependencies and holds no policy about who may be fetched — but a web
+ * layer that vetted an endpoint when it was SAVED has not vetted the fetch,
+ * because file_get_contents() resolves the name again right here. A name that
+ * answered from a public address on Tuesday can answer from 127.0.0.1 on
+ * Friday; that is what DNS rebinding is, and the notify path has re-checked on
+ * every send for exactly this reason (forge/web/boot.php). So a layer with an
+ * opinion registers fn(string $url): bool and is asked immediately before
+ * EVERY fetch this file makes. Refusing fails the call with a sentence, never
+ * a hang and never a socket.
+ *
+ * Pass a callable to set one, false to clear, nothing to read. With none
+ * registered — every CLI install — nothing changes.
+ */
+function xeric_llm_guard($fn = null): ?callable
+{
+    static $g = null;
+    if ($fn === false)        $g = null;
+    elseif (is_callable($fn)) $g = $fn;
+    return $g;
+}
+
 function xeric_llm_usage(array $res): array
 {
     $u = (array)($res['usage'] ?? []);
@@ -281,6 +306,17 @@ function xeric_llm_decode(string $raw, ?string &$err = null): ?array
  */
 function xeric_llm_post(string $url, array $payload, array $headers, int $timeout): array
 {
+    // Asked HERE, at the last instruction before the socket, because this is
+    // where the name gets resolved again (see xeric_llm_guard). The refusal is
+    // a thrown sentence like every other failure on this path — a caller that
+    // knows how to say "the endpoint could not be reached" already knows how
+    // to say this.
+    $guard = xeric_llm_guard();
+    if ($guard !== null && !$guard($url)) {
+        throw new RuntimeException('llm: ' . parse_url($url, PHP_URL_HOST)
+            . ' now answers from somewhere this install refuses to call, so nothing was sent');
+    }
+
     $body = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $hdr = array_merge(['Content-Type: application/json', 'Accept: application/json'], $headers);
     $ctx = stream_context_create(['http' => [
@@ -328,6 +364,13 @@ function xeric_llm_up(array $endpoint, int $timeout = 5): bool
     if ($base === '') return false;
     $kind = strtolower((string)($endpoint['kind'] ?? 'local'));
     $url = $kind === 'anthropic' ? "$base/v1/models" : "$base/v1/models";
+
+    // The same last look the real calls take (xeric_llm_guard). This function
+    // never throws, so a refused probe reads as a machine that is not
+    // answering — which, for every purpose a caller has, it is not.
+    $guard = xeric_llm_guard();
+    if ($guard !== null && !$guard($url)) return false;
+
     $headers = ['Accept: application/json'];
     $key = xeric_llm_header_safe((string)($endpoint['key'] ?? ''));
     if ($key !== '') {

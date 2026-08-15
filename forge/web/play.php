@@ -116,8 +116,13 @@ if ($action !== '') {
         }
         // The session's ceiling holds here exactly as it does in the forge: an
         // unaffirmed session can CONFIRM the weakest rating, not raise one.
+        // THE BASE, NOT THE COMPOSED. $w['template'] carries every live story
+        // overlay composed in (and the session's rating clamp), and this save
+        // writes the whole file — saving it baked the overlay into the base
+        // template permanently. Every cog save below re-reads the file and
+        // folds only its own field in (xeric_play_base_template).
         $got = xeric_session_rating($want, $sid);
-        $t2  = $w['template'];
+        $t2  = xeric_play_base_template($w);
         $t2['meta']['rating'] = $got;
         $t2['forge']['rating_confirmed'] = true;
         xeric_review_save((string)$w['slug'], $t2);
@@ -142,7 +147,8 @@ if ($action !== '') {
         if (!in_array($want, ['eventful', 'steady', 'calm'], true)) {
             xeric_web_json(['error' => '"' . mb_substr($want, 0, 20) . '" is not a pace this engine knows'], 400);
         }
-        $t2 = $w['template'];
+        // The base off disk, never the composed — see the rating save above.
+        $t2 = xeric_play_base_template($w);
         $derived = xeric_forge_pace($want, (string)($t2['forge']['answers']['around'] ?? ''));
         $t2['events']['pace']               = $derived['pace'];
         $t2['events']['sweep_chance']       = $derived['chance'];
@@ -166,7 +172,10 @@ if ($action !== '') {
         if (xeric_world_character($w['template'], $h) === null) {
             xeric_web_json(['error' => 'nobody by that name'], 400);
         }
-        $t2 = $w['template'];
+        // The base off disk, never the composed — see the rating save above.
+        // This was the save that found the bug: a face reroll over a live
+        // story wrote the overlay's held pieces into `secrets` for good.
+        $t2 = xeric_play_base_template($w);
         foreach ($t2['cast']['characters'] as &$c2) {
             if ((string)($c2['handle'] ?? '') === $h) {
                 $c2['photos']['face_seed'] = random_int(1, 2147483646);
@@ -438,7 +447,8 @@ if ($action !== '') {
         if (!isset(xeric_story_shapes()[$want])) {
             xeric_web_json(['error' => '"' . mb_substr($want, 0, 24) . '" is not a shape this engine knows'], 400);
         }
-        $t2 = $w['template'];
+        // The base off disk, never the composed — see the rating save above.
+        $t2 = xeric_play_base_template($w);
         $t2['events']['story_shape'] = $want;
         xeric_review_save((string)$w['slug'], $t2);
         xeric_web_json(['ok' => true, 'shape' => $want,
@@ -619,6 +629,11 @@ if ($action !== '') {
         // `a=hint` — no ownership check, no cookie needed, any world on the
         // shelf — walked straight past the demo's thirty-messages-an-hour cap
         // and held the GPU for as long as somebody cared to keep asking.
+        // CHARGED ON DELIVERY (say.php's shape): the check RESERVES the seat,
+        // and only a hint that actually came back keeps it — the note below.
+        // A dead model or an empty answer cancels, and limits.php hands an
+        // unnoted seat back when the request ends anyway; without the note,
+        // that give-back refunded EVERY hint while the model spent the call.
         xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 
         try { $endpoint = xeric_play_endpoint($sid); }
@@ -633,10 +648,15 @@ if ($action !== '') {
                                     (string)($_GET['ask'] ?? ''), $endpoint);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
+            xeric_limit_cancel('message', ['sid' => $sid]);
             xeric_web_json(['error' => 'nothing came back', 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
-        if (trim($line) === '') xeric_web_json(['error' => 'nothing came back'], 502);
+        if (trim($line) === '') {
+            xeric_limit_cancel('message', ['sid' => $sid]);
+            xeric_web_json(['error' => 'nothing came back'], 502);
+        }
+        xeric_limit_note('message', ['sid' => $sid]);
         xeric_web_json(['ok' => true, 'text' => $line]);
     }
 
@@ -659,6 +679,7 @@ if ($action !== '') {
 
         // Same meter as the hint above, and for the same reason: a model call
         // somebody can ask for in a loop is a model call that needs a budget.
+        // And the same charge-on-delivery: kept only once a line came back.
         xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 
         try { $endpoint = xeric_play_endpoint($sid); }
@@ -672,11 +693,16 @@ if ($action !== '') {
             $line = xeric_play_suggest($w['template'], $w['db'], $handle, $endpoint);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
+            xeric_limit_cancel('message', ['sid' => $sid]);
             xeric_web_json(['error' => $e->getMessage(), 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
 
-        if (trim($line) === '') xeric_web_json(['error' => 'nothing came back'], 502);
+        if (trim($line) === '') {
+            xeric_limit_cancel('message', ['sid' => $sid]);
+            xeric_web_json(['error' => 'nothing came back'], 502);
+        }
+        xeric_limit_note('message', ['sid' => $sid]);
         xeric_web_json(['ok' => true, 'text' => $line]);
     }
 
@@ -714,6 +740,11 @@ if ($action !== '') {
         if ($youAt !== $place) {
             xeric_web_json(['error' => 'You are not in there. Walk over first.', 'kind' => 'away'], 409);
         }
+        // The seat is RESERVED here and kept only once the floor has actually
+        // answered (the note after xeric_floor_answer below) — say.php's
+        // charge-on-delivery shape. Without the note, limits.php's end-of-
+        // request give-back refunded every roomsay while the floor spent up
+        // to three model calls on it.
         xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 
         $now2 = xeric_clock_now($db2, $T2);
@@ -735,21 +766,47 @@ if ($action !== '') {
         try { $endpoint = xeric_play_endpoint($sid); }
         catch (Throwable $e) { xeric_web_json(['error' => $e->getMessage(), 'kind' => 'detached'], 409); }
 
+        // WHOSE MODEL SPEAKS FOR WHOM — the same per-speaker resolver say.php
+        // wears for a turn (xeric_voice_endpoint, say.php's voice arc), built
+        // once per beat and memoized: the floor may reach several heads, and
+        // each answers off the machine their voice is pinned to, prefix warm.
+        // Resolved per SPEAKER, never per request; a pin must not silence
+        // anybody, so any failure falls back to the world's engine.
+        $voiceCache  = [];
+        $endpointFor = function (string $h) use ($T2, $db2, $sid, $endpoint, &$voiceCache): array {
+            if (!isset($voiceCache[$h])) {
+                try {
+                    $voiceCache[$h] = xeric_voice_machine($db2, $h) === ''
+                        ? $endpoint
+                        : xeric_voice_endpoint($T2, $db2, $h, $sid);
+                } catch (Throwable $e) {
+                    $voiceCache[$h] = $endpoint;   // a pin must not silence anybody
+                }
+            }
+            return $voiceCache[$h];
+        };
+
         $hold = xeric_queue_take('say', 6.0, 'room:' . $slug);
         if (($hold['ok'] ?? false) !== true) {
             // The line is already in. Saying "busy" here is honest about the
             // answer, not about the sentence — which is why it is not a 500.
+            // No model ran, so the reserved seat rides out on the give-back.
             xeric_web_json(['ok' => true, 'lines' => [],
                             'note' => 'the model is busy; they will pick it up on the beat']);
         }
         try {
             $r = xeric_floor_answer($T2, $db2, $place, $text, $endpoint,
-                ['now' => $now2, 'player' => $player]);
+                ['now' => $now2, 'player' => $player, 'endpoint_for' => $endpointFor]);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
+            // Nothing was delivered; the seat goes back now, say.php's rule.
+            xeric_limit_cancel('message', ['sid' => $sid]);
             xeric_web_json(['error' => $e->getMessage(), 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
+        // CHARGED ON DELIVERY: the floor answered — even a room that chose
+        // silence spent its asks — so the seat is kept.
+        xeric_limit_note('message', ['sid' => $sid]);
         xeric_web_json(['ok' => true,
             'lines'   => array_map(
                 fn($l) => ['name' => (string)$l['name'], 'text' => (string)$l['text']],
@@ -2456,6 +2513,24 @@ echo '<style>' . xeric_play_css() . '
       .then(function (res) {
         if (!res.ok || !res.j.ok) throw new Error(res.j.error || 'you could not get there');
         arrived(res.j.went, res.j);
+        // THE HOURS THE WALK BURNED, streamed like a skip's. where.php starts
+        // the worker only when the walk crossed a sweep window (its `sweep`
+        // key carries the job); the trip itself has already landed, so this
+        // only attaches the same feed a skip uses. Most walks carry no job at
+        // all, and the arrival line above is the whole story.
+        if (res.j.sweep && res.j.sweep.job) {
+          $('#feedwrap').hidden = false;
+          follow(res.j.sweep.job);
+        } else if (res.j.sweep && res.j.sweep.note) {
+          // The walk landed but its hours will not be lived right now — the
+          // skip budget declined the worker, and the server said so in a
+          // sentence. Shown where the skips talk, because it is about hours.
+          $('#feedwrap').hidden = false;
+          var sn = document.createElement('div');
+          sn.className = 'ended';
+          sn.textContent = res.j.sweep.note;
+          $('#feed').appendChild(sn);
+        }
         // where.php answers with the map, not with rendered page chrome — so the
         // repaint comes from the state endpoint, the one renderer, exactly as it
         // does after a turn. Nothing here knows how a cast row is drawn.
@@ -2599,13 +2674,19 @@ echo '<style>' . xeric_play_css() . '
   // ROOM answers — whoever the floor lands on, which may be nobody in
   // particular and is never "the person you are talking to", because there
   // isn't one.
-  function sendRoom(retryText) {
-    var box = $('#composer'), text = retryText || box.value.trim();
+  // FRESH SENDS ONLY. This used to take a retryText, and the one caller that
+  // passed it was send()'s paced-retry path — which meant a line typed into a
+  // 1:1 thread could fire here after the visitor opened a room, and land,
+  // privately meant, in public scrollback. A retry now delivers to the thread
+  // it was typed into or nowhere (send()'s guard); a room line is always what
+  // is in the composer right now.
+  function sendRoom() {
+    var box = $('#composer'), text = box.value.trim();
     if (!text || busy || !openPlace) return;
     busy = true;
     $('#send').disabled = true;
     $('#sayerr').hidden = true;
-    if (!retryText) { addMsg('me', text, ''); box.value = ''; box.style.height = ''; }
+    addMsg('me', text, ''); box.value = ''; box.style.height = '';
     $('#thinkwhat').textContent = '';
     $('#thinking').hidden = false;
 
@@ -2969,9 +3050,24 @@ echo '<style>' . xeric_play_css() . '
     el.hidden = false;
   }
 
-  function send(retryText, tries) {
+  function send(retryText, tries, retryTo) {
     var box = $('#composer'), text = retryText || box.value.trim();
-    if (openPlace) { sendRoom(retryText); return; }
+    // A RETRY IS NOT A FRESH SEND. A paced or queued line re-sends itself on a
+    // timer, and the timer can land after the visitor has opened a different
+    // channel. The line belongs to the thread it was typed into — captured in
+    // retryTo when the timer was armed — and it is delivered THERE or nowhere:
+    // a privately-typed sentence following the visitor into whatever ROOM
+    // happens to be open when the clock runs out is a private line in public
+    // scrollback, in front of the floor. So a retry whose thread is no longer
+    // the open one does not send, does not re-route, and says out loud that
+    // the line went undelivered — the words are in the sentence, so nothing
+    // typed is lost. Only a fresh send may pick the room path.
+    if (!retryText && openPlace) { sendRoom(); return; }
+    if (retryText && (openPlace || openHandle !== retryTo)) {
+      sayfail('A line you typed was still waiting its turn when you left that thread, so it was '
+        + 'not sent: “' + text + '”', false);
+      return;
+    }
     if (!text || (busy && !retryText) || !openHandle) {
       // A queued turn re-sends itself on a timer. If the visitor closed the
       // thread in the meantime this is where that timer lands, and returning
@@ -2983,6 +3079,10 @@ echo '<style>' . xeric_play_css() . '
       return;
     }
     tries = tries || 0;
+    // The channel this line belongs to, pinned NOW: every retry below carries
+    // it, and the request itself speaks to it rather than to whatever
+    // openHandle says by the time a timer fires.
+    var sendTo = retryTo || openHandle;
     busy = true;
     busySince = Date.now();
     $('#send').disabled = true;
@@ -2992,7 +3092,7 @@ echo '<style>' . xeric_play_css() . '
     $('#thinking').hidden = false;
 
     fetch('say.php', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ world: W, handle: openHandle, text: text }) })
+      body: JSON.stringify({ world: W, handle: sendTo, text: text }) })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
       .then(function (res) {
         // THE WORLD'S PACE IS NOT AN ERROR, so it does not get an error's
@@ -3013,7 +3113,7 @@ echo '<style>' . xeric_play_css() . '
             el.textContent = why + ' (' + left + 's)';
             if (--left < 0) {
               el.hidden = true;
-              send(text, tries);                    // the wait is over; say it
+              send(text, tries, sendTo);            // the wait is over; say it — to the SAME thread
               return;
             }
             setTimeout(tick, 1000);
@@ -3021,9 +3121,10 @@ echo '<style>' . xeric_play_css() . '
           return;
         }
         if (!res.ok && res.d && res.d.kind === 'queued' && tries < QUEUE_TRIES) {
-          // Not an error: a queue. Say where they are and come back by itself.
+          // Not an error: a queue. Say where they are and come back by itself
+          // — carrying the thread it belongs to, never re-routed.
           $('#thinkwhat').textContent = ', ' + (res.d.phrase || 'waiting for the model');
-          setTimeout(function () { send(text, tries + 1); },
+          setTimeout(function () { send(text, tries + 1, sendTo); },
                      Math.max(2, Math.min(60, res.d.retry_after || 10)) * 1000);
           return;
         }
@@ -4155,6 +4256,21 @@ echo '<style>' . xeric_play_css() . '
       var d = JSON.parse(m.data);
       (d.why || []).forEach(function (n) { tlog('· ' + n); });
       tlog('nobody texted about it.');
+    });
+
+    // STORY MOVEMENT, AS IT LANDS. The frame is filtered server-side to what a
+    // player may already see (tick-worker.php — the strip's own title and
+    // stage, never why or truth), and it is drawn in the thread's own
+    // story-line dress: the 'moved' lane, centred, unbubbled, never in
+    // anybody's voice — the same markup addMsg builds for it, in the feed the
+    // skip is watched on.
+    es.addEventListener('story', function (m) {
+      drops = 0;
+      var d = JSON.parse(m.data);
+      var el = document.createElement('div');
+      el.className = 'moved';
+      el.innerHTML = '<span class="b">' + esc(d.text || '') + '</span>';
+      $('#feed').appendChild(el);
     });
 
     es.addEventListener('done', function (m) {

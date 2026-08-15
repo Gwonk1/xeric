@@ -523,6 +523,56 @@ ok('meter: and so does asking for a line to say',
 ok('meter: and a render, which spawns a process, is budgeted too',
     str_contains($phSrc, "xeric_limit_check('reroll'"));
 
+// CHARGED ON DELIVERY, ALL THREE. The check at each door RESERVES the seat;
+// keeping it is say.php's shape — the note after the model actually answered,
+// the cancel on the paths where nothing was delivered. Without the note, the
+// end-of-request give-back refunded every hint, suggestion and room line
+// while the floor spent up to three model calls on the last of them.
+ok('meter: hint, suggest and roomsay all keep their seat only on delivery',
+    substr_count($playSrc, "xeric_limit_note('message', ['sid' => \$sid]);") === 3
+    && substr_count($playSrc, "xeric_limit_cancel('message', ['sid' => \$sid]);") >= 3);
+$roomsayAt = (int)strpos($playSrc, 'xeric_floor_answer(');
+ok('meter: roomsay notes AFTER the floor answered, never before',
+    $roomsayAt > 0
+    && (int)strpos($playSrc, "xeric_limit_note('message', ['sid' => \$sid]);", $roomsayAt) > $roomsayAt);
+
+// And the shape itself, walked in roomsay's order against real counter files:
+// a delivered beat costs one; a floor that threw costs nothing.
+reset_limits();
+$RS  = sid();
+$rsIp = 'test-' . bin2hex(random_bytes(4));
+$rsT0 = time();
+$rsN  = xeric_limit_n('messages_per_hour');
+xeric_limit_check('message', ['sid' => $RS, 'ip' => $rsIp, 'now' => $rsT0]);   // the door
+xeric_limit_note('message', ['sid' => $RS, 'ip' => $rsIp, 'now' => $rsT0]);    // the floor answered
+xeric_limit_give_back();
+ok('meter: a delivered roomsay is one off the hour, give-back or no',
+    xeric_limit_left($RS, $rsT0)['messages'] === $rsN - 1);
+xeric_limit_check('message', ['sid' => $RS, 'ip' => $rsIp, 'now' => $rsT0]);   // the door again
+xeric_limit_cancel('message', ['sid' => $RS, 'ip' => $rsIp]);                  // the floor threw
+xeric_limit_give_back();
+ok('meter: a refused one spends nothing',
+    xeric_limit_left($RS, $rsT0)['messages'] === $rsN - 1);
+
+// A RETRY IS NOT A FRESH SEND. The paced and queued re-sends used to run back
+// through send()'s room branch, so a line typed into a 1:1 thread landed in
+// whatever ROOM was open when the timer fired — privately-typed text in
+// public scrollback. The retry now pins its thread when the timer is armed
+// and delivers there or nowhere; only a fresh send may pick the room path.
+ok('retry: a paced or queued line is pinned to the thread it was typed into',
+    str_contains($playSrc, 'openHandle !== retryTo')
+    && str_contains($playSrc, "if (!retryText && openPlace) { sendRoom(); return; }")
+    && !str_contains($playSrc, 'sendRoom(retryText)'));
+ok('retry: the timers carry the pin with them',
+    str_contains($playSrc, 'send(text, tries, sendTo)')
+    && str_contains($playSrc, 'send(text, tries + 1, sendTo)'));
+
+// The floor speaks per SPEAKER, off their pinned machine: roomsay builds the
+// same resolver say.php's turn uses and hands it through the seam.
+ok('voices: roomsay routes each landed reply through the pinned-voice resolver',
+    preg_match("/roomsay.*?xeric_voice_endpoint\(\\\$T2, \\\$db2, \\\$h, \\\$sid\)/s", $playSrc) === 1
+    && str_contains($playSrc, "'endpoint_for' => \$endpointFor]"));
+
 require_once dirname(__DIR__, 3) . '/engine/llm.php';
 ok('header: a key cannot carry a newline into the header block',
     xeric_llm_header_safe("sk-legit\r\nX-Injected: yes") === 'sk-legitX-Injected: yes'
@@ -532,6 +582,72 @@ ok('header: and an ordinary key is untouched but for its whitespace',
 $llmSrc = (string)file_get_contents(dirname(__DIR__, 3) . '/engine/llm.php');
 ok('header: both places that read a key run it through that',
     substr_count($llmSrc, "xeric_llm_header_safe((string)(\$endpoint['key']") === 2);
+
+// THE SAME REBINDING DISCIPLINE FOR THE MODEL ITSELF. The endpoint fence ran
+// once, at xeric_web_endpoint(), and llm.php's fetch re-resolved the name on
+// its own — the exact hole the notify path closed with its last-read re-check.
+// boot.php now registers a guard the engine consults immediately before every
+// fetch; with none registered (a CLI install) the engine behaves as it always
+// did, which is why the hook lives in llm.php and the opinion lives here.
+$rebindGuard = xeric_llm_guard();
+ok('rebind: boot registers a guard on the model fetch', is_callable($rebindGuard));
+ok('rebind: the local machine still speaks — a literal address cannot re-resolve',
+    $rebindGuard('http://127.0.0.1:18080/v1/chat/completions') === true
+    && $rebindGuard('http://[::1]:8080/v1/models') === true
+    && $rebindGuard('http://localhost:1234/v1/chat/completions') === true
+    && $rebindGuard('http://gpu-box.local:8080/v1/chat/completions') === true);
+ok('rebind: a name that resolves nowhere is refused at the wire, fail closed',
+    $rebindGuard('https://model.host.invalid/v1/chat/completions') === false);
+
+// A refusing guard blocks the FETCH: consulted before the socket, so the
+// failure is the guard's own sentence and never a transport error — and the
+// liveness probe asks the same question before it probes.
+$guardSaw = '';
+xeric_llm_guard(function (string $u) use (&$guardSaw): bool { $guardSaw = $u; return false; });
+$guardErr = '';
+try {
+    xeric_llm_chat(['kind' => 'local', 'base' => 'http://127.0.0.1:1'],
+        [['role' => 'user', 'content' => 'hello']], ['timeout' => 1]);
+} catch (Throwable $e) { $guardErr = $e->getMessage(); }
+ok('rebind: a refusing guard blocks the completion before anything is sent',
+    $guardSaw === 'http://127.0.0.1:1/v1/chat/completions'
+    && str_contains($guardErr, 'refuses to call') && !str_contains($guardErr, 'cannot reach'),
+    $guardErr);
+$guardSaw = '';
+ok('rebind: and the liveness probe obeys the same guard, quietly',
+    xeric_llm_up(['kind' => 'local', 'base' => 'http://127.0.0.1:1'], 1) === false
+    && $guardSaw === 'http://127.0.0.1:1/v1/models');
+xeric_llm_guard($rebindGuard);          // put the real one back for everything below
+
+// THE INSTALL'S OWN BASE IS TRUSTED BY PROVENANCE. The fence exists to stop a
+// VISITOR-typed name steering the server into its own back yard; a base the
+// OPERATOR wrote into XERIC_LOCAL_BASE or config local_base may be dotted
+// internal DNS on purpose (model.home.example.com → 192.168.x), and the
+// re-check was refusing the install's very own model on every call — llm_up
+// said false, silently, and every world just stopped answering. A subprocess,
+// because xeric_web_config() memoizes: the env has to be set before boot.
+$ownProbe = $tmp . '/own-base-probe.php';
+file_put_contents($ownProbe, "<?php\n"
+    . 'require ' . var_export(dirname(__DIR__) . '/boot.php', true) . ";\n"
+    . '$g = xeric_llm_guard();' . "\n"
+    . '$sid = bin2hex(random_bytes(16)); xeric_session_use($sid);' . "\n"
+    . 'xeric_web_session_edit(function (array &$s): void {'
+    . ' $s["local_base"] = "http://box.lan.invalid:8080"; });' . "\n"
+    . 'echo json_encode(['
+    . "'own' => \$g('http://model.home.invalid:8080/v1/chat/completions'),"
+    . "'sess' => \$g('http://box.lan.invalid:8080/v1/chat/completions'),"
+    . "'other' => \$g('https://model.host.invalid/v1/chat/completions'),"
+    . "'ip' => \$g('http://127.0.0.1:8080/v1/models')]);\n");
+$ownOut = (string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($tmp . '/own-base-data')
+    . ' XERIC_LOCAL_BASE=http://model.home.invalid:8080 '
+    . escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($ownProbe) . ' 2>&1');
+$ownD = json_decode(trim($ownOut), true);
+ok('rebind: the operator\'s own configured base passes the wire guard, dotted DNS and all',
+    is_array($ownD) && $ownD['own'] === true, $ownOut);
+ok('rebind: a local-editable install\'s stored base is the owner\'s word too',
+    is_array($ownD) && $ownD['sess'] === true, $ownOut);
+ok('rebind: while any other dotted name keeps the strict fail-closed re-check',
+    is_array($ownD) && $ownD['other'] === false && $ownD['ip'] === true, $ownOut);
 
 // ---------------------------------------------------------------------------
 // THROUGH THE DOOR IS NOT HOLDING THE KEYS.
@@ -576,13 +692,14 @@ foreach ([
 // where.php LEFT this list on purpose the day every seat grew its own body
 // (travel.php's suffix discipline): there is no "walking the owner's
 // character" any more — a guest walks their own feet. What must still be
-// true is the rule that replaced the door: a guest's trip burns the world's
-// shared minutes, so it rides the skip meter instead of walking free.
-ok('guest: where.php walks a guest on their own feet, on the skip meter',
+// true is the rule that replaced the door: the walks that spend model calls
+// ride the skip meter — inside xeric_play_trip_job now, for every seat
+// alike, because movement itself is never the thing being rationed.
+ok('guest: where.php walks a guest on their own feet, and the spawning walk rides the skip meter',
     !str_contains((string)file_get_contents(dirname(__DIR__) . '/where.php'),
         'xeric_play_owner_only(')
-    && str_contains((string)file_get_contents(dirname(__DIR__) . '/where.php'),
-        "xeric_limit_check('skip'"));
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/play-lib.php'),
+        "xeric_limit_check('skip', ['sid' => \$sid])"));
 ok('guest: power.php asks TWICE, because the clock and the switch are two doors',
     substr_count((string)file_get_contents(dirname(__DIR__) . '/power.php'),
         'xeric_play_owner_only(') === 2);
@@ -612,6 +729,38 @@ ok('and it recovers when the window rolls', $r['ok']);
 // The counters are per session: another visitor is not affected by this one.
 $r = xeric_limit_check('message', ['sid' => sid(), 'ip' => $ip, 'now' => $T0 + $n]);
 ok('somebody else\'s hour is their own', $r['ok']);
+
+// -- a refused turn is not a spent turn --------------------------------------
+// say.php reserves the seat at the door (xeric_limit_check) and only KEEPS it
+// once the model has actually answered (xeric_limit_note, after the turn). A
+// turn the engine refuses — the age floor, a dead endpoint — cancels the seat
+// on the spot, and anything that dies between the door and the note is caught
+// by the automatic give-back when the request ends. Both halves are walked
+// here, against the real counter files, with the say.php ordering pinned at
+// the source so the seat cannot quietly move back in front of the model call.
+$RF = sid();
+$r = xeric_limit_check('message', ['sid' => $RF, 'ip' => $ip, 'now' => $T0]);
+ok('the door reserves a seat, and the reservation counts at once',
+    $r['ok'] && xeric_limit_left($RF, $T0)['messages'] === $n - 1);
+xeric_limit_cancel('message', ['sid' => $RF, 'ip' => $ip]);        // what the refusal path calls
+ok('a refused turn leaves the remaining budget exactly where it was',
+    xeric_limit_left($RF, $T0)['messages'] === $n);
+
+$r = xeric_limit_check('message', ['sid' => $RF, 'ip' => $ip, 'now' => $T0]);
+xeric_limit_give_back();                                           // what the end of the request does
+ok('and a path that dies without a word gives the seat back on its own',
+    $r['ok'] && xeric_limit_left($RF, $T0)['messages'] === $n);
+
+xeric_limit_check('message', ['sid' => $RF, 'ip' => $ip, 'now' => $T0]);
+xeric_limit_note('message', ['sid' => $RF, 'ip' => $ip, 'now' => $T0]);
+xeric_limit_give_back();
+ok('while a delivered turn still costs one, give-back or no',
+    xeric_limit_left($RF, $T0)['messages'] === $n - 1);
+
+$saySrc = (string)file_get_contents(dirname(__DIR__) . '/say.php');
+ok('say.php keeps the seat only after the model answered',
+    strpos($saySrc, "xeric_limit_note('message'") > strrpos($saySrc, 'xeric_chat_turn(')
+    && strpos($saySrc, "xeric_limit_cancel('message'") !== false);
 
 $skips = xeric_limit_n('skips_per_hour');
 for ($i = 0; $i < $skips; $i++) xeric_limit_take('skip', ['sid' => $S, 'ip' => $ip, 'now' => $T0 + $i]);
@@ -1268,10 +1417,18 @@ $win = xeric_web_spawn_cmd('C:\\php\\php.exe', 'C:\\x\\worker.php', 'job7', 'C:\
 ok('windows: no shell — the binary is run directly, as an argv array',
     is_array($win['cmd']) && $win['cmd'][0] === 'C:\\php\\php.exe'
     && !empty($win['opts']['bypass_shell']));
-ok('windows: its own console, so it does not die with the one the server holds',
-    !empty($win['opts']['create_new_console']) && !empty($win['opts']['create_process_group']));
+ok('windows: NO CONSOLE WINDOW — create_new_console popped one per build and is gone,'
+    . ' the process group is what keeps the server\'s Ctrl+C out',
+    empty($win['opts']['create_new_console']) && !empty($win['opts']['create_process_group']));
+ok('windows: the worker\'s stdout and stderr land in the log, appended — a fatal is never silent',
+    ($win['spec'][0] ?? null) === ['pipe', 'r']
+    && ($win['spec'][1] ?? null) === ['file', 'C:\\d\\w.log', 'a']
+    && ($win['spec'][2] ?? null) === ['file', 'C:\\d\\w.log', 'a']);
 ok('windows: AND WE DO NOT WAIT ON IT — proc_close() there blocks for the whole build',
     $win['wait'] === false);
+ok('posix: while the posix spec stays stdin-only, its fds 1 and 2 belong to the shell redirect',
+    $posix['spec'] === [0 => ['pipe', 'r']]
+    && str_contains((string)$posix['cmd'][2], ">> '/d/worker.log' 2>&1"));
 
 // ---------------------------------------------------------------------------
 // A NOTE NEVER CARRIES THE ENDPOINT'S WORDS. llm.php puts up to 300 bytes of a
@@ -2536,8 +2693,12 @@ foreach (['floor-town', 'floor-inspect'] as $fslug) {
 // rather than clamped to sfw — the floor must hold at the world's OWN rating,
 // which is the only place it has anything to do.
 $fw = xeric_play_open('floor-town', null, true);
+// `floored`, not `skipped`: the seeder counts the age floor's refusals apart
+// from malformed rows now (engine/seed.php), and these two poisoned rows are
+// exactly the floor doing its job on well-formed input.
 ok('a seeded past drops exactly the rows that could not be written',
-    (int)$fw['seeded']['skipped'] === 2, json_encode($fw['seeded']));
+    (int)$fw['seeded']['floored'] === 2 && (int)$fw['seeded']['skipped'] === 0,
+    json_encode($fw['seeded']));
 ok('and writes every other row it was given',
     (int)$fw['seeded']['events'] === 3 && (int)$fw['seeded']['memories'] === 2, json_encode($fw['seeded']));
 
@@ -2620,11 +2781,50 @@ ok('he is out of the desire economy afterwards',
 ok('and in EVERYTHING ELSE he is exactly who he was — this is the over-restriction guard',
     ((array)$gr['week']) !== [] && trim((string)$gr['voice']) !== '' && trim((string)$gr['one_line']) !== '');
 
+// -- the gates come back: aged down, aged up, byte-identical ------------------
+// xeric_forge_rating_lock() used to lower a rating_min in place and drop the
+// pools above it with nothing kept, so the age edit above was a one-way door:
+// corrected back to an adult, harlan had lost his mature gate forever. The
+// lock now preserves what it lowers (rating_min_was, and the dropped pools as
+// a packs_was string) and the age floor restores it — exact-or-nothing — the
+// pass after the age crosses back. A world of its own, so the floor-town
+// assertions above keep meaning what they say.
+$RT = $FT;
+$RT['cast']['characters'][$grown]['packs']['mature'] = ['banter' => ['Not in front of the kid.']];
+$rtDir = xeric_web_worlds_dir() . '/floor-roundtrip';
+@mkdir($rtDir, 0775, true);
+file_put_contents($rtDir . '/world-template.json', json_encode($RT));
+file_put_contents($rtDir . '/seed.json', json_encode(['events' => [], 'memories' => []]));
+xeric_session_claim('floor-roundtrip', $F);
+
+$rw = xeric_review_open('floor-roundtrip', $F);
+$origDrives = json_encode($rw['template']['cast']['characters'][$grown]['drives']);
+$origPacks  = json_encode($rw['template']['cast']['characters'][$grown]['packs']);
+$e = xeric_review_apply_edit($rw, "cast.characters.$grown.age", '17');
+ok('gates: an adult with a mature gate can be aged to seventeen', ($e['ok'] ?? false) === true, json_encode($e));
+$hc = (array)xeric_review_open('floor-roundtrip', $F)['template']['cast']['characters'][$grown];
+ok('gates: at seventeen the gate is lowered and the pool above him is gone',
+    (string)($hc['drives']['rating_min'] ?? '') === 'sfw'
+    && array_keys((array)($hc['packs'] ?? [])) === ['sfw'],
+    json_encode([$hc['drives'] ?? null, array_keys((array)($hc['packs'] ?? []))]));
+ok('gates: and the originals are preserved beside what came down',
+    (string)($hc['drives']['rating_min_was'] ?? '') === 'mature' && is_string($hc['packs_was'] ?? null),
+    json_encode([$hc['drives'] ?? null, $hc['packs_was'] ?? null]));
+$e = xeric_review_apply_edit(xeric_review_open('floor-roundtrip', $F), "cast.characters.$grown.age", '19');
+ok('gates: and aged back up to nineteen', ($e['ok'] ?? false) === true, json_encode($e));
+$hc = (array)xeric_review_open('floor-roundtrip', $F)['template']['cast']['characters'][$grown];
+ok('gates: aged back up, the gate and the pool are restored byte-identical',
+    json_encode($hc['drives'] ?? null) === $origDrives && json_encode($hc['packs'] ?? null) === $origPacks,
+    json_encode([$hc['drives'] ?? null, $hc['packs'] ?? null]));
+ok('gates: and the sidecar keys are gone with the restore',
+    !array_key_exists('packs_was', $hc) && !array_key_exists('rating_min_was', (array)($hc['drives'] ?? [])));
+
 // -- the inspector: a minor's page is the prompt, at the minor's rating -------
-// A FRESH copy, because the edit above ran the forge's age floor over the other
-// one and xeric_forge_rating_lock() lowers a rating_min in place: a world that
-// has had anybody aged across the line has no mature-gated node left to watch
-// vanish, and every assertion below would pass for the wrong reason.
+// A FRESH copy, because the edit above aged floor-town's harlan across the
+// line and the age floor lowered his mature gate. The gate is PRESERVED now
+// (rating_min_was) and would come back if he were aged up again — but he is
+// still fifteen over there, so a world whose mature-gated node is live is
+// still the only honest fixture for watching one vanish under the inspector.
 $iw2  = xeric_play_open('floor-inspect', null, true);
 $in2  = xeric_clock_now($iw2['db'], $iw2['template']);
 $rate = xeric_world_rating($iw2['template'], null);
@@ -2777,6 +2977,46 @@ ok('RIGHT WITHOUT CLOSED SAYS NOTHING — guessing it is not being told you gues
     xeric_play_story_lines($sw, ['resolved' => [['key' => 'mill_stairwell', 'right' => true, 'closed' => false]]]) === []);
 ok('and a wrong name gets no line either',
     xeric_play_story_lines($sw, ['resolved' => [['key' => 'mill_stairwell', 'right' => false, 'closed' => true]]]) === []);
+
+// -- and the wire is a screen too --------------------------------------------
+// The transcript held the no-wink rule and devtools broke it: say.php relayed
+// the engine's whole story report, and a resolved row carries `why` — for a
+// right-but-unshown guess, the literal sentence saying so. The relay now
+// carries exactly what the page's story handler reads and nothing else.
+$unshown = ['said' => [], 'opened' => ['beat_two'], 'collapsed' => [], 'spilled' => [],
+    'resolved' => [['key' => 'mill_stairwell', 'named' => 'Neil',
+                    'closed' => false, 'right' => true, 'wrong' => 0, 'costs' => '',
+                    'why' => 'right, and not yet shown, a guess is not a solution']]];
+$relayed = xeric_web_story_relay($unshown);
+ok('relay: a supported-but-unshown resolution crosses the wire as NOTHING',
+    ($relayed['resolved'] ?? null) === [], json_encode($relayed));
+ok('relay: so no why, no wink and no name reaches devtools',
+    !str_contains(json_encode($relayed), 'why') && !str_contains(json_encode($relayed), 'not yet shown')
+    && !str_contains(json_encode($relayed), 'Neil'), json_encode($relayed));
+
+$turn = xeric_web_story_relay(['said' => ['It was not kids that night.'], 'spilled' => ['beat_one'],
+    'opened' => ['beat_two'], 'collapsed' => ['herring_one'],
+    'resolved' => [
+        ['key' => 'mill_stairwell', 'named' => 'Neil', 'closed' => true, 'right' => true,
+         'wrong' => 0, 'costs' => '', 'why' => 'shown, and closed'],
+        ['key' => 'mill_stairwell', 'named' => 'Neil', 'closed' => false, 'right' => false,
+         'wrong' => 2, 'costs' => 'Ruth stops answering the door', 'why' => 'wrong, and a wrong accusation is a beat rather than an ending'],
+    ]]);
+ok('relay: an ending and a wrong name still cross, carrying exactly what the page reads',
+    $turn['said'] === ['It was not kids that night.'] && count($turn['spilled']) === 1
+    && $turn['resolved'][0] === ['key' => 'mill_stairwell', 'closed' => true, 'right' => true]
+    && ($turn['resolved'][1]['costs'] ?? '') === 'Ruth stops answering the door',
+    json_encode($turn));
+ok('relay: with the engine\'s bookkeeping — why, named, wrong, opened, collapsed — kept off the wire',
+    !str_contains(json_encode($turn), 'why') && !str_contains(json_encode($turn), 'named')
+    && !isset($turn['opened']) && !isset($turn['collapsed'])
+    && !isset($turn['resolved'][1]['wrong']), json_encode($turn));
+ok('relay: say.php hands the browser the filtered story, never the engine\'s own report',
+    str_contains($saySrc, "xeric_web_story_relay((array)(\$out['story']")
+    && !preg_match("/'story'\s*=>\s*\(array\)\(\\\$out\['story'\]/", $saySrc));
+ok('relay: and the state rows beside it were already cut to the player-visible fields',
+    !str_contains(json_encode(xeric_play_state($sw, $F)['story']), '"why"')
+    && !str_contains(json_encode(xeric_play_state($sw, $F)['story']), '"truth"'));
 
 echo "\n# presence marks\n";
 
@@ -3445,6 +3685,25 @@ ok('sidebar: and it IS a channel once you are standing in it',
     str_contains($insideSide, 'data-room="ruth_house"'));
 xeric_player_move($wdb, $standingWhere, (int)$TUEW['epoch']);
 
+// AND NEITHER IS ITS LAST LINE. The room-thread rows above the map used to
+// render every kind='room' conversation's snippet without asking the same
+// predicate — so a viewer across town read a home's last spoken sentence out
+// of the threads list while a=room refused them the room itself. The rows now
+// ask xeric_chatter_readable, exactly as the map rows do, and an unreadable
+// room's row drops whole: the row IS the channel there, snippet and door both.
+$homeConv = xeric_conversation_for($wdb, 'ruth_house', 'room', 'the Amberg house');
+xeric_message_append($wdb, $homeConv, 'character', 'ruth',
+    'the pot is behind the folding chairs', (int)$TUEW['epoch']);
+xeric_player_move($wdb, 'bluebird', (int)$TUEW['epoch']);
+$awaySnip = xeric_play_side_html($homeT, $wdb, $TUEW, 'watch-town', true);
+ok('sidebar: a home\'s last line never reaches a viewer across town',
+    !str_contains($awaySnip, 'the pot is behind the folding chairs'));
+xeric_player_move($wdb, 'ruth_house', (int)$TUEW['epoch']);
+$inSnip = xeric_play_side_html($homeT, $wdb, $TUEW, 'watch-town', true);
+ok('sidebar: standing in the kitchen, the same row carries it again',
+    str_contains($inSnip, 'the pot is behind the folding chairs'));
+xeric_player_move($wdb, $standingWhere, (int)$TUEW['epoch']);
+
 // A room with something unread is marked ON THE MAP, not only in the threads
 // list — the map is where a person looks for a place.
 ok('sidebar: an unread room is marked where the places are',
@@ -3892,6 +4151,333 @@ ok('door: and the nobody holds still within the request',
 unset($_SERVER['HTTP_X_XERIC_SESSION']);
 ok('door: with no header the request is whoever it always was',
     xeric_web_sid() !== $nobody && xeric_web_sid() !== $agentSid);
+
+// ---------------------------------------------------------------------------
+// THE WATCH'S PINNED SYSTEM — byte-stable across a moving world. The scene
+// file pins one system string per speaker at the door (xeric_watch_start),
+// because the world genuinely moves under a scene: the heart's 60s tick lands
+// memories, lessons and arcs between two HTTP requests, and a per-request
+// rebuild shredded the speaker's prefix cache mid-scene while the docblock
+// claimed nothing wrote.
+// ---------------------------------------------------------------------------
+
+echo "\n# the watch's pinned system survives a moving world\n";
+
+$PN = sid();
+xeric_session_use($PN);
+$pnDir = xeric_web_worlds_dir() . '/pin-town';
+@mkdir($pnDir, 0775, true);
+@copy(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json', $pnDir . '/world-template.json');
+xeric_session_claim('pin-town', $PN);
+reset_limits();
+
+$pw   = xeric_play_open('pin-town');
+$pT   = $pw['template'];
+$pdb  = $pw['db'];
+$pep  = fn(string $when): int =>
+    (new DateTimeImmutable($when, new DateTimeZone('America/New_York')))->getTimestamp();
+$TUEP = xeric_world_now($pT, $pep('2026-07-28 07:30'));   // ruth + dot, the bluebird
+
+$sysSeen = [];
+$pinN    = 0;
+$pinStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) use (&$sysSeen, &$pinN) {
+    if ($tag === 'chat') {
+        $sysSeen[] = (string)$msgs[0]['content'];
+        $pinN++;
+        return "pinned line $pinN, nothing much.";
+    }
+    return ['memories' => []];
+}];
+
+$psc = xeric_watch_start($pw, 'ruth', 'dot', $TUEP);
+ok('pin: the scene file carries one assembled system per speaker from the door',
+    isset($psc['sys']['ruth'], $psc['sys']['dot'])
+    && str_contains((string)$psc['sys']['ruth'], 'RUTH')
+    && str_contains((string)$psc['sys']['dot'], 'DOT'));
+
+xeric_watch_line($pw, $psc, $pinStub, $PN);                       // speaker A, line 1
+xeric_watch_line($pw, $psc, $pinStub, $PN);                       // speaker B, line 2
+
+// The heart's tick in miniature: memories land in BOTH heads mid-scene, which
+// is exactly what used to change the rebuilt system between two lines.
+xeric_memory_add($pdb, 'ruth', 'Ruth suddenly remembered the freezer was on its way out.', 'auto', [],
+    (int)$TUEP['epoch']);
+xeric_memory_add($pdb, 'dot', 'Dot suddenly remembered the pie case needed a new bulb.', 'auto', [],
+    (int)$TUEP['epoch']);
+
+xeric_watch_line($pw, $psc, $pinStub, $PN);                       // speaker A, line 3
+xeric_watch_line($pw, $psc, $pinStub, $PN);                       // speaker B, line 4
+
+ok('pin: two consecutive lines see byte-identical system messages even after a memory lands between them',
+    count($sysSeen) === 4 && $sysSeen[0] === $sysSeen[2] && $sysSeen[1] === $sysSeen[3]);
+
+// The control that proves the assertion can bite: a FRESH assembly, run now,
+// differs from the pinned one — the world moved, and only the pin held.
+$pFirst  = (string)$psc['first'];
+$pOther  = $pFirst === 'ruth' ? 'dot' : 'ruth';
+$pFresh  = xeric_duet_system($pT, $pdb, $pFirst, $pOther, (string)$psc['eff'], (int)$psc['epoch'],
+    xeric_viewer_walls($pT, xeric_viewer($pT, ['handle' => $pFirst])), 12);
+ok('pin: a fresh rebuild after the memory differs — the pin is doing real work',
+    $pFresh !== $sysSeen[0]);
+
+// A scene file from before the pin heals in place: the first line assembles
+// once and pins it, and the scene is byte-stable from there.
+$pscOld = xeric_watch_start($pw, 'ruth', 'dot', $TUEP);
+unset($pscOld['sys']);
+$sysSeen = [];
+xeric_watch_line($pw, $pscOld, $pinStub, $PN);
+ok('pin: a pre-pin scene file heals — the line lands and the system is pinned from then on',
+    isset($pscOld['sys'][(string)$pscOld['first']])
+    && (string)$pscOld['sys'][(string)$pscOld['first']] === $sysSeen[0]);
+
+// ---------------------------------------------------------------------------
+// THE COG SAVES THE BASE, NOT THE COMPOSED. xeric_play_open() hands back a
+// template with every live story overlay composed in; xeric_review_save()
+// writes whole files. A cog save that started from $w['template'] therefore
+// baked the overlay's lines into the base template permanently — every
+// play-screen setting that persists (face, rating, pace, shape) shared the
+// defect. The fix is xeric_play_base_template(): re-read the file, fold only
+// the edited field in.
+// ---------------------------------------------------------------------------
+
+echo "\n# the cog saves the base template, never the composed one\n";
+
+$CG = sid();
+xeric_session_use($CG);
+$cgDir = xeric_web_worlds_dir() . '/cog-town';
+@mkdir($cgDir, 0775, true);
+@copy(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json', $cgDir . '/world-template.json');
+@copy(dirname(__DIR__, 3) . '/engine/fixtures/milldale-story.json', $cgDir . '/story-mill.json');
+xeric_session_claim('cog-town', $CG);
+
+$cg = xeric_play_open('cog-town');
+// Story-ONLY text: the overlay's wall key and its protect clause. Not a beat
+// piece — the fixture story was written from milldale's own secrets, so the
+// pieces legitimately exist in the base already and compose skips them
+// (xeric_story_already_holds); a piece-needle would cry bake at the base's
+// own material.
+$cgNeedles = ['mill_stairwell', 'who was on the landing'];
+$cgComposedHas = true;
+foreach ($cgNeedles as $ndl) {
+    if (!str_contains(json_encode($cg['template'], JSON_UNESCAPED_UNICODE), $ndl)) $cgComposedHas = false;
+}
+ok('cog: the open really composes the overlay in — the trap is set',
+    $cg['stories'] !== [] && $cgComposedHas);
+
+$cgBase = xeric_play_base_template($cg);
+$cgBaseBytes = json_encode($cgBase, JSON_UNESCAPED_UNICODE);
+ok('cog: the base re-read carries none of it',
+    !str_contains($cgBaseBytes, $cgNeedles[0]) && !str_contains($cgBaseBytes, $cgNeedles[1]));
+
+// The face save, exactly as play.php now performs it: base off disk, one
+// field folded in, saved through the review door.
+$cgExpect = $cgBase;
+$cgEdit   = $cgBase;
+foreach ($cgEdit['cast']['characters'] as $iC => $cC) {
+    if ((string)($cC['handle'] ?? '') === 'janelle') {
+        $cgEdit['cast']['characters'][$iC]['photos']['face_seed'] = 424242;
+        $cgExpect['cast']['characters'][$iC]['photos']['face_seed'] = 424242;
+    }
+}
+xeric_review_save('cog-town', $cgEdit);
+
+$cgDisk      = xeric_world_load($cgDir . '/world-template.json');
+$cgDiskBytes = json_encode($cgDisk, JSON_UNESCAPED_UNICODE);
+ok('cog: with a live overlay, a face save leaves the base story-free',
+    !str_contains($cgDiskBytes, $cgNeedles[0]) && !str_contains($cgDiskBytes, $cgNeedles[1]));
+ok('cog: and byte-identical except the edited field',
+    $cgDiskBytes === json_encode($cgExpect, JSON_UNESCAPED_UNICODE));
+
+// The wiring, not just the function: every cog save path in play.php reads the
+// base, and the composed-template save is gone from the file.
+$playSrc = (string)file_get_contents(dirname(__DIR__) . '/play.php');
+ok('cog: every play.php cog save reads xeric_play_base_template',
+    substr_count($playSrc, 'xeric_play_base_template($w)') >= 4
+    && !str_contains($playSrc, "\$t2 = \$w['template'];"),
+    (string)substr_count($playSrc, 'xeric_play_base_template($w)'));
+
+// ---------------------------------------------------------------------------
+// A TRIP'S HOURS ARE LIVED LIKE A SKIP'S. The seam: travel advances the clock
+// FIRST (engine/travel.php), so the walked stretch is measured backward from
+// the landing (xeric_play_trip_stretch) and swept with the clock pinned to
+// its far edge — the worker's walked mode advances nothing.
+// ---------------------------------------------------------------------------
+
+echo "\n# the walk's hours are lived like a skip's\n";
+
+$WA = sid();
+xeric_session_use($WA);
+$waDir = xeric_web_worlds_dir() . '/walk-town';
+@mkdir($waDir, 0775, true);
+@copy(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json', $waDir . '/world-template.json');
+xeric_session_claim('walk-town', $WA);
+
+$wa   = xeric_play_open('walk-town');
+$waT  = $wa['template'];
+$wadb = $wa['db'];
+
+$waEnd  = (new DateTimeImmutable('2026-07-28 08:30', new DateTimeZone('America/New_York')))->getTimestamp();
+$waSpan = 90 * 60;                                        // a walk that crossed the 08:00 boundary
+$waR    = xeric_play_trip_stretch($waEnd, $waSpan);
+ok('walk: the stretch is measured backward from the landing, to the minute',
+    $waR === ['from' => $waEnd - $waSpan, 'to' => $waEnd]);
+
+// The same stub seam the engine suites use: a model that writes a well-formed
+// hour, each head handed a different half of it.
+$waStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) {
+    preg_match_all('/^- \[([a-z0-9_]+)\]/mu', (string)($msgs[1]['content'] ?? ''), $m);
+    static $n = 0;
+    $halves = ['counted the folding chairs twice on the way out',
+               'left the urn switched on until nearly midnight',
+               'paid for the milk out of a coat pocket',
+               'took the long way home past the old mill'];
+    $mem = [];
+    foreach ($m[1] as $h2) $mem[$h2] = ucfirst(str_replace('_', ' ', $h2)) . ' ' . $halves[$n++ % 4] . '.';
+    return ['title' => 'the urn ran out early',
+            'prose' => 'The last of the coffee went at half past.',
+            'memories' => $mem];
+}];
+
+$waOffset = xeric_clock_offset($wadb);
+$waRes = xeric_sweep_catchup($waT, $wadb, $waStub, $waR['from'], $waR['to'],
+    ['clock' => $waR['to'], 'chance' => 1.0, 'seed' => 21]);
+$waIn = $waRes['events'] !== [];
+foreach ($waRes['events'] as $waE) {
+    if ((int)$waE['world_epoch'] < $waR['from'] || (int)$waE['world_epoch'] > $waR['to']) $waIn = false;
+}
+ok('walk: the catchup over the walked stretch lands its hours inside the walk, never past the landing',
+    $waIn, json_encode(array_map(fn($e) => (int)$e['world_epoch'], $waRes['events'])));
+ok('walk: and the sweep never touches the clock — travel already moved it',
+    xeric_clock_offset($wadb) === $waOffset);
+ok('walk: the stretch happens once, so racing the heart (or a second walk) is already safe',
+    xeric_sweep_catchup($waT, $wadb, $waStub, $waR['from'], $waR['to'],
+        ['clock' => $waR['to'], 'chance' => 1.0, 'seed' => 22])['events'] === []);
+
+// The job gate: a walk inside one window starts nothing, and a walk with no
+// machine attached starts nothing — a walk never waits on its hours.
+ok('walk: a five-minute hop inside one hour spawns no worker at all',
+    xeric_play_trip_job($wa, ['minutes' => 5, 'now' => ['epoch' => $waEnd]], $WA) === null);
+ok('walk: a boundary-crossing walk with nothing attached declines silently — the trip stands',
+    xeric_play_trip_job($wa, ['minutes' => 90, 'now' => ['epoch' => $waEnd]], $WA) === null);
+
+// The wiring: where.php starts the job off the landed trip, and the worker
+// knows the walked mode that makes it advance nothing.
+$whereSrc = (string)file_get_contents(dirname(__DIR__) . '/where.php');
+$tickSrc  = (string)file_get_contents(dirname(__DIR__) . '/tick-worker.php');
+ok('walk: where.php starts the trip sweep off the landed trip',
+    str_contains($whereSrc, 'xeric_play_trip_job($w, $trip, $sid)')
+    && str_contains($whereSrc, "['sweep' => \$sweep]"));
+ok('walk: and tick-worker.php walks a trip without advancing, marking, or stamping',
+    str_contains($tickSrc, "'walked'")
+    && str_contains($tickSrc, 'if (!$walked) $mark = xeric_rewind_mark($db);')
+    // The walked far edge is DERIVED from the trip's own landing, never a
+    // fresh clock read and never an advance — the needle tracks the seam.
+    && str_contains($tickSrc, '$walked ? xeric_world_now($T, $landed) : xeric_clock_advance($db, $span, $T)'));
+ok('walk: the trip job serializes its landing epoch for the worker to anchor on',
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/play-lib.php'), "'landed' => \$to,")
+    && str_contains($tickSrc, "\$landed = (int)(\$payload['landed'] ?? 0);"));
+
+// THE STAMP SURVIVES THE TAIL. `skip:underway` used to refresh only at the
+// between-window checkpoints, so the final window's sweep plus three 180s
+// proactive candidates could age it past XERIC_TRAVEL_SKIP_STALE while the
+// worker was still inside its rewind-mark-to-commit span — and a walk waved
+// in there lands its writes in the skip's manifest. Four writes now: the
+// first stamp, the checkpoint, the post-loop re-promise, and the one between
+// proactive candidates.
+ok('walk: the underway stamp is refreshed through the post-loop tail, never mid-call',
+    substr_count($tickSrc, "xeric_world_state_set(\$db, 'skip:underway', (string)time())") === 4);
+
+// THE METER SITS AT THE SPAWN, FOR EVERYBODY. tick.php meters every skip
+// unconditionally; the walks that spawn the same worker (real model calls)
+// ride the same budget whoever is walking — where.php's old guest-only gate
+// let owners and strangers on their own fork spawn unmetered, and could
+// refuse a guest the WALK itself, which is never the thing being rationed.
+reset_limits();
+xeric_web_session_edit(function (array &$s): void {
+    $s['model'] = ['kind' => 'local', 'base' => '', 'model' => ''];
+}, $WA);
+$wkN  = xeric_limit_n('skips_per_hour');
+$wkT0 = time();
+for ($i = 0; $i < $wkN; $i++) xeric_limit_take('skip', ['sid' => $WA, 'now' => $wkT0 - $i]);
+ok('walk: the hour\'s skips are spent — the setup holds', xeric_limit_left($WA)['skips'] === 0);
+$wkNo = xeric_play_trip_job($wa, ['minutes' => 90, 'now' => ['epoch' => $waEnd]], $WA);
+ok('walk: over the skip budget, the sweep declines out loud and spawns nothing',
+    is_array($wkNo) && !isset($wkNo['job']) && ($wkNo['note'] ?? '') !== '', json_encode($wkNo));
+ok('walk: and the note says the trip stood — movement is never refused',
+    is_array($wkNo) && str_contains((string)($wkNo['note'] ?? ''), 'still arrive'), json_encode($wkNo));
+xeric_limit_give_back();
+ok('walk: the refusal spent nothing', xeric_limit_left($WA)['skips'] === 0
+    && xeric_limit_hits('skip-' . $WA, XERIC_LIMIT_HOUR, time())['count'] === $wkN);
+// Inside one window there is nothing to spend, so nothing is consulted: a
+// five-minute hop with the budget gone still answers null, exactly as before.
+ok('walk: a hop inside one hour is still free and still silent',
+    xeric_play_trip_job($wa, ['minutes' => 5, 'now' => ['epoch' => $waEnd]], $WA) === null);
+// And the seat is kept only once the worker is genuinely away.
+$plSrc2 = (string)file_get_contents(dirname(__DIR__) . '/play-lib.php');
+ok('walk: the seat is noted AFTER the spawn, say.php\'s charge-on-delivery',
+    (int)strpos($plSrc2, "xeric_limit_note('skip', ['sid' => \$sid]);")
+        > (int)strpos($plSrc2, "'tick-worker.php');"));
+
+// ---------------------------------------------------------------------------
+// THE ROTA COUNTS BODIES BEFORE THE FLOOR. chatter.php's one-shopkeeper-plus-
+// player rule was unreachable from its only production caller: heart.php cut
+// the rooms to two cast BEFORE counting where anybody at the centre stood, so
+// the person at the counter never got a word out of the one on shift. And the
+// prompt now names the body actually present, not the absent owner. In a
+// subprocess, because heart.php runs its pass at include time and this
+// suite's sessions are not its business.
+// ---------------------------------------------------------------------------
+
+echo "\n# the heart's rota\n";
+
+$rotaProbe = $tmp . '/rota-probe.php';
+file_put_contents($rotaProbe, "<?php\n"
+    . 'require ' . var_export(dirname(__DIR__) . '/heart.php', true) . ";\n"
+    . '$T = xeric_world_load(' . var_export(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json', true) . ");\n"
+    . '$mk = function (string $tag) use ($T): PDO {' . "\n"
+    . '    $db = xeric_state_open(' . var_export($tmp, true) . ' . "/rota-" . $tag . ".db");' . "\n"
+    . '    xeric_state_seed($db, $T);' . "\n"
+    // Sat 10:00 in Milldale: dot alone at the Bluebird, harlan and theo at the
+    // hardware store — the exact geometry the engine suites stand on.
+    . '    $sat = (new DateTimeImmutable("2026-08-01 10:00", new DateTimeZone("America/New_York")))->getTimestamp();' . "\n"
+    . '    xeric_clock_offset_set($db, $sat - time());' . "\n"
+    . '    return $db;' . "\n"
+    . '};' . "\n"
+    . '$calls = [];' . "\n"
+    . '$ep = ["base" => "stub://", "stub" => function (string $tag, array $msgs, array $opts) use (&$calls) {' . "\n"
+    . '    if ($tag === "chat") { $calls[] = $msgs; return "Morning. Coffee is fresh."; }' . "\n"
+    . '    return ["memories" => []];' . "\n"
+    . '}];' . "\n"
+    . '$quiet = function (string $s): void {};' . "\n"
+    // Nobody at the centre anywhere: the one-cast Bluebird stays OUT.
+    . '$db1 = $mk("empty");' . "\n"
+    . 'xeric_heart_chatter($T, $db1, $ep, $quiet, "rota-town");' . "\n"
+    . '$blueOut = xeric_conversation_find($db1, "bluebird", "room") === null;' . "\n"
+    // Neil's body at the counter: one shopkeeper plus a present player talks.
+    . '$db2 = $mk("body");' . "\n"
+    . '$now2 = xeric_clock_now($db2, $T);' . "\n"
+    . '$neil = xeric_player_add($db2, $T, "Neil");' . "\n"
+    . 'xeric_player_move($db2, "bluebird", (int)$now2["epoch"], $neil);' . "\n"
+    . '$calls = [];' . "\n"
+    . '$said = xeric_heart_chatter($T, $db2, $ep, $quiet, "rota-town");' . "\n"
+    . '$blueIn = xeric_conversation_find($db2, "bluebird", "room") !== null;' . "\n"
+    . '$sys = "";' . "\n"
+    . 'foreach ($calls as $ms) foreach ($ms as $m) {' . "\n"
+    . '    if (($m["role"] ?? "") === "system" && str_contains((string)$m["content"], "Bluebird")) { $sys = (string)$m["content"]; break 2; }' . "\n"
+    . '}' . "\n"
+    . 'echo json_encode(["blue_out" => $blueOut, "blue_in" => $blueIn, "said" => $said,' . "\n"
+    . '    "neil" => str_contains($sys, "Neil is here too"),' . "\n"
+    . '    "walt" => str_contains($sys, "Walt is here too")]);' . "\n");
+$rotaOut = (string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($tmp . '/rota-data')
+    . ' XERIC_LOCAL_BASE=http://127.0.0.1:1 '
+    . escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg($rotaProbe) . ' 2>&1');
+$rotaD = json_decode(trim($rotaOut), true);
+ok('rota: a one-cast room with nobody at the centre keeps the two-to-gossip floor',
+    is_array($rotaD) && $rotaD['blue_out'] === true, $rotaOut);
+ok('rota: one shopkeeper plus a present body IS a conversation, and the rota knows',
+    is_array($rotaD) && $rotaD['blue_in'] === true && (int)$rotaD['said'] > 0, $rotaOut);
+ok('rota: and the prompt names the body actually standing there, never the absent owner',
+    is_array($rotaD) && $rotaD['neil'] === true && $rotaD['walt'] === false, $rotaOut);
 
 rmtree($tmp);
 

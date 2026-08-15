@@ -242,6 +242,34 @@ function xeric_remind_clean(array $raw, int $now): ?array
     return ['what' => mb_substr($what, 0, 200), 'at' => $now + $in * 60, 'in_minutes' => $in];
 }
 
+/**
+ * What a FIRED reminder is allowed to say to a phone.
+ *
+ * Beside xeric_notify_hour_body and xeric_notify_ping_body because the rule is
+ * the same rule: what leaves the machine is decided HERE, not at the caller.
+ * The body carries the thing in the asker's own words plus the human phrasing
+ * of when they asked for it (xeric_remind_when) — which reads correctly both
+ * on time ("You asked to be reminded in 20 minutes: call the bank back") and
+ * delivered late off a machine that slept ("You asked to be reminded on
+ * Thursday at 09:00: …" is still true on Friday, and says the lateness out
+ * loud instead of pretending).
+ *
+ * @param array $row a reminders row: text, due, created_at
+ */
+function xeric_notify_remind_body(array $row, string $tz = 'UTC'): string
+{
+    $text    = trim((string)($row['text'] ?? ''));
+    $due     = (int)($row['due'] ?? 0);
+    $created = (int)($row['created_at'] ?? 0);
+
+    // No booking on record (a hand-inserted row, a legacy table): the thing
+    // itself is the whole body, exactly as it always was.
+    if ($due <= 0 || $created <= 0 || $due <= $created) return $text;
+
+    $minutes = max(1, (int)round(($due - $created) / 60));
+    return 'You asked to be reminded ' . xeric_remind_when($minutes, $due, $tz) . ': ' . $text;
+}
+
 /** "in 40 minutes" · "in 3 hours" · "on Thursday" — how a confirmation reads. */
 function xeric_remind_when(int $minutes, int $at, string $tz = 'UTC'): string
 {

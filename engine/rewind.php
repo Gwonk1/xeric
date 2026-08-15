@@ -69,6 +69,20 @@
  * background hour instead of the thing the player regrets, and the feature
  * would undo the wrong week.
  *
+ * ── ONE TABLE LIST, THREE CONSUMERS ──────────────────────────────────────
+ *
+ * The mark, the commit diff and the rewind transaction all walk the same row
+ * tables, and for as long as each site enumerated them by hand they drifted
+ * exactly the way hand copies do: photo_jobs and reminders both shipped with
+ * AUTOINCREMENT ids and appeared in none of the three, so a row born mid-skip
+ * in either survived its own rewind — a picture the world owed itself for an
+ * hour that no longer happened. xeric_rewind_tables() is now the one list all
+ * three read, and rewind-test asserts it against the SCHEMA (every
+ * AUTOINCREMENT table in a migrated store), so the next table cannot go
+ * invisible in the manifest and in the test at once. deaths stays a special
+ * case at each site: it has no id column and diffs by handle set, both
+ * directions.
+ *
  * ── THE CONSTRUCTS SEAM ──────────────────────────────────────────────────
  *
  * Expectations (engine/constructs.php) keep their whole life in stores this
@@ -82,17 +96,20 @@
  * heart, and heart-lived misses are correctly not rewindable (below); the day
  * the skip path calls it too — CONSTRUCTS.md says fuses burn during skips —
  * nothing in this file changes. THE SEAM IS TABLES: if a construct (or
- * anything else) ever grows a row table of its own, this file must learn it
- * in three places — the mark, the commit diff, and the rewind transaction —
- * or a rewind will leave that table remembering an un-happened week. deaths
- * is the worked example: it has no AUTOINCREMENT id, so it diffs by handle
- * set. Grep for XERIC-REWIND-TABLES to find every place a new table must be
- * added.
+ * anything else) ever grows a row table of its own, it gets ONE line in
+ * xeric_rewind_tables() and the mark, the commit diff and the rewind
+ * transaction all learn it at once — or a rewind will leave that table
+ * remembering an un-happened week. deaths is the worked example of a table
+ * that cannot ride the list: it has no AUTOINCREMENT id, so it diffs by
+ * handle set. Grep for XERIC-REWIND-TABLES to find the sites.
  *
- * Two stores are OUTSIDE the manifest, deliberately:
- *  - reminders run on REAL time (state.php is emphatic about it), and real time
- *    is the one clock a rewind does not command. A reminder asked for on
- *    Thursday is still owed on Thursday, whatever the world un-lived.
+ * Two things stay OUTSIDE the manifest, deliberately:
+ *  - reminders' DUE TIMES run on REAL time (state.php is emphatic about it),
+ *    and real time is the one clock a rewind does not command: a reminder
+ *    asked for before the skip is still owed on its own Thursday, whatever
+ *    the world un-lived, and the id diff cannot touch a row below the mark.
+ *    A reminder ROW born inside the skip is different — it is part of the
+ *    undone future like any other row, and the diff removes it and only it.
  *  - the player's signals from BEFORE the skip are evidence about hours that
  *    still happened. But the distil pass that ran mid-skip may have marked them
  *    read, and its lessons are being reverted with the arcs — so those marks
@@ -120,6 +137,28 @@ const XERIC_REWIND_KEY = 'skip:last';
  *  is a lying one and this file's whole contract is that it never lies. */
 const XERIC_REWIND_V = 1;
 
+/**
+ * XERIC-REWIND-TABLES: every row table the manifest diffs by AUTOINCREMENT id,
+ * in the order the rewind deletes from them — messages before conversations on
+ * purpose, so the delete never leans on the FK cascade being on.
+ *
+ * ONE LIST, THREE CONSUMERS, AND THAT IS THE POINT (the same argument
+ * xeric_wall_interior_fields() makes in walls.php). The mark reads each
+ * table's high-water id, the commit turns "id > mark" into the manifest, and
+ * the rewind deletes exactly what the manifest names. When the three sites
+ * enumerated tables by hand, photo_jobs and reminders were in none of them —
+ * a row born mid-skip in either outlived its own rewind. A new row table gets
+ * its line HERE and nowhere else; rewind-test holds this list equal to the
+ * schema's own AUTOINCREMENT census, so forgetting the line is a loud failure
+ * rather than a ghost. deaths cannot ride the list (no id column) and keeps
+ * its handle-set diff at each site.
+ */
+function xeric_rewind_tables(): array
+{
+    return ['events', 'memories', 'messages', 'conversations', 'signals',
+            'photo_jobs', 'reminders'];
+}
+
 // ---------------------------------------------------------------------------
 // The mark: everything the diff will need, read before the clock moves
 // ---------------------------------------------------------------------------
@@ -143,7 +182,8 @@ const XERIC_REWIND_V = 1;
  * rows twice per skip is noise next to one model call.
  *
  * XERIC-REWIND-TABLES: deaths has no id column, so it snapshots as a handle
- * set. A new row table gets its line here first.
+ * set. A new row table gets its line in xeric_rewind_tables(), and this mark
+ * reads it from there.
  */
 function xeric_rewind_mark(PDO $db): array
 {
@@ -190,15 +230,14 @@ function xeric_rewind_mark(PDO $db): array
         $convs[(int)$r['id']] = [(int)$r['updated_at'], (int)$r['unread']];
     }
 
+    // XERIC-REWIND-TABLES: the high-water id of every row table, off the one
+    // shared list, so a table added there is marked here without a second edit.
+    $tops = [];
+    foreach (xeric_rewind_tables() as $table) $tops[$table] = $top($table);
+
     return [
         'offset'       => xeric_clock_offset($db),
-        'top'          => [
-            'events'        => $top('events'),
-            'memories'      => $top('memories'),
-            'messages'      => $top('messages'),
-            'conversations' => $top('conversations'),
-            'signals'       => $top('signals'),
-        ],
+        'top'          => $tops,
         'deaths'       => $deaths,
         'death_rows'   => $deathRows,
         'signals_open' => $open,
@@ -244,14 +283,13 @@ function xeric_rewind_commit(PDO $db, array $mark, ?int $at = null): ?array
         return $out;
     };
 
+    // XERIC-REWIND-TABLES: the diff walks the same shared list the mark read,
+    // so the two cannot disagree about which tables a skip is answerable for.
     $top = (array)($mark['top'] ?? []);
-    $ids = [
-        'events'        => $newIds('events',        (int)($top['events'] ?? 0)),
-        'memories'      => $newIds('memories',      (int)($top['memories'] ?? 0)),
-        'messages'      => $newIds('messages',      (int)($top['messages'] ?? 0)),
-        'conversations' => $newIds('conversations', (int)($top['conversations'] ?? 0)),
-        'signals'       => $newIds('signals',       (int)($top['signals'] ?? 0)),
-    ];
+    $ids = [];
+    foreach (xeric_rewind_tables() as $table) {
+        $ids[$table] = $newIds($table, (int)($top[$table] ?? 0));
+    }
 
     // XERIC-REWIND-TABLES: deaths, by handle, BOTH DIRECTIONS. A lethal hour
     // that landed inside the skip put a body in the ledger, and a rewind that
@@ -494,8 +532,6 @@ function xeric_rewind(array $t, PDO $db): array
     $events   = $list('events');
     $memories = $list('memories');
     $messages = $list('messages');
-    $convs    = $list('conversations');
-    $signals  = $list('signals');
 
     $db->beginTransaction();
     try {
@@ -503,15 +539,13 @@ function xeric_rewind(array $t, PDO $db): array
             if ($rows === []) return;
             $db->exec("DELETE FROM $table WHERE id IN (" . implode(',', $rows) . ')');
         };
-        // Messages before their conversations only by tidiness — the FK would
-        // cascade — but a rewind that leans on a PRAGMA being on is a rewind
-        // that ghosts on the one install where it is not.
-        // XERIC-REWIND-TABLES: every row table the manifest names, deleted here.
-        $kill('events',        $events);
-        $kill('memories',      $memories);
-        $kill('messages',      $messages);
-        $kill('conversations', $convs);
-        $kill('signals',       $signals);
+        // XERIC-REWIND-TABLES: every row table the manifest names, deleted off
+        // the one shared list, in its order — messages before their
+        // conversations only by tidiness (the FK would cascade), but a rewind
+        // that leans on a PRAGMA being on is a rewind that ghosts on the one
+        // install where it is not. A table the manifest predates simply lists
+        // no ids, which is a no-op and not a version break.
+        foreach (xeric_rewind_tables() as $table) $kill($table, $list($table));
 
         $undead = array_values(array_filter(array_map('strval', (array)($m['deaths'] ?? [])), fn($h) => $h !== ''));
         if ($undead !== []) {

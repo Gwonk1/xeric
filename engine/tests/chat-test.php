@@ -114,7 +114,7 @@ ok('seed: a world with no seed file applied is not marked as seeded', !xeric_see
 
 $r1 = xeric_seed_apply($db, $T, $SEED, $NOW['epoch']);
 ok('seed: events and memories are written, dangling rows dropped and counted',
-    $r1 === ['events' => 3, 'memories' => 3, 'skipped' => 2, 'applied' => true], json_encode($r1));
+    $r1 === ['events' => 3, 'memories' => 3, 'skipped' => 2, 'floored' => 0, 'applied' => true], json_encode($r1));
 ok('seed: the world is now marked as seeded', xeric_seed_applied($db));
 
 $rows = xeric_events_recent($db, 10);
@@ -138,7 +138,7 @@ $r2 = xeric_seed_apply($db, $T, $SEED, $NOW['epoch']);
 $after = [xeric_events_count($db), xeric_memories_count($db)];
 ok('seed: applying twice writes nothing the second time', $before === $after, json_encode([$before, $after]));
 ok('seed: the second call reports the first call\'s counts and says it did not apply',
-    $r2 === ['events' => 3, 'memories' => 3, 'skipped' => 2, 'applied' => false], json_encode($r2));
+    $r2 === ['events' => 3, 'memories' => 3, 'skipped' => 2, 'floored' => 0, 'applied' => false], json_encode($r2));
 
 // The whole point of seeding: she is not a blank on turn one.
 $sys = xeric_prompt_system($T, $db, 'ruth', 'sfw');
@@ -189,8 +189,11 @@ $POISON = [
 $dbP = fresh_db('seed-floor');
 xeric_state_seed($dbP, $T);
 $rp = xeric_seed_apply($dbP, $T, $POISON, $NOW['epoch']);
-ok('seed floor: the poisoned event and the poisoned memory are skipped and counted, nothing else is',
-    $rp === ['events' => 2, 'memories' => 2, 'skipped' => 2, 'applied' => true], json_encode($rp));
+// Counted APART from the dangling rows: a floor refusal is the engine working,
+// a dangling row is the forge's model misnaming things, and one number used to
+// hold both — so the CLI reported deliberate refusals as "unusable rows".
+ok('seed floor: the poisoned event and the poisoned memory are floored and counted, apart from the dangling',
+    $rp === ['events' => 2, 'memories' => 2, 'skipped' => 0, 'floored' => 2, 'applied' => true], json_encode($rp));
 ok('seed floor: the world still opens — one bad line does not refuse a whole past',
     $rp['applied'] === true && xeric_seed_applied($dbP));
 ok('seed floor: the murder seeds, the fight seeds, and only the sexual row is missing',
@@ -224,7 +227,7 @@ $ra = xeric_seed_apply($dbAdult, $T, ['events' => [], 'memories' => [
      'days_ago' => 9],
 ]], $NOW['epoch']);
 ok('seed floor: a line between two adults, naming no child, still seeds',
-    $ra === ['events' => 0, 'memories' => 1, 'skipped' => 0, 'applied' => true], json_encode($ra));
+    $ra === ['events' => 0, 'memories' => 1, 'skipped' => 0, 'floored' => 0, 'applied' => true], json_encode($ra));
 
 // ---------------------------------------------------------------------------
 // 2. Reply hygiene — each junk pattern, on its own
@@ -409,6 +412,41 @@ ok('extract: a model failure is loud', str_contains($msg, 'could not harvest mem
 ok('extract: and writes nothing', xeric_memories_count($db3, 'ruth') === $countBefore);
 ok('extract: a thread with nothing in it harvests nothing and calls no model',
     xeric_chat_extract($T, $db3, 'dot', xeric_conversation_for($db3, 'dot', 'chat'), stub_dead(), $NOW) === 0);
+
+// THE CONFIDENCE WATCH — engine/confide.php's production door. Its only
+// writers used to live in its own test file: the sweep iterated an
+// always-empty list and the block never rendered. The model SPOTS the telling
+// on the same harvest as the promise watch; code disposes (armed, adults, one
+// row per thing — all confide.php's), and the row lands on the character
+// carrying it, told by the person at the centre.
+$dbCf = fresh_db('confide-watch');
+$convCf = xeric_chat_turn($T, $dbCf, 'ruth', 'Between us — there is a letter I have not told anybody about.',
+    $NOW, stub_says('That stays with me.'))['conversation_id'];
+$keptCf = xeric_chat_extract($T, $dbCf, 'ruth', $convCf, stub_says([
+    'memories' => ['Walt trusted Ruth with something about a letter and she agreed to keep it.'],
+    'promise' => null, 'explained' => false,
+    'confided' => ['what' => 'about the letter he has not sent'],
+]), $NOW);
+$cfRows = xeric_confides_for($dbCf, 'ruth');
+ok('extract: a confidence spotted in the thread becomes the arc the prompt reads',
+    $keptCf === 1 && count($cfRows) === 1
+    && ($cfRows[0]['what'] ?? '') === 'about the letter he has not sent'
+    && (int)($cfRows[0]['p'] ?? 0) === XERIC_PLAYER_FIRST
+    && ($cfRows[0]['by'] ?? 'x') === '', json_encode($cfRows));
+ok('extract: the extractor is told to watch for one, next to the promise watch',
+    (function () use ($T, $dbCf, $convCf, $NOW): bool {
+        $asked = null;
+        xeric_chat_extract($T, $dbCf, 'ruth', $convCf,
+            stub_says(['memories' => [], 'confided' => null], $asked), $NOW);
+        return str_contains((string)($asked[1]['content'] ?? ''), '"confided"');
+    })());
+ok('extract: and the block it feeds reaches her own system prompt, beside what she is owed',
+    str_contains(xeric_prompt_system($T, $dbCf, 'ruth', 'sfw'), 'WHAT YOU ARE KEEPING FOR SOMEBODY')
+    && str_contains(xeric_prompt_system($T, $dbCf, 'ruth', 'sfw'), 'about the letter he has not sent'));
+ok('extract: a report with nothing in it forms nothing and never costs the harvest',
+    xeric_chat_extract($T, $dbCf, 'ruth', $convCf, stub_says([
+        'memories' => [], 'confided' => ['what' => ''],
+    ]), $NOW) === 0 && count(xeric_confides_for($dbCf, 'ruth')) === 1);
 
 // THE WATERMARK IS WHAT WAS READ, NOT WHAT WAS KEPT. A harvest that keeps
 // nothing used to leave it unset, so should_extract said yes again on the very
@@ -914,6 +952,21 @@ xeric_remind_done($dbR2, $rid3, $rNow);
 ok('remind: one already claimed elsewhere is not reported as sent',
     xeric_remind_fire($dbR1, [], 'Milldale', $rNow) === []);
 
+// The FIRED body carries the human phrasing of when it was asked for
+// (xeric_notify_remind_body → xeric_remind_when) — booked an hour out, it
+// reads as the minutes; booked days out it reads as the day, which stays
+// true however late a sleeping machine delivers it.
+ok('remind: a fired body says when it was asked for, in the asker\'s own scale',
+    xeric_notify_remind_body(['text' => 'ring the bank back',
+        'due' => $rNow, 'created_at' => $rNow - 3600])
+    === 'You asked to be reminded in 60 minutes: ring the bank back');
+ok('remind: a long booking phrases as the day, not a count of minutes',
+    str_starts_with(xeric_notify_remind_body(['text' => 'call about the roof',
+        'due' => $rNow, 'created_at' => $rNow - 3 * 86400], 'UTC'), 'You asked to be reminded on '));
+ok('remind: a row with no booking on record is the bare thing, exactly as it always was',
+    xeric_notify_remind_body(['text' => 'take the bins out', 'due' => 0, 'created_at' => 0])
+    === 'take the bins out');
+
 // ---------------------------------------------------------------------------
 // The opener tic — the words a ban names, and when there is nothing to ban
 // ---------------------------------------------------------------------------
@@ -926,11 +979,57 @@ ok('opener: stage wrap does not survive into the ban',
     xeric_chat_opener('*Fine.*') === 'Fine', xeric_chat_opener('*Fine.*'));
 ok('opener: empty is empty', xeric_chat_opener('   ') === '');
 
+// THE E2 80 FAMILY. trim()'s charlist is bytes, and the curly quotes the wrap
+// list names share their lead bytes with '…' and '—'. A line opening with
+// either used to lose those bytes to the byte-trim, the dangling continuation
+// byte made the opener invalid UTF-8, and json_encode() of the whole model
+// payload carrying it returned false — a failed call from one character of
+// punctuation. The round-trip IS the regression: json_encode must take it.
+ok('opener: a line opening on an ellipsis keeps it whole and still json-encodes',
+    xeric_chat_opener('…and then the rain came back') === '…and then the'
+    && json_encode(xeric_chat_opener('…and then the rain came back')) !== false,
+    var_export(xeric_chat_opener('…and then the rain came back'), true));
+ok('opener: an em-dash opening survives as valid UTF-8 too',
+    json_encode(xeric_chat_opener('—no. Not tonight. Not ever.')) !== false
+    && mb_check_encoding(xeric_chat_opener('—no. Not tonight. Not ever.'), 'UTF-8'),
+    var_export(xeric_chat_opener('—no. Not tonight. Not ever.'), true));
+ok('opener: curly wrap is still stripped whole, never byte by byte',
+    xeric_chat_opener('“Well, sure, it’s got that chill.”') === 'Well, sure, it’s',
+    xeric_chat_opener('“Well, sure, it’s got that chill.”'));
+
 ok('tic: the coach line names the opener and bans it',
     str_contains(xeric_chat_tic_line('Well, sure, the weather holds.'), '"Well, sure, the"')
     && str_contains(xeric_chat_tic_line('Well, sure, the weather holds.'), 'do not start with those words'));
 ok('tic: no previous line, no coaching', xeric_chat_tic_line('') === '');
 ok('tic: a one-letter fragment is not worth a ban', xeric_chat_tic_line('I') === '');
+ok('tic: a coach line built from an ellipsis opener is a line json_encode will carry',
+    json_encode(xeric_chat_tic_line('…the same words as last time, again')) !== false,
+    var_export(xeric_chat_tic_line('…the same words as last time, again'), true));
+
+// ---------------------------------------------------------------------------
+// Whose turn — opts['player'] has to reach the prompt builder
+// ---------------------------------------------------------------------------
+// The turn already read opts['player'] at the top and charged the warmth crumb
+// with it at the bottom; the whitelist in the middle used to drop it, so every
+// guest in every multiplayer world was PROMPTED as the owner — wrong
+// player_where, no guest-naming rules. The rules line is the tell: it names
+// who the speaker is texting.
+
+$dbG = fresh_db('guest');
+xeric_state_seed($dbG, $T);
+$guestId = xeric_player_add($dbG, $T, 'Neil');
+$seenG = [];
+xeric_chat_turn($T, $dbG, 'ruth', 'Evening.', $NOW, stub_says('Evening yourself.', $seenG),
+    ['player' => $guestId, 'remind' => false]);
+ok('player: a guest turn is prompted as the guest, not the owner',
+    str_contains((string)($seenG[0]['content'] ?? ''), 'You are texting Neil'),
+    mb_substr((string)($seenG[0]['content'] ?? ''), 0, 160));
+$seenO = [];
+xeric_chat_turn($T, $dbG, 'ruth', 'Still there?', $NOW, stub_says('Here.', $seenO), ['remind' => false]);
+ok('player: the owner\'s turn still reads as the owner',
+    str_contains((string)($seenO[0]['content'] ?? ''), 'You are texting Walt')
+    && !str_contains((string)($seenO[0]['content'] ?? ''), 'You are texting Neil'),
+    mb_substr((string)($seenO[0]['content'] ?? ''), 0, 160));
 
 $dbR1 = $dbR2 = null;
 

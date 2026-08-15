@@ -145,10 +145,15 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
     $lastSpoke = 0;
     foreach ($history as $m) $lastSpoke = max($lastSpoke, (int)($m['world_epoch'] ?? 0));
 
+    // WHOSE BODY IS IN THE ROOM. The in-the-room line below names the person
+    // standing there; for a guest's turn that is the guest, not the template
+    // owner — a cast that greets an absent owner by name reads as haunted.
+    $plId = max(XERIC_PLAYER_FIRST, (int)($opts['player'] ?? XERIC_PLAYER_FIRST));
     $volatile = xeric_prompt_now_block($t, $speakerHandle, $now, (string)($opts['tail'] ?? ''), $walls,
         array_key_exists('player_where', $opts) ? $opts['player_where']
-            : xeric_player_where($t, $db, max(XERIC_PLAYER_FIRST, (int)($opts['player'] ?? XERIC_PLAYER_FIRST))),
-        xeric_deaths($db), $lastSpoke, $db);
+            : xeric_player_where($t, $db, $plId),
+        xeric_deaths($db), $lastSpoke, $db,
+        $plId > XERIC_PLAYER_FIRST ? xeric_player_name($db, $plId, $t) : null);
 
     // The camera, offered only where the world consented to photographs
     // (opts['photos'], the web layer's read of photos.approved). It rides the
@@ -192,7 +197,8 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
 // ---------------------------------------------------------------------------
 
 /**
- * The system message: voice → rules → bible → economies → lessons → memories.
+ * The system message: voice → rules → bible → economies → lessons → owed →
+ * confidences → story → memories.
  *
  * Byte-stable for a given (template, speaker, rating, memory set). Two calls a
  * minute apart must return identical strings, or the cache was pointless — which
@@ -243,6 +249,17 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     // who else is standing in the room, are different answers per person.
     $owed = xeric_expect_block($t, $db, $speakerHandle, ['epoch' => $epoch ?? 0], $player);
     if ($owed !== '') $parts[] = $owed;
+
+    // What they are carrying for people, and what got out (confide.php).
+    // Beside the owed block because it is the same kind of thing: this
+    // character's OWN ledger of told things, so no wall applies — you always
+    // know what you were trusted with — and coarse states only, kept or
+    // broken, never a count and never a clock, so the block moves when a
+    // confidence forms or gets out and at no other time. That per-epoch
+    // stability is what lets it ride the byte-stable half at all.
+    require_once __DIR__ . '/confide.php';
+    $told = xeric_confide_block($t, $db, $speakerHandle, $player);
+    if ($told !== '') $parts[] = $told;
 
     $story = xeric_prompt_story($t, $speakerHandle);
     if ($story !== '') $parts[] = $story;
@@ -617,7 +634,7 @@ function xeric_prompt_wants_photo(string $text): bool
  */
 function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, string $tail = '',
                                 ?array $walls = null, ?string $playerWhere = null, ?array $deaths = null,
-                                int $lastSpoke = 0, ?PDO $db = null): string
+                                int $lastSpoke = 0, ?PDO $db = null, ?string $playerName = null): string
 {
     $walls ??= xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $speakerHandle]));
 
@@ -692,7 +709,10 @@ function xeric_prompt_now_block(array $t, string $speakerHandle, array $now, str
         // line, it takes this with it. Fail closed — a world that hides where
         // somebody is standing must not hand back who is standing with them.
         if ($playerWhere !== null && $playerWhere !== '' && $playerWhere === (string)($mine['where'] ?? '')) {
-            $you = xeric_text($t['user']['name'] ?? '');
+            // The name of whoever's BODY this is — a guest's turn names the
+            // guest; null falls back to the owner, which is every old caller.
+            $you = xeric_text($playerName !== null && $playerName !== ''
+                              ? $playerName : ($t['user']['name'] ?? ''));
             $lines[] = ($you !== '' ? $you : 'The person you are talking to')
                 . ' is here, in the room with you, not on the phone.';
         }

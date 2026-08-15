@@ -78,7 +78,16 @@ const XERIC_WORK_STEP = 2 * 3600;
 function xeric_money_default(array $t): string
 {
     $armed = (array)($t['forge']['armed'] ?? []);
-    $eco   = in_array('economies', $armed, true) || (array)($t['economies'] ?? []) !== [];
+    // `scarcity`, NOT `economies`. This tested in_array('economies', $armed)
+    // from the day it was written, and that branch could never fire:
+    // 'economies' is not a name in the subsystem vocabulary (XERIC_SYSTEMS,
+    // forge/forge.php) and xeric_forge_systems_clean() drops unknown names on
+    // the way into every forged template, so no armed list can carry it. The
+    // declared-ledgers half of the OR was doing all the work. What the dead
+    // half MEANT is the world that says money is a pressure without declaring
+    // a ledger for it, and the vocabulary name for that is `scarcity` — "not
+    // enough to go around", the system the survival preset arms.
+    $eco   = in_array('scarcity', $armed, true) || (array)($t['economies'] ?? []) !== [];
     return ($eco && xeric_shifts($t) !== []) ? 'light' : 'none';
 }
 

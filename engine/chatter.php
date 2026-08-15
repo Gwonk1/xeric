@@ -276,7 +276,7 @@ function xeric_chatter_scrollback(array $t, PDO $db, int $conversationId, int $l
  */
 function xeric_chatter_system(array $t, PDO $db, string $me, array $others, string $place,
                               string $eff, int $epoch, array $walls, int $memoryLimit,
-                              bool $userHere): string
+                              bool $userHere, array $playersHere = []): string
 {
     $base     = xeric_prompt_system($t, $db, $me, $eff, $memoryLimit, $epoch, $walls);
     $company  = $others === []
@@ -284,6 +284,22 @@ function xeric_chatter_system(array $t, PDO $db, string $me, array $others, stri
         : xeric_join_list(array_map(fn($h) => xeric_world_name($t, $h), $others));
     $userName = trim((string)($t['user']['name'] ?? '')) ?: 'them';
     $where    = xeric_world_place_name($t, $place);
+
+    // WHO IS ACTUALLY STANDING HERE. $playersHere carries the display names of
+    // the people at the centre whose bodies presence puts in this room — the
+    // heart reads the bodies, the floor knows its speaker. Empty means the
+    // caller predates bodies, and the template owner's name stands in, which
+    // keeps every old world and every old caller byte-identical per epoch.
+    // Hard-coding the owner here made the cast greet somebody who was not in
+    // the room the moment a guest was: the transcript lying, in their face.
+    $hereNames = [];
+    if ($userHere) {
+        foreach ($playersHere as $n) {
+            $n = trim((string)$n);
+            if ($n !== '') $hereNames[] = $n;
+        }
+        if ($hereNames === []) $hereNames = [$userName];
+    }
 
     $out = [rtrim($base), ''];
     $out[] = 'WHERE YOU ARE';
@@ -297,8 +313,11 @@ function xeric_chatter_system(array $t, PDO $db, string $me, array $others, stri
     // it, and what is said in it stays said. Which is what makes a thing said
     // behind somebody's back cost anything at all.
     $out[] = $userHere
-        ? '- ' . $userName . ' is here too, in the room with you. Lines from ' . $userName
-          . ' arrive labeled the same way. Talk to them like somebody standing there.'
+        ? (count($hereNames) > 1
+            ? '- ' . xeric_join_list($hereNames) . ' are here too, in the room with you. Their'
+              . ' lines arrive labeled with their own names. Talk to whoever actually spoke.'
+            : '- ' . $hereNames[0] . ' is here too, in the room with you. Lines from ' . $hereNames[0]
+              . ' arrive labeled the same way. Talk to them like somebody standing there.')
         : '- ' . $userName . ' is not in the room at the moment, but this is a room in your town'
           . ' and not a private one. What gets said here is said. People repeat things.';
     // MORE THAN ONE PERSON AT THE CENTRE. Said only when it is true (the
@@ -388,6 +407,15 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
     $userHere = !empty($opts['user_here']);
     if (!xeric_chatter_readable($t, $place, $userHere ? $place : null)) return $out;
 
+    // AND WHICH of the people at the centre it is — display names, from the
+    // caller's presence read (heart.php walks the bodies). Empty falls back to
+    // the template owner inside xeric_chatter_system, the pre-bodies shape.
+    $playersHere = [];
+    foreach ((array)($opts['players_here'] ?? []) as $n) {
+        $n = trim((string)$n);
+        if ($n !== '') $playersHere[] = $n;
+    }
+
     // TWO TO GOSSIP, ONE TO ANSWER. Idle chatter needs a pair — one person
     // alone in a room is not a conversation, it is a soliloquy. But a person
     // standing there talking to the one shopkeeper on shift is, and the pair
@@ -451,7 +479,7 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
         $walls  = xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $me]));
 
         $system = xeric_chatter_system($t, $db, $me, $others, $place, $eff, $epoch, $walls,
-                                       XERIC_CHATTER_KEEP, $userHere);
+                                       XERIC_CHATTER_KEEP, $userHere, $playersHere);
         $coach  = xeric_chatter_material($t, $db, $me, $others);
         // THE OPENER TIC (xeric_chat_tic_line): $back carries this run's own
         // landed lines too, so a head drawn twice in one fire is coached off
@@ -498,7 +526,20 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
         }
 
         try {
-            $raw = xeric_chat_say($endpoint, $messages, ['temperature' => 0.95, 'max_tokens' => 160]);
+            // The speaker speaks as themselves, so a caller with per-character
+            // pinned voices may hand in `endpoint_for` (handle → endpoint, the
+            // heart builds one on xeric_voice_endpoint) and this line goes to
+            // THEIR machine, prefix warm — proactive.php's resolver seam, worn
+            // here too. Absent, or failing, the room's own endpoint speaks:
+            // a tuning choice must not be able to silence a room.
+            $lineEp = $endpoint;
+            if (isset($opts['endpoint_for']) && is_callable($opts['endpoint_for'])) {
+                try {
+                    $ep = ($opts['endpoint_for'])($me);
+                    if (is_array($ep) && $ep !== []) $lineEp = $ep;
+                } catch (Throwable $e) { /* the room's own endpoint speaks */ }
+            }
+            $raw = xeric_chat_say($lineEp, $messages, ['temperature' => 0.95, 'max_tokens' => 160]);
         } catch (Throwable $e) {
             // A quiet room is not an error and never fails a heartbeat — but a
             // room that is quiet because every call is throwing looks exactly
@@ -508,7 +549,16 @@ function xeric_chatter_run(array $t, PDO $db, string $place, array $endpoint, ar
         }
 
         $otherNames = array_map(fn($h) => $names[$h], $others);
-        if ($userHere) $otherNames[] = trim((string)($t['user']['name'] ?? '')) ?: 'you';
+        // The guard follows the same presence facts the system block just told:
+        // every person at the centre who is standing here has their name
+        // shielded, not only the owner's — the cleaner strips lines put in the
+        // mouth of whoever is ACTUALLY in the room.
+        if ($userHere) {
+            foreach ($playersHere !== [] ? $playersHere
+                     : [trim((string)($t['user']['name'] ?? '')) ?: 'you'] as $pn) {
+                $otherNames[] = $pn;
+            }
+        }
         $text = xeric_room_clean((string)$raw, $names[$me], $otherNames, 400);
         if ($text === '') {
             if (!empty($opts['on_why'])) ($opts['on_why'])('empty', $me, mb_substr((string)$raw, 0, 200));

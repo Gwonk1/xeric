@@ -26,7 +26,8 @@
  * seat is a seat. Tuning a world is its owner's; skipping its hours is a
  * decision for somebody the world belongs to. The one clock cost an agent
  * can incur is the same one a person incurs — walking takes minutes, and a
- * guest's walking rides the skip meter (where.php).
+ * walk whose hours spawn a sweep rides the skip meter like anybody's
+ * (xeric_play_trip_job; the walk itself is never refused).
  *
  * THE SEAT LIFECYCLE, which join() does in one motion:
  *   1. mint 32 hex once — the client-minted bearer id the door takes;
@@ -111,7 +112,10 @@ function xmcp_seat(?string $world): ?array
 
 /**
  * @param ?array $body JSON body when $form is false, form fields when true
- * @return array{status:int,json:?array,raw:string}
+ * @return array{status:int,json:?array,raw:string,location:string}
+ *         `location` is the redirect target when the endpoint answered with
+ *         one ('' otherwise) — deliberately captured rather than followed,
+ *         because model.php speaks its refusals through it (see xmcp_no).
  */
 function xmcp_http(string $method, string $url, ?array $body = null, bool $form = false,
                    ?string $sid = null, int $timeout = XMCP_QUICK): array
@@ -138,15 +142,34 @@ function xmcp_http(string $method, string $url, ?array $body = null, bool $form 
     ]]);
     $raw = @file_get_contents($url, false, $ctx);
     $status = 0;
+    $location = '';
     foreach ($http_response_header ?? [] as $h) {
         if (preg_match('#^HTTP/\S+\s+(\d{3})#', $h, $m)) $status = (int)$m[1];
+        if (preg_match('#^Location:\s*(.+)$#i', $h, $m)) $location = trim($m[1]);
     }
     if ($raw === false) {
-        return ['status' => 0, 'json' => null,
+        return ['status' => 0, 'json' => null, 'location' => '',
                 'raw' => 'nothing is answering at ' . $url . ' — is the xeric running? (./xeric, then try again)'];
     }
     $d = json_decode((string)$raw, true);
-    return ['status' => $status, 'json' => is_array($d) ? $d : null, 'raw' => (string)$raw];
+    return ['status' => $status, 'json' => is_array($d) ? $d : null,
+            'location' => $location, 'raw' => (string)$raw];
+}
+
+/**
+ * The refusal a redirect carries, decoded — or '' when the redirect is a plain
+ * success. model.php answers act=adduse with a 302 on BOTH outcomes; the only
+ * thing telling them apart is the Location: a refusal goes back to
+ * `model.php?no=<the sentence>`, a success to `model.php` bare. The helper
+ * above deliberately never follows redirects, so the header is the one place
+ * the sentence survives to be read.
+ */
+function xmcp_no(array $r): string
+{
+    $q = (string)(parse_url((string)($r['location'] ?? ''), PHP_URL_QUERY) ?? '');
+    if ($q === '') return '';
+    parse_str($q, $params);
+    return trim((string)($params['no'] ?? ''));
 }
 
 /** The engine's own sentence when it refused, or a plain one when it broke. */
@@ -259,18 +282,23 @@ function xmcp_call(string $tool, array $a): string
         $player = (int)($r['json']['player'] ?? 0);
 
         // The machine, in the same motion — a seat that cannot run a turn is a
-        // chair in a dark room. adduse answers with a redirect, not JSON; any
-        // non-4xx is the attachment made.
+        // chair in a dark room. adduse answers with a redirect, not JSON — on
+        // BOTH outcomes, so the status alone cannot tell a refusal from an
+        // attachment. The refusal names itself in the Location (`?no=...`,
+        // xmcp_no), and an agent whose seat is quietly detached deserves the
+        // reason, not a success line.
         $machine = trim((string)($a['machine'] ?? '')) ?: 'http://127.0.0.1:8080';
         $m = xmcp_http('POST', $base . '/model.php', ['act' => 'adduse', 'base' => $machine], true, $sid);
-        $attached = $m['status'] > 0 && $m['status'] < 400;
+        $no = xmcp_no($m);
+        $attached = $m['status'] > 0 && $m['status'] < 400 && $no === '';
 
         xmcp_seat_save($world, ['sid' => $sid, 'player' => $player,
                                 'name' => trim((string)($a['name'] ?? ''))]);
         return 'You are in: ' . (string)($r['json']['world'] ?? $world) . ', as '
             . trim((string)($a['name'] ?? '')) . ' (player ' . $player . ').'
-            . ($attached ? '' : ' The model machine at ' . $machine . ' did not attach — your turns '
-                . 'will be refused as "detached" until one does.')
+            . ($attached ? '' : ' The model machine at ' . $machine . ' did not attach'
+                . ($no !== '' ? ' — the instance said: ' . $no : '')
+                . ' — your turns will be refused as "detached" until one does.')
             . ' The seat is stored; every other tool now speaks as you. Look around first.';
     }
 

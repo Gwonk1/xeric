@@ -43,9 +43,17 @@ function xeric_why_bar(int $part, int $whole): string
  * per-section sizes quietly excluded the one block that competes with the bible
  * for the model's attention, which is the number this page exists to show.
  *
+ * AND EVERY PARAMETER prompt.php READS HAS TO THREAD THROUGH. $player is
+ * xeric_prompt_system()'s own: the rules block names the person being texted,
+ * and the owed and confidence blocks answer differently per person at the
+ * centre — a reconstruction that pinned the first player would re-open the
+ * "out of date" banner for every guest in a multi-player world, over
+ * machinery that is working.
+ *
  * @return array{sections:array,exact:bool}
  */
-function xeric_why_system_sections(array $t, PDO $db, string $handle, string $eff, int $memoryLimit, ?int $epoch): array
+function xeric_why_system_sections(array $t, PDO $db, string $handle, string $eff, int $memoryLimit,
+                                   ?int $epoch, int $player = XERIC_PLAYER_FIRST): array
 {
     $viewer = ['handle' => $handle];
     $out = [];
@@ -64,7 +72,8 @@ function xeric_why_system_sections(array $t, PDO $db, string $handle, string $ef
               'note' => 'xeric_prompt_voice(), her own record, read directly. Walls never apply to a person\'s '
                       . 'account of themselves.', 'text' => $voice];
 
-    $rules = implode("\n", xeric_prompt_rules($t, $handle, $eff));
+    $rules = implode("\n", xeric_prompt_rules($t, $handle, $eff,
+        $player > XERIC_PLAYER_FIRST ? xeric_player_name($db, $player, $t) : ''));
     $out[] = ['name' => 'how she answers',
               'note' => 'xeric_prompt_rules(): the answering rules, plus the rating written as a STYLE at '
                       . 'this viewer\'s own ceiling — a child\'s rules carry TV-G\'s register whatever the '
@@ -95,7 +104,7 @@ function xeric_why_system_sections(array $t, PDO $db, string $handle, string $ef
     }
 
     require_once dirname(__DIR__, 2) . '/engine/constructs.php';
-    $owed = xeric_expect_block($t, $db, $handle, ['epoch' => $epoch ?? 0]);
+    $owed = xeric_expect_block($t, $db, $handle, ['epoch' => $epoch ?? 0], $player);
     if ($owed !== '') {
         $out[] = ['name' => 'what she is owed, and what she owes',
                   'note' => 'xeric_expect_block(), the constructs door. The promises this character heard '
@@ -104,6 +113,20 @@ function xeric_why_system_sections(array $t, PDO $db, string $handle, string $ef
                           . 'been saying. Her OWN ledger, so no wall applies. Day-coarse on purpose: it '
                           . 'changes only when a state changes, never per turn.',
                   'text' => $owed];
+    }
+
+    // MIRRORED FROM prompt.php AT ITS POSITION, OR THE BANNER LIES — the
+    // lessons block's own history, three sections up: a block this page does
+    // not rebuild makes `exact` false on every world that carries one, and
+    // the inspector declares itself out of date over machinery that works.
+    require_once dirname(__DIR__, 2) . '/engine/confide.php';
+    $told = xeric_confide_block($t, $db, $handle, $player);
+    if ($told !== '') {
+        $out[] = ['name' => 'what she is carrying for people',
+                  'note' => 'xeric_confide_block(), the confidences she holds and the ones that got '
+                          . 'out. Her OWN ledger of told things, so no wall applies; coarse states '
+                          . 'only — kept or broken, never a count — so the byte-stable half survives it.',
+                  'text' => $told];
     }
 
     $story = xeric_prompt_story($t, $handle);

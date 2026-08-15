@@ -455,7 +455,9 @@ ok('you: which is the template the worker is told to use',
 echo "\n# what was said while it happened\n";
 
 $tSaw = '';
-$tEp = ['base' => 'stub://', 'stub' => function (string $tag, array $m) use (&$tSaw) {
+$tSys = '';
+$tEp = ['base' => 'stub://', 'stub' => function (string $tag, array $m) use (&$tSaw, &$tSys) {
+    $tSys = (string)$m[0]['content'];
     $tSaw = (string)$m[1]['content'];
     return ['talk' => ['Harlan: "That is the last of my quarters."',
                        'Dot: "You said that an hour ago."', '', str_repeat('x', 400)]];
@@ -476,8 +478,47 @@ ok('talk: the model is describing a night that is already settled',
     str_contains($tSaw, 'do not change it') && str_contains($tSaw, 'hands'));
 ok('talk: it is handed the TELLS the schema has carried all along',
     str_contains($tSaw, 'counts his change twice'));
+// THE SPEC MOVED INTO THE SYSTEM MESSAGE (the prompt.php split: invariant
+// first, volatile last) — so the instruction lives there now, and the user
+// turn holds only the night, with the settled numbers last.
 ok('talk: and told a tell is something a person does, never announces',
-    str_contains($tSaw, 'not something they announce'));
+    str_contains($tSys, 'not something they announce'));
+ok('talk: the invariant spec rides the system message and the night rides the user turn',
+    str_contains($tSys, 'WRITE ONE JSON OBJECT')
+    && !str_contains($tSaw, 'WRITE ONE JSON OBJECT')
+    && str_starts_with($tSaw, 'THE GAME:'));
+
+// THE TELL IS A WALL PATH, AND THIS PROMPT IS EVERY SEAT'S AT ONCE. A seat
+// walled off from `tells` (own_bible's deny-by-default floor carries it) must
+// not be handed the other seats' tells in the very prompt its own lines are
+// written from — while its OWN tell stays, because a person knows the thing
+// they do without noticing.
+$Twall = $T;
+$Twall['cast']['characters'][1]['tells'] = ['taps the rim of her cup'];      // ruth's own
+$Twall['cast']['special_roles'] = [['role' => 'protected', 'character' => 'ruth', 'own_bible' => true]];
+$wSaw = '';
+$wEp = ['base' => 'stub://', 'stub' => function (string $tag, array $m) use (&$wSaw) {
+    $wSaw = (string)$m[1]['content'];
+    return ['talk' => ['Harlan: "Deal them."', 'Dot: "About time."']];
+}];
+xeric_table_talk($Twall, $TABLE, $sit, $wEp);
+ok('walls: a walled seat takes every OTHER seat\'s tell out of the shared prompt',
+    !str_contains($wSaw, 'counts his change twice'), $wSaw);
+ok('walls: and their own tell stays — a person knows themselves',
+    str_contains($wSaw, 'taps the rim of her cup'), $wSaw);
+
+// AND THE RATING, at the room's ceiling — the same filter the speaker's own
+// prompt runs before a tell may reach it (prompt.php).
+$Trate = $T;
+$Trate['cast']['characters'][0]['tells'] = [['text' => 'palms his cards when the pot is big', 'rating_min' => 'mature']];
+$rSaw = '';
+$rEp = ['base' => 'stub://', 'stub' => function (string $tag, array $m) use (&$rSaw) {
+    $rSaw = (string)$m[1]['content'];
+    return ['talk' => ['Harlan: "Deal them."', 'Dot: "About time."']];
+}];
+xeric_table_talk($Trate, $TABLE, $sit, $rEp);
+ok('rating: a gated tell stays out of a room whose ceiling does not reach it',
+    !str_contains($rSaw, 'palms his cards'), $rSaw);
 ok('talk: a model that will not answer leaves a quiet game, not a broken one',
     xeric_table_talk($T, $TABLE, $sit,
         ['base' => 'stub://', 'stub' => function () { throw new RuntimeException('down'); }]) === []);

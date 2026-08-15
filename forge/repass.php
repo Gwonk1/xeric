@@ -78,6 +78,12 @@ function xeric_repass(array $w, array $endpoint, ?callable $onNote = null, array
     // exclusion exists to keep out.
     $sweep  = ($opts['mode'] ?? '') === 'sweep';
     $frozen = array_fill_keys(array_map('strval', (array)($opts['frozen'] ?? [])), true);
+    // THE SAME STOP THE BUILD OBEYS. The automatic repass at the end of a forge
+    // (worker.php) hands its `$stop` through here, consulted before every model
+    // read and OUTSIDE the try below on purpose: a stop that was caught and
+    // logged as a failed read would be a stop that did not stop. The button
+    // paths pass nothing and behave exactly as they always have.
+    $guard = is_callable($opts['guard'] ?? null) ? $opts['guard'] : static function (): void {};
 
     [$items, $context] = xeric_repass_digest($t, $seed);
     foreach ($items as $n => $it) {
@@ -103,6 +109,7 @@ function xeric_repass(array $w, array $endpoint, ?callable $onNote = null, array
     if (!$sweep) $reads[] = ['plot', xeric_repass_ask_plot($items, $context, $t)];
     $reads[] = ['develop', xeric_repass_ask_develop($devItems, $context)];
     foreach ($reads as [$kind, $msgs]) {
+        $guard();
         try {
             $calls++;
             $out = xeric_forge_ask($endpoint, 'repass-' . $kind, $msgs,
@@ -128,6 +135,7 @@ function xeric_repass(array $w, array $endpoint, ?callable $onNote = null, array
         foreach (xeric_repass_snake_shape($s) as $f) $findings[] = $f;
         $msgs = xeric_repass_ask_snake($s);
         if ($msgs === null) continue;
+        $guard();
         try {
             $calls++;
             $out = xeric_forge_ask($endpoint, 'repass-snake', $msgs,

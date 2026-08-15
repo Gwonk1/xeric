@@ -318,6 +318,61 @@ ok('a junk model still produces a valid world', validates($junkBuild['template']
 ok('the notes say what fell back', (bool)array_filter($junkBuild['notes'], fn($n) => str_contains($n, 'built-in default')));
 
 // ---------------------------------------------------------------------------
+// THE STOP INSIDE A PASS (xeric_forge_guard)
+//
+// The build's own guard runs BETWEEN passes; xeric_forge_attempt() retries a
+// failed model call once, and that retry was the one call no guard could see —
+// the owner taking the GPU back mid-pass still paid for a second attempt. The
+// module-registered guard is consulted at the start of every attempt and
+// between the try and the retry, outside any try/catch, so what it throws is
+// the stop itself and never a fallback. A forge with nothing registered — the
+// CLI, every earlier test in this file — keeps today's behaviour exactly.
+// ---------------------------------------------------------------------------
+
+$tries = 0;
+$r = xeric_forge_attempt('guardless', function () use (&$tries): array {
+    $tries++;
+    throw new RuntimeException('boom');
+}, fn() => ['fell' => 'back']);
+ok('with no guard registered the retry fires and the fallback lands',
+    $tries === 2 && $r === ['fell' => 'back'], (string)$tries);
+
+$tries = 0;
+$reclaimed = false;
+xeric_forge_guard(function () use (&$reclaimed): void {
+    if ($reclaimed) throw new RuntimeException('the owner took the machine back');
+});
+$stopSaid = err(function () use (&$tries, &$reclaimed): void {
+    xeric_forge_attempt('guarded', function () use (&$tries, &$reclaimed): array {
+        $tries++;
+        $reclaimed = true;                 // the reclaim lands mid-attempt
+        throw new RuntimeException('boom');
+    }, fn() => ['fell' => 'back']);        // must never be reached
+});
+ok('a guard tripped between the try and the retry stops the retry from firing',
+    $tries === 1, (string)$tries);
+ok('and the stop reaches the caller as itself, never as the fallback',
+    str_contains($stopSaid, 'took the machine back'), $stopSaid);
+
+// Still tripped from above: the next attempt spends nothing at all.
+$tries = 0;
+$stopSaid = err(fn() => xeric_forge_attempt('guarded again', function () use (&$tries): array {
+    $tries++;
+    throw new RuntimeException('boom');
+}, fn() => []));
+ok('a guard already tripped at attempt start spends not one call',
+    $tries === 0 && str_contains($stopSaid, 'took the machine back'), "$tries / $stopSaid");
+
+xeric_forge_guard(false);
+$tries = 0;
+$r = xeric_forge_attempt('cleared', function () use (&$tries): array {
+    $tries++;
+    throw new RuntimeException('boom');
+}, fn() => ['fell' => 'back']);
+ok('clearing the guard restores the ordinary failure discipline',
+    $tries === 2 && $r === ['fell' => 'back'], (string)$tries);
+
+// ---------------------------------------------------------------------------
 // The happy path: a model that answers properly
 // ---------------------------------------------------------------------------
 
@@ -732,6 +787,34 @@ ok('and the adult\'s seed pointed at another adult survives',
     array_key_exists((string)$ageCast[2]['handle'], (array)$fAdult['relationships']['attraction_seeds']));
 $hard = (array)($fKid['limits']['hard'] ?? []);
 ok('a child\'s own limits say so in words as well', $hard !== [] && str_contains(implode(' ', $hard), 'minor'));
+
+// ---- lowered, not lost: the way back up ------------------------------------
+// The lock preserves what it lowers (rating_min_was, and dropped pools as a
+// packs_was string), and the age floor restores it the pass after the age
+// crosses back — exact-or-nothing, and byte for byte where it restores.
+ok('what came down is preserved beside the node it came off',
+    ($fKid['drives']['rating_min_was'] ?? '') === 'explicit'
+    && is_string($fKid['packs_was'] ?? null)
+    && array_key_exists('explicit', (array)json_decode((string)($fKid['packs_was'] ?? ''), true)),
+    json_encode([$fKid['drives'] ?? null, $fKid['packs_was'] ?? null]));
+$agedUpT = $floored;
+foreach ($agedUpT['cast']['characters'] as $i => $c) {
+    if ((string)$c['handle'] === $k) $agedUpT['cast']['characters'][$i]['age'] = 19;
+}
+$agedUpT = xeric_forge_age_floor($agedUpT);
+$bKid = null;
+$origKid = null;
+foreach ($agedUpT['cast']['characters'] as $c) if ((string)$c['handle'] === $k) $bKid = $c;
+foreach ($loud['cast']['characters'] as $c)    if ((string)$c['handle'] === $k) $origKid = $c;
+ok('aged back up, the gate is restored byte for byte',
+    json_encode($bKid['drives'] ?? null) === json_encode($origKid['drives'] ?? null),
+    json_encode($bKid['drives'] ?? null));
+ok('and the dropped pool comes back byte for byte',
+    json_encode($bKid['packs'] ?? null) === json_encode($origKid['packs'] ?? null),
+    json_encode($bKid['packs'] ?? null));
+ok('and the sidecar keys come off with the restore',
+    !array_key_exists('packs_was', (array)$bKid)
+    && !array_key_exists('rating_min_was', (array)($bKid['drives'] ?? [])));
 
 // A cast with no adults in it has nobody the desire systems could fire over.
 $allKids = $ageT;
@@ -1736,6 +1819,42 @@ ok('a name the brief itself contains is kept whole, banned or not',
     xeric_forge_fresh_person_name('Elias Sanders', $nm, 0, [], 'my teacher Mr. Sanders, called Elias by nobody')
         === 'Elias Sanders');
 
+// THE EXEMPTION IS A WORD, NOT A SUBSTRING — and it is not a second seat.
+// The old test was mb_stripos: 'Ann' fired it out of 'planning', 'Inn' out of
+// 'beginning', and the person version then returned early, skipping the
+// not-twice-in-one-town gates entirely — so the brief exemption was both too
+// easy to trip and too powerful once tripped.
+(function (): void {
+    $n = ['key' => 'r', 'label' => 'Rust', 'sound' => 'x',
+        'given' => ['Mabel', 'Ruth', 'Hattie'], 'family' => ['Roarke', 'Stoker'],
+        'toponyms' => ['a', 'b'], 'businesses' => ['Fenner & Sons', 'Dredge Supply'], 'church' => 'e',
+        'over' => ['given' => [], 'family' => [], 'toponyms' => [], 'businesses' => []],
+        'banned_given' => ['ann' => true], 'banned_family' => [], 'banned_world' => [], 'banned_suffix' => [],
+        'used' => ['worlds' => [], 'places' => ['inn' => true], 'given' => [], 'family' => []]];
+
+    $got = xeric_forge_fresh_person_name('Ann Culver', $n, 0, [], 'we are planning a fair for the church');
+    ok("'Ann' inside 'planning' is not the brief naming her — the ban still holds",
+        !str_starts_with($got, 'Ann') && str_ends_with($got, ' Culver'), $got);
+    ok('a brief that actually says Ann keeps her, ban list or not',
+        xeric_forge_fresh_person_name('Ann Culver', $n, 0, [], 'my aunt Ann runs the counter') === 'Ann Culver');
+
+    // The brief names ONE Ann. The second one collides and re-rolls, exactly
+    // like any other twice-in-one-town given name.
+    $second = xeric_forge_fresh_person_name('Ann Prescott', $n, 1, ['ann_culver' => true],
+        'my aunt Ann runs the counter');
+    ok('two Anns cannot both ship, however hard the brief asked for one',
+        !str_starts_with($second, 'Ann') && str_ends_with($second, ' Prescott'), $second);
+
+    // The place gate: same helper, same rule — and it used to have no length
+    // minimum at all, so this three-letter door slid past the shelf.
+    $u1 = [];
+    $door = xeric_forge_fresh_place_name('Inn', 'bar', $n, 0, $u1, 'in the beginning there were boats');
+    ok("'Inn' inside 'beginning' no longer keeps a shelf-worn door", $door !== 'Inn', $door);
+    $u2 = [];
+    ok('a door the brief names by name still stands',
+        xeric_forge_fresh_place_name('Inn', 'bar', $n, 0, $u2, 'meet me at the Inn after dark') === 'Inn');
+})();
+
 ok('a world may not be Oakhaven, Blackwood, or end in Creek or Hollow',
     !xeric_forge_world_name_ok('Oakhaven Mills', $nm) && !xeric_forge_world_name_ok('Blackwood Rest', $nm)
     && !xeric_forge_world_name_ok('Cutter Creek', $nm) && !xeric_forge_world_name_ok('Fenn Hollow', $nm)
@@ -1743,6 +1862,9 @@ ok('a world may not be Oakhaven, Blackwood, or end in Creek or Hollow',
 ok('and an ordinary name passes', xeric_forge_world_name_ok('Ostrander', $nm) && xeric_forge_world_name_ok('Creekside', $nm));
 ok('a banned world name the premise itself contains is the user\'s choice and stands',
     xeric_forge_fresh_world_name('Blackwood', $nm, 'a town called Blackwood, like my grandmother\'s') === 'Blackwood');
+ok('but a banned world name hiding inside another word is nobody\'s choice',
+    xeric_forge_fresh_world_name('Blackwood', $nm, 'the blackwoods out past the fence') !== 'Blackwood',
+    xeric_forge_fresh_world_name('Blackwood', $nm, 'the blackwoods out past the fence'));
 
 // The world's own name gets the gate the doors and the people get. A town of
 // Boudreauxs and Thibodeauxs was called Stone Fleet Wharf, which is the whole

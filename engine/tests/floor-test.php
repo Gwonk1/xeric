@@ -447,6 +447,28 @@ ok('guest: the transcript labels the line with the guest\'s name',
     str_contains(call_volatile($calls, 0), 'Neil: hello in here.'));
 ok('guest: the system says the centre is shared',
     str_contains(call_system($calls, 0), 'does not live here alone'));
+// THE SYSTEM NAMES THE PERSON PRESENT, NOT THE TEMPLATE OWNER. It used to
+// hard-code Walt into the here-line, so with a guest speaking the cast
+// greeted somebody who was not in the room — and the clean guard shielded
+// the wrong name while it happened.
+ok('guest: the room is told the SPEAKER is standing in it',
+    str_contains(call_system($calls, 0), 'Neil is here too, in the room with you'));
+ok('guest: and not the absent owner',
+    !str_contains(call_system($calls, 0), 'Walt is here too'));
+
+// Two bodies standing in the same room are named together, off the presence
+// data: the speaker first, then whoever else's body is here.
+$db    = fresh_db('guest-both');
+$neilB = xeric_player_add($db, $T, 'Neil');
+xeric_player_move($db, 'first_lutheran', (int)$SUN['epoch'], $neilB);
+say_into($T, $db, 'first_lutheran', 'both of us made it.', $SUN);
+$calls = [];
+xeric_floor_answer($T, $db, 'first_lutheran', 'both of us made it.',
+    stub_script(['So you did.'], $calls),
+    ['now' => $SUN, 'seed' => 7, 'interject' => 0.0]);
+ok('bodies: the owner speaking with a guest\'s body in the room names them both',
+    str_contains(call_system($calls, 0), 'Walt and Neil are here too, in the room with you'),
+    mb_substr((string)strstr(call_system($calls, 0), 'here too'), 0, 120));
 
 // And the bare row stays the first person's — the no-migration rule.
 $db = fresh_db('owner-default');
@@ -520,6 +542,47 @@ $r = xeric_floor_answer($T, $db, 'bluebird', 'I\'ll come back at nine tomorrow.'
 $exD = array_values(array_filter(xeric_expects_for($db, 'dot'), fn($e) => ($e['state'] ?? '') === 'open'));
 ok('promise: the only one in the room is the listener, even through her silence',
     $r['silence'] && count($exD) === 1, json_encode($exD));
+
+// ---------------------------------------------------------------------------
+// 13. The pinned-voice resolver: the floor speaks off the SPEAKER's machine
+// ---------------------------------------------------------------------------
+
+// Every other speaks-as-themselves surface routes through the resolver seam
+// (say, watch, chatter, pings, dreams); the floor was the one landed-reply
+// path still hard-wired to the default endpoint. `endpoint_for` is handle →
+// endpoint, resolved per SPEAKER — and the default endpoint here FAILS THE
+// TEST if anything reaches it, which is the proof the seam carried the call.
+$db = fresh_db('resolver');
+say_into($T, $db, 'first_lutheran', 'Ruth, you still there?', $SUN);
+$resolved = [];
+$r = xeric_floor_answer($T, $db, 'first_lutheran', 'Ruth, you still there?',
+    stub_never(),
+    ['now' => $SUN, 'seed' => 11, 'interject' => 0.0,
+     'endpoint_for' => function (string $h) use (&$resolved): array {
+         $resolved[] = $h;
+         return ['base' => 'stub://' . $h, 'stub' => function (string $tag, array $msgs, array $opts) {
+             return $tag === 'chat' ? 'Right here.' : ['memories' => []];
+         }];
+     }]);
+ok('resolver: the landed line came off the resolved endpoint, not the default',
+    $r['said'] === 1 && $r['lines'][0]['text'] === 'Right here.',
+    json_encode($r['lines']));
+ok('resolver: resolved per SPEAKER — the addressed head, by handle',
+    $resolved === ['ruth'], implode(',', $resolved));
+
+// A resolver that throws must not silence the room: the default endpoint
+// speaks, exactly as chatter.php's seam behaves.
+$db = fresh_db('resolver-throws');
+say_into($T, $db, 'first_lutheran', 'Ruth, one more thing.', $SUN);
+$calls = [];
+$r = xeric_floor_answer($T, $db, 'first_lutheran', 'Ruth, one more thing.',
+    stub_script(['Go on, then.'], $calls),
+    ['now' => $SUN, 'seed' => 11, 'interject' => 0.0,
+     'endpoint_for' => function (string $h): array {
+         throw new RuntimeException('this pin is broken');
+     }]);
+ok('resolver: a failing resolver falls back to the room\'s own endpoint',
+    $r['said'] === 1 && $r['lines'][0]['text'] === 'Go on, then.');
 
 // ---------------------------------------------------------------------------
 

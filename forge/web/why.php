@@ -165,6 +165,39 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     </ul>
   <?php endif; ?>
 
+  <h2>the talk she is holding, and how it reached her</h2>
+  <?php
+    // A GRUDGE THAT CANNOT EXPLAIN ITSELF READS AS THE MODEL BEING MOODY —
+    // the design rule this page exists for, applied to the gossip ripple.
+    // xeric_gossip_why() is the engine's own answer (constructs.php, read-only
+    // here like everything else): who saw the hour firsthand, and the hop
+    // every retelling took, so "the whole town is suddenly on about Ruth"
+    // reads as a ripple with a source. Only the items THIS character holds:
+    // the same inclusion the prompt's own WHAT PEOPLE ARE SAYING block uses,
+    // which is the question this section answers — why does she know that?
+    require_once dirname(__DIR__, 2) . '/engine/constructs.php';
+    $gossipRows = [];
+    foreach (xeric_gossip_items($db) as $item) {
+        if (($item['state'] ?? '') !== 'live') continue;
+        foreach ((array)($item['knowers'] ?? []) as $kn) {
+            if ((string)($kn['who'] ?? '') === $handle) { $gossipRows[] = $item; break; }
+        }
+    }
+    if ($gossipRows === []): ?>
+    <p class="quiet">Nothing. The town's talk reaches her the way it reaches anybody — somebody standing
+      next to a knower — and right now she holds none of it.</p>
+  <?php else: ?>
+    <ul class="sys">
+      <?php foreach ($gossipRows as $item): ?>
+      <li><span class="k">“<?= h((string)($item['line'] ?? '')) ?>”</span>
+        <span class="v"><?= h(xeric_gossip_why($T, $item)) ?></span></li>
+      <?php endforeach; ?>
+    </ul>
+    <p class="quiet">What travels is always the hour's own commons words — what a bystander could have
+      seen — never what anybody felt. The prompt view above shows the same items the way SHE reads them;
+      this is the receipts.</p>
+  <?php endif; ?>
+
   <h2>the conversation, as turns</h2>
   <?php
     $turns = array_slice($messages, 1);
@@ -428,6 +461,66 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     <?php endforeach; ?>
   </ul>
 
+  <?php
+    // -- the promises the beat formed, receipts style -----------------------
+    // The floor has always written `expects` into this trail (floor.php: the
+    // arc keys a promise formed) and this page never printed them — so "why
+    // does Dot expect me Thursday?" had a recorded answer nobody could reach.
+    // Two shapes ride the list and both are honoured: "<listener>:<key>" for
+    // the player's own promise, and a bare "<key>" for a promise between two
+    // of the cast (xeric_expect_from_scene returns the key alone, so the
+    // bare shape is resolved against everyone the trail says was present —
+    // over-showing a receipt beats hiding one, and the row itself names who
+    // promised). Names and states only, the way the trail's own lists are.
+    require_once dirname(__DIR__, 2) . '/engine/constructs.php';
+    $userNameW = trim((string)($T['user']['name'] ?? '')) ?: 'the person at the centre';
+    $expRows = [];
+    foreach ((array)($tr['expects'] ?? []) as $ek) {
+        $ek = (string)$ek;
+        $holders = [];
+        if (str_contains($ek, ':')) {
+            [$who, $key] = explode(':', $ek, 2);
+            $holders[$who] = $key;
+        } else {
+            foreach ((array)($tr['present'] ?? []) as $ph) $holders[(string)$ph] = $ek;
+        }
+        foreach ($holders as $who => $key) {
+            foreach (xeric_expects_for($db, (string)$who) as $e) {
+                if ((string)($e['key'] ?? '') !== $key) continue;
+                $of = trim((string)($e['of'] ?? ''));
+                // The bare shape is always a cast-to-cast promise, and the
+                // scene stamps the promiser (`of` = the speaker) — so a row
+                // with no promiser, or one who never spoke in this beat, is a
+                // key COLLISION (expect.N numbers per listener), not this
+                // beat's receipt.
+                if (!str_contains($ek, ':')
+                    && ($of === '' || !in_array($of, array_map('strval', (array)($tr['spoke'] ?? [])), true))) {
+                    continue;
+                }
+                $expRows[] = [
+                    'who'   => xeric_world_name($T, (string)$who),
+                    'from'  => $of === '' ? $userNameW : (xeric_world_name($T, $of) ?: $of),
+                    'what'  => (string)($e['what'] ?? ''),
+                    'when'  => (string)($e['when_said'] ?? ''),
+                    'state' => (string)($e['state'] ?? ''),
+                ];
+            }
+        }
+    }
+    if ($expRows !== []): ?>
+  <h2>what this beat left somebody expecting</h2>
+  <p class="quiet">A promise is formed on the words alone (constructs.php), never on a model's opinion of
+    them — and the fuse burns in world time whether or not anybody looks. These are the receipts.</p>
+  <ul class="sys">
+    <?php foreach ($expRows as $er): ?>
+    <li><span class="k"><?= h($er['who']) ?></span>
+      <span class="v">now expects <?= h($er['from']) ?> — <?= h($er['what']) ?><?=
+        $er['when'] !== '' ? ', ' . h($er['when']) : '' ?>
+        <span class="quiet">· <?= h($er['state']) ?></span></span></li>
+    <?php endforeach; ?>
+  </ul>
+  <?php endif; ?>
+
   <?php $disc = (array)($tr['discretion'] ?? []); if ($disc !== []): ?>
   <h2>discretion</h2>
   <p class="quiet">Said to the speaker before the call, so the model steers instead of being censored.
@@ -676,6 +769,32 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     <ul class="sys">
       <?php foreach ((array)($last['notes'] ?? []) as $n): ?>
       <li><span class="v"><?= h((string)$n) ?></span></li>
+      <?php endforeach; ?>
+    </ul>
+  <?php endif; ?>
+
+  <h2>what is still coming</h2>
+  <?php
+    // The reminders somebody asked for and has not been given yet —
+    // xeric_remind_pending()'s intended screen, finally built. REAL time, not
+    // world time, deliberately (the one clock in the engine that is not the
+    // world's): a reminder booked for Thursday means the Thursday the person
+    // will live through, however far the world has been skipped.
+    $pendingR = xeric_remind_pending($db);
+    if ($pendingR === []): ?>
+    <p class="quiet">No reminders are booked. Ask anybody in a thread — "remind me to call the bank on
+      Thursday" — and the heart delivers it on the person's own clock, not the xeric's.</p>
+  <?php else: ?>
+    <ul class="sys">
+      <?php $nowR = time(); $tzR = (string)($T['user']['timezone'] ?? 'UTC');
+      foreach ($pendingR as $rr): $dueR = (int)$rr['due']; ?>
+      <li><span class="k"><?= h((string)$rr['text']) ?></span>
+        <span class="v"><?= $dueR > $nowR
+            ? h(xeric_remind_when(max(1, (int)round(($dueR - $nowR) / 60)), $dueR, $tzR))
+            : 'due already — it fires on the heart\'s next tick' ?>
+          <?php if ((string)$rr['handle'] !== ''): ?>
+            <span class="quiet">· asked of <?= h(xeric_world_name($T, (string)$rr['handle'])) ?></span>
+          <?php endif; ?></span></li>
       <?php endforeach; ?>
     </ul>
   <?php endif; ?>

@@ -325,6 +325,74 @@ ok('players: a marked user row is labeled with that person\'s own name',
     $backP[1]['role'] === 'user' && $backP[1]['name'] === 'Neil', $backP[1]['name']);
 
 // ---------------------------------------------------------------------------
+// 10. OUT is out of the room — an unentered character is not present, so the
+// beat can never draw them and they never say a word (fail closed; the same
+// door xeric_world_who_is_where holds for the sweeps and the map).
+// ---------------------------------------------------------------------------
+
+$TOut = $T;
+foreach ($TOut['cast']['characters'] as $iC => $cC) {
+    if ((string)$cC['handle'] === 'ruth') $TOut['cast']['characters'][$iC]['out'] = true;
+}
+$dbOut  = fresh_db('out');
+$SUNout = xeric_world_now($TOut, ep('2026-08-02 10:00'));
+$hereO  = xeric_chatter_present($TOut, $dbOut, 'first_lutheran', $SUNout);
+ok('out: an unentered character is simply not standing in the room',
+    !in_array('ruth', $hereO, true) && $hereO !== [], implode(',', $hereO));
+
+// ---------------------------------------------------------------------------
+// 11. The prompt names who is ACTUALLY standing there — never the absent owner
+// ---------------------------------------------------------------------------
+
+// The system used to hard-code the template owner as the person present, so
+// with a guest at the counter the cast greeted Walt to Neil's face — and the
+// name guard shielded Walt's name while Neil's went unguarded. The caller now
+// threads the presence data through (`players_here`), and the owner remains
+// the fallback so every pre-bodies caller stays byte-identical.
+$sysOf = function (array $calls, int $i): string {
+    foreach ($calls[$i]['msgs'] as $m) if ($m['role'] === 'system') return (string)$m['content'];
+    return '';
+};
+
+$dbN  = fresh_db('names-owner');
+$callsN = [];
+xeric_chatter_run($T, $dbN, 'bluebird', stub_chat($callsN),
+    ['now' => $SAT, 'force' => true, 'user_here' => true, 'max_lines' => 1]);
+ok('names: no players_here still says the owner is in the room — the fallback',
+    str_contains($sysOf($callsN, 0), 'Walt is here too, in the room with you'));
+
+$dbN  = fresh_db('names-guest');
+$callsN = [];
+xeric_chatter_run($T, $dbN, 'bluebird', stub_chat($callsN),
+    ['now' => $SAT, 'force' => true, 'user_here' => true, 'max_lines' => 1,
+     'players_here' => ['Neil']]);
+ok('names: the guest standing there is the one the room is told about',
+    str_contains($sysOf($callsN, 0), 'Neil is here too, in the room with you'));
+ok('names: and the absent owner is not claimed to be in it',
+    !str_contains($sysOf($callsN, 0), 'Walt is here too'));
+
+$dbN  = fresh_db('names-both');
+$callsN = [];
+xeric_chatter_run($T, $dbN, 'bluebird', stub_chat($callsN),
+    ['now' => $SAT, 'force' => true, 'user_here' => true, 'max_lines' => 1,
+     'players_here' => ['Walt', 'Neil']]);
+ok('names: two bodies present are named together, off the presence data',
+    str_contains($sysOf($callsN, 0), 'Walt and Neil are here too, in the room with you'));
+
+// The clean guard follows the same list: a line that starts writing the
+// PRESENT person's reply is cut at their name, whoever they are.
+$dbN = fresh_db('names-guard');
+$impersonate = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) {
+    return $tag === 'chat' ? "Fine by me.\nNeil: sounds good" : ['memories' => []];
+}];
+$rN = xeric_chatter_run($T, $dbN, 'bluebird', $impersonate,
+    ['now' => $SAT, 'force' => true, 'user_here' => true, 'max_lines' => 1,
+     'players_here' => ['Neil']]);
+ok('names: the guard cuts a line put in the present guest\'s mouth',
+    (int)$rN['said'] === 1 && !str_contains((string)$rN['lines'][0]['text'], 'sounds good'),
+    json_encode($rN['lines']));
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $g) @unlink($g);
 

@@ -22,10 +22,18 @@
  * no place in the model queue, and cannot fail because somebody else is busy.
  * Walking across town should never be something a person has to wait in line for.
  *
- * WHAT A TRIP DOES NOT DO: run sweeps. Twenty minutes of walking is twenty
- * minutes nothing happened in. That is a deliberate cheap version — the honest
- * one is that travel time should be lived through the way skipped time is, and
- * when that changes, it changes in tick-worker.php and this file stays as it is.
+ * WHAT A TRIP NOW DOES ABOUT SWEEPS. Travel time is lived through the way
+ * skipped time is: when a landed trip crossed a sweep window, this POST also
+ * starts the existing tick-worker over the walked stretch (walked mode — the
+ * clock already moved, so the worker advances nothing and simply lives the
+ * hours behind it), and the response carries the job under `sweep` so a client
+ * can stream them exactly as it streams a skip. The WALK itself never waits:
+ * the trip answers inline as it always did, the sweep takes the normal ticket
+ * path behind whoever is talking, and a refused or queued sweep is a note in
+ * the stream — a sweep the skip budget declines is a note on the response
+ * (`sweep.note`, xeric_play_trip_job) — never a blocked trip. Sweeps are
+ * idempotent per window, so racing the heart — or a second walk — is already
+ * safe.
  */
 
 declare(strict_types=1);
@@ -58,14 +66,16 @@ if (!$post) {
 // the rule was right when it was written: there was ONE body, so a guest
 // walking would have moved the owner's feet. Every seat has its own body now
 // (travel.php's suffix discipline) — a guest walks their own, a stranger
-// still moves around their own fork freely. What survives of the old rule is
-// its OTHER half: a trip burns world-minutes for everybody (time is a world
-// fact), so a guest's walking rides the same meter a skip does — pacing the
-// street is not a free fast-forward for somebody else's world.
-if (xeric_play_is_guest($w)) {
-    xeric_limit_guard(xeric_limit_check('skip', ['sid' => $sid]));
-    xeric_limit_note('skip', ['sid' => $sid]);
-}
+// still moves around their own fork freely. And the METER sits where the
+// spend actually is: walking itself calls no model (the header above), so
+// nothing is checked here — the skip budget is consulted inside
+// xeric_play_trip_job, for EVERYBODY alike, on exactly the walks that would
+// spawn the sweep worker (real model calls, the same spend tick.php meters
+// unconditionally). The old shape metered guests only, at this door: owners
+// and strangers on their own fork spawned workers with no limit consulted,
+// while a guest could be refused the WALK itself — and movement is never the
+// thing being rationed. Over budget, the trip still lands; the hours pass
+// quietly and the response's `sweep.note` says so.
 
 // -- go -----------------------------------------------------------------------
 // `to` absent, null or empty means leaving the map: going off on your own time
@@ -90,6 +100,16 @@ if (!$trip['ok']) {
     xeric_web_json(['error' => (string)$trip['error'], 'kind' => 'travel'], 400);
 }
 
+// -- the hours the walk burned, lived ----------------------------------------
+// The trip has already landed; this only STARTS the job (xeric_play_trip_job
+// owns every refusal) and reports it so the page can stream the walked hours
+// the way it streams a skip. Null when the walk never crossed a window, or
+// nothing is attached — the map below is the answer either way. A walk the
+// skip budget declines comes back as {note} instead of {job}: the walk stood,
+// the sweep did not, and the sentence rides under `sweep` so a client can say
+// so.
+$sweep = xeric_play_trip_job($w, $trip, $sid);
+
 // The arrival is reported from the moment AFTER the clock moved, which is the
 // whole point of the feature: the twenty minutes it took to get out there are
 // twenty minutes in which she left. The map is recomputed rather than patched
@@ -111,4 +131,5 @@ xeric_web_json([
         // is nothing to say, and the client falls back to its plain line.
         'scene'   => (string)($trip['scene'] ?? ''),
     ],
-] + xeric_travel_map($w['template'], $w['db'], $trip['now'], $player));
+] + ($sweep !== null ? ['sweep' => $sweep] : [])
+  + xeric_travel_map($w['template'], $w['db'], $trip['now'], $player));

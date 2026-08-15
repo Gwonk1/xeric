@@ -877,7 +877,12 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
   <div class="launchbar" id="launchbar">
     <?php if (!$w['launched'] && $w['mine']): ?>
       <button class="btn" type="button" id="launch">Launch this xeric →</button>
-      <button class="linkbtn" type="button" id="undo" title="Put back the version from before the last change">↺ undo the last change</button>
+      <!-- HIDDEN UNTIL THERE IS SOMEWHERE TO GO BACK TO. xeric_review_has_undo()
+           was written to gate this button and the button never asked: a fresh
+           draft offered an undo whose only answer was a refusal. The script
+           shows it the moment a save writes the first .prev. -->
+      <button class="linkbtn" type="button" id="undo"<?= xeric_review_has_undo($w['slug']) ? '' : ' hidden' ?>
+              title="Put back the version from before the last change">↺ undo the last change</button>
       <!-- THE LABEL IS THE STATE, THE TOOLTIP IS THE ACTION, and it used to be
            the other way round on one control: the words said "reroll with the
            local model" while the tooltip said "use a paid API", so reading them
@@ -969,8 +974,13 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
     <?php endif; ?>
     <button class="redbtn" type="button" id="repassall"
             title="Warning: this uses a lot of tokens, and it makes several passes. It reads, rewrites, and reads again until no contradictions remain.">Clear All Contradictions</button>
-    <span class="st" id="repassst"></span>
-    <ul class="rfind" id="rfind" hidden></ul>
+    <!-- THE FORGE ALREADY READ IT ONCE. worker.php runs one repass at the end
+         of every build and leaves the findings on the world (forge.repass);
+         they are painted here so they meet the owner without a press. A press
+         of either button above replaces them with a fresh read. -->
+    <?php $autoRows = $w['mine'] ? xeric_web_repass_rows($T) : ''; ?>
+    <span class="st" id="repassst"><?= h($autoRows !== '' ? xeric_web_repass_note($T) : '') ?></span>
+    <ul class="rfind" id="rfind"<?= $autoRows === '' ? ' hidden' : '' ?>><?= $autoRows ?></ul>
   </div>
 
   <?php if ($w['mine']): ?>
@@ -1020,6 +1030,16 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
 
   var $  = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+
+  // The undo button starts hidden on a draft nothing has changed — there is no
+  // .prev to go back to and the only thing pressing it could say is no. Every
+  // path that writes one (a save, a reroll that landed, a repass that fixed
+  // something, an entrance) calls this, so the button appears exactly when it
+  // first has an answer.
+  function showUndo() {
+    var u = $('#undo');
+    if (u) u.hidden = false;
+  }
 
   // -- edit by hand --------------------------------------------------------
   // Saved on blur, not on every keystroke: a validator run per character would
@@ -1342,6 +1362,7 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         st.textContent = fs.length + ' finding' + (fs.length === 1 ? '' : 's') + ', '
           + n + ' correction' + (n === 1 ? '' : 's') + '.'
           + (n ? ' Already in, ↺ takes the whole pass back.' : '');
+        if (n) showUndo();
         paintPass(d);
         if (d.teaser_stale) writeCover(true);
       }, function (msg) { lock(false); st.textContent = msg; });
@@ -1537,7 +1558,7 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         // A spiral is a fault, not a result: it says so where a fault is said.
         if (stop === 'thrash' || stop === 'budget' || stop === 'rounds') st.classList.add('bad');
         else st.classList.remove('bad');
-        if (anyFixed) writeCover(true);
+        if (anyFixed) { writeCover(true); showUndo(); }
       }
 
       // one finding, driven to a terminal state, then cb()
@@ -1809,6 +1830,7 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
             }
             if (err) err.hidden = true;
             if (log && res.d.note) { log.hidden = false; tlog(log, res.d.note); }
+            showUndo();
             repaint('cast');
           },
           function (e) {
@@ -1820,10 +1842,50 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
     });
   }
 
+  // -- the entrance -----------------------------------------------------------
+  // The doorbell for an OUT character: one POST to a=enter, the engine does the
+  // whole of it (the flip, the validation, the prev-copy, the event the town
+  // remembers), and the cast repaints from disk like every other cast action.
+  // Confirmed first, because an entrance writes an event a world cannot unsee.
+  function bindEnter(root) {
+    $$('.enterstory', root).forEach(function (b) {
+      if (b.dataset.bound) return;
+      b.dataset.bound = '1';
+      b.addEventListener('click', function () {
+        if (running || !MINE || b.disabled) return;
+        if (!confirm('Bring ' + (b.dataset.name || 'them') + ' into the story? '
+          + 'If this xeric has a past, the town will remember them turning up today.')) return;
+        var sec = b.closest('.sec');
+        var was = b.textContent;
+        b.disabled = true;
+        b.textContent = 'opening the door…';
+        fetch('review.php?a=enter', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ world: W, handle: b.dataset.h }) })
+          .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+          .then(function (res) {
+            b.disabled = false;
+            b.textContent = was;
+            if (!res.ok || !res.d.ok) {
+              if (sec) fail(sec, (res.d && res.d.error) || 'the door would not open');
+              return;
+            }
+            showUndo();
+            repaint('cast');
+          },
+          function (e) {
+            b.disabled = false;
+            b.textContent = was;
+            if (sec) fail(sec, 'the forge could not be reached, ' + e.message);
+          });
+      });
+    });
+  }
+
   function bindEdits(root) {
     bindDice(root);
     bindAddField(root);
     bindPronounFill(root);
+    bindEnter(root);
     $$('.ed', root).forEach(function (el) {
       if (el.dataset.bound) return;
       el.dataset.bound = '1';
@@ -1866,6 +1928,7 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         el.value = res.d.value;
         el.dataset.was = res.d.value;
         el.classList.add('saved');
+        showUndo();                        // the save just wrote the .prev this button goes back to
 
         // Some edits change more than the box they were typed in — retyping
         // your motivation re-arms the systems, and the panel three inches below
@@ -2030,6 +2093,7 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
             b.textContent = was;
             var sec = document.getElementById('sec-' + section);
             if (!res.ok) { fail(sec, res.d.error || 'that did not work'); return; }
+            showUndo();
             repaint(section);
           },
           function (e) {
@@ -2148,6 +2212,8 @@ echo '<style>' . xeric_play_css() . xeric_review_css() . '</style>';
         e2.textContent = 'Nothing was changed, this xeric is exactly as it was. '
           + 'The log above says why.';
         e2.hidden = false;
+      } else {
+        showUndo();                        // a reroll that saved rolled a .prev
       }
       (d.stale || []).forEach(repaint);
       // New rooms under old prose, a new cast under old references: a

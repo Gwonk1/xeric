@@ -140,7 +140,11 @@ const XERIC_PROACTIVE_DREAM_DAYS = 7;
  *                     learn (false to ignore what this world has learned),
  *                     stories (the overlays the caller composed with),
  *                     dream_chance (the dream rung's explicit instruction —
- *                     `chance` deliberately does not reach it)
+ *                     `chance` deliberately does not reach it),
+ *                     endpoint_for (handle → endpoint, see
+ *                     xeric_proactive_endpoint — a caller with per-character
+ *                     pinned voices registers one; absent, every call goes to
+ *                     $endpoint exactly as it always did)
  * @param array|null $notes OUT: why nobody did, in words. Optional and by
  *                     reference so the ordinary call site stays one line — a
  *                     cron does not care, a CLI transcript very much does.
@@ -237,6 +241,36 @@ function xeric_proactive_check(array $t, PDO $db, array $endpoint, array $now, a
 }
 
 /**
+ * The endpoint that speaks for ONE character, when the caller cares which.
+ *
+ * A RESOLVER, NOT A ROUND-ROBIN. The heart pins a character's unprompted
+ * lines to the same machine say.php and watch.php already route their turns
+ * to (play-lib.php's `voice.machine` arc), and the whole point of that pin is
+ * that HER prefix stays warm on HER machine — so the mapping is handle →
+ * endpoint and nothing else, stable across calls, decided by the caller.
+ * This file only asks the question at the moment a character SPEAKS AS
+ * THEMSELVES: the ping and the dream. The sweep never comes through here —
+ * an hour has no single voice to route (play-lib.php, deliberately).
+ *
+ * FALLS BACK, NEVER FAILS, the same doctrine as the pin itself: a resolver
+ * that throws, or hands back nothing usable, degrades to the run's own
+ * endpoint and the message still lands. A tuning choice must not be able to
+ * silence somebody.
+ */
+function xeric_proactive_endpoint(array $endpoint, array $opts, string $handle): array
+{
+    if (isset($opts['endpoint_for']) && is_callable($opts['endpoint_for'])) {
+        try {
+            $ep = ($opts['endpoint_for'])($handle);
+            if (is_array($ep) && $ep !== []) return $ep;
+        } catch (Throwable $e) {
+            // fall through to the run's own endpoint
+        }
+    }
+    return $endpoint;
+}
+
+/**
  * One candidate event, decided. Split out of xeric_proactive_check() so the
  * candidate walk above stays readable; every rule below is unchanged.
  */
@@ -306,7 +340,10 @@ function xeric_proactive_try(array $t, PDO $db, array $endpoint, array $now, arr
     $usage = [];
     $t0    = microtime(true);
     try {
-        $raw = xeric_chat_say($endpoint, $messages, [
+        // She speaks as herself, so her own machine speaks for her when the
+        // caller pinned one (xeric_proactive_endpoint) — the same routing her
+        // chat turns already get, which is what keeps her prefix warm there.
+        $raw = xeric_chat_say(xeric_proactive_endpoint($endpoint, $opts, $handle), $messages, [
             'temperature' => (float)($opts['temperature'] ?? 0.95),
             'max_tokens'  => (int)($opts['max_tokens'] ?? 180),
         ] + array_intersect_key($opts, ['timeout' => 1]), $usage);
@@ -425,7 +462,17 @@ function xeric_proactive_pick(array $t, PDO $db, array $event, array $now, array
     foreach ($who as $handle) {
         $handle = (string)$handle;
         // Fixtures are scenery. Scenery does not text.
-        if (xeric_world_character($t, $handle) === null) continue;
+        $c = xeric_world_character($t, $handle);
+        if ($c === null) continue;
+
+        // NOR DOES ANYBODY WHO HAS NOT ENTERED THE STORY. OUT is a casting
+        // state (enter.php): unstaged people are already absent from every
+        // presence read, but an event's participant list is a RECORD — seed
+        // history, or an hour lived before a reroll flipped them out — and a
+        // record is exactly the door a fail-closed rule has to close too. A
+        // first text from somebody the world says has not arrived yet would
+        // be the town contradicting its own entrance event.
+        if (!empty($c['out'])) continue;
 
         // NOR DO THE DEAD, and this is checked HERE — at the moment somebody is
         // about to reach for a phone — rather than when the hour that gave them
@@ -695,7 +742,9 @@ function xeric_proactive_dream(array $t, PDO $db, array $endpoint, array $now, a
     $usage = [];
     $t0    = microtime(true);
     try {
-        $raw = xeric_chat_say($endpoint, $messages, [
+        // The dreamer speaks as herself too, so her pinned machine dreams for
+        // her when the caller registered one (xeric_proactive_endpoint).
+        $raw = xeric_chat_say(xeric_proactive_endpoint($endpoint, $opts, $handle), $messages, [
             'temperature' => (float)($opts['temperature'] ?? 0.95),
             'max_tokens'  => (int)($opts['max_tokens'] ?? 180),
         ] + array_intersect_key($opts, ['timeout' => 1]), $usage);
@@ -816,7 +865,14 @@ function xeric_proactive_dreamer(array $t, PDO $db, array $now, array $opts, arr
     $who = [];
     foreach (xeric_world_cast($t) as $c) {
         $h = (string)($c['handle'] ?? '');
-        if ($h !== '') $who[] = $h;
+        if ($h === '') continue;
+        // OUT of the story does not dream about you either. The waking rung
+        // reads an event's participants and can only meet an out character
+        // through a stale record; this rung walks the WHOLE cast, so without
+        // the same fail-closed check it would be the one surface where an
+        // unentered character could speak first.
+        if (!empty($c['out'])) continue;
+        $who[] = $h;
     }
 
     $reach = [];

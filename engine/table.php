@@ -139,7 +139,7 @@ function xeric_table_tonight(array $table, array $now): bool
  *
  * @return array{nerve:int,tell:string}
  */
-function xeric_table_nerve(array $t, string $handle): array
+function xeric_table_nerve(array $t, string $handle, ?string $eff = null): array
 {
     $c = xeric_world_character($t, $handle) ?? [];
     $blob = mb_strtolower(implode(' ', array_filter([
@@ -155,9 +155,15 @@ function xeric_table_nerve(array $t, string $handle): array
               'timid' => -2, 'cautious' => -1, 'gentle' => -1, 'worried' => -1] as $w => $d) {
         if (str_contains($blob, $w)) $nerve += $d;
     }
+    // THE TELL IS A RATED NODE, the same one prompt.php filters before it may
+    // reach the speaker's own block. A caller building PROSE hands the room's
+    // ceiling in and gets only what that ceiling allows, gated at the subject's
+    // own rating like every other node about a person; the betting policy
+    // never reads the tell, so a null keeps the pure paths byte-identical.
     $tells = (array)($c['tells'] ?? []);
+    if ($eff !== null) $tells = xeric_rating_filter($tells, $eff, $c);
     return ['nerve' => max(0, min(4, $nerve)),
-            'tell'  => $tells === [] ? '' : (string)$tells[0]];
+            'tell'  => $tells === [] ? '' : xeric_text($tells[0])];
 }
 
 /**
@@ -704,17 +710,64 @@ function xeric_table_talk(array $t, array $table, array $played, array $endpoint
                           array $opts = []): array
 {
     $net = (array)$played['net'];
+
+    // WHOSE PROMPT THIS IS: EVERY SEAT'S AT ONCE. One call writes what Ruth
+    // says from the same bytes it writes what Harlan says — the same
+    // one-call-many-heads shape as the sweep prompt — so whatever rides it is
+    // read on behalf of each of them, and it gets the two fences the speaker
+    // path has always had (engine/prompt.php): the walls, and the rating. A
+    // tell is a wall path (`tells`, engine/walls.php) and a rateable node, and
+    // it used to ride here raw for every seat. The ceiling is the lowest one
+    // at the table, the way the sweep clamps a room's; the walls are each
+    // seat's own, and a seat walled off from `tells` takes every OTHER seat's
+    // tell out of the prompt — their own stays, because a person knows the
+    // thing they do without noticing. Player seats resolve to no character and
+    // sit outside both reads; the floor at the bottom already owns what may
+    // reach a child.
+    $eff   = xeric_world_rating($t);
+    $walls = [];
+    foreach (array_keys($net) as $h) {
+        if (str_starts_with((string)$h, XERIC_TABLE_YOU)) continue;
+        $viewer      = xeric_viewer($t, ['handle' => (string)$h]);
+        $walls[(string)$h] = xeric_viewer_walls($t, $viewer);
+        $eff         = xeric_viewer_rating($eff, $viewer);
+    }
+
     $who = [];
     foreach ($net as $h => $n) {
         if (str_starts_with((string)$h, XERIC_TABLE_YOU)) { $who[] = '- You: ' . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level')); continue; }
-        $nerve = xeric_table_nerve($t, (string)$h);
+        $tell = xeric_table_nerve($t, (string)$h, $eff)['tell'];
+        foreach ($walls as $seat => $w) {
+            if ($seat === (string)$h) continue;
+            if (xeric_hidden($w, 'tells')) { $tell = ''; break; }
+        }
         $who[] = '- ' . (xeric_world_name($t, (string)$h) ?: (string)$h) . ': '
                . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level'))
-               . ($nerve['tell'] !== '' ? ' — when he is not thinking about it, he ' . $nerve['tell'] : '');
+               . ($tell !== '' ? ' — when he is not thinking about it, he ' . $tell : '');
     }
 
+    // THE SPEC RIDES THE SYSTEM MESSAGE; THE NIGHT RIDES THE USER TURN. Every
+    // sentence of the output spec is the same bytes for every table this
+    // engine ever settles, and it used to sit at the BOTTOM of the user turn,
+    // below the one thing that changes per night — so the prefix cache died at
+    // "THE GAME:" and re-read the whole spec on every call. prompt.php's split,
+    // applied here: invariant first, volatile last, the settled numbers still
+    // the closest thing to where the model writes.
     $sys = 'You write what people said around a card table. You are not running the game: it is '
-         . 'finished and the numbers are settled. Reply with ONE JSON object and nothing else.';
+         . 'finished and the numbers are settled. Reply with ONE JSON object and nothing else.'
+         . "\n\nWRITE ONE JSON OBJECT
+"
+         . '{ "talk": ["Name: \"…\"", "Name: \"…\""] }' . "
+"
+         . "- Four to seven short spoken lines from across the whole night, in order.
+"
+         . "- Speech only. No narration, no thoughts, nothing anybody could not HEAR.
+"
+         . "- A tell under HOW IT WENT is something a person DOES, not something they announce. If somebody
+"
+         . "  is losing badly it should be audible in what they say, never stated outright.
+"
+         . "- Nobody says the numbers out loud. People do not read out the score at a card table.";
     $user = 'THE GAME: ' . (string)($table['name'] ?? 'the game') . ', ' . (int)$played['hands']
           . " hands.
 
@@ -726,22 +779,7 @@ HOW IT WENT — this is settled, do not change it:
 SOME OF THE TABLE:
 "
           . implode("
-", array_map(fn($l) => '  ' . $l, array_slice((array)$played['log'], -8)))
-          . "
-
-WRITE ONE JSON OBJECT
-"
-          . '{ "talk": ["Name: \"…\"", "Name: \"…\""] }' . "
-"
-          . "- Four to seven short spoken lines from across the whole night, in order.
-"
-          . "- Speech only. No narration, no thoughts, nothing anybody could not HEAR.
-"
-          . "- A tell above is something a person DOES, not something they announce. If somebody
-"
-          . "  is losing badly it should be audible in what they say, never stated outright.
-"
-          . "- Nobody says the numbers out loud. People do not read out the score at a card table.";
+", array_map(fn($l) => '  ' . $l, array_slice((array)$played['log'], -8)));
 
     try {
         $raw = xeric_chat_json($endpoint, 'table-talk', [

@@ -169,6 +169,125 @@ $r = xeric_review_apply_edit(xeric_review_open('note-town', $R), 'cast.character
 ok('a refused edit carries the refusal and never the live sentence',
     ($r['ok'] ?? true) === false && !isset($r['note']), json_encode($r));
 
+// ---------------------------------------------------------------------------
+// LOADING TOLERATES WHAT SAVING REFUSES — the hidden-list contract split.
+// A world already on disk carrying a free-form hidden entry (legal-but-inert
+// under the old contract) must still OPEN, because this door is the only
+// place it can be fixed — and the same entry must never get PAST this door.
+// ---------------------------------------------------------------------------
+
+$ltClean = xeric_review_open('note-town', $R)['template'];
+$ltInert = $ltClean;
+$ltInert['knowledge_walls'][0]['hidden'][] = 'teles';
+$refusal = '';
+try { xeric_review_save('note-town', $ltInert); } catch (Throwable $e) { $refusal = $e->getMessage(); }
+ok('hidden: a free-form hidden key refuses the save and names itself',
+    $refusal !== '' && str_contains($refusal, "'teles'"), $refusal);
+ok('hidden: and the refused save wrote nothing',
+    !in_array('teles', (array)(xeric_review_open('note-town', $R)['template']['knowledge_walls'][0]['hidden'] ?? []), true));
+// An old world arrives the way this writes: behind the validator's back.
+file_put_contents($dir . '/world-template.json', json_encode($ltInert, $jopt) . "\n");
+$openMsg = '';
+$reopened = null;
+try { $reopened = xeric_review_open('note-town', $R); } catch (Throwable $e) { $openMsg = $e->getMessage(); }
+ok('hidden: the same world already on disk still opens for review',
+    $openMsg === '' && is_array($reopened)
+    && in_array('teles', (array)($reopened['template']['knowledge_walls'][0]['hidden'] ?? []), true), $openMsg);
+// The plant comes back out, so nothing downstream trips over it.
+file_put_contents($dir . '/world-template.json', json_encode($ltClean, $jopt) . "\n");
+
+echo "\n# what a crumb may quote\n";
+
+// ---------------------------------------------------------------------------
+// xeric_review_learn_edit() writes every hand edit on a lived world into
+// world.db as a signal, and a WORLD-bucket edit (no handle) is distilled into
+// every speaker's prompt — so its crumb must not quote wording the walls of
+// this world hide. That redaction branch had never once executed under test:
+// every apply_edit assertion above targets cast.characters.*, which files
+// under a handle and takes the quoting path.
+// ---------------------------------------------------------------------------
+
+require_once dirname(__DIR__, 3) . '/engine/state.php';
+$db = xeric_state_open($dir . '/world.db');       // note-town is lived-in from here on
+ok('the world counts as lived once its database exists',
+    !empty(xeric_review_open('note-town', $R)['lived']));
+
+$lastSignal = function () use ($db): array {
+    $rows = $db->query('SELECT kind, handle, subject, note FROM signals ORDER BY id DESC LIMIT 1')
+               ->fetchAll(PDO::FETCH_ASSOC);
+    return (array)($rows[0] ?? []);
+};
+
+// The control: a world path NO wall of this world hides quotes both values.
+$r = xeric_review_apply_edit(xeric_review_open('note-town', $R),
+    'setting.texture.0', 'The river smell reaches Main Street by ten.');
+ok('crumbs: an unwalled world edit is recorded', ($r['ok'] ?? false) === true, json_encode($r));
+$sig = $lastSignal();
+ok('crumbs: it files under the world, not a person', ($sig['kind'] ?? '') === 'edit' && ($sig['handle'] ?? 'x') === '');
+ok('crumbs: and its note quotes what moved, both values',
+    str_contains((string)($sig['note'] ?? ''), 'river smell')
+    && str_contains((string)($sig['note'] ?? ''), 'now “'), json_encode($sig));
+
+// Walled by definition: a wall's own prose is not a path any hidden list needs
+// to name.
+$r = xeric_review_apply_edit(xeric_review_open('note-town', $R),
+    'knowledge_walls.0.shown_as', 'Your Milldale is church, the diner and the store, and that is all it is.');
+ok('crumbs: a wall\'s own line saves like any other', ($r['ok'] ?? false) === true, json_encode($r));
+$sig = $lastSignal();
+ok('crumbs: but its crumb is redacted — the path is named, the wording is not',
+    str_contains((string)($sig['note'] ?? ''), 'behind a wall')
+    && !str_contains((string)($sig['note'] ?? ''), 'church'), json_encode($sig));
+ok('crumbs: and the subject still says which box was corrected',
+    str_contains((string)($sig['subject'] ?? ''), 'knowledge_walls.0.shown_as'), json_encode($sig));
+
+// Walled by a hidden list: a wall of THIS world hides its places, so a place's
+// description is somebody's smaller world and its wording stays out of the
+// world bucket.
+$lt = xeric_review_open('note-town', $R)['template'];
+$lt['knowledge_walls'][1]['hidden'][] = 'places';
+xeric_review_save('note-town', $lt);
+$r = xeric_review_apply_edit(xeric_review_open('note-town', $R),
+    'places.0.description', 'Formica, a bell on the door, and the coffee always on.');
+ok('crumbs: a place edit under a wall that hides places still saves', ($r['ok'] ?? false) === true, json_encode($r));
+$sig = $lastSignal();
+ok('crumbs: and its crumb is redacted too',
+    str_contains((string)($sig['note'] ?? ''), 'behind a wall')
+    && !str_contains((string)($sig['note'] ?? ''), 'Formica'), json_encode($sig));
+
+echo "\n# a typed memory meets the wall\n";
+
+// ---------------------------------------------------------------------------
+// The seed pass drops a model memory that walks into what a protected person
+// must not know (xeric_forge_trips_wall); the hand-edit box on the same line
+// used to take the age floor's word for it and nothing else — so typing the
+// secret straight into the protected head was the one door left open.
+// ---------------------------------------------------------------------------
+
+$lt = xeric_review_open('note-town', $R)['template'];
+$prot = (string)($lt['cast']['special_roles'][0]['character'] ?? '');
+$lt['cast']['special_roles'][0]['must_not_know'] = 'what her dad does on thursdays';
+xeric_review_save('note-town', $lt);
+
+$w = xeric_review_open('note-town', $R);
+$mi = -1;
+foreach ((array)$w['seed']['memories'] as $i => $m) {
+    if ((string)($m['handle'] ?? '') === $prot) { $mi = $i; break; }
+}
+ok('memory wall: the baked past carries a memory for the protected person', $mi >= 0,
+    implode(',', array_map(fn($m) => (string)($m['handle'] ?? ''), (array)$w['seed']['memories'])));
+$r = xeric_review_apply_edit($w, "seed.memories.$mi.text",
+    'She worked out what happens on Thursdays and has been pretending she did not.');
+ok('memory wall: a typed memory that hands them the secret is refused, old line kept',
+    ($r['ok'] ?? true) === false, json_encode($r));
+$who = xeric_world_name($w['template'], $prot);
+ok('memory wall: and the refusal is a human sentence naming the protected person',
+    str_contains((string)($r['error'] ?? ''), $who)
+    && !str_contains((string)($r['error'] ?? ''), '{')
+    && preg_match('/[.!]$/', trim((string)($r['error'] ?? ''))) === 1, (string)($r['error'] ?? ''));
+$r = xeric_review_apply_edit(xeric_review_open('note-town', $R), "seed.memories.$mi.text",
+    'She keeps the church key on a red ribbon behind the stove.');
+ok('memory wall: an ordinary retype of the same box still lands', ($r['ok'] ?? false) === true, json_encode($r));
+
 echo "\n# the pronoun backfill\n";
 
 // ---------------------------------------------------------------------------

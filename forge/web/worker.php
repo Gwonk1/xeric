@@ -4,7 +4,7 @@
  *
  * WHY THIS EXISTS. A world is two to three minutes of model calls. Every proxy
  * in front of this app cuts a streaming response long before that: measured on
- * dev.xeric.dev, Cloudflare kills the connection at ~120 seconds even when a
+ * a Cloudflare-proxied host, the connection dies at ~120 seconds even when a
  * frame is flushed every five. Tying the build's life to one HTTP connection
  * therefore means no build ever finishes. So the build runs here, detached, and
  * the browser watches a file.
@@ -141,6 +141,15 @@ try {
             . '. Your answers are still here, press build again in a few minutes.');
     };
 
+    // AND THE SAME STOP INSIDE THE PASSES. The hook above runs between passes;
+    // xeric_forge_attempt() retries every failed model call once, and that
+    // retry was the one call the guard could never see — taking the GPU back
+    // mid-pass still cost a second attempt. Registered module-wide (the
+    // xeric_llm_meter shape), consulted at the start of every attempt and
+    // between the try and the retry, cleared in the finally below. A CLI forge
+    // registers nothing and keeps today's behaviour.
+    xeric_forge_guard($stop);
+
     // EXPERIMENTAL DISCUSSION MODE. A different builder and the same everything
     // else: the world it returns is an ordinary xeric, so the write, the claim,
     // the review door and the play screen below are untouched. That is the whole
@@ -195,6 +204,69 @@ try {
     $path = xeric_forge_write($template, $seed, xeric_web_worlds_dir());
     $slug = basename(dirname($path));
     $onNote('written: worlds/' . $slug . '/world-template.json');
+
+    // -- the literary repass, once, on the house ------------------------------
+    // The punchlist decision: the editor's read should be a habit, not a
+    // button. One pass, AFTER the write on purpose — the world above is
+    // finished and on disk whatever happens here, because a repass is
+    // advisory and a world is ALWAYS launchable. Findings only, never
+    // applied: they land on the template (forge.repass) where the result
+    // screen and the review page both paint them, waiting on the owner.
+    // The buttons still exist for a second read; this is the first one.
+    if (empty($payload['panel'])) {
+        require_once dirname(__DIR__) . '/repass.php';
+        $skip = '';
+        if (is_array($lock) && xeric_queue_expired($lock)) {
+            // The build finished inside its hold and the hold has since gone —
+            // the same drain the $stop guard watches, met politely: no throw,
+            // because there is nothing left to protect from half-writing.
+            $skip = xeric_queue_stop_reason($lock);
+        } elseif (!isset($endpoint['stub'])
+                  && (($endpoint['base'] ?? '') === '' || !xeric_llm_up($endpoint, 4))) {
+            $skip = 'no model is answering';
+        }
+        if ($skip !== '') {
+            $onNote('repass: skipped (' . $skip . ') — the world is finished and unaffected, '
+                . 'the review page can run the editor later');
+        } else {
+            try {
+                $onNote('repass: the editor reads the whole draft once');
+                $r = xeric_repass(
+                    ['slug' => $slug, 'dir' => dirname($path), 'template' => $template, 'seed' => $seed],
+                    $endpoint + ['timeout' => XERIC_WEB_BUILD_CALL_TIMEOUT],
+                    $onNote,
+                    ['guard' => $stop]
+                );
+                $found = array_values(array_filter((array)$r['findings'],
+                    fn($f) => is_array($f) && trim((string)($f['say'] ?? '')) !== ''));
+                $template['forge'] = (array)($template['forge'] ?? []);
+                $template['forge']['repass'] = [
+                    'at'       => gmdate('c'),
+                    'auto'     => true,
+                    'findings' => $found,
+                    'checked'  => (array)($r['checked'] ?? []),
+                ];
+                // The same write-then-rename every review save uses; no .prev,
+                // because nothing a person did is being replaced.
+                xeric_review_put($path, json_encode($template,
+                    JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+                $onNote($found === []
+                    ? 'repass: the editor read it and found nothing to report'
+                    : 'repass: ' . count($found) . ' finding' . (count($found) === 1 ? '' : 's')
+                        . ' — nothing applied, they are waiting on the review page');
+            } catch (Throwable $e) {
+                // A reclaimed GPU mid-read, or a read that fell over: either
+                // way the world stands and the note says why the editor left.
+                $onNote('repass: skipped ('
+                    . ($stopped && is_array($lock) ? xeric_queue_stop_reason($lock) : $e->getMessage())
+                    . ') — the world is finished and unaffected');
+                // The WORLD was not stopped — it is written and about to be
+                // announced — so a later, unrelated throw must not wear the
+                // 'stopped' label this advisory pass just set.
+                $stopped = false;
+            }
+        }
+    }
 
     $meta = [
         'slug' => $slug,
@@ -254,7 +326,10 @@ try {
         'message' => $e->getMessage()]);
 } finally {
     // Hand the slot back and tell the queue what it cost, so the next visitor's
-    // estimate is measured rather than guessed.
+    // estimate is measured rather than guessed. The module guard comes off with
+    // it: this process is done asking, and a cleared guard is how the next
+    // in-process caller (a test, mostly) starts from zero.
+    xeric_forge_guard(false);
     if (is_array($lock)) xeric_queue_release($lock);
 }
 exit(0);

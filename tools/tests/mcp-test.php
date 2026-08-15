@@ -3,12 +3,15 @@
  * mcp-test.php — the agent wrapper's wire, with no xeric behind it.
  * `php tools/tests/mcp-test.php`, exit 0.
  *
- * NO NETWORK: XERIC_BASE points at a port nothing answers on, because half of
- * what this file defends is what the wrapper says when the instance is not
- * there — an agent deserves "is the xeric running?" and never a stack trace.
- * The protocol half runs the real server as a subprocess and speaks the real
- * wire: newline-delimited JSON-RPC, initialize first, notifications answered
- * with silence, junk answered with a parse error and a living loop.
+ * NO REAL INSTANCE: XERIC_BASE points at a port nothing answers on, because
+ * half of what this file defends is what the wrapper says when the instance is
+ * not there — an agent deserves "is the xeric running?" and never a stack
+ * trace. The protocol half runs the real server as a subprocess and speaks the
+ * real wire: newline-delimited JSON-RPC, initialize first, notifications
+ * answered with silence, junk answered with a parse error and a living loop.
+ * The last section stands up a two-file STUB instance on this test's own
+ * loopback, because the refused-attach story is a fact about a Location header
+ * only a real HTTP hop can carry.
  */
 
 declare(strict_types=1);
@@ -109,6 +112,83 @@ ok('methods: an unknown one is -32601', (int)($byId[6]['error']['code'] ?? 0) ==
 ok('junk: a non-JSON line is a parse error and the loop lives',
     $parseErr !== null && (int)$parseErr['error']['code'] === -32700);
 ok('ping: pings pong', isset($byId[7]['result']));
+
+// -- a refused attach is not an attach ----------------------------------------
+//
+// model.php answers act=adduse with a 302 on BOTH outcomes; only the Location
+// tells them apart (a refusal goes to model.php?no=<sentence>, a success to
+// model.php bare), and the wrapper deliberately never follows redirects. The
+// status check alone called every refusal an attachment — the agent was told
+// its seat could speak while every turn was about to answer "detached".
+//
+// The parsing half needs no instance at all: mcp.php holds its wire loop
+// behind the argv guard, so requiring it here hands over the functions.
+require dirname(__DIR__) . '/mcp.php';
+ok('no: a ?no= Location is the refusal, decoded',
+    xmcp_no(['location' => 'model.php?no=' . rawurlencode('That address is on a private network.')])
+        === 'That address is on a private network.');
+ok('no: a bare redirect is a success, not a refusal',
+    xmcp_no(['location' => 'model.php']) === '' && xmcp_no(['location' => '']) === '');
+
+// The wire half runs against a stub instance on this test's own loopback —
+// still no real xeric, just the two endpoints join() speaks to, answering the
+// exact shapes model.php ships.
+$stubDir = sys_get_temp_dir() . '/xeric-mcp-stub-' . getmypid();
+@mkdir($stubDir, 0775, true);
+file_put_contents($stubDir . '/join.php',
+    "<?php header('Content-Type: application/json');\n"
+    . "echo json_encode(['ok' => true, 'player' => 2, 'world' => 'stub-town']);\n");
+file_put_contents($stubDir . '/model.php',
+    "<?php\n"
+    . "if (str_contains((string)(\$_POST['base'] ?? ''), 'refuse')) {\n"
+    . "    header('Location: model.php?no=' . rawurlencode('that machine is on a private network, "
+    . "and this install only takes an address like that from the machine it is running on.'), true, 302);\n"
+    . "} else {\n"
+    . "    header('Location: model.php', true, 302);\n"
+    . "}\n");
+
+$stubPort = 0;
+for ($try = 8961; $try < 8999; $try++) {
+    $probe = @fsockopen('127.0.0.1', $try, $e1, $e2, 0.2);
+    if ($probe === false) { $stubPort = $try; break; }
+    fclose($probe);
+}
+ok('stub: a free port was found for the stub instance', $stubPort > 0);
+$stubPid = (int)trim((string)shell_exec(
+    escapeshellarg(PHP_BINARY) . ' -S 127.0.0.1:' . $stubPort . ' -t ' . escapeshellarg($stubDir)
+    . ' > /dev/null 2>&1 & echo $!'));
+$stubUp = false;
+for ($i = 0; $i < 40; $i++) {
+    $s = @fsockopen('127.0.0.1', $stubPort, $e1, $e2, 0.3);
+    if ($s !== false) { fclose($s); $stubUp = true; break; }
+    usleep(150000);
+}
+ok('stub: the stub instance answers', $stubUp);
+
+if ($stubUp) {
+    putenv('XERIC_BASE=http://127.0.0.1:' . $stubPort);
+    putenv('XERIC_AGENT_SEATS=' . $seats);
+    @unlink($seats);
+
+    $said = xmcp_call('join', ['world' => 'stub-town', 'code' => 'ABCD1234', 'name' => 'Scout',
+                               'machine' => 'http://192.168.9.9-refuse:8080']);
+    ok('join: a refused attach is reported as detached, with the instance\'s reason',
+        str_contains($said, 'did not attach')
+        && str_contains($said, 'private network')
+        && str_contains($said, 'refused as "detached"'), $said);
+    ok('join: the seat itself still lands — a chair in a dark room is still a chair',
+        str_contains($said, 'You are in: stub-town'), $said);
+
+    @unlink($seats);
+    $said = xmcp_call('join', ['world' => 'stub-town', 'code' => 'ABCD1234', 'name' => 'Scout',
+                               'machine' => 'http://127.0.0.1:8080']);
+    ok('join: a plain 302 is the attachment made, no warning',
+        !str_contains($said, 'did not attach'), $said);
+}
+if ($stubPid > 0) @shell_exec('kill ' . $stubPid . ' 2>/dev/null');
+@unlink($stubDir . '/join.php');
+@unlink($stubDir . '/model.php');
+@rmdir($stubDir);
 
 @unlink($seats);
 echo $FAILED === 0 ? "\nall mcp tests passed\n" : "\n$FAILED FAILED\n";

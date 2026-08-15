@@ -1011,22 +1011,17 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
         $counted[] = '- ' . implode('; ', $bits);
     }
 
+    // THE SPEC BEFORE THE EVIDENCE — prompt.php's split, applied to a distil
+    // pass. The schema and its rules are the same bytes on every batch (they
+    // move only when the notebook flips between empty and not, which is the
+    // ALREADY WRITTEN DOWN cadence), while the crumbs change every single
+    // pass; with the crumbs ABOVE the spec the prefix cache died at the first
+    // one and re-read thirty lines of instructions per batch. Static first,
+    // freshest last: the newest thing the model reads sits closest to where
+    // it writes, and the header on the evidence says so out loud.
     $lines = [];
     $lines[] = 'WHO THIS IS ABOUT';
     $lines[] = $userName . ', the person this world is being run for.';
-    if ($known !== []) {
-        $lines[] = '';
-        $lines[] = 'ALREADY WRITTEN DOWN (do not write any of these again)';
-        foreach ($known as $k) $lines[] = '- ' . $k;
-    }
-    if ($counted !== []) {
-        $lines[] = '';
-        $lines[] = 'WHAT THE COUNTING KNOWS';
-        foreach ($counted as $c) $lines[] = $c;
-    }
-    $lines[] = '';
-    $lines[] = 'WHAT ' . strtoupper($userName) . ' DID';
-    foreach ($evLines as $e) $lines[] = '- ' . $e;
     $lines[] = '';
     $lines[] = 'WRITE ONE JSON OBJECT';
     $lines[] = $knownMap === []
@@ -1039,25 +1034,38 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
     $lines[] = '- "lesson": ONE line, under ' . XERIC_LEARN_MAX_CHARS . ' characters, written as an instruction to';
     $lines[] = '  the people in this world about how to be with ' . $userName . '. "Keep her answers under three';
     $lines[] = '  lines, he replies to short ones and lets long ones sit."';
-    // Everything above is something the USER did. Left to itself a model turns
-    // each line into an instruction aimed at whoever it mentions — "answer his
-    // messages", "follow up on that" — which is advice to the wrong party,
-    // filed permanently. Seen against the real model, 2026-07-30.
-    $lines[] = '- Every line above is something ' . $userName . ' did or did not do. A lesson NEVER tells anybody';
+    // Every evidence line is something the USER did. Left to itself a model
+    // turns each line into an instruction aimed at whoever it mentions —
+    // "answer his messages", "follow up on that" — which is advice to the
+    // wrong party, filed permanently. Seen against the real model, 2026-07-30.
+    $lines[] = '- Every line under WHAT ' . strtoupper($userName) . ' DID is something ' . $userName . ' did or did not do. A lesson NEVER tells anybody';
     $lines[] = '  to do more of what he walked past, and never tells him anything: it says how the people here';
     $lines[] = '  should behave, given what he is like.';
     // Without this a model writes flattery — "he is a thoughtful person who
     // values authenticity" — which is unfalsifiable, unusable, and permanent.
     $lines[] = '- About BEHAVIOUR only: length, timing, how often to reach out, what to bring up, what to leave';
     $lines[] = '  alone. Never about his character, never praise, never a compliment.';
-    $lines[] = '- Only what the evidence above actually shows. If it shows nothing, return an empty list.';
+    $lines[] = '- Only what the evidence below actually shows. If it shows nothing, return an empty list.';
     $lines[] = '- A hand-retyped line is the strongest evidence here: he was shown what this world thought and';
     $lines[] = '  went and changed it in writing. Take it literally.';
     if ($knownMap !== []) {
         $lines[] = '- "strike": AT MOST ONE, and usually none. Only when what ' . $userName . ' just did says a numbered';
         $lines[] = '  line under ALREADY WRITTEN DOWN is now WRONG — not stale, not unproven: contradicted by the';
-        $lines[] = '  evidence above. "n" is that number, "why" is one line naming the evidence that contradicts it.';
+        $lines[] = '  evidence below. "n" is that number, "why" is one line naming the evidence that contradicts it.';
     }
+    if ($known !== []) {
+        $lines[] = '';
+        $lines[] = 'ALREADY WRITTEN DOWN (do not write any of these again)';
+        foreach ($known as $k) $lines[] = '- ' . $k;
+    }
+    if ($counted !== []) {
+        $lines[] = '';
+        $lines[] = 'WHAT THE COUNTING KNOWS';
+        foreach ($counted as $c) $lines[] = $c;
+    }
+    $lines[] = '';
+    $lines[] = 'WHAT ' . strtoupper($userName) . ' DID (the freshest evidence — weigh it over everything above)';
+    foreach ($evLines as $e) $lines[] = '- ' . $e;
     $lines[] = 'No prose outside the JSON.';
 
     $raw = xeric_chat_json($endpoint, 'lessons', [

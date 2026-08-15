@@ -903,6 +903,45 @@ function xeric_web_days_short(array $days): string
 }
 
 /**
+ * The forge's own editorial read, as rows the repass list can hold.
+ *
+ * THE AUTOMATIC REPASS LEAVES ITS FINDINGS ON THE WORLD (forge.repass, written
+ * by worker.php at the end of every build) and this is the one renderer both
+ * surfaces read them through — the result screen's list and the review page's,
+ * which are the same markup the repass buttons paint client-side, so a stored
+ * finding and a fresh one are indistinguishable furniture. Findings only:
+ * nothing here was applied, and nothing here carries a button, because the
+ * buttons above the list already re-run the editor for anyone convinced.
+ */
+function xeric_web_repass_rows(array $t): string
+{
+    $rows = '';
+    $label = ['consistency' => 'contradiction', 'plot' => 'plot', 'develop' => 'develop', 'snake' => 'the snake'];
+    foreach ((array)($t['forge']['repass']['findings'] ?? []) as $f) {
+        if (!is_array($f)) continue;
+        $say = trim((string)($f['say'] ?? ''));
+        if ($say === '') continue;
+        $kind = (string)($f['kind'] ?? '');
+        $rows .= '<li class="rf ' . h($kind) . '"><span class="rfk">' . h($label[$kind] ?? $kind) . '</span>'
+               . '<span class="rfs">' . h(trim((string)($f['about'] ?? '')) . ': ' . $say) . '</span></li>';
+    }
+    return $rows;
+}
+
+/** The sentence over those rows. '' when the build left no findings behind. */
+function xeric_web_repass_note(array $t): string
+{
+    $n = 0;
+    foreach ((array)($t['forge']['repass']['findings'] ?? []) as $f) {
+        if (is_array($f) && trim((string)($f['say'] ?? '')) !== '') $n++;
+    }
+    if ($n === 0) return '';
+    return 'The editor read this draft as it came off the anvil: ' . $n . ' finding'
+        . ($n === 1 ? '' : 's') . ', nothing changed by itself. Weigh them, fix what convinces you, '
+        . 'or press the repass to read it again.';
+}
+
+/**
  * The result screen, from a validated template + its seed.
  *
  * $meta: seconds, notes[], slug, endpoint, json_url, mine, left.
@@ -971,8 +1010,12 @@ function xeric_web_result_html(array $t, array $seed, array $meta = []): string
   <?php endif; ?>
   <button type="button" class="redbtn" id="fgrepassall" data-w="<?= h($slug) ?>"
     title="Warning: this uses a lot of tokens, and it makes several passes. It reads, rewrites, and reads again until no contradictions remain.">Clear All Contradictions</button>
-  <span class="st" id="fgrepassst"></span>
-  <ul class="rfind" id="fgrfind" hidden></ul>
+  <!-- The forge already ran the editor once (worker.php, end of every build)
+       and its findings arrive here with the world — no press required. A fresh
+       press replaces them the way it always replaced an empty list. -->
+  <?php $autoRows = xeric_web_repass_rows($t); ?>
+  <span class="st" id="fgrepassst"><?= h(xeric_web_repass_note($t)) ?></span>
+  <ul class="rfind" id="fgrfind"<?= $autoRows === '' ? ' hidden' : '' ?>><?= $autoRows ?></ul>
 </div>
 <?php endif; ?>
 <?php

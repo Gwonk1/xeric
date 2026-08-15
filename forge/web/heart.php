@@ -50,7 +50,9 @@ const XERIC_HEART_MODEL_WAIT  = 2.0;  // seconds to wait for the model before gi
 const XERIC_HEART_CHATTER_LINES = 8;  // model calls spent on idle room talk, per world per tick
 
 /**
- * Idle talk in every room that has two people standing in it.
+ * Idle talk in every room that has two people standing in it — or one, when
+ * one of the people at the centre is standing there with them (chatter.php's
+ * two-to-gossip-one-to-answer rule; the bodies are counted before the floor).
  *
  * ITS OWN PHASE, ABOVE THE SWEEP GATE. The sweep only runs when a whole world
  * HOUR has passed, and the heart ticks every sixty seconds — so a chatter pass
@@ -66,8 +68,13 @@ const XERIC_HEART_CHATTER_LINES = 8;  // model calls spent on idle room talk, pe
  * end of town would never say a word.
  *
  * Never fatal. A room that throws is a quiet room; the tick carries on.
+ *
+ * $endpointFor is the pinned-voice resolver (handle → endpoint, built below on
+ * xeric_voice_endpoint) — threaded into the run so a pinned character's idle
+ * line goes to THEIR machine, exactly as their chat turns already do.
  */
-function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, string $slug): int
+function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, string $slug,
+                             ?callable $endpointFor = null): int
 {
     $now     = xeric_clock_now($db, $t);
     $realNow = time();
@@ -78,11 +85,31 @@ function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, 
         $where = (string)($row['where'] ?? '');
         if ($where !== '') $rooms[$where] = ($rooms[$where] ?? 0) + 1;
     }
-    // Public places only — see xeric_chatter_public. Filtered here as well as in
-    // the run so the rota walks the rooms that can actually talk: with homes in
-    // the list the budget's starting point spent most of its turns on houses
-    // that were going to refuse.
-    $rooms = array_keys(array_filter($rooms, fn($n) => $n >= XERIC_CHATTER_MIN));
+
+    // Every body at the centre, not just the first: a room with ANY of them
+    // standing in it opens the way a room with the owner in it always did.
+    // Counted BEFORE the cast threshold below, because a present body is what
+    // makes one shopkeeper enough — and by NAME, because the run tells each
+    // head who is actually standing there (xeric_chatter_system's playersHere).
+    $bodies = [];
+    foreach (array_keys(xeric_players($db, $t)) as $pid) {
+        $at = xeric_player_where($t, $db, (int)$pid);
+        if ($at !== null) $bodies[$at][] = xeric_player_name($db, (int)$pid, $t);
+    }
+
+    // TWO TO GOSSIP, ONE TO ANSWER — chatter.php's own rule, finally reachable
+    // from its one production caller. The cast floor used to be applied before
+    // the bodies were counted, so a room holding one shopkeeper and a present
+    // player was dropped from the rota here and the one-plus-you rule in
+    // xeric_chatter_run could never fire. A room with a body in it stays on
+    // one cast member; a room empty of players keeps the two-cast floor.
+    // Public places only — see xeric_chatter_public. Filtered here as well as
+    // in the run so the rota walks the rooms that can actually talk: with
+    // homes in the list the budget's starting point spent most of its turns on
+    // houses that were going to refuse.
+    $rooms = array_keys(array_filter($rooms,
+        fn($n, $p) => $n >= XERIC_CHATTER_MIN || ($n >= 1 && isset($bodies[$p])),
+        ARRAY_FILTER_USE_BOTH));
     $rooms = array_values(array_filter($rooms, fn($p) => xeric_chatter_public($t, (string)$p)));
     if ($rooms === []) return 0;
     sort($rooms);                                    // a stable order for the rota to walk
@@ -92,13 +119,6 @@ function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, 
     $rota = (int)(xeric_world_state_get($db, 'chatter_rota', '0') ?? 0);
     xeric_world_state_set($db, 'chatter_rota', (string)(($rota + 1) % max(1, count($rooms))), $realNow);
 
-    // Every body at the centre, not just the first: a room with ANY of them
-    // standing in it opens the way a room with the owner in it always did.
-    $bodies = [];
-    foreach (array_keys(xeric_players($db, $t)) as $pid) {
-        $at = xeric_player_where($t, $db, (int)$pid);
-        if ($at !== null) $bodies[$at] = true;
-    }
     $budget = XERIC_HEART_CHATTER_LINES;
     $said   = 0;
 
@@ -109,8 +129,11 @@ function xeric_heart_chatter(array $t, PDO $db, array $endpoint, callable $say, 
                 'now'       => $now,
                 'real_now'  => $realNow,
                 'user_here' => isset($bodies[$place]),
+                // WHO, by name — the presence data, so the cast talks to the
+                // person actually standing there and not to the absent owner.
+                'players_here' => $bodies[$place] ?? [],
                 'max_lines' => $budget,
-            ]);
+            ] + ($endpointFor !== null ? ['endpoint_for' => $endpointFor] : []));
         } catch (Throwable $e) {
             $say($slug . ': ' . $place . ' stayed quiet, ' . $e->getMessage());
             continue;
@@ -153,6 +176,12 @@ function xeric_heart_last_window(PDO $db, int $size): int
 
 // ---------------------------------------------------------------------------
 
+// Not when included by a test that wants the functions without the pass —
+// the same door mcp.php holds, for the same reason: the pass below ends in
+// exit(0), and a suite that required this file for xeric_heart_chatter()
+// would die mid-test without it.
+if (realpath($argv[0] ?? '') !== __FILE__) return;
+
 $ticked = 0;
 $lived  = 0;
 
@@ -183,6 +212,30 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         $T  = $w['template'];
         $db = $w['db'];
 
+        // WHOSE MODEL SPEAKS FOR WHOM. say.php and watch.php already route a
+        // pinned character's turns to their own machine (xeric_voice_endpoint);
+        // until this resolver existed, the heart was the one speaker that did
+        // not — a pinned character's pings, dreams and idle chatter came off
+        // the world's engine, wrong-voiced and paying a cold prefix. A
+        // RESOLVER, NOT A ROUND-ROBIN: handle → endpoint, memoized for the
+        // tick, so each character keeps landing on the one machine where their
+        // prefix is warm. Unpinned characters resolve to the play endpoint
+        // exactly as before, and sweeps never come through here at all —
+        // an hour has no single voice to route (play-lib.php, deliberate).
+        $voiceCache = [];
+        $endpointFor = function (string $h) use ($T, $db, $sid, $endpoint, &$voiceCache): array {
+            if (!isset($voiceCache[$h])) {
+                try {
+                    $voiceCache[$h] = xeric_voice_machine($db, $h) === ''
+                        ? $endpoint
+                        : xeric_voice_endpoint($T, $db, $h, $sid);
+                } catch (Throwable $e) {
+                    $voiceCache[$h] = $endpoint;   // a pin must not silence anybody
+                }
+            }
+            return $voiceCache[$h];
+        };
+
         // Fuses next to reminders, and for the same reason: no model, cheap,
         // and a promise must miss on time whether or not the queue is busy.
         // The tick is idempotent, and a miss detected here is stamped at the
@@ -192,7 +245,12 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         // Reminders first, and whatever else happens. They need no model, they
         // are the thing somebody explicitly asked for, and they must not be
         // behind a queue that is busy or a world that has nothing to sweep.
-        foreach (xeric_remind_fire($db, $notify, (string)($T['meta']['name'] ?? $slug)) as $r) {
+        // The timezone is the PERSON's (user.timezone), because a reminder is
+        // the one clock in the engine that is not the world's — it feeds the
+        // "you asked to be reminded on Thursday at 09:00" phrasing the fired
+        // notification now carries (xeric_notify_remind_body).
+        foreach (xeric_remind_fire($db, $notify, (string)($T['meta']['name'] ?? $slug), null,
+                                   (string)($T['user']['timezone'] ?? 'UTC')) as $r) {
             $say($slug . ': reminded, ' . (string)$r['text']);
         }
 
@@ -224,7 +282,7 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         if (!xeric_queue_busy()) {
             $chold = xeric_queue_take('tick', XERIC_HEART_MODEL_WAIT, 'chatter:' . $slug);
             if (($chold['ok'] ?? false) === true) {
-                try { xeric_heart_chatter($T, $db, $endpoint, $say, $slug); }
+                try { xeric_heart_chatter($T, $db, $endpoint, $say, $slug, $endpointFor); }
                 catch (Throwable $e) { $say($slug . ': chatter, ' . $e->getMessage()); }
                 finally { xeric_queue_release($chold); }
             }
@@ -281,7 +339,8 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             // The phone. Same call the skip button makes, on the moment the
             // world actually landed on.
             $after = xeric_clock_now($db, $T);
-            $ping  = xeric_proactive_check($T, $db, $endpoint, $after, ['stories' => $w['stories']]);
+            $ping  = xeric_proactive_check($T, $db, $endpoint, $after,
+                ['stories' => $w['stories'], 'endpoint_for' => $endpointFor]);
             if ($ping !== null) {
                 $say($slug . ': ' . (string)($ping['name'] ?? 'somebody') . ' texted you');
                 if (xeric_notify_on($notify, 'ping')) {

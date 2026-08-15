@@ -69,9 +69,14 @@ $SUN = xeric_world_now($T, ep('2026-08-02 10:00'));
 // OWN legal assembly". The pair that proves it is the walled one: janelle
 // (own_bible + family_innocence, which hide cast_dossiers and secrets) must
 // never receive a byte of dale's, while dale keeps his own. Asserted as bytes
-// rather than trusted as architecture.
+// rather than trusted as architecture. Janelle's needle is 'glovebox' and NOT
+// 'Chillicothe', room-test's own reasoning: the town's name also rides the
+// casserole economy's commons rules ("a ride to the clinic in Chillicothe
+// counts double"), so it is in EVERYBODY'S bible legitimately — and a control
+// made of it could never fail, because stripping her own interior would still
+// leave the commons line saying the word.
 const DALE_SECRET    = 'five-card draw';
-const JANELLE_SECRET = 'Chillicothe';
+const JANELLE_SECRET = 'glovebox';
 
 /** A throwaway world db. Every test that writes gets its own. */
 function fresh_db(string $tag): PDO

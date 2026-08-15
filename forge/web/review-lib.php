@@ -672,6 +672,27 @@ function xeric_review_apply_edit(array $w, string $path, string $value, array $o
         }
     }
 
+    // AND THE WALLS HOLD OVER A TYPED MEMORY TOO. The seed pass drops a model
+    // memory that walks into what a protected person must not know
+    // (xeric_forge_trips_wall, the same deliberately blunt lexical check), and
+    // until now a hand edit to the same box was the one way to write the
+    // secret straight into that person's head — a seeded memory renders into
+    // their own prompt on day one, and nothing downstream can take it back.
+    // The wall fails closed: an over-refusal here costs a retype, the other
+    // direction costs the world its one surprise.
+    if (is_string($value) && preg_match('#^seed\.memories\.\d+\.text$#', $path)) {
+        $holder = (string)(xeric_review_edit_handles($w, $path)[0] ?? '');
+        foreach ((array)($w['template']['cast']['special_roles'] ?? []) as $role) {
+            if ((string)($role['character'] ?? '') !== $holder || $holder === '') continue;
+            $blind = trim((string)($role['must_not_know'] ?? ''));
+            if ($blind === '' || !xeric_forge_trips_wall($value, $blind)) continue;
+            $who = xeric_world_name($w['template'], $holder);
+            return ['ok' => false, 'error' => 'That memory would hand ' . $who . ' the one thing this '
+                . 'xeric is built to keep from them, so ' . $label . ' is unchanged. Write around the '
+                . 'secret: a sentence that carries it, however sideways, is still the secret in their head.'];
+        }
+    }
+
     $bag = xeric_review_set($bag, $path, $value);
 
     $t = $isSeed ? $w['template'] : $bag;
@@ -2028,11 +2049,26 @@ function xeric_review_section_html(string $sec, array $w): string
         $star = (string)($t['cast']['protagonist']['handle'] ?? '');
         foreach ((array)($t['cast']['characters'] ?? []) as $i => $c) {
             $h = (string)$c['handle'];
+            // OUT IS A CASTING STATE, and this card is the one place its owner
+            // meets it. review.php?a=enter has stood since the engine grew
+            // enter.php and nothing on any page ever rang it — the only way to
+            // bring somebody in was a hand edit to the JSON, which is every
+            // safety skipped at once. The tag names the state; the button is
+            // the doorbell, and the confirm lives in the page's script.
+            $out = !empty($c['out']);
             echo '<div class="card" id="who-' . h($h) . '">';
             echo '<div class="cardhead"><code>' . h($h) . '</code>'
                 . ($h === $star ? '<span class="tag">their story</span>' : '')
+                . ($out ? '<span class="tag">not in the story yet</span>' : '')
                 . '<span class="cardacts">'
                 . '<a class="linkbtn" href="why.php?w=' . h(rawurlencode($slug)) . '&amp;h=' . h(rawurlencode($h)) . '">what they are told →</a>'
+                . ($out && !empty($w['mine'])
+                    ? '<button class="linkbtn enterstory" type="button" data-h="' . h($h) . '"'
+                        . ' data-name="' . h((string)($c['display_name'] ?? $h)) . '"'
+                        . ' title="They exist in the template but are unstaged — never swept, never anywhere. '
+                        . 'This flips them in, and a world with a past remembers them turning up today.">'
+                        . 'bring them into the story</button>'
+                    : '')
                 . '<button class="linkbtn reroll" type="button" data-what="character" data-index="' . (int)$i . '">reroll just this person</button>'
                 . '</span></div>';
             echo '<div class="row2">'
@@ -2180,7 +2216,7 @@ function xeric_review_body_html(array $w, array $meta = []): string
 
     ob_start();
     foreach ($secs as [$key, $title, $btn, $can, $blurb]) {
-        echo '<section class="sec" id="sec-' . h($key) . '" data-sec="' . h($key) . '">';
+        echo '<section class="sec" id="sec-' . h($key) . '">';
         echo '<div class="sechead"><h2>' . h($title) . '</h2>';
         if ($can && $btn !== '') {
             echo '<button class="linkbtn reroll" type="button" data-what="' . h($key) . '">↻ ' . h($btn) . '</button>';

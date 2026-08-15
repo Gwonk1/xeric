@@ -229,6 +229,26 @@ $cases = [
     ['content gated above sfw inside a minor\'s dossier',
         mutate($T, ['cast', 'characters', 5, 'drives', 'rating_min'], 'mature'),
         "cast.characters[5].drives.rating_min gates content above sfw on 'theo', who is a minor"],
+
+    // The hidden list, linted against xeric_wall_vocabulary(). xeric_hidden()
+    // walks silently past a key it does not own, so a typo'd entry hides
+    // NOTHING, forever — a wall that fails open. Same posture as the unknown
+    // audience selector above, same answer at every WRITE gate: refused, path
+    // named — the strict default this table exercises. The load path collects
+    // the same complaints as notes instead; see the contract-split checks
+    // after this table.
+    ['a hidden key the engine does not own',
+        mutate($T, ['knowledge_walls', 0, 'hidden'], ['teles']),
+        "knowledge_walls[0].hidden[0] 'teles' is not a path the engine owns"],
+    ['a hidden path whose suffix names nobody',
+        mutate($T, ['knowledge_walls', 0, 'hidden'], ['secrets.harlon']),
+        "knowledge_walls[0].hidden[0] 'secrets.harlon' hides nothing — 'harlon' is not a declared character"],
+    ['a hidden ledger nobody declared',
+        mutate($T, ['knowledge_walls', 1, 'hidden'], ['economies.thursday_pit']),
+        "knowledge_walls[1].hidden[0] 'economies.thursday_pit' hides nothing — 'thursday_pit' is not a declared economy"],
+    ['a dotted hidden path under a head the engine does not own',
+        mutate($T, ['knowledge_walls', 0, 'hidden'], ['secrts.harlan']),
+        "knowledge_walls[0].hidden[0] 'secrts.harlan' is not a path the engine owns"],
 ];
 
 foreach ($cases as [$name, $bad, $needle]) {
@@ -242,6 +262,45 @@ ok('validate: a wall with no audience is fine when a special role hands it out b
     err(fn() => xeric_world_validate(mutate($T, ['knowledge_walls', 0, 'audience'], null), 'milldale.json')) === '');
 ok('validate: empty quiet hours are legal — a world is allowed never to sleep',
     err(fn() => xeric_world_validate(mutate($T, ['user', 'quiet_hours'], ''), 'milldale.json')) === '');
+// Every shape the vocabulary owns lints clean: bare words, the `.*`
+// decoration xeric_hidden() strips, resolved dynamic suffixes, the whole-world
+// star, and the story namespace whose keys only story.php can check.
+ok('validate: the vocabulary\'s dynamic and decorated hidden forms all lint clean',
+    err(fn() => xeric_world_validate(mutate($T, ['knowledge_walls', 0, 'hidden'],
+        ['drives.*', 'economies.thursday_pot', 'psyche.ruth', 'cast_dossiers.harlan',
+         'boons.basement_key', 'places.bluebird', 'orbits.extras',
+         'story.mill_stairwell', 'relationships', '*']), 'milldale.json')) === '');
+
+// THE CONTRACT SPLIT: loading tolerates what saving refuses, for the hidden
+// lists and nothing else. The old contract called a free-form entry
+// legal-but-inert, so worlds on disk carry them — and the fatal lint above,
+// run on the LOAD path, made such a world unopenable everywhere including the
+// review door that could fix it. The tolerant pass hands the same complaint
+// back as a note that names the inert key; every write gate keeps the strict
+// default the four refusal cases above just exercised.
+$inert = mutate($T, ['knowledge_walls', 0, 'hidden'], ['teles']);
+ok('validate: the tolerant pass accepts a free-form hidden key instead of refusing',
+    err(fn() => xeric_world_validate($inert, 'milldale.json', false)) === '',
+    err(fn() => xeric_world_validate($inert, 'milldale.json', false)));
+$inertNotes = xeric_world_validate($inert, 'milldale.json', false);
+ok('validate: and the note names the inert key and the save that will refuse it',
+    count($inertNotes) === 1 && str_contains((string)$inertNotes[0], "'teles'")
+    && str_contains((string)$inertNotes[0], 'save will refuse'), implode(' | ', $inertNotes));
+ok('validate: strict stays the default — the same key still refuses wherever a write is gated',
+    str_contains(err(fn() => xeric_world_validate($inert, 'milldale.json')), "'teles'"));
+ok('validate: a clean template collects no notes in either temper',
+    xeric_world_validate($T, 'milldale.json', false) === []
+    && xeric_world_validate($T, 'milldale.json') === []);
+
+// And through the load door itself: an old world already carrying the key opens.
+$inertPath = tempnam(sys_get_temp_dir(), 'xeric') . '.json';
+file_put_contents($inertPath, json_encode($inert));
+$loadNotes = [];
+$loadMsg = err(function () use ($inertPath, &$loadNotes) { xeric_world_load($inertPath, $loadNotes); });
+ok('world: an old world carrying an inert hidden key still loads', $loadMsg === '', $loadMsg);
+ok('world: and the load hands back the note that names it',
+    count($loadNotes) === 1 && str_contains((string)$loadNotes[0], "'teles'"), implode(' | ', $loadNotes));
+@unlink($inertPath);
 
 // ---------------------------------------------------------------------------
 // 2. Resolvers

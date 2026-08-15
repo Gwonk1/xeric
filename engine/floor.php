@@ -126,6 +126,9 @@ const XERIC_FLOOR_MAX_CHARS = 400;
  *                         interject (0..1), effective_rating, model_rating,
  *                         player (which person at the centre spoke — the coach
  *                         and the mention heat follow whoever actually typed),
+ *                         endpoint_for (handle → endpoint, the pinned-voice
+ *                         resolver — resolved per speaker, default the room's
+ *                         own endpoint for everybody),
  *                         on_line(handle,name,text), on_why(kind,handle,detail)
  * @return array{said:int,lines:array<int,array{handle:string,name:string,text:string}>,
  *               silence:bool,note:string,place:string,rating:string,
@@ -169,6 +172,24 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
     $player   = (int)($opts['player'] ?? XERIC_PLAYER_FIRST);
     $userName = xeric_player_name($db, $player, $t);
 
+    // AND EVERY BODY AT THE CENTRE STANDING IN THIS ROOM, by name: the speaker
+    // first (the one fact this beat owns), then anybody else whose body the
+    // presence data puts here. The channel's system block and the name guard
+    // both follow this list — a template that hard-coded the owner had the
+    // cast greeting somebody who was not in the room the moment a guest spoke,
+    // and guarding the wrong name while it did it.
+    $playersHere = [$userName];
+    try {
+        foreach (xeric_players($db, $t) as $pid => $p) {
+            if ((int)$pid === $player) continue;
+            if (xeric_player_where($t, $db, (int)$pid) === $place) {
+                $playersHere[] = (string)$p['name'];
+            }
+        }
+    } catch (Throwable $e) {
+        // The speaker alone is still the truth; presence is garnish here.
+    }
+
     // THE CEILING IS THE LOWEST PERSON STANDING IN IT — folded once, before a
     // single call, never re-raised (the sweep's sentence, every screen's fold).
     $eff = (string)($opts['effective_rating'] ?? xeric_world_rating($t, $opts['model_rating'] ?? null));
@@ -209,7 +230,7 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
         $others = array_values(array_diff($present, [$me]));
         $walls  = xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $me]));
         $system = xeric_chatter_system($t, $db, $me, $others, $place, $eff, $epoch, $walls,
-                                       XERIC_CHATTER_KEEP, true);
+                                       XERIC_CHATTER_KEEP, true, $playersHere);
 
         $coach = xeric_chatter_material($t, $db, $me, $others);
 
@@ -275,8 +296,26 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
 
         $out['asked'][] = $me;
         $asks++;
+
+        // WHOSE MACHINE SPEAKS. Every other speaks-as-themselves surface (say,
+        // watch, chatter, pings, dreams) routes through the pinned-voice
+        // resolver; the floor wears the same seam. `endpoint_for` is handle →
+        // endpoint (play.php builds one on xeric_voice_endpoint, the shape
+        // say.php uses per turn), resolved per SPEAKER and never per request —
+        // two heads in one beat may answer off two machines, each with their
+        // own prefix warm. Absent, or failing, the room's own endpoint speaks:
+        // a tuning choice must not be able to silence a room (chatter.php's
+        // seam, verbatim).
+        $lineEp = $endpoint;
+        if (isset($opts['endpoint_for']) && is_callable($opts['endpoint_for'])) {
+            try {
+                $ep = ($opts['endpoint_for'])($me);
+                if (is_array($ep) && $ep !== []) $lineEp = $ep;
+            } catch (Throwable $e) { /* the room's own endpoint speaks */ }
+        }
+
         try {
-            $raw = xeric_chat_say($endpoint, $messages, [
+            $raw = xeric_chat_say($lineEp, $messages, [
                 'temperature' => (float)($opts['temperature'] ?? 0.85),
                 'max_tokens'  => 200,
             ] + array_intersect_key($opts, ['timeout' => 1]));
@@ -302,8 +341,10 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
             continue;
         }
 
-        $otherNames   = array_map(fn($h) => $names[$h], $others);
-        $otherNames[] = $userName;
+        $otherNames = array_map(fn($h) => $names[$h], $others);
+        // Every person at the centre standing here is guarded, not only the
+        // speaker — the same presence list the system block was handed.
+        foreach ($playersHere as $pn) $otherNames[] = $pn;
         $text = xeric_room_clean($raw, $names[$me], $otherNames,
                                  (int)($opts['max_chars'] ?? XERIC_FLOOR_MAX_CHARS));
         if ($text === '') {

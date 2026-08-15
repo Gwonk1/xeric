@@ -312,9 +312,12 @@ function xeric_audience_match(array $audience, array $v): bool
  * "economies" section as a whole, so a wall can remove one ledger and leave the
  * rest standing.
  *
- * Hidden keys the renderer owns no path for ("what_dad_does_on_thursdays") are
- * inert — they still bring their shown_as framing, but the renderer never
- * invents structure for a key it doesn't own.
+ * Hidden keys the renderer owns no path for are inert HERE — this function
+ * never invents structure for a key it doesn't own — and REFUSED AT LOAD:
+ * xeric_world_validate() lints every hidden list against
+ * xeric_wall_vocabulary(), because a key this loop silently walks past is a
+ * wall that quietly fails to take hold, which is a secret told to the wrong
+ * person. Free-form intent belongs in shown_as, where a human reads it.
  */
 function xeric_hidden(array $walls, string $path): bool
 {
@@ -567,8 +570,19 @@ function xeric_selector_any(array $selectors, array $v): bool
 }
 
 /**
- * The paths renderers ask about. A template validator can lint `hidden` lists
- * against this; unknown keys are legal but inert (see xeric_hidden).
+ * The paths renderers ask about — THE SINGLE AUTHORITY ON WHAT A WALL MAY NAME.
+ * xeric_world_validate() lints every `hidden` list against this and refuses a
+ * key outside it, naming the path, because xeric_hidden() walks silently past
+ * a key it does not own: a typo'd entry used to hide NOTHING, forever, which
+ * is the exact leak this whole subsystem exists to prevent (and the same
+ * posture as the unknown audience selector, which has always been fatal).
+ * Free-form intent belongs in shown_as, where a human reads it.
+ *
+ * The <key>/<handle> forms are dynamic: the suffix must resolve against the
+ * template (a declared place, orbit, economy, boon, or character).
+ * `story.<key>` is the overlays' namespace — an overlay's own keys are
+ * validated by story.php, and a bare template cannot know which overlays will
+ * ride it, so any suffix under `story.` passes here.
  */
 function xeric_wall_vocabulary(): array
 {
@@ -577,12 +591,13 @@ function xeric_wall_vocabulary(): array
         'setting', 'setting.texture', 'setting.canon_rules',
         'places', 'places.<key>',
         'orbits', 'orbits.<key>', 'circles',
-        'cast_lines', 'schedules', 'cast_dossiers', 'protagonist',
-        'psyche', 'tells', 'secrets', 'secrets.<handle>', 'solace',
+        'cast_lines', 'schedules', 'cast_dossiers', 'cast_dossiers.<handle>', 'protagonist',
+        'psyche', 'psyche.<handle>', 'tells', 'secrets', 'secrets.<handle>', 'solace',
         'drives', 'drives.<handle>', 'relationships', 'fixtures',
         'economies', 'economies.<key>', 'boons', 'boons.<key>',
         'mystery', 'mystery.rumor', 'mystery.room',
         'world_mood',
+        'story.<key>',
     ];
 }
 

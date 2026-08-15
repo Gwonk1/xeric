@@ -863,8 +863,7 @@
         "secrets",
         "drives.*",
         "economies.thursday_pot",
-        "mystery.rumor",
-        "what_dad_does_on_thursdays"
+        "mystery.rumor"
       ],
       "shown_as": "your father's Milldale is church, the diner and the hardware store, and the people in it are neighbors — which is exactly and only what they look like",
       "_note": "shown_as is read BY the walled viewer, so it is written in second person, like the other two."
@@ -889,7 +888,7 @@
         "circle": "pinochle"
       },
       "hidden": [
-        "what_walt_is_to_each_of_you"
+        "relationships"
       ],
       "shown_as": "what Walt is to any one of you is not circle knowledge unless somebody spills it"
     }

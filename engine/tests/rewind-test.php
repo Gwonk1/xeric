@@ -166,7 +166,9 @@ function skip(array $t, PDO $db, array $endpoint, int $realNow, int $span, array
 }
 
 /** Every count and both stores, whole. Equality of two of these IS the rewind
- *  working: same rows, same values, same dots, and not one thing else. */
+ *  working: same rows, same values, same dots, and not one thing else. The
+ *  counts DERIVE from xeric_rewind_tables() — the census and the manifest read
+ *  one list, so a future table cannot go invisible in both at once. */
 function snap(PDO $db): array
 {
     $n = fn(string $t) => (int)$db->query("SELECT COUNT(*) c FROM $t")->fetchAll()[0]['c'];
@@ -178,10 +180,10 @@ function snap(PDO $db): array
     foreach ($db->query('SELECT id, updated_at, unread FROM conversations ORDER BY id')->fetchAll() as $r) {
         $convs[(int)$r['id']] = $r['updated_at'] . '/' . $r['unread'];
     }
-    return [
-        'events' => $n('events'), 'memories' => $n('memories'), 'messages' => $n('messages'),
-        'conversations' => $n('conversations'), 'signals' => $n('signals'),
-        'deaths' => $n('deaths'), 'reminders' => $n('reminders'),
+    $counts = [];
+    foreach (xeric_rewind_tables() as $tbl) $counts[$tbl] = $n($tbl);
+    return $counts + [
+        'deaths' => $n('deaths'),
         'offset' => xeric_clock_offset($db),
         'unread' => xeric_conversation_unread_total($db),
         'world_state' => xeric_world_state_all($db),
@@ -264,12 +266,26 @@ ok('rewind: it worked, and the summary says what un-happened',
     && $r1['hours'] === 6.0 && $r1['label'] === '6h', json_encode($r1));
 
 $POST = snap($db);
+$tablesBack = true;
+foreach (array_merge(xeric_rewind_tables(), ['deaths']) as $tbl) {
+    if ($POST[$tbl] !== $PRE[$tbl]) $tablesBack = false;
+}
 ok('rewind: every table counts exactly what it counted before the skip',
-    $POST['events'] === $PRE['events'] && $POST['memories'] === $PRE['memories']
-    && $POST['messages'] === $PRE['messages'] && $POST['conversations'] === $PRE['conversations']
-    && $POST['signals'] === $PRE['signals'] && $POST['deaths'] === $PRE['deaths']
-    && $POST['reminders'] === $PRE['reminders'],
-    json_encode([$PRE, $POST]));
+    $tablesBack, json_encode([$PRE, $POST]));
+
+// THE LIST IS ASSERTED AGAINST THE SCHEMA, not against another hand copy.
+// Every AUTOINCREMENT row table in a migrated store must be in
+// xeric_rewind_tables() — photo_jobs and reminders both shipped with ids and
+// sat in none of the three hand-kept enumerations, so a row born mid-skip in
+// either outlived its own rewind. deaths has no id and diffs by handle set.
+$autoInc = [];
+foreach ($db->query("SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%AUTOINCREMENT%' ORDER BY name")->fetchAll() as $r) {
+    $autoInc[] = (string)$r['name'];
+}
+$listed = xeric_rewind_tables();
+sort($listed);
+ok('manifest: the shared table list IS the schema\'s own AUTOINCREMENT census',
+    $autoInc === $listed, json_encode([$autoInc, $listed]));
 ok('rewind: world_state is byte-for-byte the pre-skip world — guards gone, watermark back, trails gone, manifest gone',
     $POST['world_state'] == $PRE['world_state'],
     json_encode([array_diff_assoc($POST['world_state'], $PRE['world_state']),
@@ -433,6 +449,34 @@ $howBack = (string)($dbR->query('SELECT how FROM deaths LIMIT 1')->fetchAll()[0]
 ok('revive: and each body kept its story', $howBack === 'the dam went');
 
 // ---------------------------------------------------------------------------
+// 8c. The tables the manifest learned late: a photo job and a reminder born
+// inside the skip un-happen with it, and the reminders asked for BEFORE it
+// keep their real-time due dates — the id diff cannot reach below the mark,
+// which is exactly the split the header promises.
+// ---------------------------------------------------------------------------
+
+$dbJ = fresh_db('late-tables');
+xeric_state_seed($dbJ, $T);
+xeric_remind_add($dbJ, 'the Thursday that stays owed', $REAL + 7 * 86400, 'ruth');
+$preJ = snap($dbJ);
+
+$markJ = xeric_rewind_mark($dbJ);
+xeric_clock_advance($dbJ, 2 * 3600, $T, $REAL);
+$dbJ->prepare('INSERT INTO photo_jobs (kind, subject, created_at) VALUES (?,?,?)')
+    ->execute(['portrait', 'ruth', $REAL]);
+xeric_remind_add($dbJ, 'a reminder born of undone hours', $REAL + 3600, 'dot');
+$mJ = xeric_rewind_commit($dbJ, $markJ);
+ok('tables: the manifest names the mid-skip photo job and reminder',
+    count((array)($mJ['ids']['photo_jobs'] ?? [])) === 1
+    && count((array)($mJ['ids']['reminders'] ?? [])) === 1, json_encode($mJ['ids'] ?? null));
+
+$rJ = xeric_rewind($T, $dbJ);
+ok('tables: both un-happen with the skip — no picture owed for an hour that never was',
+    $rJ['ok'] === true && snap($dbJ) == $preJ, json_encode($rJ));
+ok('tables: and the reminder asked for before the skip is still owed on its own Thursday',
+    count(xeric_remind_due($dbJ, $REAL + 8 * 86400)) === 1);
+
+// ---------------------------------------------------------------------------
 // 9. The constructs seam: a fuse that fires inside a skip un-fires with it
 // ---------------------------------------------------------------------------
 
@@ -500,7 +544,7 @@ ok('refusal: a manifest in a shape this build cannot fully read stays unread',
 
 // ---------------------------------------------------------------------------
 
-$db = $dbN = $dbW = $dbH = $dbHQ = $dbD = $dbP = $dbV = $dbX = null;
+$db = $dbN = $dbW = $dbH = $dbHQ = $dbD = $dbP = $dbV = $dbX = $dbJ = null;
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);
 

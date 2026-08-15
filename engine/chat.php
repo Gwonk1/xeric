@@ -54,6 +54,7 @@ require_once __DIR__ . '/learn.php';     // where a turn is written down as a si
 require_once __DIR__ . '/death.php';     // the dead do not answer
 require_once __DIR__ . '/notify.php';    // "remind me" — the one clock that is not the world's
 require_once __DIR__ . '/constructs.php'; // promises heard, kept, missed, explained
+require_once __DIR__ . '/confide.php';    // a thing told in a thread is a confidence formed
 require_once __DIR__ . '/llm.php';
 
 /** A text message, not an essay. Anything past this is collapsed at a full stop. */
@@ -144,7 +145,13 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
         'tail'             => (string)($opts['tail'] ?? ''),
         'history_limit'    => (int)($opts['history_limit'] ?? 20),
         'memory_limit'     => (int)($opts['memory_limit'] ?? 12),
-    ] + array_intersect_key($opts, ['effective_rating' => 1, 'model_rating' => 1, 'photos' => 1]));
+    ] + array_intersect_key($opts, [
+        'effective_rating' => 1, 'model_rating' => 1, 'photos' => 1,
+        // WHOSE TURN, again — prompt.php reads it for the guest-naming rules
+        // and for THIS person's player_where. Off this list, every guest in
+        // every multiplayer world was prompted as the owner.
+        'player' => 1,
+    ]));
 
     $usage = [];
     $t0    = microtime(true);
@@ -821,9 +828,28 @@ const XERIC_CHAT_TIC_WORDS = 3;
 function xeric_chat_opener(string $text): string
 {
     $words  = preg_split('/\s+/u', trim($text)) ?: [];
-    $opener = implode(' ', array_slice($words, 0, XERIC_CHAT_TIC_WORDS));
-    $opener = trim($opener, " \t\n\r\0\x0B\"'“”‘’*_([)]");
-    return rtrim($opener, ',.;:—–…!?-');
+    return xeric_chat_opener_trim(implode(' ', array_slice($words, 0, XERIC_CHAT_TIC_WORDS)));
+}
+
+/**
+ * Wrapping off both ends, then trailing punctuation off the right — the one
+ * cleanup, shared with xeric_sweep_opener(), which was a copy of these two
+ * lines and therefore a copy of the bug below.
+ *
+ * REGEX, NOT trim(). trim()'s charlist is BYTES, and the curly quotes in the
+ * wrap list share their E2 80 lead bytes with '…' and '—'. A line opening with
+ * either lost its lead bytes to the byte-trim, the dangling continuation byte
+ * made the opener invalid UTF-8, and json_encode() of the whole model payload
+ * carrying it returned false — a failed call every time, and in the sweeps a
+ * self-sustaining wedge, because the corrupt opener came off recent[0] and
+ * recent[0] never changes while every sweep fails. Anchored /u classes strip
+ * whole characters (the §-needs-/u gotcha applies to any multibyte char).
+ */
+function xeric_chat_opener_trim(string $opener): string
+{
+    $opener = (string)preg_replace(
+        '/^[ \t\n\r\x00\x0B"\'“”‘’*_(\[)\]]+|[ \t\n\r\x00\x0B"\'“”‘’*_(\[)\]]+$/u', '', $opener);
+    return (string)preg_replace('/[,.;:—–…!?-]+$/u', '', $opener);
 }
 
 /**
@@ -926,7 +952,8 @@ function xeric_chat_remind(array $t, PDO $db, string $speaker, string $said,
  *
  * @return array the reminders that were claimed
  */
-function xeric_remind_fire(PDO $db, array $notify, string $world = '', ?int $realNow = null): array
+function xeric_remind_fire(PDO $db, array $notify, string $world = '', ?int $realNow = null,
+                           string $tz = 'UTC'): array
 {
     $now  = $realNow ?? xeric_state_time();
     $sent = [];
@@ -939,7 +966,11 @@ function xeric_remind_fire(PDO $db, array $notify, string $world = '', ?int $rea
         $sent[] = $row;
 
         if (!xeric_notify_on($notify, 'reminder')) continue;
-        xeric_notify_send($notify, (string)$row['text'], [
+        // The body is notify.php's decision, like every body that leaves the
+        // machine: the thing in the asker's own words, plus the human phrasing
+        // of when they asked for it ($tz is the person's, handed down by the
+        // caller because a reminder is the one clock that is not the world's).
+        xeric_notify_send($notify, xeric_notify_remind_body($row, $tz), [
             'title'    => $world !== '' ? 'Xeric, ' . $world : 'Xeric',
             'tags'     => 'bell',
             'priority' => 4,
@@ -1013,7 +1044,16 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             . "Else null. Report their words exactly; do not judge whether it was firm.\n"
             . "- \"explained\": true only if {$userName} gave a reason or apology for having missed "
             . "something they were expected at. Else false.\n"
-            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false }\nNo prose outside the JSON."],
+            // THE CONFIDENCE WATCH, same split as the promise above: the model
+            // SPOTS the telling, and whether a row forms is decided in code
+            // (engine/confide.php — armed worlds only, adults only, one row
+            // per thing). The bar is in the prompt because the failure mode is
+            // over-reporting: a model told to watch for confidences finds one
+            // in every weather report.
+            . "- \"confided\": if {$userName} told {$name} something private about themselves — a thing "
+            . "held back, plainly not for anybody else — return {\"what\": it in eight words or fewer}. "
+            . "Else null. The ordinary business of a conversation is not a confidence.\n"
+            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false, \"confided\": null }\nNo prose outside the JSON."],
     ];
 
     try {
@@ -1066,6 +1106,16 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null,
                       $now, null, null, $player);
     if (!empty($raw['explained'])) xeric_expect_repair($template, $db, $speaker, $now, null, $player);
+
+    // And the confidence, on the same harvest and the same terms: the row
+    // lands on the character CARRYING it, told by this player — the one
+    // asymmetry the arc knows (confide.php). Fail-soft like its siblings: a
+    // malformed report, a walled-off world or a party the floor refuses all
+    // form nothing, and none of it costs the harvest.
+    if (is_array($raw['confided'] ?? null)) {
+        xeric_confide_form($template, $db, $speaker,
+            (string)($raw['confided']['what'] ?? ''), $now, '', $player, $at);
+    }
 
     return count($keep);
 }

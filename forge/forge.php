@@ -416,6 +416,29 @@ function xeric_forge_ask(array $endpoint, string $tag, array $messages, array $o
 }
 
 /**
+ * THE STOP, REACHING INSIDE A PASS. xeric_forge_build()'s `guard` runs between
+ * passes, so a pass that failed once could still spend a whole second model
+ * call after the owner took the GPU back — the retry sat in the one gap the
+ * guard could not see. The same module-plug shape as xeric_llm_meter(), for
+ * the same reason: threading a guard through every attempt call site would
+ * touch every pass and still miss the next one somebody writes.
+ *
+ * Pass a callable to set one, false to clear, nothing to read. A registered
+ * guard is consulted at the start of every attempt and between the try and the
+ * retry, outside any try/catch, so whatever it throws leaves the attempt at
+ * once and reaches the build's caller — a stop that was caught and turned into
+ * a fallback would be a stop that did not stop. A CLI forge registers nothing
+ * and behaves exactly as it always has.
+ */
+function xeric_forge_guard($fn = null): ?callable
+{
+    static $g = null;
+    if ($fn === false)        $g = null;
+    elseif (is_callable($fn)) $g = $fn;
+    return $g;
+}
+
+/**
  * Try, retry once, then take the hand-written default.
  *
  * Every pass and every sub-call goes through here. This is the whole of the
@@ -426,6 +449,10 @@ function xeric_forge_attempt(string $what, callable $attempt, callable $fallback
 {
     $last = '';
     for ($try = 1; $try <= 2; $try++) {
+        // BEFORE EVERY TRY, NOT JUST THE FIRST. The gap this closes is the
+        // retry: with the GPU reclaimed mid-pass, the second call must not fire.
+        $guard = xeric_forge_guard();
+        if ($guard !== null) $guard();
         try {
             return $attempt($try);
         } catch (Throwable $e) {
@@ -916,6 +943,25 @@ function xeric_forge_naming_examples(array $naming, string $bank, int $n, int $r
     return implode(', ', $out);
 }
 
+/**
+ * Did the person's own brief actually SAY this name? The one exemption test
+ * all three naming gates share — worlds, places, people.
+ *
+ * WORD-BOUNDARY, CASE-FOLDED, THREE CHARACTERS OR MORE. This was a bare
+ * substring test, three times, and a substring is not a mention: 'Ann' fired
+ * it out of 'planning' and 'Inn' out of 'beginning', and the exemption then
+ * walked past every gate standing behind it. The boundaries are letter/number
+ * lookarounds rather than \b because \b only knows ASCII word characters —
+ * the §-needs-/u gotcha, applied to names beyond ASCII — and /iu folds case
+ * the Unicode way for the same reason.
+ */
+function xeric_forge_brief_names(string $brief, string $name): bool
+{
+    $name = trim($name);
+    if ($brief === '' || mb_strlen($name) < 3) return false;
+    return preg_match('/(?<![\p{L}\p{N}])' . preg_quote($name, '/') . '(?![\p{L}\p{N}])/iu', $brief) === 1;
+}
+
 /** May a world be called this? Bans by word, by suffix, by the Low-<thing> shape, by shelf reuse. */
 function xeric_forge_world_name_ok(string $name, array $naming): bool
 {
@@ -946,7 +992,7 @@ function xeric_forge_world_name_ok(string $name, array $naming): bool
 function xeric_forge_fresh_world_name(string $name, array $naming, string $premise = ''): string
 {
     if ($name === '') return $name;
-    if ($premise !== '' && mb_stripos($premise, $name) !== false) return $name;
+    if (xeric_forge_brief_names($premise, $name)) return $name;
     if (xeric_forge_world_name_ok($name, $naming) && xeric_forge_name_fits_register($name, $naming)) {
         return $name;
     }
@@ -1217,7 +1263,10 @@ function xeric_forge_place_reface(string $name, array $naming, int $i, array &$u
 function xeric_forge_fresh_place_name(string $name, string $kind, array $naming, int $i, array &$used, string $brief = ''): string
 {
     $norm = xeric_forge_name_norm($name);
-    if ($name !== '' && $brief !== '' && !isset($used[$norm]) && mb_stripos($brief, $name) !== false) {
+    // The brief must say the name AS a name (xeric_forge_brief_names) — 'Inn'
+    // inside 'beginning' used to fire this, ahead of every gate below it —
+    // and this world's own ledger still wins: the brief names one door, not two.
+    if ($name !== '' && !isset($used[$norm]) && xeric_forge_brief_names($brief, $name)) {
         $used[$norm] = true;
         return $name;
     }
@@ -1276,9 +1325,14 @@ function xeric_forge_fresh_place_name(string $name, string $kind, array $naming,
  * character's own index, exactly the way the dedupe banks are walked, so two
  * renamed characters cannot land on the same replacement either.
  *
- * A name the brief itself contains is kept whole whatever the shelf thinks:
+ * A name the brief itself contains is kept whole whatever the SHELF thinks:
  * "my teacher Mr. Sanders" has named a person, and renaming somebody the user
- * asked for by name would be the premise promise broken a second way.
+ * asked for by name would be the premise promise broken a second way. What the
+ * brief cannot do is name the same person twice — the exemption covers the ban
+ * lists and the shelf, never the not-twice-in-one-town gates below, so a
+ * second character wearing the asked-for name collides and re-rolls like
+ * anybody else. (It used to return early past those gates, and it matched by
+ * bare substring — see xeric_forge_brief_names for both halves of that bug.)
  * Surname reuse WITHIN a world is deliberately not gated here — two Blevinses
  * in one town are a family; the same Blevins in three worlds is a rut.
  */
@@ -1328,11 +1382,11 @@ function xeric_forge_fresh_person_name(string $name, array $naming, int $index, 
 {
     [$first, $last] = xeric_forge_name_split($name);
     if ($first === '') return $name;
-    if ($brief !== '') {
-        foreach ([$first, $last] as $part) {
-            if (mb_strlen($part) >= 3 && mb_stripos($brief, $part) !== false) return $name;
-        }
-    }
+    // ASKED FOR BY NAME, as a word the brief actually says. This exempts the
+    // ban lists and the shelf below — never the same-world dedup: the brief
+    // names ONE person, and the second character to arrive wearing that name
+    // is the three-Garricks failure with the user's own name on it.
+    $asked = xeric_forge_brief_names($brief, $first) || xeric_forge_brief_names($brief, $last);
     $nf = xeric_forge_name_norm($first);
     $nl = xeric_forge_name_norm($last);
 
@@ -1358,9 +1412,9 @@ function xeric_forge_fresh_person_name(string $name, array $naming, int $index, 
     // next to Bram Gerrity is the Drubb/Drub problem wearing the other hat, and
     // the first cut of this fix produced exactly that while removing the
     // duplicate it was aimed at.
-    $badFirst = isset($naming['banned_given'][$nf]) || isset($naming['used']['given'][$nf])
+    $badFirst = (!$asked && (isset($naming['banned_given'][$nf]) || isset($naming['used']['given'][$nf])))
                 || isset($usedGiven[$nf]) || xeric_forge_name_twin($nf, $usedGiven);
-    $badLast  = $last !== '' && (isset($naming['banned_family'][$nl]) || isset($naming['used']['family'][$nl])
+    $badLast  = $last !== '' && ((!$asked && (isset($naming['banned_family'][$nl]) || isset($naming['used']['family'][$nl])))
                 || xeric_forge_name_twin($nl, $usedFamily));
     if (!$badFirst && !$badLast) return $name;
 
@@ -3551,6 +3605,13 @@ function xeric_forge_age_floor(array $t, ?callable $onNote = null): array
             if (!in_array($line, $hard, true)) $hard[] = $line;
             $c['limits'] = (array)($c['limits'] ?? []);
             $c['limits']['hard'] = $hard;
+        } else {
+            // AGING BACK UP RESTORES THE GATES. The lock above preserves what
+            // it lowers; an adult who was floored on an earlier pass — a typo'd
+            // age, since corrected — gets his rating_min and his dropped pools
+            // back here, byte for byte, and the sidecar keys come off. An adult
+            // who was never floored carries none and passes through unchanged.
+            $c = xeric_forge_rating_unlock($c);
         }
 
         $chars[$i] = $c;
@@ -3587,24 +3648,102 @@ function xeric_forge_age_floor(array $t, ?callable $onNote = null): array
  * with no gate at all is a node that shows everywhere; content pools keyed
  * above it are dropped, since a pool is the content. Both directions are the
  * same rule: nothing under a minor may be reachable above his effective rating.
+ *
+ * LOWERED, NOT LOST. This used to overwrite the gate and drop the pools with
+ * nothing kept, so a character aged below 18 by a typo and corrected back up
+ * had lost every mature gate forever. What comes down is now preserved beside
+ * the node it came off — `rating_min_was`, and the dropped pack entries as a
+ * JSON string under `packs_was` (a STRING on purpose: the validator walks a
+ * minor's record refusing any live `rating_min` above sfw, and a preserved
+ * subtree carrying live keys would be refused as the gate it is only the
+ * memory of). xeric_forge_rating_unlock() is the other half; both sidecars
+ * are inert to every renderer, which reads named fields and never these.
  */
 function xeric_forge_rating_lock(array $node, string $eff): array
 {
     $out = [];
     foreach ($node as $k => $v) {
         if ($k === 'rating_min') {
-            $out[$k] = xeric_rating_rank((string)$v) > xeric_rating_rank($eff) ? $eff : (string)$v;
+            if (xeric_rating_rank((string)$v) > xeric_rating_rank($eff)) {
+                $out[$k] = $eff;
+                // Only the FIRST lowering records the original: a second pass
+                // over an already-floored node must not overwrite the memory
+                // of 'mature' with the 'sfw' it wrote itself.
+                if (!array_key_exists('rating_min_was', $node)) $out['rating_min_was'] = (string)$v;
+            } else {
+                $out[$k] = (string)$v;
+            }
+            continue;
+        }
+        // The sidecars themselves pass through untouched — and are never
+        // recursed into, so a preserved pool cannot be re-floored in storage.
+        if ($k === 'rating_min_was' || $k === 'packs_was') {
+            if (!array_key_exists($k, $out)) $out[$k] = $v;
             continue;
         }
         if ($k === 'packs' && is_array($v)) {
             $keep = [];
+            $drop = [];
             foreach ($v as $rk => $rv) {
                 if (xeric_rating_rank((string)$rk) <= xeric_rating_rank($eff)) $keep[$rk] = $rv;
+                else                                                           $drop[$rk] = $rv;
+            }
+            $out[$k] = $keep === [] ? (object)[] : $keep;
+            if ($drop !== []) {
+                // Merged, never clobbered: keys preserved by an earlier pass win,
+                // for the same reason rating_min_was does.
+                $was = json_decode((string)($node['packs_was'] ?? ''), true);
+                if (!is_array($was)) $was = [];
+                foreach ($drop as $rk => $rv) {
+                    if (!array_key_exists($rk, $was)) $was[$rk] = $rv;
+                }
+                $out['packs_was'] = json_encode($was, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+            continue;
+        }
+        $out[$k] = is_array($v) ? xeric_forge_rating_lock($v, $eff) : $v;
+    }
+    return $out;
+}
+
+/**
+ * The way back up: restore what xeric_forge_rating_lock() preserved.
+ *
+ * Runs over every ADULT the age floor visits, so a character corrected back
+ * across the line gets his gates back on the same pass that took them — and an
+ * adult who was never floored walks through unchanged, because he carries no
+ * sidecars for this to read.
+ *
+ * EXACT-OR-NOTHING, the walls philosophy pointed the other way: a preserved
+ * rating that is not one of xeric_ratings() stays lowered, a preserved pack
+ * whose key is not a legal rating stays dropped, a packs_was that will not
+ * decode restores nothing. The sidecar keys come off either way — a memory
+ * that failed validation is not a memory worth keeping — so a restored record
+ * is byte-identical to the one that was floored, and never half of it.
+ */
+function xeric_forge_rating_unlock(array $node): array
+{
+    $legal = xeric_ratings();
+    $out   = [];
+    foreach ($node as $k => $v) {
+        if ($k === 'rating_min_was' || $k === 'packs_was') continue;   // consumed below, never kept
+        if ($k === 'rating_min' && array_key_exists('rating_min_was', $node)) {
+            $was = $node['rating_min_was'];
+            $out[$k] = (is_string($was) && in_array($was, $legal, true)) ? $was : $v;
+            continue;
+        }
+        if ($k === 'packs' && array_key_exists('packs_was', $node)) {
+            $keep = is_array($v) ? $v : [];                            // (object)[] reads as empty
+            $was  = json_decode((string)$node['packs_was'], true);
+            if (is_array($was)) {
+                foreach ($was as $rk => $rv) {
+                    if (!array_key_exists($rk, $keep) && in_array((string)$rk, $legal, true)) $keep[$rk] = $rv;
+                }
             }
             $out[$k] = $keep === [] ? (object)[] : $keep;
             continue;
         }
-        $out[$k] = is_array($v) ? xeric_forge_rating_lock($v, $eff) : $v;
+        $out[$k] = is_array($v) ? xeric_forge_rating_unlock($v) : $v;
     }
     return $out;
 }
@@ -3714,9 +3853,11 @@ function xeric_forge_assemble(array $answers, array $concept, array $places, arr
     $grav = xeric_forge_centrality((string)($answers['centrality'] ?? 'ensemble'));
     // Default `none` and that is deliberate: a xeric is a place before it is a
     // plot, and a world nobody asked to have an arc should not quietly acquire
-    // one. Every world forged before this question existed answers '' and keeps
-    // running at exactly the rate it always did.
-    $shape = xeric_forge_shape((string)($answers['story_shape'] ?? ''), $concept, $endpoint, $onNote);
+    // one. The fallback is the same 'none' interview.json declares — the two
+    // resolve identically inside xeric_forge_shape(), so code and data now say
+    // it in the same word. Every world forged before this question existed
+    // keeps running at exactly the rate it always did.
+    $shape = xeric_forge_shape((string)($answers['story_shape'] ?? 'none'), $concept, $endpoint, $onNote);
 
     // Residents: whoever's first week block puts them here. The bible prints
     // them as the people you expect to find in the room.

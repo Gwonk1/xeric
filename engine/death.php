@@ -92,7 +92,8 @@ function xeric_death_mode(array $t, PDO $db): string
 /** What the TEMPLATE asks for, before any death has frozen it. */
 function xeric_death_mode_of(array $t): string
 {
-    $m = strtolower(trim((string)($t['deaths']['mode'] ?? '')));
+    $raw = $t['deaths']['mode'] ?? '';
+    $m = is_string($raw) ? strtolower(trim($raw)) : '';
     return $m === XERIC_DEATH_PERMANENT ? XERIC_DEATH_PERMANENT : XERIC_DEATH_REVIVABLE;
 }
 

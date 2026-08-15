@@ -63,6 +63,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
 
         $job = xeric_web_job_new();
         xeric_web_spawn($job, ['slug' => (string)$w['slug'], 'sid' => $sid], 'photo-worker.php');
+        // The seat is only reserved until the request ends; without this note
+        // the automatic give-back refunded every render, and the "this stops a
+        // loop" budget above never actually counted one.
+        xeric_limit_note('reroll', ['sid' => $sid]);
         xeric_web_json(['ok' => 1, 'job' => $job,
                         'pending' => count(xeric_photo_jobs($w['db'], 'pending'))]);
     }

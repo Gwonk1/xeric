@@ -58,7 +58,12 @@ function xeric_confide_armed(array $t): bool
 {
     $armed = (array)($t['forge']['armed'] ?? []);
     if ($armed === []) return true;                  // predates arming, same as the others
-    foreach (['attraction', 'private_history', 'arcs'] as $s) {
+    // `secrets` JOINED THE LIST WHEN THE SWEEP WAS WIRED: it is the system
+    // that arms the `confidence` hour (sweeps.php's catalogue), and machinery
+    // that cannot record what its own generator produces never fires. The
+    // floor above does not move an inch — armed through whichever door, both
+    // parties are adults or there is no row.
+    foreach (['attraction', 'private_history', 'arcs', 'secrets'] as $s) {
         if (in_array($s, $armed, true)) return true;
     }
     return false;

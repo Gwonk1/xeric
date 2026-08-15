@@ -297,6 +297,53 @@ function xeric_web_note_safe(string $n): string
         $n) ?? $n;
 }
 
+/**
+ * What a chat turn's story payload may say to the BROWSER.
+ *
+ * The same discipline as the note above, aimed at a different reader.
+ * xeric_chat_story() reports everything the overlay worked out, including
+ * `why` — which for a right-but-unshown accusation is the literal sentence
+ * "right, and not yet shown, a guess is not a solution". The play view
+ * deliberately renders NOTHING for that case (no acknowledgment, no wink: a UI
+ * that flinched would be the wink), but relaying the whole array put the wink
+ * in devtools instead, one keypress from the player. So the relay carries
+ * exactly the fields the page's story handler reads and not one more:
+ *
+ *   said      the lines the world spoke, rendered verbatim in the narr lane
+ *   spilled   read only for its length ("she told you something") — the keys
+ *             are of beats whose pieces were just said out loud on the screen
+ *   resolved  only the two shapes the page acts on: an ending (closed+right,
+ *             needing `key` to find its strip row) and a wrong name (neither,
+ *             needing `costs`). A resolution the page would say nothing about
+ *             — above all right-and-not-yet-shown — is dropped WHOLE, because
+ *             every field on such a row is the wink.
+ *
+ * `why`, `named`, `wrong`, `opened` and `collapsed` stay on the server: they
+ * are the engine explaining itself to code, not to the player.
+ */
+function xeric_web_story_relay(array $story): array
+{
+    $out = [
+        'said'     => array_values(array_map('strval', (array)($story['said'] ?? []))),
+        'spilled'  => array_values(array_map('strval', (array)($story['spilled'] ?? []))),
+        'resolved' => [],
+    ];
+    foreach ((array)($story['resolved'] ?? []) as $r) {
+        if (!is_array($r)) continue;
+        $closed = !empty($r['closed']);
+        $right  = !empty($r['right']);
+        if ($closed && $right) {
+            $out['resolved'][] = ['key' => (string)($r['key'] ?? ''), 'closed' => true, 'right' => true];
+        } elseif (!$closed && !$right) {
+            $out['resolved'][] = ['key' => (string)($r['key'] ?? ''), 'closed' => false, 'right' => false,
+                                  'costs' => (string)($r['costs'] ?? '')];
+        }
+        // right without closed, and an accusation at a story already over:
+        // both cross the wire as silence, exactly as they cross the screen.
+    }
+    return $out;
+}
+
 /** Append one record. One line, one flush — this file is read while it is written. */
 function xeric_web_job_append(string $id, array $rec): void
 {
@@ -370,7 +417,7 @@ function xeric_web_spawn(string $job, array $payload, string $script = 'worker.p
     $body = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
     $spec  = xeric_web_spawn_cmd($php, $worker, $job, $log);
-    $proc  = @proc_open($spec['cmd'], [0 => ['pipe', 'r']], $pipes, null, null, $spec['opts']);
+    $proc  = @proc_open($spec['cmd'], $spec['spec'], $pipes, null, null, $spec['opts']);
     if (!is_resource($proc)) throw new RuntimeException('cannot start a build process');
 
     fwrite($pipes[0], $body);
@@ -394,9 +441,16 @@ function xeric_web_spawn(string $job, array $payload, string $script = 'worker.p
  * is needed. A proc_open child on Windows is not killed when its parent exits,
  * and `bypass_shell` runs the binary directly rather than through cmd.exe, which
  * is what stops a console window appearing and what makes the argv array safe
- * without quoting. `create_new_console` gives it its own console so it does not
- * die with the one Apache or `php -S` is holding. Output goes to the log by
- * descriptor rather than by a `>>` the shell would have expanded.
+ * without quoting. `create_process_group` keeps the server console's Ctrl+C out
+ * of the worker. Output goes to the log by DESCRIPTOR — the spec routes fds 1
+ * and 2 to the log file, appended — because there is no shell there to expand a
+ * `>>` for us, and a spec that only pipes stdin leaves the worker's stdout and
+ * stderr closed: every fatal a Windows build died of went nowhere while this
+ * comment promised the log. (An earlier draft also set `create_new_console`,
+ * which did the opposite of the no-window promise above — one console window
+ * per build, skip and reroll. This branch cannot run on the machines the suite
+ * runs on; it follows proc_open's documented semantics — verify on a Windows
+ * box.)
  *
  * WHY STDIN, ON EVERY PLATFORM. The payload carries the user's API key. It is
  * not a command-line argument (visible in `ps` and Task Manager to every account
@@ -409,7 +463,10 @@ function xeric_web_spawn(string $job, array $payload, string $script = 'worker.p
  * every machine this suite runs on, and a branch that cannot be executed is a
  * branch that stays wrong. The default is the truth; a test passes the other.
  *
- * @return array{cmd:array|string,opts:array,wait:bool}
+ * @return array{cmd:array|string,spec:array,opts:array,wait:bool} `spec` is the
+ *         descriptor spec proc_open is given — the whole of it, so the branch
+ *         that needs fds 1 and 2 redirected can say so and the branch whose
+ *         shell already redirects them keeps stdin-only, byte-identical.
  */
 function xeric_web_spawn_cmd(string $php, string $worker, string $job, string $log,
                              ?string $family = null): array
@@ -417,8 +474,8 @@ function xeric_web_spawn_cmd(string $php, string $worker, string $job, string $l
     if (($family ?? PHP_OS_FAMILY) === 'Windows') {
         return [
             'cmd'  => [$php, $worker, $job],
-            'opts' => ['bypass_shell' => true, 'create_new_console' => true,
-                       'create_process_group' => true],
+            'spec' => [0 => ['pipe', 'r'], 1 => ['file', $log, 'a'], 2 => ['file', $log, 'a']],
+            'opts' => ['bypass_shell' => true, 'create_process_group' => true],
             'wait' => false,
         ];
     }
@@ -444,7 +501,8 @@ function xeric_web_spawn_cmd(string $php, string $worker, string $job, string $l
     // first and naming it in the redirect is what keeps the pipe.
     $cmd = 'exec 3<&0; ' . $inner . ' <&3 >> ' . escapeshellarg($log) . ' 2>&1 &';
 
-    return ['cmd' => ['/bin/sh', '-c', $cmd], 'opts' => [], 'wait' => true];
+    return ['cmd' => ['/bin/sh', '-c', $cmd], 'spec' => [0 => ['pipe', 'r']],
+            'opts' => [], 'wait' => true];
 }
 
 /** A program on PATH, or ''. No shell, so nothing here can be injected into. */
@@ -1129,6 +1187,89 @@ xeric_llm_meter(function (array $u, string $where = ''): void {
         }
     }
 });
+
+// THE FENCE, AT THE WIRE AND NOT ONLY AT THE DOOR. xeric_web_endpoint() vets a
+// bring-your-own base URL when it is BUILT, but llm.php's fetch resolves the
+// name again — and a name that answered from a public address on Tuesday can
+// answer from 127.0.0.1 on Friday. That is what DNS rebinding IS, and the
+// notify path has re-checked on the last read before every send for exactly
+// this reason (xeric_web_notify above). So the engine asks this guard
+// immediately before every model fetch.
+//
+// A LITERAL ADDRESS PASSES. It cannot re-resolve, the build check already
+// refused a private one anywhere a visitor could store it, and the local
+// machine — loopback, a LAN literal, a bare name — is the product's ordinary
+// case, exempt from the fence at build on purpose (pointing this app at your
+// own back yard is the entire point of a local model). What is re-checked is a
+// NAME, because a name is the only thing DNS can move. The "one of your own
+// machines" spellings here are xeric_model_kind()'s, restated rather than
+// called: this file must stand without play-lib.php, which the detached
+// workers do not load.
+//
+// AND SO DOES THE INSTALL'S OWN BASE, BY PROVENANCE. The rebinding fence
+// exists to keep a VISITOR-typed name from steering this server into its own
+// back yard — the threat is who chose the name, not where it points. A base
+// stored in config local_base or XERIC_LOCAL_BASE was written by the OPERATOR
+// (deploy.sh, the environment, the launcher), and an operator whose model
+// lives behind dotted internal DNS — model.home.example.com resolving to
+// 192.168.x — has told this install, on purpose, to call their own network.
+// Re-checking that name refused the install's very own model on every call,
+// silently: llm_up said false and every world just stopped answering. The
+// same trust extends to a session-stored local base ONLY on a local_editable
+// install, because local_editable is the boundary that already decides the
+// person typing is the person the server belongs to (model.php stores it
+// behind that exact gate). Everything a visitor could have stored on a hosted
+// box — a BYO endpoint, a pinned voice machine — keeps the strict re-check.
+xeric_llm_guard(function (string $url): bool {
+    $host = strtolower(trim((string)(parse_url($url, PHP_URL_HOST) ?? ''), '[]'));
+    if ($host === '') return false;
+    if (filter_var($host, FILTER_VALIDATE_IP) !== false) return true;
+    if ($host === 'localhost' || !str_contains($host, '.')
+        || str_ends_with($host, '.local') || str_ends_with($host, '.localhost')) {
+        return true;
+    }
+    if (xeric_web_own_base($host)) return true;
+    return xeric_web_host_open($host);
+});
+
+/**
+ * Is this host one of the install's OWN configured model bases?
+ *
+ * The operator's word, not a visitor's: config `local_base` (which
+ * xeric_web_config folds XERIC_LOCAL_BASE into) always; the session's stored
+ * local base only when this install is local_editable — the same boundary
+ * model.php stores it behind, restated here rather than called because this
+ * file must stand without play-lib.php. Matches by host, case-blind: the
+ * trust is in who wrote the name down, so the port and the path are free to
+ * differ per call.
+ */
+function xeric_web_own_base(string $host): bool
+{
+    $same = function (string $base) use ($host): bool {
+        $h = strtolower(trim((string)(parse_url(trim($base), PHP_URL_HOST) ?? ''), '[]'));
+        return $h !== '' && $h === $host;
+    };
+
+    if ($same((string)xeric_web_config()['local_base'])) return true;
+
+    // xeric_web_local_editable()'s own test, restated: an explicit config key
+    // wins; otherwise only a loopback (or CLI) caller is the owner.
+    $cfg = xeric_web_config();
+    $editable = array_key_exists('local_editable', $cfg)
+        ? (bool)$cfg['local_editable']
+        : in_array((string)($_SERVER['REMOTE_ADDR'] ?? ''), ['127.0.0.1', '::1', ''], true);
+    if (!$editable) return false;
+
+    try {
+        $s = xeric_web_session_read();
+        foreach ([(string)($s['local_base'] ?? ''), (string)($s['model']['local'] ?? '')] as $b) {
+            if ($b !== '' && $same($b)) return true;
+        }
+    } catch (Throwable $e) {
+        // No session to consult: the config's word above was the only word.
+    }
+    return false;
+}
 
 // THE IMAGE SPEND LANDS ON THE SAME LEDGER. The reaper hands every render to
 // this sink (engine/photo.php's meter discipline, llm.php's shape), and the
