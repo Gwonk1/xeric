@@ -112,7 +112,7 @@ php engine/sweep-cli.php --world=worlds/<slug> --advance=6h
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h --no-learn
 
 # the test suites — all of them, no exceptions
-for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php; do php "$t" || break; done
+for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php tools/tests/*.php; do php "$t" || break; done
 
 # the last of those is the smoke test: it starts a throwaway server, loads
 # every page in headless Chrome, and fails on any uncaught javascript. It

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy.sh — put the forge and the play view on staging, at https://dev.xeric.dev/forge
+# deploy.sh — put the forge and the play view on a staging host
 #
 # The deployed tree mirrors the repo, one level down:
 #
@@ -55,7 +55,12 @@ HOST="${XERIC_HOST:-}"
     echo "           XERIC_DOCROOT, XERIC_DATA and XERIC_LOCAL_BASE override the rest." >&2
     exit 2
 }
-DOCROOT="${XERIC_DOCROOT:-/var/www/html/namedhosts/dev.xeric.dev}"
+# Same rule as the host: the docroot names YOUR site, so it has no default.
+DOCROOT="${XERIC_DOCROOT:-}"
+[ -n "$DOCROOT" ] || {
+    echo "deploy.sh: set XERIC_DOCROOT to the staging vhost's document root." >&2
+    exit 2
+}
 WEB="$DOCROOT/forge"
 DATA="${XERIC_DATA:-/var/www/xeric-data}"
 # The model is on this box's :8080; the server sees the same model at :18080,
@@ -112,10 +117,12 @@ $EDIT_LINE
     // forges, rerolls, the per-IP budgets, and the disk eviction that keeps this
     // box from filling up.
     'caps'       => true,
-    'places'     => 6,
-    'cast'       => 4,
+    // No 'places'/'cast' here: THE DEFAULTS LIVE IN boot.php, and only there.
+    // This file pinning 'cast' => 4 is exactly how every deployed host kept
+    // building four-person worlds after the default moved to twelve. A host
+    // that wants smaller worlds sets it here deliberately, by hand.
 ];
 PHP
 chmod -R a+rX '$WEB'"
 
-echo "✓ https://dev.xeric.dev/forge"
+echo "✓ deployed: $HOST:$WEB"

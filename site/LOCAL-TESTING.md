@@ -31,14 +31,14 @@ this ends up deployed behind (e.g. `ErrorDocument 404 /404.html` on
 Apache, `error_page 404 /404.html;` on nginx) — out of scope for this
 static-file preview.
 
-## Optional: a fake local hostname (`dev.xeric.dev`)
+## Optional: a fake local hostname (`local.xeric.dev`)
 
 If you want the address bar to show something closer to the real domain,
 you can point a hostname at your own machine with an `/etc/hosts` entry:
 
 ```sh
-echo "127.0.0.1  dev.xeric.dev" | sudo tee -a /etc/hosts
-php -S dev.xeric.dev:8100 -t site/
+echo "127.0.0.1  local.xeric.dev" | sudo tee -a /etc/hosts
+php -S local.xeric.dev:8100 -t site/
 ```
 
 **This will not work over plain HTTP in Chrome (or any modern Chromium
@@ -55,7 +55,7 @@ Workarounds, in order of how much they're worth the trouble:
 - **Don't bother — use `http://localhost:8100`.** Simplest, always works,
   is what the "Quick preview" section above already gives you.
 - Firefox does not enforce the `.dev` HSTS preload as strictly for
-  arbitrary local names, so `http://dev.xeric.dev:8100` may work there —
+  arbitrary local names, so `http://local.xeric.dev:8100` may work there —
   but don't rely on cross-browser behavior for anything real.
 - If you actually need HTTPS locally (e.g. to test service-worker or
   cookie-scoped behavior), generate a local cert with `mkcert` and run

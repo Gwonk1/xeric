@@ -32,3 +32,6 @@ node_modules/
 # A bundled PHP is 30MB and changes every month for security. tools/fetch-php.php
 # puts one here; a repository is not a CDN.
 runtime/
+
+# a pre-blanking backup of lived worlds is a backup, not a fixture
+/worlds.pre-blank-*/
