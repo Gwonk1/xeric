@@ -60,6 +60,15 @@ On the llama.cpp side, bind all interfaces if Xeric is not on the same box:
 llama-server --host 0.0.0.0 --port 8080 --api-key SECRET -m model.gguf
 ```
 
+Router mode (no `-m`, several GGUFs behind one address) needs a model id, which
+the machines screen offers as a list once it sees GET `/models` with a lifecycle
+status. Same thing from the shell:
+
+```bash
+./xeric --llm http://192.168.1.50:8080 --llm-model Qwen3-8B-Q4_K_M
+export XERIC_LOCAL_MODEL=Qwen3-8B-Q4_K_M
+```
+
 ## Your first world
 
 Open the wizard, answer as much or as little as you like — every question has a

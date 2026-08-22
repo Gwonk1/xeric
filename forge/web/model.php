@@ -102,6 +102,20 @@ if ((string)($_GET['a'] ?? '') === 'probe') {
     // down is four more timeouts on the one screen somebody is looking at
     // BECAUSE things are timing out.
     $who = $up ? xeric_model_who($base, $kind) : ['name' => '', 'model' => '', 'local' => true];
+    if ($up && !empty($who['router']) && $who['models'] !== []
+        && $i === xeric_model_active($list, $sid)) {
+        $sess = xeric_web_session_read($sid);
+        $have = trim((string)(($sess['model']['model'] ?? '')));
+        $pick = function_exists('xeric_llm_router_pick')
+            ? xeric_llm_router_pick((array)$who['models'], $have)
+            : (string)($who['model'] ?? '');
+        if ($pick !== '' && $have === '') {
+            xeric_web_session_edit(function (array &$s) use ($pick): void {
+                if (isset($s['model']) && is_array($s['model'])) $s['model']['model'] = $pick;
+            }, $sid);
+        }
+        if ($pick !== '') $who['model'] = $pick;
+    }
     xeric_web_json(['up' => $up, 'found' => $found, 'who' => $who]);
 }
 
@@ -383,6 +397,36 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         }, $sid);
 
         if ($wasEngine) xeric_play_clock_all($next === '', $sid);
+        header('Location: model.php');
+        exit;
+    }
+
+    // A llama.cpp router is one address holding several GGUFs. The model id
+    // is what /v1/chat/completions uses to pick which one answers — without
+    // it the router has nowhere to send the request.
+    if ($act === 'pickmodel') {
+        $model = str_replace(["\r", "\n"], '', trim((string)($_POST['model'] ?? '')));
+        if ($model === '' || !isset($list[$i])) {
+            if ($wantsJson) xeric_web_json(['ok' => false]);
+            header('Location: model.php');
+            exit;
+        }
+        $base = (string)$list[$i]['base'];
+        $wasOn = $i === xeric_model_active($list, $sid);
+        xeric_web_session_edit(function (array &$s) use ($model, $wasOn, $i, $base): void {
+            if ($i > 0) {
+                $rows = array_values((array)($s['machines'] ?? []));
+                if (isset($rows[$i - 1])) $rows[$i - 1]['model'] = $model;
+                $s['machines'] = $rows;
+            }
+            if ($wasOn) {
+                if (!isset($s['model']) || !is_array($s['model'])) {
+                    $s['model'] = xeric_model_descriptor($base);
+                }
+                $s['model']['model'] = $model;
+            }
+        }, $sid);
+        if ($wantsJson) xeric_web_json(['ok' => true, 'model' => $model]);
         header('Location: model.php');
         exit;
     }
@@ -733,7 +777,37 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
     if (!el) return;
     if (!who || !who.name) { el.hidden = true; return; }
     el.querySelector('.wname').textContent = who.name;
-    el.querySelector('.wmodel').textContent = who.model || '';
+    var slot = el.querySelector('.wmodel');
+    slot.textContent = who.model || '';
+    if (who.router && who.models && who.models.length) {
+      var sel = document.createElement('select');
+      sel.className = 'wmodels';
+      sel.setAttribute('aria-label', 'model');
+      who.models.forEach(function (m) {
+        var o = document.createElement('option');
+        o.value = m.id;
+        var label = m.id;
+        if (m.status === 'loaded') label += ' — loaded';
+        else if (m.status === 'unloaded') label += ' — unloaded';
+        else if (m.status === 'loading') label += ' — loading';
+        else if (m.status === 'sleeping') label += ' — sleeping';
+        else if (m.status === 'downloading') label += ' — downloading';
+        o.textContent = label;
+        if (m.id === who.model) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener('change', function () {
+        var body = new FormData();
+        body.append('act', 'pickmodel');
+        body.append('i', String(i));
+        body.append('model', sel.value);
+        body.append('json', '1');
+        fetch('model.php', { method: 'POST', body: body, credentials: 'same-origin' })
+          .catch(function () {});
+      });
+      slot.textContent = '';
+      slot.appendChild(sel);
+    }
     el.querySelector('.wsig').className = 'wsig ' + (who.local ? 'here' : 'away');
     el.hidden = false;
   }

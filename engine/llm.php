@@ -107,6 +107,71 @@ function xeric_llm_default_model(): string
 }
 
 /**
+ * llama.cpp router GET /models: each row carries a lifecycle `status`.
+ * Anything else (OpenAI /v1/models, a 404 body, a single-model server) returns
+ * []. The fingerprint is the status field, not the path — some proxies alias
+ * /models onto /v1/models and those rows have an id and nothing else.
+ *
+ * @param mixed $json
+ * @return array<int,array{id:string,status:string,path:string}>
+ */
+function xeric_llm_router_catalog($json): array
+{
+    if (!is_array($json)) return [];
+    $rows = [];
+    if (isset($json['data']) && is_array($json['data'])) $rows = $json['data'];
+    elseif (array_is_list($json)) $rows = $json;
+
+    $out = [];
+    $seen = [];
+    $stamped = 0;
+    foreach ($rows as $item) {
+        if (!is_array($item)) continue;
+        $id = trim((string)($item['id'] ?? ''));
+        if ($id === '' || isset($seen[$id])) continue;
+        $raw = $item['status'] ?? null;
+        $status = '';
+        if (is_string($raw)) {
+            $status = strtolower(trim($raw));
+        } elseif (is_array($raw) && isset($raw['value']) && is_string($raw['value'])) {
+            $status = strtolower(trim($raw['value']));
+        }
+        if ($status !== '') $stamped++;
+        $seen[$id] = true;
+        $out[] = [
+            'id'     => $id,
+            'status' => $status,
+            'path'   => (string)($item['path'] ?? ''),
+        ];
+        if (count($out) >= 48) break;
+    }
+    return $stamped > 0 ? $out : [];
+}
+
+/**
+ * The model a router should start on: one already loaded, else the first.
+ *
+ * @param array<int,array{id:string,status:string,path?:string}> $catalog
+ */
+function xeric_llm_router_pick(array $catalog, string $current = ''): string
+{
+    $ids = [];
+    foreach ($catalog as $m) {
+        $id = (string)($m['id'] ?? '');
+        if ($id === '') continue;
+        $ids[] = $id;
+        if ($id === $current) return $current;
+    }
+    if ($current !== '') return $current;
+    foreach ($catalog as $m) {
+        if (($m['status'] ?? '') === 'loaded' && ($m['id'] ?? '') !== '') {
+            return (string)$m['id'];
+        }
+    }
+    return $ids[0] ?? '';
+}
+
+/**
  * CLI endpoint from flags, with the same env fallback the web app uses.
  *
  * --base wins, then XERIC_LOCAL_BASE, then llama.cpp's default. A key is

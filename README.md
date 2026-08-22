@@ -53,6 +53,7 @@ default; an external llama.cpp is a URL:
 ```bash
 ./xeric --llm http://192.168.1.50:8080
 ./xeric --llm http://gpu.example.com:8080 --llm-key SECRET
+./xeric --llm http://192.168.1.50:8080 --llm-model Qwen3-8B-Q4_K_M   # llama.cpp router
 export XERIC_LOCAL_BASE=http://192.168.1.50:8080   # same, for CLI and the heart
 ```
 

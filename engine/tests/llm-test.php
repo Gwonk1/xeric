@@ -71,6 +71,25 @@ $cli = xeric_llm_cli_endpoint(['base' => 'gpu:8080']);
 ok('a host:port without a scheme is still a URL',
     $cli['base'] === 'http://gpu:8080', $cli['base']);
 
+ok('OpenAI /v1/models is not a router catalog',
+    xeric_llm_router_catalog(['data' => [['id' => 'gpt-4', 'object' => 'model']]]) === []);
+ok('an empty payload is not a router',
+    xeric_llm_router_catalog(['data' => []]) === []);
+$cat = xeric_llm_router_catalog(['data' => [
+    ['id' => 'gemma', 'path' => '/m/gemma.gguf', 'status' => ['value' => 'loaded']],
+    ['id' => 'qwen',  'path' => '/m/qwen.gguf',  'status' => ['value' => 'unloaded']],
+]]);
+ok('llama.cpp /models with lifecycle status is a router',
+    count($cat) === 2 && $cat[0]['id'] === 'gemma' && $cat[0]['status'] === 'loaded');
+ok('the loaded GGUF is the default pick',
+    xeric_llm_router_pick($cat) === 'gemma');
+ok('a current id that is still listed is kept',
+    xeric_llm_router_pick($cat, 'qwen') === 'qwen');
+ok('a current id that left the catalog is kept rather than swapped',
+    xeric_llm_router_pick($cat, 'other') === 'other');
+ok('a string status is accepted the same way as {value}',
+    xeric_llm_router_catalog(['data' => [['id' => 'a', 'status' => 'loading']]])[0]['status'] === 'loading');
+
 foreach (['XERIC_LOCAL_BASE' => $prevBase, 'XERIC_LOCAL_KEY' => $prevKey,
           'XERIC_API_KEY' => $prevApi, 'XERIC_LOCAL_MODEL' => $prevModel] as $k => $v) {
     if ($v === false || $v === null) putenv($k);
