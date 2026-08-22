@@ -1159,6 +1159,16 @@ ok('and the label names that host, not 127.0.0.1',
 ok('and a junk local address falls back rather than being called',
     (string)xeric_web_endpoint(['kind' => 'local', 'local' => 'not a url'])['base'] === $cfgBase);
 
+// THE WORKER RE-PARSES WHAT BUILD.PHP ALREADY RESOLVED. Dropping `local` on the
+// way out made the second pass identical to a visitor omitting it, so every
+// forge against a GPU box quietly ran on 127.0.0.1:8080 and, when nothing
+// answered there, fell back to the surprise table.
+$again = xeric_web_endpoint($own);
+ok('resolving a local endpoint twice still names the box the owner set',
+    (string)$again['base'] === 'http://10.1.2.3:8080', (string)$again['base']);
+ok('because the resolved shape carries `local`, not only `base`',
+    (string)($own['local'] ?? '') === 'http://10.1.2.3:8080', json_encode($own));
+
 // `none` is a state, and it has to fail here rather than at the first request.
 $noneSaid = '';
 try { xeric_web_endpoint(['kind' => 'none']); } catch (Throwable $e) { $noneSaid = $e->getMessage(); }

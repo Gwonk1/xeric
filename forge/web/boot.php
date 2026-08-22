@@ -640,7 +640,13 @@ function xeric_web_endpoint(array $model): array
             : (string)($model['key'] ?? '');
         if ($key === '' && function_exists('xeric_llm_default_key')) $key = xeric_llm_default_key();
 
-        return ['kind' => 'local', 'base' => $base,
+        // `local` RIDES THE OUTPUT. build.php resolves, pipes the result to
+        // worker.php, and the worker calls this function again. A shape that
+        // only had `base` was indistinguishable from a visitor stuffing a URL
+        // into `base` — which this function discards on purpose — so the second
+        // pass fell through to 127.0.0.1:8080 and the forge built from the
+        // surprise table against a box nobody asked for.
+        return ['kind' => 'local', 'base' => $base, 'local' => $base,
                 'model' => (string)($model['model'] ?? (function_exists('xeric_llm_default_model') ? xeric_llm_default_model() : '')),
                 'key' => $key];
     }
