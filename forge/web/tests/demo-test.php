@@ -1169,6 +1169,81 @@ ok('and `connected` tells the two apart',
     && xeric_web_connected(['kind' => 'local']) && xeric_web_connected(['kind' => 'openai']));
 
 // ---------------------------------------------------------------------------
+// THE FORGE WIZARD MUST NOT DETACH THE GPU BOX.
+//
+// Autosave used to take `{i: N}` — the only thing the page is allowed to post —
+// and write `{kind: local, base: '', model: ''}`. `local` never landed, so the
+// next xeric_web_endpoint() fell through to config 127.0.0.1:8080, even when
+// the visitor had already attached a box on the LAN. The index has to resolve
+// against THIS visitor's list, and a payload that names no machine must leave
+// the engine alone.
+// ---------------------------------------------------------------------------
+
+$gpu = 'http://192.168.50.10:8080';
+$G = sid();
+xeric_session_use($G);
+xeric_web_session_edit(function (array &$s) use ($gpu): void {
+    $s['machines'] = [['base' => $gpu, 'model' => 'qwen2.5-32b']];
+    $s['wired']    = [$gpu];
+    $s['model']    = ['kind' => 'local', 'base' => '', 'local' => $gpu, 'model' => 'qwen2.5-32b'];
+}, $G);
+
+$pickedGpu = xeric_model_choice(['i' => 1], $G);
+ok('forge {i:N} keeps the GPU box, not 127.0.0.1:8080',
+    is_array($pickedGpu)
+    && ($pickedGpu['kind'] ?? '') === 'local'
+    && ($pickedGpu['local'] ?? '') === $gpu
+    && ($pickedGpu['model'] ?? '') === 'qwen2.5-32b',
+    json_encode($pickedGpu));
+ok('and the endpoint is that box',
+    (string)xeric_web_endpoint($pickedGpu)['base'] === $gpu,
+    (string)xeric_web_endpoint($pickedGpu)['base']);
+
+$wiped = ['kind' => 'local', 'base' => '', 'model' => ''];
+ok('the old wizard write would have fallen through to the configured default',
+    (string)xeric_web_endpoint($wiped)['base'] === $cfgBase, (string)xeric_web_endpoint($wiped)['base']);
+
+ok('a wizard save that names no machine does not invent a descriptor',
+    xeric_model_choice([], $G) === null
+    && xeric_model_choice(['kind' => 'local'], $G) === null
+    && xeric_model_choice(['kind' => 'local', 'base' => 'http://169.254.169.254/'], $G) === null
+    && xeric_model_choice(['local' => 'http://169.254.169.254/'], $G) === null);
+
+ok('kind=local `base` still cannot point the endpoint at a visitor URL',
+    (string)xeric_web_endpoint(['kind' => 'local', 'base' => 'http://169.254.169.254/'])['base'] === $cfgBase);
+
+$api = 'https://api.openai.com';
+xeric_web_session_edit(function (array &$s) use ($api): void {
+    $s['machines'][] = ['base' => $api];
+}, $G);
+$pickedApi = xeric_model_choice(['i' => 2], $G);
+ok('a public API chosen by index keeps its own host',
+    is_array($pickedApi) && ($pickedApi['kind'] ?? '') === 'openai' && ($pickedApi['base'] ?? '') === $api,
+    json_encode($pickedApi));
+
+ok('an index that is not on the list is a no-op, not a default machine',
+    xeric_model_choice(['i' => 99], $G) === null);
+
+// Apply the save the way forge.php does, then read the engine back — this is
+// the whole user-facing failure: next status/build hit 127.0.0.1:8080.
+xeric_web_session_edit(function (array &$s) use ($G): void {
+    $got = xeric_model_choice(['i' => 1], $G);
+    if ($got !== null) $s['model'] = $got;
+}, $G);
+$after = xeric_web_model($G);
+ok('after a wizard save the attached engine is still the GPU box',
+    (string)($after['local'] ?? '') === $gpu
+    && (string)xeric_web_endpoint($after)['base'] === $gpu
+    && !str_contains((string)xeric_web_endpoint($after)['base'], '127.0.0.1'),
+    json_encode($after));
+
+$forgeSave = (string)file_get_contents(dirname(__DIR__) . '/forge.php');
+ok('the wizard save resolves {i:N} rather than storing kind/base off the wire',
+    str_contains($forgeSave, 'xeric_model_choice($m)')
+    && !preg_match("/\\\$s\['model'\] = \['kind' => \(string\)\(\\\$m\['kind'\]/", $forgeSave));
+
+
+// ---------------------------------------------------------------------------
 // THE ONE GENUINELY UNPORTABLE THING IN THE APP: starting a detached worker.
 // Split into a function that only DESCRIBES the launch so both branches can be
 // read on one machine — the Windows branch is otherwise untestable anywhere the

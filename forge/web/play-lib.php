@@ -3022,11 +3022,55 @@ function xeric_model_auto_engine(string $base): bool
 }
 
 /** The descriptor a machine gets when it becomes the engine. */
-function xeric_model_descriptor(string $base): array
+function xeric_model_descriptor(string $base, string $model = ''): array
 {
+    $base  = rtrim(trim($base), '/');
+    $model = str_replace(["\r", "\n"], '', trim($model));
     return xeric_model_kind($base) === 'local'
-        ? ['kind' => 'local', 'base' => '', 'local' => $base, 'model' => '']
-        : ['kind' => xeric_model_kind($base), 'base' => $base, 'local' => '', 'model' => ''];
+        ? ['kind' => 'local', 'base' => '', 'local' => $base, 'model' => $model]
+        : ['kind' => xeric_model_kind($base), 'base' => $base, 'local' => '', 'model' => $model];
+}
+
+/**
+ * Resolve a posted machine choice into a stored engine descriptor.
+ *
+ * The forge wizard sends `{i: N}` — an index into this visitor's own list —
+ * and never an address. Returning null means "do not overwrite": a payload
+ * that does not name a machine (empty, leftover `{kind: local}`, or a URL
+ * stuffed into `base`) must leave the attached engine alone. Honouring a
+ * visitor-supplied `local` here would be the SSRF hole xeric_web_endpoint()
+ * exists to close; the address comes off the session list, or nowhere.
+ *
+ * The GGUF id rides along when the same address is already the engine, or
+ * when that row stored one (a llama.cpp router). Wiping it would send the
+ * next forge to whatever the router happens to have loaded.
+ *
+ * @return ?array the descriptor to store, or null to keep what is already there
+ */
+function xeric_model_choice(array $posted, ?string $sid = null): ?array
+{
+    if (!array_key_exists('i', $posted)) return null;
+    $rows = xeric_model_list($sid);
+    $i = (int)$posted['i'];
+    if (!isset($rows[$i])) return null;
+    $base = rtrim(trim((string)$rows[$i]['base']), '/');
+    if ($base === '') return null;
+
+    $keep = '';
+    $cur = xeric_web_model($sid);
+    $at  = rtrim(trim((string)($cur['local'] ?? '')), '/');
+    if ($at === '') $at = rtrim(trim((string)($cur['base'] ?? '')), '/');
+    if ($at === $base) $keep = str_replace(["\r", "\n"], '', trim((string)($cur['model'] ?? '')));
+
+    if ($keep === '' && $i > 0) {
+        $sess  = xeric_web_session_read($sid ?? xeric_session_id());
+        $extra = array_values((array)($sess['machines'] ?? []));
+        if (isset($extra[$i - 1]['model'])) {
+            $keep = str_replace(["\r", "\n"], '', trim((string)$extra[$i - 1]['model']));
+        }
+    }
+
+    return xeric_model_descriptor($base, $keep);
 }
 
 // ---------------------------------------------------------------------------
