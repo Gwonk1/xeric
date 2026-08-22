@@ -45,6 +45,19 @@ missing. [`docs/WORLD_TEMPLATE.md`](docs/WORLD_TEMPLATE.md) is the template
 schema, worked end to end against `engine/fixtures/milldale.json` — the
 fictional world the engine is tested with.
 
+## A model that is not on this machine
+
+Runtime talks the OpenAI chat API. llama.cpp on `127.0.0.1:8080` is still the
+default; an external llama.cpp is a URL:
+
+```bash
+./xeric --llm http://192.168.1.50:8080
+./xeric --llm http://gpu.example.com:8080 --llm-key SECRET
+export XERIC_LOCAL_BASE=http://192.168.1.50:8080   # same, for CLI and the heart
+```
+
+A trailing `/v1` is stripped. See [`QUICKSTART.md`](QUICKSTART.md).
+
 ## Architecture (the short version)
 
 | Piece | What it does |

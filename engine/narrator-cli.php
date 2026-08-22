@@ -205,20 +205,10 @@ exit(0);
 
 // ---------------------------------------------------------------------------
 
-/** The endpoint, from flags. Local :8080 when nothing names another. */
+/** The endpoint, from flags. XERIC_LOCAL_BASE, else llama.cpp's :8080. */
 function xeric_narrator_cli_endpoint(array $args): array
 {
-    $endpoint = [
-        'kind'  => (string)($args['kind'] ?? 'local'),
-        'base'  => (string)($args['base'] ?? ''),
-        'model' => (string)($args['model'] ?? ''),
-        'key'   => (string)($args['key'] ?? getenv('XERIC_API_KEY') ?: ''),
-    ];
-    if ($endpoint['base'] === '') {
-        $endpoint['kind'] = 'local';
-        $endpoint['base'] = 'http://127.0.0.1:8080';
-    }
-    return $endpoint;
+    return xeric_llm_cli_endpoint($args);
 }
 
 /**
@@ -425,9 +415,10 @@ function xeric_narrator_cli_usage(): string
       --temp=N             sampling temperature (default 0.6)
       --timeout=SECS       default 180
 
-      --base=URL           any OpenAI-compatible endpoint (default 127.0.0.1:8080)
+      --base=URL           any OpenAI-compatible endpoint
+                           default: $XERIC_LOCAL_BASE, else 127.0.0.1:8080
       --kind=local|openai|anthropic
-      --model=NAME  --key=SECRET   (or set XERIC_API_KEY)
+      --model=NAME  --key=SECRET   (or set XERIC_LOCAL_KEY / XERIC_API_KEY)
 
     TXT;
 }

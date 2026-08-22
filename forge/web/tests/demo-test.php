@@ -1153,6 +1153,9 @@ $own = xeric_web_endpoint(['kind' => 'local', 'local' => 'http://10.1.2.3:8080',
                            'base' => 'http://169.254.169.254/']);
 ok('a local address the owner set is used, and `base` is still discarded',
     (string)$own['base'] === 'http://10.1.2.3:8080', (string)$own['base']);
+ok('and the label names that host, not 127.0.0.1',
+    xeric_web_endpoint_label($own) === 'the local model (10.1.2.3:8080)',
+    xeric_web_endpoint_label($own));
 ok('and a junk local address falls back rather than being called',
     (string)xeric_web_endpoint(['kind' => 'local', 'local' => 'not a url'])['base'] === $cfgBase);
 

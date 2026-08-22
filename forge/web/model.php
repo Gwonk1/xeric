@@ -60,18 +60,31 @@ if ((string)($_GET['a'] ?? '') === 'probe') {
 
     $base = (string)$list[$i]['base'];
     $kind = xeric_model_kind($base);
+    $key  = function_exists('xeric_llm_default_key') ? xeric_llm_default_key() : '';
 
-    // A REMOTE ENDPOINT CANNOT BE PROBED HONESTLY. The key is never stored, so
-    // the only request that can be made is keyless, and a keyless request to a
-    // working OpenAI endpoint is a 401 — which reads as "down" and is a lie
-    // about somebody's perfectly good API. Null, and the lamp stays grey.
+    // A hosted API usually cannot be probed honestly: the key is never stored,
+    // so a keyless request to a working OpenAI endpoint is a 401 — which reads
+    // as "down" and is a lie. llama.cpp on another machine is different: it
+    // speaks the same wire with no key, or with XERIC_LOCAL_KEY / XERIC_API_KEY
+    // when started with --api-key. Try; on failure keep the grey lamp.
     if ($kind !== 'local') {
+        $up = false;
+        try {
+            $up = xeric_llm_up(['kind' => $kind, 'base' => $base, 'model' => '', 'key' => $key], 4);
+        } catch (Throwable $e) {
+            $up = false;
+        }
+        if ($up) {
+            $who = xeric_model_who($base, 'local');
+            if (($who['name'] ?? '') === '') $who = xeric_model_who($base, $kind);
+            xeric_web_json(['up' => true, 'found' => '', 'who' => $who]);
+        }
         xeric_web_json(['up' => null] + ['who' => xeric_model_who($base, $kind)]);
     }
 
     $up = false;
     try {
-        $up = xeric_llm_up(['kind' => 'local', 'base' => $base, 'model' => '', 'key' => ''], 4);
+        $up = xeric_llm_up(['kind' => 'local', 'base' => $base, 'model' => '', 'key' => $key], 4);
     } catch (Throwable $e) {
         $up = false;
     }
@@ -614,10 +627,11 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
         <input type="hidden" name="act" value="add">
         <div class="opt madd" id="maddcard">
           <span class="t">Add a machine</span>
-          <span class="d">Anything that speaks the OpenAI chat API: llama.cpp, Ollama, vLLM, LM Studio,
-            or an API you have a key for.</span>
+          <span class="d">Anything that speaks the OpenAI chat API: llama.cpp on this machine or
+            another, Ollama, vLLM, LM Studio, or an API you have a key for. Paste
+            <code>http://gpu-box:8080</code> or <code>https://host/v1</code> — a trailing /v1 is stripped.</span>
           <input type="text" name="base" id="maddin" inputmode="url" autocapitalize="off"
-                 autocorrect="off" spellcheck="false" placeholder="host:port" hidden>
+                 autocorrect="off" spellcheck="false" placeholder="http://host:8080" hidden>
         </div>
       </form>
       <span class="mgap" aria-hidden="true"></span>

@@ -42,8 +42,23 @@ It will not run a paused world, will not take the model from somebody who is
 mid-conversation, and will not try to live a month-long gap in a single tick.
 
 The app finds a local model by probing the ports people actually use (11434,
-8080, 1234, 5000, 8000, 4891). If yours is somewhere else, the machines screen
-in the UI takes an address, or set it and skip the probe.
+8080, 1234, 5000, 8000, 4891). If yours is somewhere else — a GPU box on the
+LAN, an ssh tunnel, llama.cpp bound on another host — point it there:
+
+```bash
+./xeric --llm http://192.168.1.50:8080
+./xeric --llm http://gpu.example.com:8080 --llm-key SECRET   # llama-server --api-key
+export XERIC_LOCAL_BASE=http://192.168.1.50:8080            # same thing, sticky
+```
+
+A trailing `/v1` is stripped, so the URL you copied from an OpenAI-compatible
+tutorial works. The machines screen in the UI also takes an address.
+
+On the llama.cpp side, bind all interfaces if Xeric is not on the same box:
+
+```bash
+llama-server --host 0.0.0.0 --port 8080 --api-key SECRET -m model.gguf
+```
 
 ## Your first world
 

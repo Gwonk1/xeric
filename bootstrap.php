@@ -58,6 +58,25 @@ for ($i = 1; $i < $argc; $i++) {
             if ($data === '') { fwrite(STDERR, "xeric: --data needs a directory\n"); exit(1); }
             break;
         case '--lan': $host = '0.0.0.0'; break;
+        case '--llm':
+            $v = (string)($argv[++$i] ?? '');
+            if ($v === '') { fwrite(STDERR, "xeric: --llm needs a URL (llama.cpp OpenAI API)\n"); exit(1); }
+            if (!preg_match('#^https?://#i', $v)) $v = 'http://' . $v;
+            putenv('XERIC_LOCAL_BASE=' . $v);
+            $_ENV['XERIC_LOCAL_BASE'] = $v;
+            break;
+        case '--llm-key':
+            $v = (string)($argv[++$i] ?? '');
+            if ($v === '') { fwrite(STDERR, "xeric: --llm-key needs a value\n"); exit(1); }
+            putenv('XERIC_LOCAL_KEY=' . $v);
+            $_ENV['XERIC_LOCAL_KEY'] = $v;
+            break;
+        case '--llm-model':
+            $v = (string)($argv[++$i] ?? '');
+            if ($v === '') { fwrite(STDERR, "xeric: --llm-model needs a name\n"); exit(1); }
+            putenv('XERIC_LOCAL_MODEL=' . $v);
+            $_ENV['XERIC_LOCAL_MODEL'] = $v;
+            break;
         default:
             fwrite(STDERR, "xeric: unknown option {$argv[$i]}\n");
             exit(1);
@@ -133,6 +152,19 @@ $out = [
     // The machine is yours, so its address is yours to change.
     'XERIC_LOCAL_EDIT' => (string)(getenv('XERIC_LOCAL_EDIT') ?: 'true'),
 ];
+
+$llmBase = function_exists('xeric_llm_normalize_base')
+    ? xeric_llm_normalize_base((string)(getenv('XERIC_LOCAL_BASE') ?: ''))
+    : rtrim((string)(getenv('XERIC_LOCAL_BASE') ?: ''), '/');
+if ($llmBase !== '') {
+    putenv('XERIC_LOCAL_BASE=' . $llmBase);
+    $_ENV['XERIC_LOCAL_BASE'] = $llmBase;
+    $out['XERIC_LOCAL_BASE'] = $llmBase;
+}
+$llmKey = (string)(getenv('XERIC_LOCAL_KEY') ?: '');
+if ($llmKey !== '') $out['XERIC_LOCAL_KEY'] = $llmKey;
+$llmModel = (string)(getenv('XERIC_LOCAL_MODEL') ?: '');
+if ($llmModel !== '') $out['XERIC_LOCAL_MODEL'] = $llmModel;
 
 // PHP_CLI_SERVER_WORKERS IS NOT OPTIONAL WHERE IT EXISTS. The built-in server is
 // otherwise one request at a time, and progress.php holds a stream open for the
