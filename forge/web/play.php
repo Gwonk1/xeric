@@ -909,7 +909,19 @@ $userName = trim((string)($T['user']['name'] ?? '')) ?: 'you';
 $userJob  = trim((string)($T['user']['occupation']['title'] ?? ''));
 $userWork = xeric_world_place_name($T, (string)($T['user']['occupation']['workplace_key'] ?? ''));
 
-xeric_web_head('Xeric: ' . (string)$T['meta']['name']);
+// Is an ears machine set for this visitor? CONFIGURED, NEVER PROBED — the
+// speaker's rule, the look's rule: the button asks the machine when it is
+// held, not the page on the way in. It also decides whether this page may
+// ask for the microphone at all (ui.php's Permissions-Policy).
+$earsOn = (function (): bool {
+    try {
+        return xeric_ears_endpoint() !== null;
+    } catch (Throwable $e) {
+        return false;
+    }
+})();
+
+xeric_web_head('Xeric: ' . (string)$T['meta']['name'], ['microphone' => true]);
 echo '<style>' . xeric_play_css() . '
 /* ── the ⚙ cog and its modal rows (xeric controls) ── */
 /* color set EXPLICITLY: a button never inherits text colour, it takes the
@@ -962,6 +974,11 @@ echo '<style>' . xeric_play_css() . '
 .mspk:disabled { opacity:.25; cursor:default; }
 @keyframes mspkpulse { 50% { opacity:.8; } }
 .mspkno { display:block; font-size:.7rem; font-style:italic; opacity:.7; }
+/* hold to talk, beside the composer: lit while it is listening, dim while it is sending */
+.mhear { touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+.mhear.on { background:var(--fg); color:var(--bg); }
+.mhear.loading { opacity:.45; animation:mspkpulse 1.2s ease-in-out infinite; }
+.mhear:disabled { opacity:.3; cursor:default; }
 /* what you see: the room, the width of the panel, rounded like a photo in a thread */
 .lookimg { display:block; width:100%; height:auto; border-radius:.6rem; margin:0 0 .25rem; }
 .lookpanobox { margin:0 0 .25rem; }
@@ -1403,6 +1420,12 @@ echo '<style>' . xeric_play_css() . '
     </div>
     <div class="composer">
       <textarea id="composer" rows="1" placeholder="say something…" autocomplete="off"></textarea>
+      <?php if ($earsOn): ?>
+      <!-- HOLD TO TALK. Shown only when an ears machine is set (never probed
+           here). What it hears goes into the box above, to read and send. -->
+      <button class="btn mhear" type="button" id="hear" aria-label="hold to talk" aria-pressed="false"
+        title="hold to talk — the words go in the box for you to send">🎙</button>
+      <?php endif; ?>
       <button class="btn" type="button" id="send">Send</button>
     </div>
   </section>
@@ -4149,6 +4172,157 @@ echo '<style>' . xeric_play_css() . '
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 128) + 'px';
   });
+
+  // -- hold to talk ------------------------------------------------------------
+  // PRESS, SPEAK, LET GO, READ, SEND. The recording goes to hear.php and the
+  // words come back into the box — never straight into the thread, because a
+  // machine that misheard a name would otherwise put a line in the player's
+  // mouth that they did not say. The microphone is asked for on the first
+  // press and on no earlier one (so the prompt is never a surprise); the
+  // tracks are stopped after every line, so the browser's recording light
+  // means what it says. Thirty seconds at most, the server's own ceiling.
+  // A refusal is shown once and the button stands down, the speaker's rule.
+  (function () {
+    var hb = document.getElementById('hear');
+    if (!hb) return;
+    var MAX_MS = 30000;
+    var holding = false, rec = null, chunks = [], timer = null, began = 0, sending = false, asking = false;
+
+    function pickType() {
+      if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
+      var c = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+      for (var i = 0; i < c.length; i++) if (MediaRecorder.isTypeSupported(c[i])) return c[i];
+      return '';
+    }
+    function extOf(t) {
+      t = String(t || '');
+      if (t.indexOf('mp4') >= 0) return '.mp4';
+      if (t.indexOf('ogg') >= 0) return '.ogg';
+      return '.webm';
+    }
+    function lit(on) {
+      hb.classList.toggle('on', on);
+      hb.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    function refuseHear(why) {
+      holding = false;
+      lit(false);
+      hb.classList.remove('loading');
+      hb.disabled = true;
+      sayfail(why || 'the ears machine did not answer');
+    }
+    function stopTracks(stream) {
+      if (!stream) return;
+      stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+    }
+
+    function start() {
+      if (hb.disabled || holding || rec || sending || asking || !openHandle) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+        refuseHear('This browser cannot record here, so the box takes typing only.');
+        return;
+      }
+      holding = true;
+      asking = true;
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        asking = false;
+        // The first press is often spent answering the browser's question.
+        // If the button was let go meanwhile, nothing is recorded: the next
+        // press is the one that listens.
+        if (!holding) { stopTracks(stream); return; }
+        var type = pickType();
+        try {
+          rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
+        } catch (e) {
+          stopTracks(stream);
+          refuseHear('This browser cannot record here, so the box takes typing only.');
+          return;
+        }
+        chunks = [];
+        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = function () {
+          var r = rec; rec = null;
+          stopTracks(stream);
+          var blob = new Blob(chunks, { type: (r && r.mimeType) || type || 'audio/webm' });
+          chunks = [];
+          if (Date.now() - began < 350 || !blob.size) return;   // a tap, not a line
+          send_(blob);
+        };
+        began = Date.now();
+        rec.start();
+        lit(true);
+        timer = setTimeout(stop, MAX_MS);
+      }, function () {
+        asking = false;
+        refuseHear('The microphone was not allowed, so the box takes typing only.');
+      });
+    }
+
+    function stop() {
+      holding = false;
+      if (timer) { clearTimeout(timer); timer = null; }
+      lit(false);
+      if (rec && rec.state === 'recording') rec.stop();
+    }
+
+    function send_(blob) {
+      sending = true;
+      hb.classList.add('loading');
+      var fd = new FormData();
+      fd.append('w', W);
+      fd.append('h', openHandle || '');
+      fd.append('audio', blob, 'line' + extOf(blob.type));
+      fetch('hear.php', { method: 'POST', body: fd })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; },
+                                                   function () { return { ok: false, d: null }; }); })
+        .then(function (res) {
+          sending = false;
+          hb.classList.remove('loading');
+          if (!res.ok || !res.d || !res.d.ok) {
+            refuseHear((res.d && res.d.error) || 'the ears machine did not answer');
+            return;
+          }
+          var text = String(res.d.text || '').trim();
+          if (!text) { sayfail('Nothing was heard. Hold the button while you talk.'); return; }
+          var box = $('#composer');
+          $('#sayerr').hidden = true;
+          box.value = box.value.trim() ? (box.value.replace(/\s+$/, '') + ' ' + text) : text;
+          box.dispatchEvent(new Event('input'));            // let it grow to fit
+          box.focus();
+          box.selectionStart = box.selectionEnd = box.value.length;
+        })
+        .catch(function () {
+          sending = false;
+          hb.classList.remove('loading');
+          refuseHear('the ears machine could not be reached');
+        });
+    }
+
+    hb.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      try { hb.setPointerCapture(e.pointerId); } catch (x) {}
+      start();
+    });
+    hb.addEventListener('pointerup', stop);
+    hb.addEventListener('pointercancel', stop);
+    hb.addEventListener('lostpointercapture', function () { if (holding) stop(); });
+    hb.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    // The keyboard holds it too: Space (or Enter) held while the button has
+    // focus is the same as a finger on it.
+    hb.addEventListener('keydown', function (e) {
+      if (e.key !== ' ' && e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!e.repeat) start();
+    });
+    hb.addEventListener('keyup', function (e) {
+      if (e.key !== ' ' && e.key !== 'Enter') return;
+      e.preventDefault();
+      stop();
+    });
+    hb.addEventListener('blur', function () { if (holding) stop(); });
+    hb.addEventListener('click', function (e) { e.preventDefault(); });
+  })();
 
   // -- the time control ----------------------------------------------------
   var es = null, ticking = false, drops = 0;

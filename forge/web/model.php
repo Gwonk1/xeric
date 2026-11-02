@@ -12,6 +12,8 @@
  *     POST {act:scene, base, kind, auth}   the scene machine; sceneoff = no rooms; scenedefault = the fallback
  *     GET  model.php?a=voiceup    is the voice machine answering
  *     POST {act:voice, base}      the voice machine, and its voice list harvested; voiceoff = none
+ *     GET  model.php?a=earsup     is the ears machine answering
+ *     POST {act:ears, base}       the ears machine (push to talk); earsoff = none
  *
  * A machine is an address and nothing else. Its kind is read off the host —
  * api.anthropic.com speaks Anthropic, anything else public speaks the OpenAI
@@ -147,6 +149,14 @@ if (in_array('sceneup', [(string)($_GET['a'] ?? ''), (string)($_GET['act'] ?? ''
 if (in_array('voiceup', [(string)($_GET['a'] ?? ''), (string)($_GET['act'] ?? '')], true)) {
     $ep = xeric_voice_endpoint();
     xeric_web_json(['up' => $ep !== null && xeric_voice_up($ep, 4)]);
+}
+
+// -- is the ears machine answering -------------------------------------------
+// The configured one only. A voice machine that also transcribes is not asked
+// in its place: nobody chose it to listen (engine/ears.php).
+if (in_array('earsup', [(string)($_GET['a'] ?? ''), (string)($_GET['act'] ?? '')], true)) {
+    $ep = xeric_ears_endpoint();
+    xeric_web_json(['up' => $ep !== null && xeric_ears_up($ep, 4)]);
 }
 
 // -- what else is on this machine --------------------------------------------
@@ -312,6 +322,34 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         // Explicitly none: even an environment XERIC_VOICE_BASE is ignored for
         // this browser, and every bubble goes back to being read.
         xeric_web_session_edit(function (array &$s): void { $s['voice'] = ['off' => true]; }, $sid);
+        header('Location: model.php');
+        exit;
+    }
+    // -- the ears machine ----------------------------------------------------
+    // The voice machine's discipline, the other way round: one address in the
+    // session, held to the same private-address boundary, read at call time by
+    // the engine's resolver (boot.php); the KEY never stored — XERIC_EARS_KEY,
+    // environment only. Nothing is harvested: a transcriber has no list worth
+    // keeping, and the lamp asks after it once the page is up.
+    if ($act === 'ears') {
+        $b = trim((string)($_POST['base'] ?? ''));
+        if ($b !== '' && !preg_match('#^https?://#i', $b)) $b = 'http://' . $b;
+        $b    = rtrim($b, '/');
+        $host = strtolower((string)(parse_url($b, PHP_URL_HOST) ?? ''));
+        $ok   = $b !== '' && filter_var($b, FILTER_VALIDATE_URL) !== false && $host !== '';
+        if ($ok && !xeric_web_host_open($host) && !$edit) $ok = false;
+        if ($ok) {
+            xeric_web_session_edit(function (array &$s) use ($b): void { $s['ears'] = ['base' => $b]; }, $sid);
+            header('Location: model.php');
+            exit;
+        }
+        header('Location: model.php?no=' . rawurlencode(xeric_model_no($b, $host, $edit)));
+        exit;
+    }
+    if ($act === 'earsoff') {
+        // Explicitly none: even an environment XERIC_EARS_BASE is ignored for
+        // this browser, and the hold-to-talk button goes away.
+        xeric_web_session_edit(function (array &$s): void { $s['ears'] = ['off' => true]; }, $sid);
         header('Location: model.php');
         exit;
     }
@@ -1000,6 +1038,48 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
     </ul>
   </section>
 
+  <!-- EARS. The player out loud: hold to talk beside the play screen's
+       composer, transcribed on whatever machine is set here, the words put in
+       the box to read before sending. Always shown, like the voice card. -->
+  <?php $eEp = xeric_ears_endpoint(); ?>
+  <section class="found" id="ears">
+    <h2 class="fh">Ears machine</h2>
+    <p class="mnote">What hears you when you hold to talk on the play screen. Anything that answers
+      <code>{address}/v1/audio/transcriptions</code> works. What is sent: the recording, and the
+      names of the people where you are standing, so it spells them right. Nothing is stored — not
+      the recording, not the words; they go into the box for you to read and send.</p>
+    <ul class="mlist">
+    <?php if ($eEp !== null): ?>
+      <li><div class="opt fopt">
+        <span class="thead"><span class="t"><?= h(preg_replace('#^https?://#', '', (string)($eEp['base'] ?? 'a test machine'))) ?></span></span>
+        <p class="whois"><span class="wname">the ears machine</span>
+          <span class="wmodel" id="earslamp">checking…</span></p>
+        <?php if (xeric_ears_costly($eEp)): ?>
+        <p class="whois"><strong>This address is not on this computer: every line heard bills an API
+          key</strong> (XERIC_EARS_KEY, environment only — keys are never stored here). The meter
+          counts every one, but the meter is a receipt, not a limit — set spending caps with your
+          provider.</p>
+        <?php else: ?>
+        <p class="whois">Local: lines cost your own electricity and GPU time, nothing metered.
+          Every line is still counted on the meter.</p>
+        <?php endif; ?>
+        <div class="mact"><form method="post" action="model.php">
+          <input type="hidden" name="act" value="earsoff">
+          <button type="submit" class="btn">Disconnect</button>
+        </form></div>
+      </div></li>
+    <?php endif; ?>
+      <li><form method="post" action="model.php" class="opt fopt">
+        <input type="hidden" name="act" value="ears">
+        <span class="thead"><span class="t">Connect an ears machine</span></span>
+        <p class="whois"><input type="text" name="base" inputmode="url" autocapitalize="off"
+          autocorrect="off" spellcheck="false" placeholder="host:port" aria-label="ears machine address"></p>
+        <p class="whois"><span class="wmodel">The key comes from XERIC_EARS_KEY and is never stored here.</span></p>
+        <div class="mact"><button type="submit" class="btn join">Connect</button></div>
+      </form></li>
+    </ul>
+  </section>
+
   <p class="corner"><?= xeric_web_meter_html() ?> · <a href="play.php">back</a></p>
 </div>
 
@@ -1150,6 +1230,18 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
           : 'not answering right now — the lines are still there to read';
       })
       .catch(function () { voicelamp.textContent = 'not answering right now'; });
+  }
+
+  // The ears machine's lamp: the same question again.
+  var earslamp = document.getElementById('earslamp');
+  if (earslamp) {
+    fetch('model.php?a=earsup').then(function (r) { return r.json(); })
+      .then(function (d) {
+        earslamp.textContent = d && d.up
+          ? 'answering — hold to talk is beside the box on the play screen'
+          : 'not answering right now — the box still takes typing';
+      })
+      .catch(function () { earslamp.textContent = 'not answering right now'; });
   }
 
   function paintFound(sectionId, listId, rows, addable) {

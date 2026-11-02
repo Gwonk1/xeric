@@ -18,7 +18,11 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/boot.php';
 
-function xeric_web_head(string $title): void
+/**
+ * @param array $opts `microphone` => true on the one page that may ask for it
+ *                    (play.php's push to talk); every other page says no.
+ */
+function xeric_web_head(string $title, array $opts = []): void
 {
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store');
@@ -60,6 +64,13 @@ function xeric_web_head(string $title): void
         . "object-src 'none'");
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: no-referrer');
+    // THE MICROPHONE IS ONE PAGE'S. Push to talk lives on the play view, and
+    // only there may a page of this origin ask for it; everywhere else the
+    // answer is no before anybody is asked, so an injected script on the
+    // forge or the machines screen cannot even raise the prompt. The page
+    // says which it is (the `microphone` option) rather than this guessing
+    // from a script name, which a router or a subdirectory would change.
+    header('Permissions-Policy: microphone=' . (!empty($opts['microphone']) ? '(self)' : '()') . ', camera=()');
     ?><!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -122,7 +133,8 @@ function xeric_web_meter_html(?string $sid = null, string $at = ''): string
             . number_format($t['calls']) . ' calls this session'
             . ($img > 0 ? ' · ' . number_format($img) . ' photos' : '')
             . ((int)($t['scenes'] ?? 0) > 0 ? ' · ' . number_format((int)$t['scenes']) . ' rooms' : '')
-            . ((int)($t['clips'] ?? 0) > 0 ? ' · ' . number_format((int)$t['clips']) . ' lines spoken' : '')) . '">'
+            . ((int)($t['clips'] ?? 0) > 0 ? ' · ' . number_format((int)$t['clips']) . ' lines spoken' : '')
+            . ((int)($t['hearings'] ?? 0) > 0 ? ' · ' . number_format((int)$t['hearings']) . ' lines heard' : '')) . '">'
         . 'Tokens wasted: <b>' . h(xeric_web_tokens_short($n)) . '</b>'
         . ($img > 0 ? ' <i class="mimg">+' . $img . ' 📷</i>' : '') . '</span>';
 }

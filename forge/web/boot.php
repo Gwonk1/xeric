@@ -1229,6 +1229,49 @@ xeric_voice_meter(function (array $u, string $where = ''): void {
     }
 });
 
+// AND THE PLAYER, OUT LOUD. engine/ears.php wired the way the voices are: the
+// machines screen's stored address first (the visitor's own session), then
+// the environment; `off` is explicitly none, and nothing stands in past that.
+// The KEY is never stored — XERIC_EARS_KEY, environment only. Model and
+// language come from the environment too: they describe what the install
+// asks for, not which machine it asks. Nothing else is kept — not the
+// recording, not the transcript; the transcript goes back to the page that
+// asked for it and nowhere else.
+require_once $XERIC_LIB . '/engine/ears.php';
+
+xeric_ears_source(function () {
+    try {
+        $e = (array)(xeric_web_session_read()['ears'] ?? []);
+    } catch (Throwable $ex) {
+        return null;                                   // no session: fall to env
+    }
+    if (($e['off'] ?? false) === true) return false;   // explicitly none, env ignored
+    $base = trim((string)($e['base'] ?? ''));
+    if ($base === '') return null;
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_EARS_KEY') ?: '')]
+         + xeric_ears_settings(['model'    => (string)(getenv('XERIC_EARS_MODEL') ?: ''),
+                                'language' => (string)(getenv('XERIC_EARS_LANGUAGE') ?: '')]);
+});
+
+// Lines heard, on the same ledger: counted as hearings, and the seconds
+// beside them, because seconds are what a hosted transcriber bills by.
+xeric_ears_meter(function (array $u, string $where = ''): void {
+    $key = xeric_web_meter_key($where);
+    try {
+        xeric_web_session_edit(function (array &$s) use ($u, $key): void {
+            $by  = (array)($s['tokens']['by'] ?? []);
+            $row = (array)($by[$key] ?? []);
+            $row['hearings'] = (int)($row['hearings'] ?? 0) + max(1, (int)($u['hearings'] ?? 1));
+            $row['seconds']  = (int)($row['seconds'] ?? 0) + max(0, (int)ceil((float)($u['seconds'] ?? 0)));
+            $row['calls']    = (int)($row['calls'] ?? 0) + 1;
+            $by[$key] = $row;
+            $s['tokens'] = ['by' => $by] + (array)($s['tokens'] ?? []);
+        });
+    } catch (Throwable $e) {
+        // No session to write to. The line was still heard.
+    }
+});
+
 /**
  * Where this visitor's notifications go, and what they are for.
  *
@@ -1276,7 +1319,8 @@ function xeric_web_meter_key(string $base): string
 function xeric_web_tokens(?string $sid = null, string $at = ''): array
 {
     $by  = (array)(xeric_web_session_read($sid)['tokens']['by'] ?? []);
-    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0, 'scenes' => 0, 'clips' => 0, 'chars' => 0];
+    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0, 'scenes' => 0, 'clips' => 0, 'chars' => 0,
+            'hearings' => 0, 'seconds' => 0];
 
     $want = $at === '' ? null : xeric_web_meter_key($at);
     foreach ($by as $key => $row) {
@@ -1288,6 +1332,8 @@ function xeric_web_tokens(?string $sid = null, string $at = ''): array
         $out['scenes'] += (int)($row['scenes'] ?? 0);
         $out['clips']  += (int)($row['clips'] ?? 0);
         $out['chars']  += (int)($row['chars'] ?? 0);
+        $out['hearings'] += (int)($row['hearings'] ?? 0);
+        $out['seconds']  += (int)($row['seconds'] ?? 0);
     }
     return $out;
 }
