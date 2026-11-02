@@ -107,6 +107,51 @@ function xeric_director_ensure(PDO $db): void
         )
     SQL);
     $db->exec('CREATE INDEX IF NOT EXISTS idx_director_when ON director_stagings(epoch_from)');
+    // The reader's index: "which rows can still cover a moment" is a range on
+    // the END of the window — everything that finished before it is behind it.
+    $db->exec('CREATE INDEX IF NOT EXISTS idx_director_to ON director_stagings(epoch_to, epoch_from)');
+    $db->exec('CREATE INDEX IF NOT EXISTS idx_director_state ON director_stagings(state)');
+}
+
+/** Rows the Director has decoded off disk in this process; $add counts more (the test's seam). */
+function xeric_director_rows_read(int $add = 0): int
+{
+    static $n = 0;
+    return $n += $add;
+}
+
+/**
+ * The rows matching a WHERE, decoded, oldest window first. No table reads as
+ * no rows. Every bound is an INTEGER: execute([...]) binds strings, and in
+ * SQLite every integer sorts below every string.
+ */
+function xeric_director_query(PDO $db, string $where, array $ints = []): array
+{
+    try {
+        $q = $db->prepare('SELECT * FROM director_stagings' . ($where !== '' ? ' WHERE ' . $where : '') . ' ORDER BY epoch_from, id');
+        foreach (array_values($ints) as $i => $v) $q->bindValue($i + 1, (int)$v, PDO::PARAM_INT);
+        $q->execute();
+        $rows = $q->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        return [];
+    }
+    xeric_director_rows_read(count($rows));
+    return array_map('xeric_director_row', $rows ?: []);
+}
+
+/**
+ * Only the rows that can be holding somebody at $epoch: its window around the
+ * moment, and not cancelled before it. The same test as xeric_director_covers,
+ * asked of the index instead of of every row ever staged — a world a year old
+ * has hundreds of finished stagings, and who_is_where is asked per person per
+ * prompt, per panel, per sweep window. Time, not the stored state, decides, as
+ * covers() does: a history read of last Tuesday still sees last Tuesday's.
+ */
+function xeric_director_rows_at(PDO $db, int $epoch): array
+{
+    return xeric_director_query($db,
+        "epoch_to > ? AND epoch_from <= ? AND (state != 'cancelled' OR (ended IS NOT NULL AND ended > ?))",
+        [$epoch, $epoch, $epoch]);
 }
 
 /**
@@ -115,14 +160,7 @@ function xeric_director_ensure(PDO $db): void
  */
 function xeric_director_rows(PDO $db): array
 {
-    try {
-        $rows = $db->query('SELECT * FROM director_stagings ORDER BY epoch_from, id')->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Throwable $e) {
-        return [];
-    }
-    $out = [];
-    foreach ($rows ?: [] as $r) $out[] = xeric_director_row($r);
-    return $out;
+    return xeric_director_query($db, '');
 }
 
 function xeric_director_row(array $r): array
@@ -166,7 +204,8 @@ function xeric_director_state_at(array $s, int $epoch): string
 /** Write planned → live → done as the clock passes them. Idempotent. */
 function xeric_director_advance(PDO $db, int $epoch): void
 {
-    foreach (xeric_director_rows($db) as $s) {
+    // Only what can still move: a done or cancelled row is history and stays.
+    foreach (xeric_director_query($db, "state IN ('planned', 'live')") as $s) {
         $st = xeric_director_state_at($s, $epoch);
         if ($st === $s['state']) continue;
         $q = $db->prepare('UPDATE director_stagings SET state = ?, ended = ? WHERE id = ?');
@@ -279,7 +318,10 @@ function xeric_director_apply(array $t, array $now, array $presence, ?PDO $db = 
 
     $all = [];
     foreach ((array)($t['_director']['stagings'] ?? []) as $s) $all[(int)$s['id']] = $s;
-    if ($db !== null) foreach (xeric_director_rows($db) as $s) $all[$s['id']] = $s;
+    // The rows that can cover this moment, and no others: decoding the whole
+    // history on every presence read was the Director's cost growing with the
+    // world's age instead of with what is happening now.
+    if ($db !== null) foreach (xeric_director_rows_at($db, $epoch) as $s) $all[$s['id']] = $s;
     if ($all === []) return $presence;
     ksort($all);
 
@@ -314,11 +356,23 @@ function xeric_director_apply(array $t, array $now, array $presence, ?PDO $db = 
  * The template, carrying the stagings presence should honour — for readers
  * that take no database (the sweeps). A world with no stagings comes back
  * byte-for-byte as it went in.
+ *
+ * NOT THE WHOLE HISTORY. Every finished staging used to ride along on every
+ * dressed template, so a world's every open copied a year of rows into memory
+ * to answer questions about tonight. $from is the earliest moment the reader
+ * will ask about (the heart passes the first unswept window): rows that ended
+ * before it are left on disk. Without it, the reader is asking about now and
+ * after, and a row the clock has already written done or cancelled cannot be
+ * holding anybody then — so only planned and live rows ride, plus a
+ * cancellation that still holds part of its window.
  */
-function xeric_director_dress(array $t, PDO $db): array
+function xeric_director_dress(array $t, PDO $db, ?int $from = null): array
 {
-    $rows = array_values(array_filter(xeric_director_rows($db),
-        fn($s) => !($s['state'] === 'cancelled' && $s['ended'] !== null && $s['ended'] <= $s['from'])));
+    $rows = $from === null
+        ? xeric_director_query($db, "state IN ('planned', 'live') OR (state = 'cancelled' AND ended > epoch_from AND ended > ?)",
+                               [xeric_clock_epoch($db)])
+        : xeric_director_query($db, "epoch_to > ? AND (state != 'cancelled' OR (ended IS NOT NULL AND ended > epoch_from AND ended > ?))",
+                               [$from, $from]);
     if ($rows === []) return $t;
     $t['_director'] = ['stagings' => $rows];
     return $t;

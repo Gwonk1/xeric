@@ -74,6 +74,12 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 
 require_once __DIR__ . '/play-lib.php';
 require_once XERIC_WEB_LIB . '/engine/director.php';   // the set, never the performance
+// Sleep is loaded here, not discovered. It used to be called behind a
+// function_exists() test with nothing on this include path
+// loading it — only a lazy require deep in prompt recall — so a world slept
+// when some earlier build happened to have pulled the file in, and otherwise
+// never. A pass the heart owes every tick is a dependency, not a rumour.
+require_once XERIC_WEB_LIB . '/engine/sleep.php';
 
 const XERIC_HEART_MAX_WINDOWS = 6;    // hours lived per world per tick
 const XERIC_HEART_MODEL_WAIT  = 2.0;  // seconds to wait for the model before giving up
@@ -308,7 +314,9 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             }
             // The sweep reads presence with no database, so the stagings ride
             // in on the template; a world with none gets $T back untouched.
-            $r = xeric_sweep_catchup(xeric_director_dress($T, $db), $db, $endpoint, $from, $to, $sweepOpts);
+            // From the first unswept window on: what ended before it is history
+            // the catchup will never ask about.
+            $r = xeric_sweep_catchup(xeric_director_dress($T, $db, (int)$from), $db, $endpoint, $from, $to, $sweepOpts);
             if (($r['stopped'] ?? '') === 'budget' && is_array($short)) {
                 xeric_budget_stopped($db, xeric_clock_now($db, $T), $short);
                 $say($slug . ': stopped living hours, ' . (string)($short['reason'] ?? 'budget'));
@@ -353,12 +361,11 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
                                    ['no_model' => xeric_queue_expired($hold['hold'] ?? $hold) || $broke, 'timeout' => 60]);
             if ($lp['learned'] > 0) $say($slug . ': learned ' . $lp['learned'] . ' thing' . ($lp['learned'] === 1 ? '' : 's'));
 
-            // Sleep, the consolidation pass (the sleep agent's seam), under the
-            // same hold, when that lands.
-            if (function_exists('xeric_sleep_pass')) {
-                try { xeric_sleep_pass($T, $db, $after, $endpoint); }
-                catch (Throwable $e) { $say($slug . ': sleep, ' . $e->getMessage()); }
-            }
+            // Sleep, the consolidation pass, under the same hold. Required at
+            // the top of this file, so it runs every tick; the pass itself
+            // decides whether this tick is inside tonight's window.
+            try { xeric_sleep_pass($T, $db, $after, $endpoint); }
+            catch (Throwable $e) { $say($slug . ': sleep, ' . $e->getMessage()); }
         } catch (Throwable $e) {
             $say($slug . ': ' . $e->getMessage());
         } finally {

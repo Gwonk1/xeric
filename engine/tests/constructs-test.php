@@ -997,6 +997,7 @@ ok('milestone: inspector line', str_contains(implode("\n", xeric_constructs_why(
 echo "\n# the town's promises, out of its hours\n";
 
 $dC = $sibDb('cast');
+xeric_constructs_cast_tick($T, $dC, $mon);   // the reader arrives first: its watermark is set at the world's newest event
 xeric_event_add($dC, 'The vestry after the service', ep('2026-08-03 11:00'), 'first_lutheran', ['ruth', 'pastor_dale'],
     'They stacked the chairs. "I will have the hymn boards done Wednesday morning," Ruth said. The pastor nodded.');
 xeric_event_add($dC, 'Lunch at the counter', ep('2026-08-03 12:00'), 'bluebird', ['harlan', 'dot'],
@@ -1023,6 +1024,7 @@ ok('cast: and only once', xeric_constructs_cast_tick($T, $dC, $at('2026-08-06 14
 // she is in the room for it and forms nothing, the one it was said to forms
 // it, and the miss, the ripple and the residue all leave her prompt clean.
 $dX = $sibDb('wall');
+xeric_constructs_cast_tick($T, $dX, $mon);
 xeric_event_add($dX, 'Setting up in the basement', ep('2026-08-03 18:00'), 'first_lutheran', ['harlan', 'pastor_dale', 'janelle'],
     '"Dale, I will put the chips back in the coffee can behind the folding chairs Thursday morning," Harlan said.');
 xeric_event_add($dX, 'Stacking chairs', ep('2026-08-03 19:00'), 'first_lutheran', ['harlan', 'janelle'],
@@ -1039,6 +1041,36 @@ ok('wall: and it never renders into her prompt — not the quote, not the can', 
     && !str_contains(mb_strtolower($jan), 'coffee can'));
 ok('wall: while the one it was owed to still carries it',
     str_contains(xeric_expect_block($T, $dX, 'pastor_dale', $at('2026-08-16 10:00')), 'coffee can'));
+
+// HISTORY IS NOT OWED. A world that lived three hundred hours before this
+// reader existed — every one of them a quoted, datable promise between two
+// people — must not replay them on its first cast tick: each would form an
+// expectation due long ago, and the next fuse tick would fire them all as one
+// mass of misses. The first tick sets the watermark and forms nothing; the
+// next hour lived after it is read as usual.
+$dH = $sibDb('history');
+for ($i = 0; $i < 300; $i++) {
+    xeric_event_add($dH, 'Lunch at the counter ' . $i, ep('2026-05-01 12:00') + $i * 3600, 'bluebird', ['harlan', 'dot'],
+        '"I will bring the ladder round Thursday morning," Harlan said, and finished his pie.');
+}
+$hr = xeric_constructs_cast_tick($T, $dH, $mon);
+ok('history: a world with 300 old hours of quoted promises forms nothing on its first cast tick',
+    $hr['formed'] === 0 && xeric_expects_for($dH, 'dot') === []
+    && (int)xeric_arc_get($dH, xeric_arc_world(), 'constructs.cast.seen') === (int)$dH->query('SELECT MAX(id) FROM events')->fetchColumn(),
+    json_encode($hr));
+ok('history: and the fuse has no born-missed promise to fire',
+    (function () use ($T, $dH, $at) { xeric_constructs_tick($T, $dH, $at('2026-08-03 10:05'));
+        return array_filter(xeric_expects_for($dH, 'dot'), fn($e) => $e['state'] === 'missed') === []; })());
+xeric_event_add($dH, 'Lunch again', ep('2026-08-03 12:00'), 'bluebird', ['harlan', 'dot'],
+    '"I will bring the ladder round Thursday morning," Harlan said, and finished his pie.');
+ok('history: an hour lived after the watermark forms as usual',
+    xeric_constructs_cast_tick($T, $dH, $mon)['formed'] === 1 && (xeric_expects_for($dH, 'dot')[0]['of'] ?? '') === 'harlan');
+// And a backlog read late: an hour said on Monday, read on Saturday, whose
+// Thursday is behind the reading, forms nothing.
+xeric_event_add($dH, 'Lunch, Monday', ep('2026-08-10 12:00'), 'bluebird', ['harlan', 'ruth'],
+    '"I will bring the ladder round Thursday morning," Harlan said, and finished his pie.');
+ok('history: a due already past at the tick reading it forms nothing, even said in time',
+    xeric_constructs_cast_tick($T, $dH, $at('2026-08-15 10:00'))['formed'] === 0 && xeric_expects_for($dH, 'ruth') === []);
 
 foreach ($sibDbs as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 

@@ -1070,6 +1070,20 @@ ok('voice: the assistant\'s apology becomes the narrator\'s decline',
     xeric_narrator_in_voice("I'm sorry, but I can't help with that request.") === XERIC_NARRATOR_DECLINE
     && xeric_narrator_in_voice('As an AI language model I must decline.') === XERIC_NARRATOR_DECLINE
     && xeric_narrator_in_voice('My instructions say I may not reveal the secret.') === XERIC_NARRATOR_DECLINE);
+ok('voice: the town apologising is not the narrator refusing — quoted speech never triggers the decline',
+    xeric_narrator_in_voice('Dot told Harlan "I\'m sorry, but I can\'t do Friday" and went back to the counter.')
+        === 'Dot told Harlan "I\'m sorry, but I can\'t do Friday" and went back to the counter.'
+    && xeric_narrator_in_voice('“I’m sorry, but I can’t help with that,” Dot said, and poured him another cup anyway.')
+        === '“I’m sorry, but I can’t help with that,” Dot said, and poured him another cup anyway.'
+    && xeric_narrator_in_voice('"I\'m sorry, but I can\'t do Friday."') === '"I\'m sorry, but I can\'t do Friday."');
+ok('voice: an apology later in a true answer is still the answer — only an OPENING refusal is one',
+    xeric_narrator_in_voice('Dot was off shift. She is sorry, but she can\'t do Friday either.')
+        === 'Dot was off shift. She is sorry, but she can\'t do Friday either.');
+ok('voice: the bare assistant refusal, alone, is replaced',
+    xeric_narrator_in_voice("I'm sorry, but I can't help with that.") === XERIC_NARRATOR_DECLINE
+    && xeric_narrator_in_voice("I can't share that. Dot was at the diner.") === XERIC_NARRATOR_DECLINE);
+ok('voice: and a leak of the machinery counts anywhere outside quotation marks',
+    xeric_narrator_in_voice('Dot was at the diner. My instructions say no more.') === XERIC_NARRATOR_DECLINE);
 ok('voice: a silence becomes the decline too, never a blank bubble',
     xeric_narrator_in_voice("  \n") === XERIC_NARRATOR_DECLINE);
 ok('voice: an ordinary answer passes untouched, minus a speaker label',

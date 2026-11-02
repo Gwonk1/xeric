@@ -90,6 +90,17 @@ $keep = (string)file_get_contents($f);
 unlink($f);
 ok('reference: a portrait whose file is gone is passed over', xeric_photo_reference($db, 'ruth', $photos) === null);
 file_put_contents($f, $keep);
+// Not an image is not a png: a file cut off mid-write has a perfect header and
+// no end, and must not be handed over labelled image/png.
+file_put_contents($f, substr($keep, 0, 40));
+ok('reference: a truncated portrait is no likeness — read as nothing, not labelled png',
+    xeric_photo_reference_read($f) === null && xeric_photo_reference($db, 'ruth', $photos) === null);
+file_put_contents($f, 'Bad Gateway: the machine was rebooting');
+ok('reference: nor are bytes that are not a picture at all', xeric_photo_reference_read($f) === null);
+file_put_contents($f, "\xff\xd8\xff\xe0" . str_repeat('x', 40));
+ok('reference: nor a jpeg with no end', xeric_photo_reference_read($f) === null);
+file_put_contents($f, $keep);
+ok('reference: and the whole file reads again', (xeric_photo_reference_read($f)['mime'] ?? '') === 'image/png');
 
 echo "\n# frames with a person in them\n";
 

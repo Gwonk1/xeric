@@ -238,7 +238,7 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     // What sleep consolidated (WHAT YOU KNOW), then what is still raw (WHAT
     // YOU REMEMBER), under one cap. A world that never slept renders exactly
     // the block it always did.
-    foreach (xeric_prompt_recall($t, $db, $speakerHandle, $memoryLimit) as $block) $parts[] = implode("\n", $block);
+    foreach (xeric_prompt_recall($t, $db, $speakerHandle, $memoryLimit, $eff) as $block) $parts[] = implode("\n", $block);
 
     return implode("\n\n", $parts) . "\n";
 }
@@ -571,13 +571,35 @@ function xeric_prompt_memories(array $t, PDO $db, string $speakerHandle, int $li
  * until the pair fits. That is what makes a prompt get shorter, not longer, as
  * a world ages — and what the continuity benchmark's sleep class checks.
  *
+ * A FACT KEEPS ITS SOURCES' WALLS, OR IT IS A LAUNDERING. The disposer drops a
+ * fact whose own words quote what its holder is walled from, but a fact can be
+ * clean in its words and still made of a source that quoted a wall for this
+ * very person (a leak that reached her raw memories, now paraphrased) — the
+ * grade records that as `walled_from`, and a source gated at a rating as
+ * `rating_min`. Recording it and rendering anyway would make the grade a
+ * label on an open door. So a fact walled from this speaker, or rated above
+ * what this speaker may be shown ($eff, age-floored by the caller; read off
+ * the world and the viewer when not handed in), does not render: not as a
+ * line, and not as a slot in the share. An unreadable grade fails closed.
+ *
  * @return array<int,string[]> zero, one or two blocks, each a list of lines
  */
-function xeric_prompt_recall(array $t, PDO $db, string $speakerHandle, int $limit): array
+function xeric_prompt_recall(array $t, PDO $db, string $speakerHandle, int $limit, ?string $eff = null): array
 {
     require_once __DIR__ . '/sleep.php';
     $plain = xeric_prompt_memories($t, $db, $speakerHandle, $limit);
     $facts = xeric_sleep_facts($db, $speakerHandle);
+    if ($facts !== []) {
+        $eff ??= xeric_viewer_rating(xeric_world_rating($t), xeric_viewer($t, ['handle' => $speakerHandle]));
+        $facts = array_values(array_filter($facts, function (array $f) use ($speakerHandle, $eff): bool {
+            $meta = $f['meta'];
+            if (!is_array($meta)) return false;
+            if (!is_array($meta['walled_from'] ?? [])) return false;
+            if (in_array($speakerHandle, array_map('strval', (array)($meta['walled_from'] ?? [])), true)) return false;
+            if (isset($meta['rating_min']) && !xeric_rating_allows($eff, ['rating_min' => (string)$meta['rating_min']])) return false;
+            return true;
+        }));
+    }
     if ($facts === []) return $plain !== [] ? [$plain] : [];
 
     $tzName = (string)($t['user']['timezone'] ?? 'UTC');

@@ -98,7 +98,8 @@ function xeric_confides_for(PDO $db, string $handle): array
  * somebody at the centre, which is the one asymmetry this file needs.
  */
 function xeric_confide_form(array $t, PDO $db, string $told, string $what, array $now,
-                            string $byHandle = '', int $byPlayer = 0, ?int $at = null): ?string
+                            string $byHandle = '', int $byPlayer = 0, ?int $at = null,
+                            array $not = [], string $quote = ''): ?string
 {
     if (!xeric_confide_armed($t)) return null;
     $what = trim(preg_replace('/\s+/u', ' ', $what) ?? '');
@@ -129,7 +130,12 @@ function xeric_confide_form(array $t, PDO $db, string $told, string $what, array
     $key = 'told.' . (1 + count(xeric_confides_for($db, $told)));
     xeric_arc_set($db, $told, $key, json_encode(
         ['what' => mb_substr($what, 0, 120), 'by' => $byHandle, 'p' => $byPlayer,
-         'at' => (int)($now['epoch'] ?? 0), 'state' => 'kept'] , JSON_UNESCAPED_UNICODE), $at);
+         'at' => (int)($now['epoch'] ?? 0), 'state' => 'kept']
+        // Who must not hear it, and the words it was asked in, when the reader
+        // that formed it had them (xeric_confide_from_line). Absent on every
+        // row written before, which is what "nobody named" always meant.
+        + ($not !== [] ? ['not' => array_values(array_map('strval', $not))] : [])
+        + (trim($quote) !== '' ? ['quote' => mb_substr(trim($quote), 0, 200)] : []), JSON_UNESCAPED_UNICODE), $at);
 
     // Being told something is itself the closeness moving. Warmth, not trust:
     // one confidence is not a friendship, and four of them are a point.
@@ -347,6 +353,54 @@ function xeric_confide_told_player(PDO $db, string $teller): array
     return $out;
 }
 
+/**
+ * A confidence one townsperson asked another to keep, out of a line one of
+ * them actually said (the cast-to-cast reader in constructs.php hands it the
+ * quoted words of a sweep's hour). The arc key, or null.
+ *
+ * THE SAME TWO CHECKS AS THE PLAYER'S, ON THE WORDS. The line must carry an
+ * explicit ask (xeric_confide_marked: "don't tell", "between us", "keep this
+ * to yourself") — a hint is not an ask — and both of them must be adults,
+ * which xeric_confide_form checks. Nothing is asked of a model.
+ *
+ * WHAT IT IS is the line with the ask taken out: "Between us, don't tell
+ * Harlan, the bank wrote about the house" is a confidence about the bank
+ * writing about the house, and those are the words the gossip sweep has to
+ * hear again to break it. Fewer than three words left is an ask about nothing
+ * said here, and forms nothing.
+ *
+ * WHO MUST NOT HEAR IT is only what the words say: a third person named in
+ * the same line, else nobody. No inference past the sentence — a guess about
+ * who she meant is a wall the town never built.
+ */
+function xeric_confide_from_line(array $t, PDO $db, string $teller, string $listener, string $line, array $now,
+                                 ?int $at = null): ?string
+{
+    $line = trim(preg_replace('/\s+/u', ' ', str_replace(['’', '‘'], "'", $line)) ?? '');
+    if ($line === '' || $teller === '' || $listener === '' || $teller === $listener) return null;
+    if (!xeric_confide_armed($t) || !xeric_confide_marked($line)) return null;
+
+    $named = array_values(array_diff(xeric_confide_named($t, $line, $teller), [$listener]));
+    $what = $line;
+    foreach (['between you and me', 'between ourselves', 'between us', 'just between', 'keep this to yourself',
+              'keep it to yourself', 'keep that to yourself', 'keep this quiet', 'keep it quiet',
+              "you didn't hear it from me", "you didn't hear this from me", "promise you won't tell"] as $ask) {
+        $what = (string)preg_replace('/\b' . preg_quote($ask, '/') . '\b/iu', ' ', $what);
+    }
+    // "don't tell Harlan", "not a word to Harlan": the ask, and the name it is about.
+    $who = ['anyone', 'anybody', 'nobody', 'a soul'];
+    foreach ($named as $h) foreach (xeric_world_name_forms(xeric_world_name($t, $h)) as $f) $who[] = $f;
+    $whoRe = implode('|', array_map(fn($w) => preg_quote($w, '/'), array_merge($who, $named)));
+    $what = (string)preg_replace('/\b(?:but\s+)?(?:please\s+)?(?:don\'t|do not|not a word)\s+(?:tell|say anything to|repeat (?:this|it|that) to|to)'
+        . '(?:\s+(?:' . $whoRe . '))?\b/iu', ' ', $what);
+    $what = (string)preg_replace('/^[\s,;:.!?—–-]*(?:(?:but|and|so|that|okay|ok|now)\b[\s,]*)*/iu', '', $what);
+    $what = trim((string)preg_replace('/\s*[,;:—–-]\s*(?=[,;:.!?]|$)/u', '', (string)preg_replace('/\s+/u', ' ', $what)), " \t,;:.!?—–-");
+    $what = trim((string)preg_replace('/\s*,\s*,+/u', ',', $what), ' ,');
+    if (count(xeric_wall_words($what)) < 3) return null;
+
+    return xeric_confide_form($t, $db, $listener, $what, $now, $teller, 0, $at, $named, $line);
+}
+
 /** Cast handles named in these words (first name, full name or handle). */
 function xeric_confide_named(array $t, string $text, string $except = ''): array
 {
@@ -354,9 +408,8 @@ function xeric_confide_named(array $t, string $text, string $except = ''): array
     foreach ((array)($t['cast']['characters'] ?? []) as $c) {
         $h = (string)($c['handle'] ?? '');
         if ($h === '' || $h === $except) continue;
-        $words = preg_split('/\s+/u', trim(xeric_world_name($t, $h))) ?: [];
-        if (count($words) > 1 && in_array(mb_strtolower(rtrim((string)$words[0], '.')), ['pastor', 'father', 'reverend', 'mr', 'mrs', 'ms', 'dr', 'doc'], true)) array_shift($words);
-        $first = (string)($words[0] ?? '');
+        $forms = xeric_world_name_forms(xeric_world_name($t, $h));   // the one honorific list (world.php)
+        $first = (string)($forms[1] ?? $forms[0] ?? '');
         foreach (array_filter([$first, $h]) as $n) {
             if (preg_match('/(?<![\p{L}])' . preg_quote($n, '/') . '(?![\p{L}])/ui', $text)) { $out[] = $h; break; }
         }
@@ -384,7 +437,14 @@ function xeric_confide_to_player(array $t, PDO $db, string $teller, ?array $p, a
     if ($quote === '' || $what === '') return null;
     if (!xeric_confide_marked($quote)) return null;                    // no ask, no confidence
     $norm = fn(string $s): string => mb_strtolower(trim((string)preg_replace('/[^\p{L}\p{N}]+/u', ' ', $s)));
-    if ($said !== '' && !str_contains(' ' . $norm($said) . ' ', ' ' . $norm($quote) . ' ')) return null;
+    // HER WORDS OR NOTHING. The quote has to be in what she actually said this
+    // harvest, and a harvest with no line of hers in it has nothing a quote
+    // could be in — so it forms nothing. An empty $said used to skip the check,
+    // which turned "no evidence" into "no need for evidence": the extractor's
+    // proposal alone, about words nobody spoke, became a secret the player was
+    // trusted with and could be punished for breaking.
+    if ($norm($said) === '' || $norm($quote) === '') return null;
+    if (!str_contains(' ' . $norm($said) . ' ', ' ' . $norm($quote) . ' ')) return null;
     if (!xeric_confide_adult($t, $teller)) return null;                // the same floor, the same reason
 
     $not = [];
@@ -394,8 +454,15 @@ function xeric_confide_to_player(array $t, PDO $db, string $teller, ?array $p, a
     foreach ((array)($p['not'] ?? []) as $n) $not = array_merge($not, xeric_confide_named($t, (string)$n, $teller));
     $not = array_values(array_unique($not));
 
+    // ONE ASK, ONE ROW. The same confidence comes back in the next harvest's
+    // proposal in the extractor's fresh paraphrase ("the bank letter", then
+    // "the bank wrote about the house"), so `what` alone is not who it is —
+    // the words she said are. Either the same quote or the same thing is the
+    // row already held.
     foreach (xeric_confide_told_player($db, $teller) as $c) {
-        if (mb_strtolower((string)$c['what']) === mb_strtolower($what) && (int)($c['p'] ?? 0) === $player) {
+        if ((int)($c['p'] ?? 0) !== $player) continue;
+        if (mb_strtolower((string)$c['what']) === mb_strtolower($what)
+            || $norm((string)($c['quote'] ?? '')) === $norm($quote)) {
             return (string)$c['key'];
         }
     }

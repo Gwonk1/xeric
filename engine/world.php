@@ -767,6 +767,35 @@ function xeric_world_name(array $t, string $handle): string
     return $handle;
 }
 
+/** Honorifics a name may open with; matched lower-case, a trailing dot ignored. */
+const XERIC_WORLD_TITLES = ['pastor', 'father', 'mother', 'reverend', 'rev', 'mr', 'mrs', 'ms', 'miss', 'dr', 'doc',
+    'aunt', 'uncle', 'sister', 'brother', 'grandma', 'grandpa', 'coach', 'judge', 'sheriff', 'deacon', 'old'];
+
+/**
+ * The words a person is called by: the name as written, then the given name
+ * past any honorific — "Pastor Dale Ostrander" is Dale across a table, "Dr.
+ * Ruth" is Ruth. A name with no title and one word comes back as itself, alone.
+ * A name that is ALL title ("Pastor") keeps its last word rather than nothing.
+ *
+ * ONE COPY. Sleep (which names a memory is about), the cast-to-cast promise
+ * reader (who a quoted line is said by and to) and the confidence reader (who
+ * must not hear it) each had their own honorific list, and the three lists
+ * disagreed — "Reverend" was a title to two of them and a given name to the
+ * third — so the same sentence named Reverend Hale for one reader and nobody
+ * for the next. Who a sentence names is one question; it gets one answer.
+ *
+ * @return string[] [full] or [full, given]
+ */
+function xeric_world_name_forms(string $name): array
+{
+    $name = trim((string)preg_replace('/\s+/u', ' ', $name));
+    if ($name === '') return [];
+    $words = explode(' ', $name);
+    while (count($words) > 1 && in_array(rtrim(mb_strtolower($words[0]), '.'), XERIC_WORLD_TITLES, true)) array_shift($words);
+    $given = (string)$words[0];
+    return $given !== '' && $given !== $name ? [$name, $given] : [$name];
+}
+
 function xeric_world_place_name(array $t, ?string $key): string
 {
     if ($key === null || $key === '') return '';

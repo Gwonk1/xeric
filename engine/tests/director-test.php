@@ -238,6 +238,55 @@ ok('player: standing moving apart stages them where the player is', count($t1['s
     && $t1['staged'][0]['where'] === 'bluebird' && $t1['staged'][0]['who'] === ['ruth', 'janelle']
     && $t1['staged'][0]['why'] === "the player's standing with both is moving apart", json_encode($t1));
 
+// -- a year of finished stagings costs presence nothing ------------------------
+// who_is_where is asked per person per prompt; it used to decode every staging
+// the world ever made. Five hundred done ones behind the clock are read zero
+// times, the one live staging once, and the answer is the same.
+$db = fresh_db('history');
+$T = world();
+xeric_director_stage($T, $db, ['who' => ['ruth', 'janelle'], 'where' => 'bluebird',
+    'from' => $TUE10, 'to' => $TUE10 + 3600, 'why' => 'the owner wants them to talk'], $TUE10 - 3600);
+$fresh = xeric_world_who_is_where($T, $now10, [], $db);
+$ins = $db->prepare("INSERT INTO director_stagings (who, place, epoch_from, epoch_to, why, source, state, made, ended, created_at)
+                     VALUES (?, 'bluebird', ?, ?, 'old business', 'owner', 'done', ?, ?, 0)");
+for ($i = 1; $i <= 500; $i++) {
+    $f0 = $TUE10 - $i * 86400;
+    $ins->execute([json_encode(['ruth', 'janelle']), $f0, $f0 + 3600, $f0 - 60, $f0 + 3600]);
+}
+$r0 = xeric_director_rows_read();
+$p500 = xeric_world_who_is_where($T, $now10, [], $db);
+$read = xeric_director_rows_read() - $r0;
+ok('history: 500 done stagings are not read by who_is_where — only what can cover now', $read === 1, "$read rows read");
+ok('history: and presence is the same answer it was before them', $p500 === $fresh);
+ok('history: a past moment still sees the staging that held it',
+    (xeric_world_who_is_where($T, xeric_world_now($T, $TUE10 - 3 * 86400 + 600), [], $db)['janelle']['staging'] ?? 0) > 0);
+$r0 = xeric_director_rows_read();
+$dressed = xeric_director_dress($T, $db);
+ok('history: dressing carries the planned and live, not the year behind them',
+    count($dressed['_director']['stagings'] ?? []) === 1 && xeric_director_rows_read() - $r0 === 1);
+ok('history: dressed from a moment, it carries what ends after it',
+    count(xeric_director_dress($T, $db, $TUE10 - 2 * 86400)['_director']['stagings']) === 3);
+$idx = array_column($db->query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'director_stagings'")->fetchAll(), 'name');
+ok('history: the table carries the index the reader seeks on', in_array('idx_director_to', $idx, true), json_encode($idx));
+
+// -- one honorific list ------------------------------------------------------
+ok('names: Pastor Dale is Dale', xeric_world_name_forms('Pastor Dale') === ['Pastor Dale', 'Dale']
+    && xeric_constructs_first_name('Pastor Dale Ostrander') === 'Dale');
+ok('names: Dr. Ruth is Ruth', xeric_world_name_forms('Dr. Ruth') === ['Dr. Ruth', 'Ruth']);
+ok('names: a name with no title comes back unchanged', xeric_world_name_forms('Ruth') === ['Ruth']
+    && xeric_world_name_forms('Ruth Amberg') === ['Ruth Amberg', 'Ruth'] && xeric_world_name_forms('  ') === []);
+ok('names: a name that is all title keeps itself', xeric_world_name_forms('Pastor') === ['Pastor']);
+require_once __DIR__ . '/../sleep.php';
+require_once __DIR__ . '/../confide.php';
+ok('names: sleep, the promise reader and the confidence reader agree, because there is one copy',
+    xeric_sleep_name_forms('Reverend Hale Moss') === ['Reverend Hale Moss', 'Hale']
+    && xeric_constructs_first_name('Reverend Hale Moss') === 'Hale'
+    && xeric_confide_named($BASE, "don't tell Dale", 'ruth') === ['pastor_dale']
+    && xeric_sleep_name_forms('Dr. Al') === ['Dr. Al']);
+$all = '';
+foreach (['sleep', 'constructs', 'confide'] as $f) $all .= (string)file_get_contents(__DIR__ . '/../' . $f . '.php');
+ok('names: and no other honorific list is left in them', !preg_match("/\\['pastor', 'father'/", $all));
+
 foreach ($DBFILES as $f) foreach ([$f, $f . '-wal', $f . '-shm'] as $x) @unlink($x);
 echo $FAILED === 0 ? "\nall ok\n" : "\n$FAILED FAILED\n";
 exit($FAILED === 0 ? 0 : 1);

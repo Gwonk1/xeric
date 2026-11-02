@@ -265,6 +265,12 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
 
     $due = xeric_promise_when($whenS, $t, $now);
     if ($due === null) { $note('expectations: could not place "' . $whenS . '" on the calendar — nothing formed'); return null; }
+    // BORN MISSED IS NOT A PROMISE. A due already behind the moment it forms —
+    // the hour it was said, or the later moment a caller is reading it at
+    // (`not_before`) — would be fired as a miss by the next fuse tick for a
+    // wait nobody did. Refused, not clamped: nobody was let down.
+    $floor = max((int)($now['epoch'] ?? 0), (int)($p['not_before'] ?? 0));
+    if ($due <= $floor) { $note('expectations: "' . $whenS . '" is already past — nothing formed'); return null; }
 
     // One expectation per person per day: a second promise about the same
     // stretch replaces nothing and forms nothing — the first one is the date.
@@ -323,9 +329,12 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
  * produced a promise is a better scene, and a scene that did not is a scene.
  *
  * @param array $lines [{handle, name, text}, …] as the duet and the room emit
+ * @param int $notBefore a due at or before this epoch forms nothing (the cast
+ *                       tick passes its own now; 0 means the scene's hour only)
  * @return string[] the arc keys formed
  */
-function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?callable $onNote = null): array
+function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?callable $onNote = null,
+                                 int $notBefore = 0): array
 {
     if (!xeric_expect_armed($t)) return [];
 
@@ -389,7 +398,7 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
             'quote' => $text,
             'what'  => mb_substr($text, 0, 60),
             'when'  => xeric_promise_when_phrase($text),
-        ], $now, $onNote, $speaker === '__you' ? null : $speaker);
+        ] + ($notBefore > 0 ? ['not_before' => $notBefore] : []), $now, $onNote, $speaker === '__you' ? null : $speaker);
         if ($key !== null) $formed[] = $key;
     }
     return $formed;
@@ -401,11 +410,8 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
  */
 function xeric_constructs_first_name(string $name): string
 {
-    $words = preg_split('/\s+/u', trim($name)) ?: [];
-    $titles = ['pastor', 'father', 'mother', 'reverend', 'rev', 'mr', 'mrs', 'ms', 'miss', 'dr', 'doc',
-               'aunt', 'uncle', 'sister', 'brother', 'grandma', 'grandpa', 'coach', 'judge', 'sheriff', 'deacon'];
-    while (count($words) > 1 && in_array(rtrim(mb_strtolower((string)$words[0]), '.'), $titles, true)) array_shift($words);
-    return (string)($words[0] ?? '');
+    $forms = xeric_world_name_forms($name);     // the one honorific list (world.php)
+    return (string)($forms[1] ?? $forms[0] ?? '');
 }
 
 /**
@@ -2363,13 +2369,38 @@ function xeric_constructs_why(array $t, PDO $db, string $handle): array
  * a hedge is not a promise, no when is a sentiment, and a line the
  * listener's walls remove forms nothing for them.
  *
- * @return array{formed:int,residue:int}
+ * AND WHAT THEY ASK EACH OTHER TO KEEP. The same quoted line, read the same
+ * way, is also where a confidence between two townspeople is said out loud —
+ * "between us, don't tell Harlan" — and xeric_confide_from_line forms it on
+ * the one it was said to, code-checked against the words. Only an hour of
+ * exactly two people: a thing said in front of a third is not a confidence to
+ * either of them. The gossip sweep can then break it, which until now it could
+ * only do to rows its own tests wrote.
+ *
+ * @return array{formed:int,residue:int,confided:int}
  */
 function xeric_constructs_cast_tick(array $t, PDO $db, array $now, ?callable $onNote = null): array
 {
-    $out = ['formed' => 0, 'residue' => 0];
-    if (!xeric_expect_armed($t)) return $out;
-    $seen = (int)(xeric_arc_get($db, xeric_arc_world(), 'constructs.cast.seen') ?? '0');
+    require_once __DIR__ . '/confide.php';
+    $out = ['formed' => 0, 'residue' => 0, 'confided' => 0];
+    $expect = xeric_expect_armed($t);
+    $confide = xeric_confide_armed($t);
+    if (!$expect && !$confide) return $out;
+    // THE FIRST TICK READS NOTHING. A watermark that starts at 0 on a world
+    // that already has months of hours replays all of them: every quoted
+    // "Thursday morning" in its history forms an expectation dated to a
+    // Thursday long gone, and the very next fuse tick fires the lot as one
+    // mass of misses — a town that suddenly remembers being let down by
+    // everybody at once. History lived before this reader existed was never
+    // owed to it. So a world with no watermark gets one at its newest event,
+    // and only hours lived after that are read.
+    $mark = xeric_arc_get($db, xeric_arc_world(), 'constructs.cast.seen');
+    if ($mark === null) {
+        $max = (int)$db->query('SELECT COALESCE(MAX(id), 0) FROM events')->fetchColumn();
+        xeric_arc_set($db, xeric_arc_world(), 'constructs.cast.seen', (string)$max);
+        $mark = (string)$max;
+    }
+    $seen = (int)$mark;
     $st = $db->prepare('SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 200');
     $st->execute([$seen]);
     $rows = $st->fetchAll();
@@ -2382,10 +2413,27 @@ function xeric_constructs_cast_tick(array $t, PDO $db, array $now, ?callable $on
         if (xeric_news_unfit($db, ['id' => (int)$ev['id'], 'on_spine' => 0])) continue;
         $lines = xeric_cast_lines($t, (string)($ev['prose'] ?? ''), $who);
         if ($lines === []) continue;
+        if ($confide && count(array_unique($who)) === 2) {
+            foreach ($lines as $l) {
+                $listener = (string)(array_values(array_diff($who, [$l['handle']]))[0] ?? '');
+                // Through the listener's walls, like a promise: a line that carries
+                // what they are walled from forms nothing for them.
+                if ($listener === '' || xeric_gossip_wall_blocked($t, ['line' => $l['text']], $listener)) continue;
+                if (xeric_confide_from_line($t, $db, $l['handle'], $listener, $l['text'], xeric_world_now($t, (int)$ev['world_epoch'])) !== null) {
+                    $out['confided']++;
+                }
+            }
+        }
+        if (!$expect) continue;
         foreach ($who as $h) $lines[] = ['handle' => $h, 'text' => ''];   // in the room, saying nothing more
-        $out['formed'] += count(xeric_expect_from_scene($t, $db, $lines, xeric_world_now($t, (int)$ev['world_epoch']), $onNote));
+        // Formed at the hour it was said, but never with a due already behind
+        // the tick reading it: a backlog of hours read late (a long gap, a
+        // capped batch) must not hand the fuse a promise that is born missed.
+        $out['formed'] += count(xeric_expect_from_scene($t, $db, $lines, xeric_world_now($t, (int)$ev['world_epoch']), $onNote,
+                                                        (int)($now['epoch'] ?? 0)));
     }
     if ($last !== $seen) xeric_arc_set($db, xeric_arc_world(), 'constructs.cast.seen', (string)$last);
+    if (!$expect) return $out;
 
     // A memory EACH: the one who was owed already keeps theirs (the miss and
     // the keep write it); the one who promised keeps the other half.

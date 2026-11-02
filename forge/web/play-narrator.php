@@ -206,10 +206,18 @@ function xeric_play_narrator_intents_html(array $w, ?array $rows = null): string
  * for the owner — the write-ahead list. The guest sees a sentence instead of
  * a box that would only answer 403.
  *
+ * AND NOT THE OWNER'S ANSWERS EITHER. The kept exchanges are the narrator —
+ * full canon, no walls — answering the owner; a guest on a pairing code who
+ * may not ask it may not read what it said when asked, or the 403 on the ask
+ * is a door with the room's contents painted on it. The same door as the ask
+ * (xeric_play_is_guest): the owner and somebody in their own copy see their
+ * thread; a guest sees nothing of it.
+ *
  * @return array{msgs:string,intents:string}
  */
 function xeric_play_narrator_pane_html(array $w): array
 {
+    if (xeric_play_is_guest($w)) return ['msgs' => '', 'intents' => ''];
     $msgs = '';
     foreach (xeric_play_narrator_history($w['db']) as $ex) {
         $msgs .= '<li class="me"><span class="b">' . h($ex['q']) . '</span></li>'

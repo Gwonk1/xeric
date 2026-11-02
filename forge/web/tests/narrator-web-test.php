@@ -203,6 +203,13 @@ $gp = page('play.php', $G, ['w' => $slug], [], 'GET');
 ok('a guest\'s pane has no box and no intents', !str_contains($gp['raw'], 'id="ncomposer"')
     && !str_contains($gp['raw'], 'INTENT-WEB-NEEDLE') && str_contains($gp['raw'], 'You are a guest'),
     mb_substr($gp['raw'], 0, 200));
+ok('a guest\'s pane carries none of the owner\'s kept exchanges — not the question, not the answer',
+    str_contains($gp['raw'], 'id="nmsgs"')
+    && !str_contains($gp['raw'], 'Quiet hours, and nobody was free.') && !str_contains($gp['raw'], 'Why has nothing happened at the mill?')
+    && !str_contains($gp['raw'], XERIC_NARRATOR_DECLINE),
+    $gp['status'] . ' ' . mb_substr($gp['raw'], 0, 200));
+ok('and the pane helper itself answers a guest with nothing',
+    xeric_play_narrator_pane_html(['mine' => false, 'dir' => $wdir, 'db_path' => $wdir . '/world.db', 'db' => $db]) === ['msgs' => '', 'intents' => '']);
 ok('every word of it escaped: the owner\'s own words go through h()',
     !str_contains(xeric_play_narrator_intents_html($w, [7 => ['text' => '<b>x</b>', 'state' => 'live', 'fades' => PHP_INT_MAX]]), '<b>x</b>'));
 

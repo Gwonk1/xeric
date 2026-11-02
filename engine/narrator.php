@@ -508,17 +508,41 @@ const XERIC_NARRATOR_DECLINE = 'That is not mine to say.';
  * words cut out still has the shape of a refusal that knows what it is
  * refusing. An empty reply gets the same line, so a model that said nothing
  * is not a blank bubble. Everything else passes untouched.
+ *
+ * ANCHORED, BECAUSE THE TOWN APOLOGISES TOO. The narrator reports what people
+ * said, and people say "I'm sorry, but I can't do Friday". Matched anywhere,
+ * that line replaced a whole true answer about Dot with "That is not mine to
+ * say" — the narrator declining to tell you what it had just been asked. So:
+ *
+ *   - quoted speech never counts: everything inside "…" or “…” is taken out
+ *     before anything is looked for;
+ *   - the APOLOGY shapes ("I'm sorry, but", "I can't help with", "I'm not able
+ *     to share") count only when they OPEN the reply — its first sentence,
+ *     outside quotation marks — which is where an assistant's refusal always
+ *     sits, and where a narrator's report never starts;
+ *   - the shapes no in-world sentence has a reason to contain (as an AI, a
+ *     language model, the system prompt, my instructions, content policy)
+ *     count anywhere outside quotation marks: a leak in the third sentence is
+ *     still a leak.
  */
 function xeric_narrator_in_voice(string $text): string
 {
     $s = trim($text);
     $s = trim((string)preg_replace('/^\s*(?:the\s+)?narrator\s*:\s*/iu', '', $s));
     if ($s === '') return XERIC_NARRATOR_DECLINE;
-    $policy = '/\b(?:as an ai|an ai (?:model|assistant)|language model|i\'?m sorry,? but|i am sorry,? but'
-        . '|i apologi[sz]e|system (?:prompt|message)|my (?:instructions|guidelines|programming)'
-        . '|content polic(?:y|ies)|i(?:\'m| am) not able to (?:help|assist|provide|share)'
-        . '|i can(?:not|\'t|’t) (?:help|assist) with)\b/iu';
-    if (preg_match($policy, $s) === 1) return XERIC_NARRATOR_DECLINE;
+    // The narration, with every quotation taken out (an unclosed quote runs to
+    // the end). A reply that is nothing but somebody's quoted words is a report.
+    $own = (string)preg_replace('/"[^"]*(?:"|$)|“[^”]*(?:”|$)/u', ' ', str_replace(['’', '‘'], "'", $s));
+    $own = trim((string)preg_replace('/\s+/u', ' ', $own));
+    if ($own === '') return $s;
+    $meta = '/\b(?:as an ai|an ai (?:model|assistant)|language model|system (?:prompt|message)'
+        . '|my (?:instructions|guidelines|programming)|content polic(?:y|ies))\b/iu';
+    if (preg_match($meta, $own) === 1) return XERIC_NARRATOR_DECLINE;
+    $first = preg_split('/(?<=[.!?])\s+/u', $own, 2)[0] ?? $own;
+    $apology = '/^\W*(?:(?:i\'?m|i am) sorry,? but|i apologi[sz]e|unfortunately,? i|sorry,? (?:but )?i'
+        . '|i(?:\'m| am) (?:not able|unable) to (?:help|assist|provide|share|answer)'
+        . '|i can(?:not|\'t) (?:help|assist|provide|share|answer))\b/iu';
+    if (preg_match($apology, $first) === 1) return XERIC_NARRATOR_DECLINE;
     return $s;
 }
 

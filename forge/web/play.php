@@ -1286,7 +1286,9 @@ echo xeric_play_css_link() . '<style>
 
     <?php $narrPane = xeric_play_narrator_pane_html($w); $narrGuest = xeric_play_is_guest($w); ?>
     <!-- The last few exchanges, kept (the narrator's own thread, kind
-         `narrator`, handle ''). Server-rendered so the pane opens on them. -->
+         `narrator`, handle ''). Server-rendered so the pane opens on them —
+         for the owner only: a guest, refused the ask, is refused its answers
+         too, and gets an empty list (xeric_play_narrator_pane_html). -->
     <ul class="msgs" id="nmsgs"><?= $narrPane['msgs'] ?></ul>
     <div class="thinking" id="nthinking" hidden><i></i><i></i><i></i><span>looking at where things stand</span></div>
     <p class="note warn" id="nerr" hidden></p>

@@ -440,7 +440,20 @@ function xeric_image_takes_reference(?array $endpoint): bool
     return $endpoint !== null && !empty($endpoint['edits']);
 }
 
-/** One picture file read as a likeness, or null: missing, empty, too heavy, or not an image. */
+/**
+ * One picture file read as a likeness, or null: missing, empty, too heavy, or
+ * not a whole png, jpeg or webp.
+ *
+ * NOT AN IMAGE IS NOT A PNG. This used to label anything getimagesize could
+ * not read as image/png and hand it over anyway — a half-written file from a
+ * reroll racing the worker, an error page saved as a picture — and the edits
+ * route then conditioned a likeness on garbage, or refused the whole render.
+ * Null instead, so the walk-back tries the one before and, failing that, the
+ * photo renders unchained from seeds and words, which is what it did before a
+ * likeness existed. Whole means the format's own end is in the bytes (png's
+ * IEND chunk, jpeg's EOI marker, webp's RIFF length): getimagesize reads only
+ * the header, and a truncated file has a perfect header.
+ */
 function xeric_photo_reference_read(string $path, int $cap = XERIC_PHOTO_REFERENCE_CAP): ?array
 {
     // A worker lives for minutes and a reroll rewrites the file under it.
@@ -449,9 +462,27 @@ function xeric_photo_reference_read(string $path, int $cap = XERIC_PHOTO_REFEREN
     if ($size === false || $size === 0 || $size > $cap) return null;
     $bytes = @file_get_contents($path);
     if (!is_string($bytes) || $bytes === '') return null;
-    $mime = (string)(@getimagesizefromstring($bytes)['mime'] ?? '');
-    if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true)) $mime = 'image/png';
+    $mime = xeric_photo_sniff($bytes);
+    if ($mime === null) return null;
     return ['bytes' => $bytes, 'mime' => $mime, 'fingerprint' => substr(sha1($bytes), 0, 16)];
+}
+
+/** image/png, image/jpeg or image/webp when these bytes are a whole one of those, else null. */
+function xeric_photo_sniff(string $bytes): ?string
+{
+    $mime = null;
+    if (str_starts_with($bytes, "\x89PNG\r\n\x1a\n")) {
+        if (substr($bytes, 12, 4) === 'IHDR' && str_contains(substr($bytes, 33), "IEND\xae\x42\x60\x82")) $mime = 'image/png';
+    } elseif (str_starts_with($bytes, "\xff\xd8\xff")) {
+        if (str_contains(substr($bytes, 3), "\xff\xd9")) $mime = 'image/jpeg';
+    } elseif (str_starts_with($bytes, 'RIFF') && substr($bytes, 8, 4) === 'WEBP') {
+        $len = unpack('V', substr($bytes, 4, 4))[1] ?? 0;
+        if ($len >= 4 && strlen($bytes) >= $len + 8) $mime = 'image/webp';
+    }
+    if ($mime === null) return null;
+    // And the header must read as the same thing to the library that will describe it.
+    $seen = (string)(@getimagesizefromstring($bytes)['mime'] ?? '');
+    return $seen === $mime ? $mime : null;
 }
 
 /**

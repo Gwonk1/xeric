@@ -285,6 +285,113 @@ ok('failure: a model that throws writes nothing and leaves the night open to try
     str_contains($rf['characters']['ruth']['note'] ?? '', 'down') && snapshot($fdb) === $fsnap && xeric_sleep_due($T, $fdb, $NOW));
 
 // ---------------------------------------------------------------------------
+// the heart loads sleep; it does not hope it was loaded
+// ---------------------------------------------------------------------------
+
+$heartSrc = (string)file_get_contents(dirname(__DIR__, 2) . '/forge/web/heart.php');
+ok('heart: requires engine/sleep.php itself, at the top, and calls the pass unguarded',
+    str_contains($heartSrc, "\nrequire_once XERIC_WEB_LIB . '/engine/sleep.php';")
+    && str_contains($heartSrc, 'xeric_sleep_pass($T, $db, $after, $endpoint)')
+    && !str_contains($heartSrc, "function_exists('xeric_sleep_pass')"));
+
+// ---------------------------------------------------------------------------
+// a confidence told to the player is pinned like one told in the town
+// ---------------------------------------------------------------------------
+
+$pdb = fresh('confided');
+$pm1 = xeric_memory_add($pdb, 'ruth', 'Ruth Amberg told Walt the bank wrote about the house and she has not answered it.', 'auto', [], $OLD, $OLD);
+$pm2 = xeric_memory_add($pdb, 'ruth', 'Ruth Amberg kept the church kitchen keys on a red ribbon for years.', 'auto', [], $OLD + 60, $OLD);
+xeric_arc_set($pdb, 'ruth', 'confided.1', json_encode(['what' => 'the bank wrote about the house', 'quote' => "Don't tell Harlan.",
+    'p' => 1, 'not' => ['harlan'], 'at' => $OLD, 'state' => 'kept']));
+$pc = xeric_sleep_candidates($T, $pdb, 'ruth', $NOW);
+ok('pins: an ordinary memory carrying the words of a confidence told to the PLAYER is pinned, not offered',
+    ($pc['pinned'][$pm1] ?? '') === 'confidence' && array_map(fn($r) => (int)$r['id'], $pc['rows']) === [$pm2], json_encode($pc['pinned']));
+
+// ---------------------------------------------------------------------------
+// rotation: what the model leaves out rests, and is eventually kept raw
+// ---------------------------------------------------------------------------
+
+$odb = fresh('rotate');
+$oids = [];
+for ($i = 0; $i < 60; $i++) {
+    $oids[] = xeric_memory_add($odb, 'ruth', 'Ruth Amberg swept the church steps on afternoon number ' . $i . ' of the long dry fall.', 'auto', [],
+        $OLD + $i * 60, $OLD);
+}
+$offeredBy = [];   // night => ids offered
+$ocalls = 0;
+$nightOf = fn(int $n) => xeric_world_now($T, $at('2026-11-' . (20 + $n) . ' 02:00'));
+for ($n = 0; $n < 8; $n++) {
+    $seenIds = [];
+    $ep = sleeper(function (string $u) use (&$seenIds) {
+        preg_match_all('/^\[(\d+)\]/m', $u, $mm);
+        $seenIds = array_map('intval', $mm[1]);
+        return ['facts' => []];                         // consolidates nothing, ever
+    }, $ocalls);
+    xeric_sleep_pass($T, $odb, $nightOf($n), $ep, ['handles' => ['ruth']]);
+    $offeredBy[$n] = $seenIds;
+}
+ok('rotation: night one offers the oldest forty', $offeredBy[0] === array_slice($oids, 0, 40), json_encode($offeredBy[0]));
+ok('rotation: night two offers DIFFERENT ones — the twenty never offered, not the same forty again',
+    $offeredBy[1] === array_slice($oids, 40, 20), json_encode($offeredBy[1]));
+$everOffered = array_unique(array_merge(...array_values($offeredBy)));
+sort($everOffered);
+ok('rotation: every one of the sixty is offered within the first two nights', array_values($everOffered) === $oids);
+$offers = xeric_sleep_offers($odb, 'ruth');
+ok('rotation: offered three times and never consolidated, each is kept raw and offered no more',
+    count($offers) === 60 && array_filter($offers, fn($o) => !$o['kept_raw'] || $o['times'] !== XERIC_SLEEP_OFFERS_MAX) === []
+    && $offeredBy[7] === [] && max(array_map('count', $offeredBy)) <= XERIC_SLEEP_MAX_SOURCES,
+    json_encode(array_map('count', $offeredBy)));
+ok('rotation: kept raw is not deleted — every memory is still there, unconsolidated',
+    xeric_memories_count($odb) === 60 && xeric_sleep_consolidated_ids($odb, 'ruth') === []);
+$fr = xeric_sleep_candidates($T, $odb, 'ruth', $nightOf(9));
+ok('rotation: the candidates say how many were kept raw', $fr['rows'] === [] && $fr['kept_raw'] === 60, json_encode(['kr' => $fr['kept_raw']]));
+// And a memory the model DID consolidate leaves the rotation for good.
+$kdb = fresh('rotate-kept');
+$k1 = xeric_memory_add($kdb, 'ruth', 'Ruth Amberg kept the church kitchen keys on a red ribbon for years.', 'auto', [], $OLD, $OLD);
+$k2 = xeric_memory_add($kdb, 'ruth', 'Ruth Amberg swept the church steps on a long dry afternoon in the fall.', 'auto', [], $OLD + 60, $OLD);
+$kc = 0;
+xeric_sleep_pass($T, $kdb, $NOW, sleeper(fn($u) => ['facts' => [
+    ['fact' => 'Ruth Amberg keeps the church kitchen keys.', 'about' => ['ruth'], 'since' => '', 'from' => [$k1]]]], $kc), ['handles' => ['ruth']]);
+ok('rotation: only what was offered and LEFT is counted an offer', array_keys(xeric_sleep_offers($kdb, 'ruth')) === [$k2]
+    && xeric_sleep_consolidated_ids($kdb, 'ruth') === [$k1]);
+
+// ---------------------------------------------------------------------------
+// a fact keeps its sources' walls when it renders
+// ---------------------------------------------------------------------------
+
+$wdb = fresh('walled-fact');
+for ($i = 0; $i < 3; $i++) xeric_memory_add($wdb, 'janelle', 'Janelle Kerr walked home past First Lutheran on evening ' . $i . '.', 'auto', [], $OLD + $i, $OLD);
+xeric_sleep_write($wdb, 'janelle', [
+    ['text' => 'WALLED-FACT-NEEDLE Janelle Kerr heard something at First Lutheran.', 'about' => ['janelle'], 'since' => $OLD,
+     'from' => [1], 'meta' => ['sources' => 1, 'walled_from' => ['janelle'], 'walls' => [], 'gossip_grade' => false]],
+    ['text' => 'RATED-FACT-NEEDLE Janelle Kerr walks home late.', 'about' => ['janelle'], 'since' => $OLD,
+     'from' => [2], 'meta' => ['sources' => 1, 'walled_from' => [], 'rating_min' => 'explicit']],
+    ['text' => 'OPEN-FACT-NEEDLE Janelle Kerr walks home past First Lutheran.', 'about' => ['janelle'], 'since' => $OLD,
+     'from' => [3], 'meta' => ['sources' => 1, 'walled_from' => ['dot']]],
+], '2026-11-20', []);
+$jp = xeric_prompt_build($T, $wdb, 'janelle', $NOW, [])[0]['content'];
+ok('render: a fact walled from Janelle never renders in Janelle\'s prompt', !str_contains($jp, 'WALLED-FACT-NEEDLE'));
+ok('render: nor one gated above the rating she may be shown', !str_contains($jp, 'RATED-FACT-NEEDLE'));
+ok('render: while a fact walled only from somebody else still renders to her', str_contains($jp, 'OPEN-FACT-NEEDLE'), $jp);
+
+// The grading reads each viewer's walls once for the whole pass, however many
+// facts and sources there are.
+$gdb = fresh('grade-count');
+$gids = [];
+for ($i = 0; $i < 12; $i++) $gids[] = xeric_memory_add($gdb, 'ruth', 'Ruth Amberg baked bread number ' . $i . ' at the Bluebird Diner on a slow afternoon.', 'event', ['place' => 'bluebird'], $OLD + $i * 60, $OLD);
+$gc = 0;
+$before = xeric_sleep_forbidden_reads();
+xeric_sleep_pass($T, $gdb, $NOW, sleeper(function ($u) use ($gids) {
+    $f = [];
+    for ($i = 0; $i < 6; $i++) $f[] = ['fact' => 'Ruth Amberg baked bread number ' . (2 * $i) . ' at the Bluebird Diner.', 'about' => ['ruth', 'bluebird'], 'since' => '', 'from' => [$gids[2 * $i], $gids[2 * $i + 1]]];
+    return ['facts' => $f];
+}, $gc), ['handles' => ['ruth']]);
+$reads = xeric_sleep_forbidden_reads() - $before;
+$nCast = count((array)$T['cast']['characters']);
+ok('grade: six facts from twelve sources read cb_forbidden at most once per viewer', $gc === 1 && count(xeric_sleep_facts($gdb, 'ruth')) === 6
+    && $reads >= 1 && $reads <= $nCast, "$reads reads for $nCast viewers, " . count(xeric_sleep_facts($gdb, 'ruth')) . " facts, $gc calls");
+
+// ---------------------------------------------------------------------------
 // the benchmark: three days, sleep.after_days = 1
 // ---------------------------------------------------------------------------
 

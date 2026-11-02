@@ -82,6 +82,10 @@ const XERIC_SLEEP_MAX_SOURCES = 40;
 const XERIC_SLEEP_FACT_MAX    = 220;
 /** Of the prompt's memory cap, at most 1/this may be facts — the newest raw memories always keep the rest. */
 const XERIC_SLEEP_CAP_SHARE   = 3;
+/** A memory offered and not consolidated rests this many nights before it is offered again (unless nothing else is left). */
+const XERIC_SLEEP_REST_NIGHTS = 7;
+/** Offered this many times and never consolidated: the model has said what it thinks of it. Kept raw, never offered again. */
+const XERIC_SLEEP_OFFERS_MAX  = 3;
 
 // ---------------------------------------------------------------------------
 // Configuration and tables
@@ -101,7 +105,7 @@ function xeric_sleep_config(array $t): array
     ];
 }
 
-/** Create sleep's two tables. Idempotent; called only by the writer. */
+/** Create sleep's tables. Idempotent; called only by the writer. */
 function xeric_sleep_migrate(PDO $db): void
 {
     $db->exec(<<<'SQL'
@@ -126,6 +130,49 @@ function xeric_sleep_migrate(PDO $db): void
         )
     SQL);
     $db->exec('CREATE INDEX IF NOT EXISTS idx_sleep_links_fact ON sleep_links(fact_id)');
+    // What was offered and left: the rotation's memory (xeric_sleep_candidates).
+    // A row per memory a night's call was shown and did not consolidate. Not a
+    // column on memories, for the same reason the other two are tables here: a
+    // world that never sleeps never grows it.
+    $db->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS sleep_offers (
+            memory_id  INTEGER PRIMARY KEY,             -- memories.id
+            handle     TEXT    NOT NULL,
+            times      INTEGER NOT NULL DEFAULT 0,      -- nights it was offered and left out
+            offered_at TEXT    NOT NULL,                -- sleep_offered_at: the last such night (YYYY-MM-DD)
+            kept_raw   INTEGER NOT NULL DEFAULT 0       -- sleep_kept_raw: offered XERIC_SLEEP_OFFERS_MAX times, never again
+        )
+    SQL);
+    $db->exec('CREATE INDEX IF NOT EXISTS idx_sleep_offers_handle ON sleep_offers(handle)');
+}
+
+/**
+ * This person's offer record: memory id => {times, offered_at, kept_raw}. A
+ * world that slept before the rotation existed has no table yet and reads as
+ * nothing ever offered — which is the truth about it.
+ *
+ * @return array<int,array{times:int,offered_at:string,kept_raw:bool}>
+ */
+function xeric_sleep_offers(PDO $db, string $handle): array
+{
+    if ((int)$db->query("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sleep_offers'")->fetchColumn() !== 1) return [];
+    $q = $db->prepare('SELECT memory_id, times, offered_at, kept_raw FROM sleep_offers WHERE handle = ?');
+    $q->execute([$handle]);
+    $out = [];
+    foreach ($q->fetchAll() as $r) {
+        $out[(int)$r['memory_id']] = ['times' => (int)$r['times'], 'offered_at' => (string)$r['offered_at'], 'kept_raw' => (int)$r['kept_raw'] === 1];
+    }
+    return $out;
+}
+
+/** Whole nights from one night's date to another's; an unreadable date is long ago. */
+function xeric_sleep_nights_between(string $from, string $to): int
+{
+    try {
+        $a = new DateTimeImmutable($from . ' 00:00', new DateTimeZone('UTC'));
+        $b = new DateTimeImmutable($to . ' 00:00', new DateTimeZone('UTC'));
+    } catch (Throwable $e) { return PHP_INT_MAX; }
+    return intdiv($b->getTimestamp() - $a->getTimestamp(), 86400);
 }
 
 /** Has this world ever slept? A read, never a write — prompt.php asks it. */
@@ -295,6 +342,16 @@ function xeric_sleep_pinned(array $row, array $ctx): string
  * What a construct still points at, for one person, as word lists: every
  * expectation's quote they hold (a promise, whatever its state — promises are
  * pinned), and the words of every confidence they were told or told somebody.
+ *
+ * BOTH KINDS OF CONFIDENCE. Cast to cast lives under `told.*`
+ * (xeric_confides_for); what somebody asked the PLAYER to keep lives under
+ * `confided.*` on the teller (xeric_confide_told_player), and that is the one
+ * the engine points at hardest — a break is detected by matching its words,
+ * and a grudge is hung on it. Reading only the first let a memory carrying a
+ * secret told to the player be folded into prose, and the row that watches
+ * for it lost the words it watches with. The player's are read from every
+ * teller, not just this person: whoever heard it repeated carries the same
+ * words, and pinning too much costs a night's consolidation of one memory.
  */
 function xeric_sleep_pins_context(array $t, PDO $db, string $handle): array
 {
@@ -313,8 +370,16 @@ function xeric_sleep_pins_context(array $t, PDO $db, string $handle): array
         if ($h === '') continue;
         foreach (xeric_confides_for($db, $h) as $row) {
             if ($h !== $handle && (string)($row['by'] ?? '') !== $handle) continue;
-            $w = xeric_wall_words((string)($row['what'] ?? ''));
-            if (count($w) >= 3) $conf[] = $w;
+            foreach (['what', 'quote'] as $k) {
+                $w = xeric_wall_words((string)($row[$k] ?? ''));
+                if (count($w) >= 3) $conf[] = $w;
+            }
+        }
+        foreach (xeric_confide_told_player($db, $h) as $row) {
+            foreach (['what', 'quote'] as $k) {
+                $w = xeric_wall_words((string)($row[$k] ?? ''));
+                if (count($w) >= 3) $conf[] = $w;
+            }
         }
     }
     return ['promises' => $promises, 'confidences' => $conf];
@@ -324,10 +389,28 @@ function xeric_sleep_pins_context(array $t, PDO $db, string $handle): array
  * The memories one person may consolidate tonight: older than after_days (by
  * world time), not consolidated, not pinned. Oldest first, at most $limit.
  *
- * @return array{rows:array,pinned:array<int,string>}
+ * AND IN ROTATION. Oldest-first alone is a queue with a jam at its head: the
+ * memories the model leaves out of every `from` (or whose facts the disposer
+ * drops) are still the oldest tomorrow, so they were offered first every night
+ * forever and a newer old memory never got a turn — a person whose fortieth
+ * oldest memory was dull slept on the same forty for the rest of the world's
+ * life. So a memory offered and left rests XERIC_SLEEP_REST_NIGHTS nights
+ * before it is offered again, unless nothing else is left; and one offered
+ * XERIC_SLEEP_OFFERS_MAX times and never consolidated is kept raw — the model
+ * has answered about it three times — and not offered again. Kept raw is not
+ * lost: it is an ordinary unconsolidated memory, read by everything that reads
+ * memories, exactly as if sleep had never looked at it. When only resting
+ * memories are left, the least-offered and longest-rested go first.
+ *
+ * $night names tonight (the pass hands its own); null reads it off $now.
+ *
+ * @return array{rows:array,pinned:array<int,string>,resting:int,kept_raw:int}
  */
-function xeric_sleep_candidates(array $t, PDO $db, string $handle, array $now, int $limit = XERIC_SLEEP_MAX_SOURCES): array
+function xeric_sleep_candidates(array $t, PDO $db, string $handle, array $now, int $limit = XERIC_SLEEP_MAX_SOURCES,
+                                ?string $night = null): array
 {
+    $night ??= xeric_sleep_night($t, $now) ?? substr((string)($now['iso'] ?? gmdate('Y-m-d', (int)($now['epoch'] ?? 0))), 0, 10);
+    $offers = xeric_sleep_offers($db, $handle);
     $cut = (int)($now['epoch'] ?? 0) - (int)round(xeric_sleep_config($t)['after_days'] * 86400);
     $done = array_flip(xeric_sleep_consolidated_ids($db, $handle));
     // Bound as an INTEGER: execute([...]) binds strings, and in SQLite every
@@ -337,35 +420,49 @@ function xeric_sleep_candidates(array $t, PDO $db, string $handle, array $now, i
     $q->bindValue(2, $cut, PDO::PARAM_INT);
     $q->execute();
     $ctx = xeric_sleep_pins_context($t, $db, $handle);
-    $rows = []; $pinned = [];
+    $fresh = []; $resting = []; $pinned = []; $raw = 0;
     foreach ($q->fetchAll() as $r) {
-        if (isset($done[(int)$r['id']])) continue;
+        $id = (int)$r['id'];
+        if (isset($done[$id])) continue;
+        $o = $offers[$id] ?? null;
+        if ($o !== null && $o['kept_raw']) { $raw++; continue; }
+        // Once the head of the queue is full, only the pins still need reading.
+        if (count($fresh) >= $limit && $o === null) continue;
         $r['meta'] = $r['meta'] !== null ? (json_decode((string)$r['meta'], true) ?: []) : [];
         $why = xeric_sleep_pinned($r, $ctx);
-        if ($why !== '') { $pinned[(int)$r['id']] = $why; continue; }
+        if ($why !== '') { $pinned[$id] = $why; continue; }
         if (trim((string)$r['text']) === '') continue;
-        $rows[] = $r;
-        if (count($rows) >= $limit) break;
+        if ($o !== null && xeric_sleep_nights_between($o['offered_at'], $night) < XERIC_SLEEP_REST_NIGHTS) {
+            $resting[] = $r + ['_offer' => $o];
+            continue;
+        }
+        if (count($fresh) < $limit) $fresh[] = $r;
     }
-    return ['rows' => $rows, 'pinned' => $pinned];
+    if ($fresh !== []) {
+        $rows = $fresh;
+    } else {
+        // Nothing else is left: the resting, least-offered and longest-rested first, oldest among equals.
+        usort($resting, fn($a, $b) => [$a['_offer']['times'], $a['_offer']['offered_at']] <=> [$b['_offer']['times'], $b['_offer']['offered_at']]);
+        $rows = array_map(function ($r) { unset($r['_offer']); return $r; }, array_slice($resting, 0, $limit));
+    }
+    return ['rows' => $rows, 'pinned' => $pinned, 'resting' => $fresh !== [] ? count($resting) : max(0, count($resting) - count($rows)),
+            'kept_raw' => $raw];
 }
 
 // ---------------------------------------------------------------------------
 // Names and groups
 // ---------------------------------------------------------------------------
 
-/** The words a name is matched and traced by: the full name, and the given name. */
+/**
+ * The words a name is matched and traced by: the full name, and the given name
+ * (xeric_world_name_forms, the one honorific list) when it is long enough to be
+ * a word nobody else's sentence happens to contain.
+ */
 function xeric_sleep_name_forms(string $name): array
 {
-    $name = trim($name);
-    if ($name === '') return [];
-    $parts = preg_split('/\s+/u', $name) ?: [];
-    $titles = ['pastor', 'father', 'sister', 'brother', 'dr', 'dr.', 'doc', 'mr', 'mr.', 'mrs', 'mrs.', 'ms', 'ms.', 'miss', 'aunt', 'uncle', 'old'];
-    $given = '';
-    foreach ($parts as $p) { if (!in_array(mb_strtolower($p), $titles, true)) { $given = $p; break; } }
-    $out = [$name];
-    if ($given !== '' && mb_strlen($given) >= 3 && $given !== $name) $out[] = $given;
-    return $out;
+    $forms = xeric_world_name_forms($name);
+    if (isset($forms[1]) && mb_strlen($forms[1]) < 3) array_pop($forms);
+    return $forms;
 }
 
 /** Every entity a memory could be about: handle => [kind, forms]. 'user' is the person at the centre. */
@@ -559,11 +656,48 @@ function xeric_sleep_untraced(array $t, string $handle, string $fact, array $abo
     return '';
 }
 
-/** The words this viewer is walled from that a text quotes: the oracle's own test. */
-function xeric_sleep_quotes_walled(array $t, string $viewer, string $text): array
+/**
+ * What this viewer is walled from, as the oracle lists it (cb_forbidden), read
+ * ONCE per viewer per pass. $memo is the pass's: the oracle's own memo is keyed
+ * by an md5 of the whole cast and walls, which it recomputes on every call, so
+ * asking it per viewer × per source × per fact made the grading the most
+ * expensive thing sleep did — more than the model call it was grading.
+ * xeric_sleep_forbidden_reads() counts the real reads (the test's seam).
+ */
+function xeric_sleep_forbidden(array $t, string $viewer, array &$memo): array
 {
-    require_once __DIR__ . '/continuity/oracle.php';
-    return cb_quotes($t, [], $viewer, $text);
+    if (!isset($memo['forbidden'][$viewer])) {
+        require_once __DIR__ . '/continuity/oracle.php';
+        xeric_sleep_forbidden_reads(1);
+        $memo['forbidden'][$viewer] = cb_forbidden($t, $viewer);
+    }
+    return $memo['forbidden'][$viewer];
+}
+
+/** How many times sleep has read cb_forbidden in this process; $add counts one more. */
+function xeric_sleep_forbidden_reads(int $add = 0): int
+{
+    static $n = 0;
+    return $n += $add;
+}
+
+/**
+ * The words this viewer is walled from that a text quotes: the oracle's own
+ * test (cb_quotes, with no scenario allowances), against the list read once.
+ */
+function xeric_sleep_quotes_walled(array $t, string $viewer, string $text, ?array &$memo = null): array
+{
+    $memo ??= [];
+    $hay = xeric_wall_words($text);
+    if ($hay === []) return [];
+    $flat = ' ' . implode(' ', $hay) . ' ';
+    $hit  = [];
+    foreach (xeric_sleep_forbidden($t, $viewer, $memo) as $f) {
+        if (isset($hit[$f['path']])) continue;
+        if ($f['words'] === [] || !str_contains($flat, ' ' . $f['words'][0] . ' ') && count($f['words']) <= XERIC_WALL_QUOTE_RUN) continue;
+        if (xeric_wall_quotes($hay, $f['words'])) $hit[$f['path']] = true;
+    }
+    return array_keys($hit);
 }
 
 /**
@@ -572,9 +706,15 @@ function xeric_sleep_quotes_walled(array $t, string $viewer, string $text): arra
  *   walls         every wall key any source carries (meta wall / walls)
  *   walled_from   every viewer some source quotes a wall for (the oracle's test)
  *   rating_min    the highest rating any source is gated at
+ *
+ * WHO READS IT: xeric_prompt_recall() will not render a fact to a holder in
+ * its walled_from, or below its rating_min — a fact inherits a wall so that it
+ * can be withheld by it. Each source's verdict per viewer is kept in $memo, so
+ * a pass grades a memory once, however many facts are proposed from it.
  */
-function xeric_sleep_grade(array $t, array $sources): array
+function xeric_sleep_grade(array $t, array $sources, ?array &$memo = null): array
 {
+    $memo ??= [];
     $gossip = true; $walls = []; $from = []; $rank = -1; $rating = null;
     $viewers = array_values(array_filter(array_map(fn($c) => (string)($c['handle'] ?? ''), (array)($t['cast']['characters'] ?? []))));
     foreach ($sources as $s) {
@@ -587,7 +727,12 @@ function xeric_sleep_grade(array $t, array $sources): array
             $rank = xeric_rating_rank((string)$meta['rating_min']);
             $rating = (string)$meta['rating_min'];
         }
-        foreach ($viewers as $v) if (xeric_sleep_quotes_walled($t, $v, (string)$s['text']) !== []) $from[$v] = true;
+        $sk = isset($s['id']) ? 'id:' . (int)$s['id'] : 'text:' . md5((string)$s['text']);
+        if (!isset($memo['walled'][$sk])) {
+            $memo['walled'][$sk] = [];
+            foreach ($viewers as $v) if (xeric_sleep_quotes_walled($t, $v, (string)$s['text'], $memo) !== []) $memo['walled'][$sk][] = $v;
+        }
+        foreach ($memo['walled'][$sk] as $v) $from[$v] = true;
     }
     $out = ['gossip_grade' => $gossip, 'walls' => array_keys($walls), 'walled_from' => array_keys($from)];
     if ($rating !== null) $out['rating_min'] = $rating;
@@ -600,10 +745,12 @@ function xeric_sleep_grade(array $t, array $sources): array
  *
  * @param array $raw  the model's object: {facts:[{fact,about,since,from}]}
  * @param array $rows the candidates sent, as rows
+ * @param ?array $memo the pass's wall reads (xeric_sleep_forbidden), shared across people
  * @return array{kept:array<int,array{text:string,about:string[],since:int,from:int[],meta:array}>,dropped:array<int,array{fact:string,why:string}>}
  */
-function xeric_sleep_dispose(array $t, string $handle, array $raw, array $rows): array
+function xeric_sleep_dispose(array $t, string $handle, array $raw, array $rows, ?array &$memo = null): array
 {
+    $memo ??= [];
     $byId = [];
     foreach ($rows as $r) $byId[(int)$r['id']] = $r;
     $used = []; $kept = []; $dropped = [];
@@ -627,7 +774,7 @@ function xeric_sleep_dispose(array $t, string $handle, array $raw, array $rows):
 
         // The walls first: whatever else is wrong with a fact, quoting what its
         // holder is walled from is the reason that must show in the report.
-        $walled = xeric_sleep_quotes_walled($t, $handle, $text);
+        $walled = xeric_sleep_quotes_walled($t, $handle, $text, $memo);
         if ($walled !== []) { $drop($text, 'quotes a wall: ' . $walled[0]); continue; }
         if (function_exists('xeric_age_floor') && xeric_age_floor($t, [$handle], [$text]) !== null) { $drop($text, 'the age floor'); continue; }
 
@@ -640,7 +787,7 @@ function xeric_sleep_dispose(array $t, string $handle, array $raw, array $rows):
         if (mb_strlen($text) >= $srcLen) { $drop($text, 'no shorter than what it replaces'); continue; }
 
         $since = min(array_map(fn($s) => (int)($s['world_epoch'] ?? $s['created_at']), $sources));
-        $meta = xeric_sleep_grade($t, $sources) + ['sources' => count($from)];
+        $meta = xeric_sleep_grade($t, $sources, $memo) + ['sources' => count($from)];
         $ms = trim((string)($f['since'] ?? ''));
         if ($ms !== '') $meta['model_since'] = mb_substr($ms, 0, 32);
         foreach ($from as $id) $used[$id] = true;
@@ -649,8 +796,14 @@ function xeric_sleep_dispose(array $t, string $handle, array $raw, array $rows):
     return ['kept' => $kept, 'dropped' => $dropped];
 }
 
-/** Store one person's kept facts and their links, and the night's guard, together or not at all. */
-function xeric_sleep_write(PDO $db, string $handle, array $kept, string $night, array $summary, ?int $at = null): array
+/**
+ * Store one person's kept facts and their links, the night's guard, and what
+ * was offered and left (the rotation), together or not at all. $offered is the
+ * ids the call was shown; any that no kept fact cites is counted an offer, and
+ * marked kept raw at XERIC_SLEEP_OFFERS_MAX.
+ */
+function xeric_sleep_write(PDO $db, string $handle, array $kept, string $night, array $summary, ?int $at = null,
+                           array $offered = []): array
 {
     $at ??= xeric_state_time();
     xeric_sleep_migrate($db);
@@ -666,6 +819,19 @@ function xeric_sleep_write(PDO $db, string $handle, array $kept, string $night, 
             $fid = (int)$db->lastInsertId();
             foreach ($k['from'] as $mid) $l->execute([$mid, $fid, $handle]);
             $ids[] = $fid;
+        }
+        $used = [];
+        foreach ($kept as $k) foreach ($k['from'] as $mid) $used[(int)$mid] = true;
+        // The ceiling is written into the SQL, not bound: execute([...]) binds
+        // strings, and in SQLite an integer never reaches a string, so
+        // `times + 1 >= '3'` is false forever and nothing was ever kept raw.
+        $max = (int)XERIC_SLEEP_OFFERS_MAX;
+        $o = $db->prepare('INSERT INTO sleep_offers (memory_id, handle, times, offered_at, kept_raw) VALUES (?, ?, 1, ?, ' . ($max <= 1 ? 1 : 0) . ')
+                           ON CONFLICT(memory_id) DO UPDATE SET times = times + 1, offered_at = excluded.offered_at,
+                           kept_raw = CASE WHEN times + 1 >= ' . $max . ' THEN 1 ELSE 0 END');
+        foreach (array_unique(array_map('intval', $offered)) as $mid) {
+            if (isset($used[$mid])) continue;
+            $o->execute([$mid, $handle, $night]);
         }
         xeric_world_state_set($db, xeric_sleep_guard($night, $handle), json_encode($summary + ['facts' => $ids], JSON_UNESCAPED_SLASHES), $at);
         if ($own) $db->commit();
@@ -724,10 +890,12 @@ function xeric_sleep_pass(array $t, PDO $db, array $now, ?array $endpoint = null
     require_once __DIR__ . '/chat.php';     // xeric_chat_json, xeric_age_floor
     $out['ran'] = true;
     $dry = !empty($opts['dry_run']);
+    $memo = [];                             // the walls, read once per viewer for the whole pass
 
     foreach ($todo as $h) {
-        $c = xeric_sleep_candidates($t, $db, $h, $now);
-        $rep = ['candidates' => count($c['rows']), 'pinned' => count($c['pinned']), 'groups' => 0, 'kept' => [], 'dropped' => [], 'note' => ''];
+        $c = xeric_sleep_candidates($t, $db, $h, $now, XERIC_SLEEP_MAX_SOURCES, $night);
+        $rep = ['candidates' => count($c['rows']), 'pinned' => count($c['pinned']), 'resting' => $c['resting'], 'kept_raw' => $c['kept_raw'],
+                'groups' => 0, 'kept' => [], 'dropped' => [], 'note' => ''];
         if ($c['rows'] === []) {
             $rep['note'] = 'nothing old enough to sleep on';
             if (!$dry) xeric_sleep_write($db, $h, [], $night, ['candidates' => 0, 'pinned' => count($c['pinned'])]);
@@ -757,13 +925,13 @@ function xeric_sleep_pass(array $t, PDO $db, array $now, ?array $endpoint = null
             $out['characters'][$h] = $rep;
             continue;                    // nothing written, no guard: tried again next tick in the window
         }
-        $d = xeric_sleep_dispose($t, $h, $raw, $c['rows']);
+        $d = xeric_sleep_dispose($t, $h, $raw, $c['rows'], $memo);
         $rep['dropped'] = $d['dropped'];
         if (!$dry) {
             $rep['kept'] = xeric_sleep_write($db, $h, $d['kept'], $night, [
                 'candidates' => count($c['rows']), 'pinned' => count($c['pinned']),
                 'kept' => count($d['kept']), 'dropped' => count($d['dropped']),
-            ]);
+            ], null, array_map(fn($r) => (int)$r['id'], $c['rows']));
         } else {
             $rep['kept'] = array_map(fn($k) => $k['text'], $d['kept']);
         }
