@@ -23,7 +23,7 @@
  * produced an event or was skipped, so a tick that finds no new window does no
  * work and costs no tokens. Nothing here needs to know when it last ran.
  *
- * THREE THINGS IT WILL NOT DO.
+ * FOUR THINGS IT WILL NOT DO.
  *
  *  1. Run a world that is stopped. Detaching the model pauses every world, and a
  *     paused world is paused for this too — otherwise "stop the clock" would
@@ -36,6 +36,13 @@
  *  3. Live an unbounded gap in one tick. A month off is ~240 model calls; doing
  *     them in one pass makes a tick that never ends and a GPU that never frees.
  *     A handful per world per tick, and a long gap fills over several minutes.
+ *  4. Spend a metered scene machine unless the world's template asked for
+ *     prerender. Drawing a room before anybody looks at it is a courtesy on the
+ *     owner's own electricity — the room the player is standing in, by default,
+ *     on a loopback machine — and a spend on anything that bills, so on a
+ *     machine like that it draws nothing until the template says
+ *     `media.scene.prerender` out loud (xeric_scene_prerender). A glance at a
+ *     room is consent to draw it; a heartbeat is consent to nothing.
  */
 
 declare(strict_types=1);
@@ -46,6 +53,7 @@ require_once __DIR__ . '/play-lib.php';
 
 const XERIC_HEART_MAX_WINDOWS = 6;    // hours lived per world per tick
 const XERIC_HEART_MODEL_WAIT  = 2.0;  // seconds to wait for the model before giving up
+const XERIC_HEART_SCENES      = 2;    // views drawn ahead per world per tick, when a world draws ahead
 
 $loud = in_array('--loud', $argv, true);
 $say  = function (string $s) use ($loud): void {
@@ -72,10 +80,42 @@ function xeric_heart_last_window(PDO $db, int $size): int
     return $max;
 }
 
+/**
+ * The rooms, drawn ahead of being looked at (thing 4 above).
+ *
+ * Whether to spend at all is the engine's to say — xeric_scene_ahead reads
+ * the world's prerender, the machine's cost and whether it answers — and the
+ * one rule here is the heart's own: a person waiting on a reply outranks a
+ * picture of a room, and on a local machine the picture and the reply are the
+ * same GPU, so a busy queue skips the rooms and the next tick draws them. The
+ * machine is resolved under the session this pass is acting for, because the
+ * machines screen is per session and one owner's key must never draw another
+ * owner's room; $up remembers, for the length of the pass, which machines
+ * answered, so twelve worlds on one machine are one probe and not twelve.
+ */
+function xeric_heart_rooms(string $slug, array $w, callable $say, array &$up): int
+{
+    if (xeric_queue_busy()) return 0;
+    try {
+        $r = xeric_scene_ahead($w['template'], $w['db'], dirname((string)$w['db_path']) . '/scenes',
+                               null, XERIC_HEART_SCENES, $up);
+    } catch (Throwable $e) {
+        $say($slug . ': rooms, ' . $e->getMessage());
+        return 0;
+    }
+    if ($r['mode'] === 'off') return 0;
+    if ($r['enqueued'] > 0) $say($slug . ': ' . $r['enqueued'] . ' to draw ahead (' . implode(', ', $r['keys']) . ')');
+    if ($r['done'] > 0)     $say($slug . ': drew ' . $r['done'] . ' ' . ($r['done'] === 1 ? 'view' : 'views'));
+    foreach ($r['notes'] as $n) $say($slug . ': ' . $n);
+    return $r['done'];
+}
+
 // ---------------------------------------------------------------------------
 
-$ticked = 0;
-$lived  = 0;
+$ticked  = 0;
+$lived   = 0;
+$drawn   = 0;
+$sceneUp = [];   // which scene machines answered, asked once per machine per pass
 
 foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
     $sid = basename($file, '.json');
@@ -128,7 +168,12 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         // measure — start it at the window it is standing in rather than at the
         // epoch, which would try to live through 1970.
         if ($last === 0) { $last = $here - 1; }
-        if ($here <= $last) continue;                     // no whole window has passed
+        if ($here <= $last) {                             // no whole window has passed
+            // The rooms do not wait for an hour: who is standing where turns
+            // on the half-hour as often as on the hour.
+            $drawn += xeric_heart_rooms($slug, $w, $say, $sceneUp);
+            continue;
+        }
 
         // A person waiting on a reply outranks a town having a Tuesday.
         if (xeric_queue_busy()) { $say($slug . ': model busy, next time'); continue; }
@@ -185,6 +230,11 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         } finally {
             xeric_queue_release($hold);
         }
+
+        // THE ROOMS, AFTER THE HOURS. Drawn once the sweep has lived them, so
+        // a picture shows the world the hours left behind — the death, the
+        // narrator's rain — and not the one they found.
+        $drawn += xeric_heart_rooms($slug, $w, $say, $sceneUp);
     }
 }
 
@@ -197,8 +247,8 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
 // the real thing rather than to a timer in the browser pretending.
 @file_put_contents(
     (string)xeric_web_config()['data_dir'] . '/heart.tick',
-    json_encode(['at' => time(), 'moved' => $ticked, 'lived' => $lived])
+    json_encode(['at' => time(), 'moved' => $ticked, 'lived' => $lived, 'drawn' => $drawn])
 );
 
-$say('tick: ' . $ticked . ' xerics moved, ' . $lived . ' hours lived');
+$say('tick: ' . $ticked . ' xerics moved, ' . $lived . ' hours lived, ' . $drawn . ' views drawn');
 exit(0);

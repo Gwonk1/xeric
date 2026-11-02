@@ -354,6 +354,13 @@ function xeric_state_alters(): array
         // backfill is needed. -1 is a deliberate third answer: a silence with
         // two people in the room that nobody in particular can be blamed for.
         ['signals', 'player', 'INTEGER'],
+        // A scene row's CHANNEL — 'look', a picture of the room, or 'sound',
+        // what you hear in it — and the light bucket a look was asked in,
+        // which is what lets a client show one room through its day. Every
+        // row from before either existed was a look of unrecorded light, and
+        // the defaults say exactly that, so nothing on disk changes meaning.
+        ['scene_jobs', 'channel', "TEXT NOT NULL DEFAULT 'look'"],
+        ['scene_jobs', 'light',   "TEXT NOT NULL DEFAULT ''"],
     ];
 }
 
