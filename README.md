@@ -36,7 +36,7 @@ session.
 
 **Beta.** The engine runs end to end: the forge builds a world from an
 interview, the review step lets you edit or reroll any of it, and the play view
-is a world you can talk to and skip time inside. Thirty-two test suites, run on
+is a world you can talk to and skip time inside. Thirty-six test suites, run on
 PHP 8.1 and 8.3 on every push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml));
 how to run them yourself is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and what is
 known and not yet fixed is in [`docs/PUNCHLIST.md`](docs/PUNCHLIST.md).
@@ -54,7 +54,10 @@ voice is never chosen by gender.
 [`docs/CONTINUITY.md`](docs/CONTINUITY.md) is the continuity benchmark: the
 fixture world lived through three days and scored, and how to read it.
 [`docs/API.md`](docs/API.md) is the client API's contract, with a `curl` per
-route.
+route. [`docs/STAND.md`](docs/STAND.md) is the stand page: linking a headset,
+the secure-context rule, and what each headset can do.
+[`docs/BUDGET.md`](docs/BUDGET.md) is the per-world budget: a ceiling per
+world-day on tokens, renders, clips and hearings.
 
 ## A model that is not on this machine
 
@@ -79,8 +82,8 @@ A trailing `/v1` is stripped. See [`QUICKSTART.md`](QUICKSTART.md).
 | **engine** | PHP + SQLite + cron sweeps. Prompt assembly, event generation, proactive contact, photo pipeline, temperature physics. |
 | **setup forge** | A one-time pass by a capable model (remote or local) that writes your world. Runtime then runs on small local models. |
 | **story overlay** | An optional mystery laid over a finished world as a sidecar file: beats, who is wrong about what, and an ending the world survives. |
-| **client API** | `forge/web/api.php`: the world as data, versioned (`v1`), for headsets and other clients — read-only today, with a pulse to poll. See [`docs/API.md`](docs/API.md). |
-| **media** | Photo composition (identity-stable characters via seed + appearance anchoring); the viewport — the room you stand in, as a panorama or a still, with its sound; a voice for every character, dealt from a seed; and ears — hold to talk, transcribed into the composer for you to send. All composed in code and dormant until you choose a machine; no machine, no renders, no errors. |
+| **client API** | `forge/web/api.php`: the world as data and the verbs, versioned (`v1`), with a pulse to poll and per-device tokens. Its first client is the stand page, `forge/web/stand.php` — nothing but the room, for a headset first and any browser second. See [`docs/API.md`](docs/API.md) and [`docs/STAND.md`](docs/STAND.md). |
+| **media** | Photo composition (identity-stable characters via seed + appearance anchoring); the viewport — the room you stand in, as a panorama or a still, with its sound, or a splat you walk inside in our own WebGL viewer; the drawn map, the town from above beside the room from inside; a voice for every character, dealt from a seed; and ears — hold to talk, transcribed into the composer for you to send. All composed in code and dormant until you choose a machine; no machine, no renders, no errors. |
 
 ## License
 

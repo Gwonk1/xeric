@@ -139,6 +139,30 @@ XERIC_EARS_KEY=...                       # environment only, never stored
 view offers *talk to the room*: say something, and the people there answer one
 at a time — or don't, and the room may carry on a line or two without you.
 
+**Put on a headset.** On the machine Xeric runs on, open `link.php`, name the
+device and press *Make a code*; on the headset, open `stand.php?w=<slug>`,
+press **link** and type the eight characters within five minutes (on `--lan`
+the link page also shows the code as a QR). The stand page is the room and
+nothing else: press a name to turn to them, hold to talk, *step inside* for
+the headset. WebXR and the microphone need a secure context — https, or a
+page on this machine — so plain `--lan` http gets the 2D view with neither;
+Quest Link, `adb reverse` and `tailscale serve` are the three setups that
+work. See [`docs/STAND.md`](docs/STAND.md).
+
+**Set a budget.** A world's template may carry a ceiling per world-day:
+
+```json
+"budget": { "tokens_per_day": 200000, "renders_per_day": 20, "clips_per_day": 0,
+            "hearings_per_day": 0, "metered_only": true }
+```
+
+Every default is 0, and 0 means no ceiling, so a world without the block
+behaves as before. `metered_only` (on by default) counts only machines that
+bill — a remote model, scene, voice or ears machine — and never rations your
+own electricity unless you set it false. A day is the world's date, not the
+wall's. Out of tokens, the heart stops living hours where it ran out; out of
+renders, rooms wait. See [`docs/BUDGET.md`](docs/BUDGET.md).
+
 ## Reading the inspector — the tuning tool
 
 `why.php?w=<slug>` is the index, and it is the thing to reach for whenever the

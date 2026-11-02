@@ -64,6 +64,21 @@ you will notice.
 
 ## Next
 
+### A world with intent — what is next
+
+M3 in [docs/FUTURE.md](docs/FUTURE.md#m3--a-world-with-intent), first three
+items, in order:
+
+- **Wire the Narrator's ask into the play view**, in place of the 30-word
+  hint. `xeric_narrator_ask` exists, is read-only, and is CLI only today.
+- **The Director** — changes the set, never the performance. Its first move
+  is an encounter you walk into: the write-ahead lean pointed at presence
+  (below).
+- **Confidences, formed.** `xeric_confide_form` and `_block` have no caller
+  outside their tests; the sweep only breaks and reads confidences. A
+  confidence the player can betray is the highest-stakes event the engine
+  can offer.
+
 ### The Narrator
 
 The other god of the world: full canon, no walls, the only voice you can ask
@@ -134,6 +149,29 @@ cost of several speakers on one llama.cpp slot is to be measured first
 ([punchlist](docs/PUNCHLIST.md)). Next for the room is a second human in it —
 two people at the same table, each through their own walls — which is M4,
 "Together", in [docs/FUTURE.md](docs/FUTURE.md).
+
+### Stand in it
+
+**Shipped**, and **untested on a real headset**: everything below has run
+against fakes in Node and in headless Chrome, and nobody has yet worn one.
+`forge/web/stand.php` is a page that is nothing but the room, a client of
+the [client API](docs/API.md) and nothing else, so its service worker can
+keep it for when the box is out of reach. A press on a name turns to them; a
+hold talks to them, or to the room when two or more are there; in a headset
+the names are quads at their bearings, the nearest within 7° of a
+controller's or a hand's ray wins, what was heard is a caption with a cancel
+before it is said, and the answer comes back from where the speaker stands.
+A device is linked with a code from `link.php`; off a secure context the page
+says so in one line and offers neither the headset nor the microphone. See
+[docs/STAND.md](docs/STAND.md). Beside it: **walking inside a splat**, in
+our own WebGL (`xeric-splat.js`, a depth sort in a worker from our own
+origin, no WebAssembly; PLY and `.splat`, with SPZ and SOG still downloads),
+three metres from the door because leaving the room is a trip; **the drawn
+map**, the town as SVG above the where list, every mark the list's own
+`go()`; and **a budget per world-day** — tokens, renders, clips, hearings —
+that the heart, the reapers, the look button, the voices, the ears and the
+room read before they spend, off until the template sets a ceiling
+([docs/BUDGET.md](docs/BUDGET.md)).
 
 ### Death, revival, and permadeath
 
@@ -262,9 +300,8 @@ Next:
   *talk to the room* ([above](#the-room--three-way-conversation)).
 - **Streaming**, when a world model that streams can hold a room still — today
   they reinvent the booths when you turn your head.
-- **Walking inside a splat.** The envelope already accepts splats and meshes;
-  the play view offers them as downloads. Standing in one is a viewer, and
-  walking out of its door must still be a trip that costs minutes.
+- ~~**Walking inside a splat.**~~ Shipped — our own WebGL viewer, three
+  metres from the door ([above](#stand-in-it)); meshes are still downloads.
 
 ---
 

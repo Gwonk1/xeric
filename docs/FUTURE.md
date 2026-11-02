@@ -95,7 +95,7 @@ shipped; some of what it calls built is wired to nothing.
 | Story overlays | Built, filed under Later | multiple overlays, red herrings, a six-stage curve |
 | A world can start in 1873 | Built | tested |
 | More than one model | Beyond the roadmap | a per-character pin exists for say and watch; not for sweeps |
-| The viewport | Built this week | streaming, splat-walking and the room-in-view are not |
+| The viewport | Built | the room in the view [0b75ac0] and walking inside a splat, in our own WebGL renderer [934bbe6]; streaming is not |
 | Voices | Built this week | VOICE.md still has one "not shipped" line to fix |
 | Design rules | Held | the four gendered-prose sites and four more were fixed, and render-test now tokenises every engine file and fails on a gendered pronoun in a string literal, file:line, with a planted pronoun to prove the scan sees [e5a73b4] |
 
@@ -107,22 +107,28 @@ Other facts the plan has to respect:
   position (`player.where`) and the thread per character are shared, and
   messages carry no player id. Guests see each other only as a sidebar roster.
   Walking, looking, rewind, fate, photos and power are owner-only.
-- **CI exists; there is still no lint and no token budget.**
+- **CI exists; there is still no lint. There is now a token budget** — a
+  per-world ceiling on tokens, renders, clips and hearings per world-day,
+  read before every spend, off until the template sets one
+  (`engine/budget.php`, [`docs/BUDGET.md`](BUDGET.md)) [934bbe6].
   `.github/workflows/tests.yml` runs every suite on PHP 8.1 and 8.3 on every
   push and pull request, with Chrome and Node installed so the smoke and
   viewer suites really run, and `XERIC_REQUIRE_BROWSER` /
   `XERIC_REQUIRE_NODE` turning a missing tool into a failure there [42a3bd4].
-  The suite is 32 suites and about 3,700 assertions: 3,678 `ok` lines from
-  the 31 suites that ran in this sandbox, counted by running the CONTRIBUTING
-  loop with `XERIC_SOLO=0` and summing lines that start `ok`; the smoke
-  test is excluded because full Chrome hangs here without D-Bus and no
-  headless shell is installed, and demo-test's one DNS check printed SKIP.
+  The suite is 36 suites and about 4,100 assertions: 4,096 `ok` lines from
+  the 35 suites that ran in this sandbox after 934bbe6, counted by running the
+  CONTRIBUTING loop with `XERIC_SOLO=0` and summing lines that start `ok`;
+  the smoke test is excluded because full Chrome hangs here without D-Bus and
+  no headless shell is installed, and demo-test's one DNS check printed SKIP.
+  The four Node-driven suites (viewer, map, splat, stand) ran.
   The limits are message, skip, reroll and forge counts per hour and per IP,
   off unless caps are set. The meter is a receipt. The Node harness for the
   viewer's JavaScript is committed (`viewer-test.php` + `viewer-test.js`, 84
   assertions). heart.php is still checked only for HTTP denial and the
   detached workers only by source grep.
-- **The big files.** play-lib.php 6,762 lines with 139 functions (24 of them
+- **The big files.** [After 934bbe6: seven files over 2,000 lines — see
+  Measures; play-lib.php is 2,920 since its parts moved out in 5ef82aa.]
+  At the plan: play-lib.php 6,762 lines with 139 functions (24 of them
   machine discovery that belongs in model.php, and about 1,140 lines of CSS);
   forge.php 5,974; play.php 4,366 of which about 3,070 are inline JavaScript
   including the WebGL and WebXR viewer; review.php about 1,140 lines of inline
@@ -283,6 +289,23 @@ Done when: a person in a headset stands in a rendered room, looks at Dot's
 tag, presses, says "evening", and hears Dot answer from Dot's direction — and
 the continuity score of the fixture world is a number in the repo that has
 not gone down since the week before.
+
+**Shipped** [934bbe6], with the client API's two halves before it [c74f580,
+c0e7c5c] and the benchmark before that [4dd1c46]: the stand page
+(`forge/web/stand.php`, its service worker `stand-sw.php`, and the stand
+parts of `xeric-view.js` — tags as quads, the 7° ray, hold to talk with a
+caption and a cancel, the reply panned from the speaker's bearing;
+[`docs/STAND.md`](STAND.md)); walking inside a splat (`xeric-splat.js` and
+`xeric-splat-worker.js`, PLY and `.splat`, splats converted to PLY on arrival
+by `engine/splat.php`; SPZ and SOG not yet); the drawn map
+(`forge/web/play-map.php`, `xeric-map.js`); and the per-world budget
+(`engine/budget.php`, [`docs/BUDGET.md`](BUDGET.md)). **Done when is partly
+met.** The headset path — stepping inside, the ray, hold to talk, the panned
+reply — has run only against fakes in Node and headless Chrome, never on a
+real headset; nobody has yet stood in the Bluebird, said "evening" and heard
+Dot from Dot's direction. The continuity half holds: the score is in the repo
+(`engine/fixtures/continuity-baseline.json`) and unchanged, since nothing in
+934bbe6 touched the benchmark or its baseline.
 
 ### M3 — "A world with intent"
 
@@ -474,7 +497,7 @@ A number per promise, tracked in the repo.
 | Local-first | cloud calls at runtime: zero; a room drawn on a loopback machine: possible |
 | Cheap surface | lines of code for a new client against the API; the stand page is the first datum |
 | Cost | tokens, renders and clips per simulated world-day, from the benchmark's cost class |
-| Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six: `wc -l forge/web/*.php engine/*.php` finds play-lib.php 7,269, play.php 4,760, review-lib.php 2,386, sweeps.php 2,162 and review.php 2,094, and `forge/forge.php`, outside that glob, is 5,974) |
+| Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six. After 934bbe6: about 4,100 assertions — 4,096 `ok` lines over 35 of 36 suites, by the CONTRIBUTING loop with `XERIC_SOLO=0`, smoke excluded — and seven: `wc -l forge/web/*.php engine/*.php forge/forge.php` finds forge.php 5,974, play.php 4,200, play-lib.php 2,920, review-lib.php 2,386, sweeps.php 2,162, review.php 2,094 and room.php 2,041) |
 | Time to a world | minutes from install to a forged, reviewed world on a 12B |
 | Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After this pass: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are) |
 
@@ -506,9 +529,11 @@ shipped it.
    above; the "Nine test suites" line in the README.~~ **Shipped** [42a3bd4]
    — `docs/PUNCHLIST.md` and the README; ROADMAP.md's headings corrected in
    the docs pass after 0b75ac0.
-6. Split play-lib.php: machine discovery to model.php, CSS to a file, the
-   readers to their own files. Lift the viewer JavaScript. **In progress** —
-   play-lib.php has grown to 7,269 lines in the meantime.
+6. ~~Split play-lib.php: machine discovery to model.php, CSS to a file, the
+   readers to their own files. Lift the viewer JavaScript.~~ **Shipped**
+   [5ef82aa] — play-lib.php 7,269 → 2,920 lines; model-lib, play-shelf,
+   play-view, play-book, play-watch; xeric.css and xeric-view.js as hashed
+   static files.
 7. ~~The continuity benchmark's CI-sized version with the first three probes:
    W3 for Janelle at table night, Ruth's kept promise, the diner's Saturday.~~
    **Shipped** [4dd1c46] — 29 probes in seven classes, with a baseline;
@@ -520,13 +545,16 @@ shipped it.
    Appendix A's open questions were settled.
 10. Arrivals and departures in view; look-around with the phone. **First half
     shipped** [0b75ac0] (`xeric_travel_comings`, the line in the view and the
-    narrator row inside a live room); **phone look-around in progress**.
+    narrator row inside a live room); **second half shipped** [5ef82aa]
+    (look around with the phone, off by default, iOS asked inside the
+    gesture).
 11. ~~`tools/proxies/` with a panorama service, a world service and a local
     image server.~~ **Shipped** [0d3208c] — every vendor field marked
     unverified.
 12. ~~The client API's read half and the pulse, with its contract test.~~
     **Shipped** [c74f580] — `forge/web/api.php`, `docs/API.md`. **The write
-    half is in progress.**
+    half shipped too** [c0e7c5c] — every verb, the device-link ceremony,
+    tokens only over a secure context or loopback, the Host pin.
 
 Everything after that is M2.
 
@@ -1172,7 +1200,8 @@ current player. Notify is ntfy POST only, per session. Limits are off unless
 caps are set: 30 messages, 10 skips, 24 rerolls an hour, 5 forges a day per
 session; 10 forges and 20 sessions a day per IP; 150 sessions, 100 worlds,
 1 GB global; queue wait 180 s, hold 420 s, depth 8, 2 per visitor. There is
-no token budget.
+no token budget. [Since 934bbe6 there is: a per-world ceiling per world-day,
+`engine/budget.php`, `docs/BUDGET.md`.]
 
 **Platform.** bootstrap enforces PHP 8.1+; docblocks say 8.2+; only
 8.1-era features were found by grep; everything here ran on 8.3.6. Checked

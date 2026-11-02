@@ -41,6 +41,29 @@ Filed by the commits since the plan landed, not yet fixed.
 - **The smoke test cannot run under full Chrome in a sandbox without D-Bus** —
   `forge/web/tests/smoke-test.php` fails in 20 s and says so; `chrome-headless-shell` via
   `XERIC_CHROME` works (42a3bd4).
+- **SPZ and SOG splats are not decoded** — `engine/splat.php` `xeric_splat_to_ply()` keeps
+  them as they came and `forge/web/xeric-splat.js` `sniff()` refuses them; a server-side
+  decoder with no WebAssembly would convert them to PLY on arrival (934bbe6).
+- **The splat viewer assumes y up** — `forge/web/xeric-splat.js`, the view matrix; a
+  y-down capture appears upside down, and the row needs a per-row up-axis flag (934bbe6).
+- **XR tags sit about 6.8° below the horizon** — `forge/web/xeric-view.js` `tagPos()` puts
+  them at y = −0.12, so a horizon-level ray at the right bearing is already near
+  `raySelect()`'s 7° limit (934bbe6).
+- **The walk-inside view has no XR mode** — `forge/web/xeric-splat.js` is a flat canvas;
+  stepping inside a splat in a headset is not built (934bbe6).
+- **A fork inherits the owner's spend for the day** — `forge/web/session.php`
+  `xeric_session_fork_clear()` leaves the `spend` table, so a fork starts its world-day
+  with the owner's ledger; it could clear `spend` (934bbe6).
+- **why.php does not say why a world stopped on budget** — `forge/web/why.php`; the heart
+  writes `budget.stopped` and `engine/budget.php` `xeric_budget_why()` has no caller
+  outside its test; one call would show it (934bbe6).
+- **The headset and talk path is untested on a device** — `forge/web/xeric-view.js`
+  `standXR`, `raySelect`, `panAt`; run only against fakes in Node and headless Chrome
+  (`forge/web/tests/stand-test.js`, the smoke test), never on a Quest, Android XR or
+  Vision Pro (934bbe6).
+- **The stand page's room poll is untested in a browser** — `forge/web/stand.php`
+  `roomPoll()`; stand-test checks that the page's inline script parses and runs the
+  viewer's parts, not the page's own polling (934bbe6).
 
 ## Closed
 
@@ -60,6 +83,8 @@ the fix and passing since.
 - **`xeric_room_messages` dropped narrator-set weather** — `engine/room.php` (e5a73b4).
 - **The fork scrub left duet and room diaries** — `forge/web/session.php` (e5a73b4).
 - **dayView's "earlier:" never cleared** — play-lib writes `data-now` now (0b75ac0).
+- **No token budget** (was deferred by decision) — the per-world budget, `engine/budget.php`,
+  `docs/BUDGET.md` (934bbe6).
 
 ## Deferred by decision
 
@@ -83,8 +108,6 @@ Known, understood, and left on purpose until something forces them.
 - **The cast-to-cast seam is dormant** — `engine/room.php:44`, `engine/constructs.php:58`:
   expectations point only at the user, so the notch for one naming the last speaker
   reads a field no row carries. Tested so the day it lights up is not the day it breaks.
-- **No token budget** — limits are counts (messages, skips, rerolls, forges); the
-  per-world budget is M2.
 
 ## Unwired
 
