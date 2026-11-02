@@ -475,7 +475,7 @@ panorama, a splat and a stream, and a person cannot tell from the diner which
 machine drew it.
 
 **Shipped** ([cc381c0], [a304675], [377bb8a], and the follow-up that closes
-the plan): the layout (`engine/layout.php` — the room as a box, a depth map
+the plan [330544f]): the layout (`engine/layout.php` — the room as a box, a depth map
 and a segmentation map in pure PHP, never in the fingerprint), the stream
 (`engine/stream.php` — off by default, started only by the owner's "go live",
 refused on a billing machine without `remote: true`, metered by the second,
