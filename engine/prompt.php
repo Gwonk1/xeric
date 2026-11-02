@@ -466,7 +466,11 @@ function xeric_prompt_fixture_voice(array $t, array $f): array
 /** Static behaviour rules. Sit next to the voice block because they are as fixed as it is. */
 function xeric_prompt_rules(array $t, string $speakerHandle, string $eff = '', string $who = ''): array
 {
-    $userName = $who !== '' ? $who : (trim((string)($t['user']['name'] ?? '')) ?: 'him');
+    // A nameless user is texted as their own object pronoun, from the template
+    // (xeric_pronouns: they/them when none is on record). This fallback was a
+    // literal 'him' — the engine deciding a gender for exactly the user it knew
+    // least about.
+    $userName = $who !== '' ? $who : (trim((string)($t['user']['name'] ?? '')) ?: xeric_pronouns($t)['obj']);
     $out = [
         'HOW YOU ANSWER',
         // THE RATING IS A STYLE, not only a gate (owner, 2026-08-02): a TV-PG

@@ -338,7 +338,8 @@ function xeric_room(array $t, PDO $db, array $handles, array $now, array $endpoi
         $messages = xeric_room_messages($t, $speaker, array_values(array_diff($handles, [$speaker])),
             $system[$speaker], $lines, $tails[$speaker], $roomNow, $walls[$speaker], $deaths, $names,
             $lines === [], $i === $beats - 1,
-            $notice !== null ? $names[$notice] . ' has not said a word in a while. You may notice that, or let it be.' : '');
+            $notice !== null ? $names[$notice] . ' has not said a word in a while. You may notice that, or let it be.' : '',
+            $db);
 
         $u  = [];
         $t0 = microtime(true);
@@ -801,8 +802,16 @@ function xeric_room_scene(array $t, string $me, array $others, array $room, arra
  */
 function xeric_room_messages(array $t, string $me, array $others, string $system, array $lines,
                              array $scene, array $now, array $walls, array $deaths, array $names,
-                             bool $opening, bool $closing, string $notice): array
+                             bool $opening, bool $closing, string $notice, ?PDO $db = null): array
 {
+    // $db IS FOR THE WEATHER, and until now it was read out of thin air: the
+    // call below passed `$db` to xeric_prompt_now_block() and this function had
+    // no such parameter, so PHP handed it null — the bug the duet had and fixed
+    // (duet.php, xeric_duet_messages). The derived sky never needed it; what
+    // `$db` carries is the NARRATOR'S HAND, xeric_weather_told(), the one thing
+    // allowed to beat the derivation. Without it a narrator could put rain over
+    // the town and three people standing in it would talk about hazy heat.
+    // Optional, so the signature stays back-compatible; the room loop passes its own.
     $coach = $scene;
     if ($notice !== '') $coach[] = $notice;
     if ($opening) {

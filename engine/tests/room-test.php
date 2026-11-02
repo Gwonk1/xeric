@@ -675,6 +675,33 @@ ok('mapping: the scene seats them in the room the schedule agreed on',
     str_contains((string)$m21d[count($m21d) - 1]['content'], 'First Lutheran'));
 
 // ---------------------------------------------------------------------------
+// THE NARRATOR'S SKY REACHES A ROOM.
+//
+// xeric_room_messages() passed `$db` to xeric_prompt_now_block() and had no
+// such parameter, so PHP handed it null — the duet's bug, copied. The derived
+// sky was always there; the narrator's hand (xeric_weather_told, set through
+// xeric_weather_set) never was. Checked on every chat call of a real room run,
+// not on the helper alone, so the loop's wiring is what is under test.
+// ---------------------------------------------------------------------------
+
+echo "\n# the sky a room stands under\n";
+
+$dbWx = fresh_db('weather'); $cWx = [];
+xeric_weather_set($dbWx, $SUN, 'Rain since before light, and it has not let up.');
+xeric_room($T, $dbWx, $TRIO, $SUN, stub_room($cWx), ['seed' => 7, 'beats' => 4]);
+$wxChats = array_values(array_filter($cWx, fn($c) => $c['tag'] === 'chat'));
+ok('weather: every voice in the room stands in the rain the narrator called for',
+    $wxChats !== [] && array_filter($wxChats,
+        fn($c) => !str_contains(json_encode($c['msgs']), 'Rain since before light')) === [],
+    (string)count($wxChats));
+$dbWx0 = fresh_db('weather-none'); $cWx0 = [];
+xeric_room($T, $dbWx0, $TRIO, $SUN, stub_room($cWx0), ['seed' => 7, 'beats' => 4]);
+ok('weather: and a room nobody set the sky for reads the derived one, not the rain',
+    !str_contains(json_encode($cWx0), 'Rain since before light')
+    && xeric_weather_line($T, $SUN, null) !== ''
+    && str_contains(json_encode($cWx0), trim((string)json_encode(xeric_weather_line($T, $SUN, null)), '"')));
+
+// ---------------------------------------------------------------------------
 
 foreach ($DBFILES as $f) {
     foreach ([$f, $f . '-wal', $f . '-shm'] as $p) @unlink($p);

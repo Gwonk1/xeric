@@ -43,6 +43,22 @@
  *     machine like that it draws nothing until the template says
  *     `media.scene.prerender` out loud (xeric_scene_prerender). A glance at a
  *     room is consent to draw it; a heartbeat is consent to nothing.
+ *
+ * AND IT LEARNS, THE WAY A SKIP DOES. tick-worker.php has always wrapped the
+ * hours it lives in the learn pass — settle what the last stretch left hanging,
+ * pend what this one offered, distil when the crumbs are due — and this file
+ * never did. A week lived only here judged no hour, counted no reply, and so
+ * never turned a friendly conversation into trust: replies become trust only
+ * in the distil pass's counting layer (trust.php). Now each pass that lives at
+ * least one window runs xeric_learn_pass() (engine/learn.php, the same steps
+ * in the same order as the skip) at the end of its hold, after the hours and
+ * the phone, so what it pends includes whoever just texted. It runs INSIDE the
+ * queue slot the hours took, so it never takes the model from a person, and
+ * the model half is skipped (`no_model`, counting still runs) once that hold
+ * has expired or the owner has drained the GPU — the skip's own courtesy. A
+ * pass that lived no window learns nothing, and the helper refuses a second
+ * run for the same landed moment, so it is idempotent per stretch like the
+ * sweep guards it sits beside.
  */
 
 declare(strict_types=1);
@@ -225,6 +241,7 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             // world actually landed on.
             $after = xeric_clock_now($db, $T);
             $ping  = xeric_proactive_check($T, $db, $endpoint, $after, ['stories' => $w['stories']]);
+            $livedEvents = (array)($r['events'] ?? []);
             if ($ping !== null) {
                 $say($slug . ': ' . (string)($ping['name'] ?? 'somebody') . ' texted you');
                 if (xeric_notify_on($notify, 'ping')) {
@@ -234,10 +251,23 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
                          'priority' => 4]);
                 }
             }
+
+            // THE LEARN PASS, last thing under the hold (header). Same order
+            // as the skip: judge the last stretch, write down this one —
+            // including the text just sent — and distil when due.
+            $lp = xeric_learn_pass($db, $T, $endpoint, (int)$now['epoch'], $livedEvents,
+                                   is_array($ping) ? $ping : null, (int)$after['epoch'],
+                                   ['no_model' => xeric_queue_expired($hold['hold'] ?? $hold), 'timeout' => 60]);
+            if ($lp['learned'] > 0) $say($slug . ': learned ' . $lp['learned'] . ' thing' . ($lp['learned'] === 1 ? '' : 's'));
         } catch (Throwable $e) {
             $say($slug . ': ' . $e->getMessage());
         } finally {
-            xeric_queue_release($hold);
+            // The slot itself is under 'hold' — the flock handle and the hour
+            // it was taken at live there, not on the take's envelope, which
+            // carries only the ticket. Released by the envelope, the lock file
+            // stayed held until the process exited and the queue's average
+            // learned that every heart hold took one second.
+            xeric_queue_release($hold['hold'] ?? $hold);
         }
 
         // THE ROOMS, AFTER THE HOURS. Drawn once the sweep has lived them, so

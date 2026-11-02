@@ -556,6 +556,17 @@ function xeric_session_vacuum_missing(Throwable $e): bool
  *  • what a character remembers of those threads. `source='auto'` is exactly the
  *    memories chat.php harvested from somebody else's conversation; 'seed' and
  *    'event' are the world's own history and stay.
+ *  • and the scenes the owner set going. A duet's and a room's diaries
+ *    (`source='duet'`, `'room'`, and anything under `room.` — a room the
+ *    player stood in writes there) are what two or three people took away from
+ *    a conversation the OWNER asked for, watched, and in a room took part in.
+ *    This list said only 'auto' because it was written before duets and rooms
+ *    existed, so a stranger's Ruth went on remembering an afternoon with Dot
+ *    that nothing in the stranger's copy says ever happened — the transcript
+ *    that would explain it went with `messages` and `conversations` above. A
+ *    memory with no conversation behind it is exactly the kind a character
+ *    repeats with total confidence and nobody can trace. Read back too: a
+ *    diary that survived the delete is a reason to refuse the handover.
  *  • the per-player bookkeeping — how far each person has been read, harvested
  *    and learned from — which is meaningless about a player who has not arrived.
  *  • the behaviour crumbs and the lessons distilled out of them (learn.php).
@@ -572,12 +583,20 @@ function xeric_session_vacuum_missing(Throwable $e): bool
  *
  * @return bool  the copy is clear and safe to hand to a stranger
  */
+/**
+ * The memories that are a previous player's lived part, as one SQL predicate,
+ * shared by the clear and its read-back so the two cannot drift apart: what
+ * chat harvested ('auto'), duet and room diaries ('duet', 'room', 'room.*').
+ * (A dot is not a LIKE wildcard, so 'room.%' is exactly "room." and anything.)
+ */
+const XERIC_FORK_LIVED_MEMORIES = "source IN ('auto', 'duet', 'room') OR source LIKE 'room.%'";
+
 function xeric_session_fork_clear(string $path): bool
 {
     $sql = [
         'DELETE FROM messages',
         'DELETE FROM conversations',
-        "DELETE FROM memories WHERE source = 'auto'",
+        "DELETE FROM memories WHERE " . XERIC_FORK_LIVED_MEMORIES,
         "DELETE FROM arcs WHERE key LIKE 'proactive.%' OR key LIKE 'extract.%' OR key LIKE 'learn.%'",
         // skip:% goes too — skip:last is the OWNER'S rewind manifest, and a
         // visitor who never pressed skip was being offered "take back the 6h"
@@ -666,6 +685,18 @@ function xeric_session_fork_is_clear(string $path): bool
                 xeric_web_log('fork: ' . basename($path) . " still holds $n rows in $t, not handing it over");
                 return false;
             }
+        }
+        // The lived memories, read back for the same reason as the transcript:
+        // a diary is a line the stranger's cast would SAY. Absent table on an
+        // ancient world is nothing to leak, as above.
+        try {
+            $n = (int)$db->query('SELECT COUNT(*) FROM memories WHERE ' . XERIC_FORK_LIVED_MEMORIES)->fetchColumn();
+            if ($n > 0) {
+                xeric_web_log('fork: ' . basename($path) . " still holds $n lived memory row(s), not handing it over");
+                return false;
+            }
+        } catch (Throwable $e) {
+            // no memories table: nothing there to leak
         }
         // AND THE OWNER'S OTHER PEOPLE, read back for the same reason the
         // transcript is: a guest row is the one piece of this that reaches a

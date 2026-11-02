@@ -1286,8 +1286,17 @@ function xeric_sweep_groups(array $t, array $now, array $exclude = [], int $maxP
 
     $groups = [];
 
+    // NOBODY IS DEALT INTO A GAME THEIR WALLS HIDE (xeric_table_barred). An
+    // hour cast at a table's place on its night IS the game, so the group
+    // itself is where the wall has to hold: filtered here, every caller of
+    // this function — the chooser, the room, the benchmark's W3 probe — gets
+    // the same answer to "who may be in that room tonight". Template-only.
+    $barred = static fn(string $h, ?string $place): bool
+        => $place !== null && xeric_table_barred($t, $place, $now, $h);
+
     // -- in the same room already ------------------------------------------
     foreach ($atWork as $place => $handles) {
+        $handles = array_values(array_filter($handles, fn($h) => !$barred((string)$h, (string)$place)));
         if (count($handles) < 2) continue;
         $groups[] = [
             'handles' => array_slice($handles, 0, $maxPeople),
@@ -1299,7 +1308,10 @@ function xeric_sweep_groups(array $t, array $now, array $exclude = [], int $maxP
 
     // -- somebody dropping in on somebody who is working -------------------
     foreach ($atWork as $place => $handles) {
+        $handles = array_values(array_filter($handles, fn($h) => !$barred((string)$h, (string)$place)));
+        if ($handles === []) continue;
         foreach ($free as $visitor) {
+            if ($barred((string)$visitor, (string)$place)) continue;
             $set = array_slice($handles, 0, $maxPeople - 1);
             $set[] = $visitor;
             $groups[] = [
@@ -1317,7 +1329,12 @@ function xeric_sweep_groups(array $t, array $now, array $exclude = [], int $maxP
     $n    = count($free);
     for ($i = 0; $i < $n; $i++) {
         for ($j = $i + 1; $j < $n; $j++) {
-            $where = $open !== [] ? $open[array_rand($open)] : null;
+            // A pair off shift meets somewhere open — and not at a game
+            // either of them must not know of. A filter that removes nothing
+            // leaves the same list, so every other draw rolls as it always did.
+            $can = array_values(array_filter($open,
+                fn($p) => !$barred((string)$free[$i], (string)$p) && !$barred((string)$free[$j], (string)$p)));
+            $where = $can !== [] ? $can[array_rand($can)] : null;
             $groups[] = [
                 'handles' => [$free[$i], $free[$j]],
                 'where'   => $where,

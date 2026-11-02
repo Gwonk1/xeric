@@ -63,6 +63,43 @@ people, and the same explanation should not work on both. No explanation at
 all is its own answer: the trust delta stands, the residue hardens into an
 ordinary memory, and the observable version of it is available to travel.
 
+## Keeping it
+
+A promise used to have only bad endings. An expectation could go from open to
+missed, and from missed to repaired or hardened; a death released it. Nothing
+closed one because the promised thing *happened* — so the user could walk into
+the Bluebird on Friday morning with Ruth's casserole dish, and four hours later
+the fuse burned anyway: Ruth waited, lost a notch of trust, and showed it in
+small ways. A ledger that can only record failure is a grievance generator.
+
+**Kept** is the fourth ending, and it is reached two ways, both gated in code
+(`xeric_expect_keep`, `xeric_expect_keep_present` in `engine/constructs.php`):
+
+1. **The body was there.** On the day the promise was for — from that local
+   midnight until the miss would fire — whoever promised is standing where the
+   listener is. For the person at the centre that is the player's body
+   (`player.where`), and only if it *arrived after* the promise was made, so a
+   promise said across the counter is not kept by the act of saying it. For a
+   promise between two townspeople it is their own week seating them in the
+   same room. Position and schedule, no model. The constructs tick checks this
+   *before* it burns any fuse.
+2. **The extractor heard it done.** The same harvest that reports `explained`
+   reports `kept`: the user actually did, in this conversation, what they had
+   promised. The model spots it; code decides whether there is an open
+   expectation of *that* player, formed before this turn, whose miss has not
+   fired — and closes the soonest one. The same split as repair.
+
+Keeping it is the mirror of missing it: **one notch of trust** through the
+same bounded path (trust.php: past the contact band, "only the things that
+cost something move it: a promise kept"), against whoever actually promised —
+a townsperson keeping their word to another never credits the player — and
+**one ordinary memory** ("Walt said … and did."). **No event**: a person
+turning up as they said is not something a town retells, and gossip feeds on
+what was charged. The block says it in one coarse line — "said … and did,
+Friday (the casserole dish). Nothing is owed on it." — so the listener's
+prompt and the inspector read *kept*, never *expecting*. A promise already
+missed cannot be kept by turning up late; that is what explaining is for.
+
 ## Time travel is real
 
 A skip is real time passing. Expectations fire **during** skips: the fuse
@@ -119,6 +156,14 @@ grudge reads as the model being moody.
    one, so the menu grows a page and not a pile.
 
 ## Still open
+
+- **A bare day is due at its midnight.** `xeric_promise_when("Thursday")`
+  resolves to 00:00 Thursday, so with the four-hour grace "I'll be there
+  Thursday" misses at four in the morning, before the day it named has begun,
+  and its keep window is those four hours. A promise with a time word
+  ("Friday morning") is unaffected. Found while adding `kept`; not changed
+  here because the miss tests and the benchmark's scenario both pin the
+  current resolution.
 
 - **Which sibling second.** Gossip ripple is now cheap (observables-only
   makes it walls-safe); confidences (a user-created wall; betrayal as the

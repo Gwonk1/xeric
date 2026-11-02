@@ -689,6 +689,96 @@ ok('floor: and the child still gets a block, not silence',
 
 $dbF = null;
 
+// ---------------------------------------------------------------------------
+// 14. KEPT. A promise used to have only bad endings: missed, repaired,
+// hardened, or released by a death. Walk into the Bluebird on Friday morning
+// with Ruth's dish and four hours later the fuse burned anyway. Now the body
+// being there, or the extractor hearing it done, closes it as kept — gated in
+// code, the mirror of the miss: one notch of trust, one memory, no event.
+// ---------------------------------------------------------------------------
+
+echo "\n# a promise kept\n";
+
+require_once __DIR__ . '/../travel.php';
+$dbKPath = sys_get_temp_dir() . '/xeric-constructs-kept-' . getmypid() . '.db';
+foreach ([$dbKPath, $dbKPath . '-wal', $dbKPath . '-shm'] as $f) @unlink($f);
+$dbK = xeric_state_open($dbKPath);
+
+$dish = ['quote' => "I'll bring your dish back Friday morning", 'what' => 'the casserole dish', 'when' => 'Friday morning'];
+$sat  = ['quote' => "I'll be by Saturday morning", 'what' => 'come by Saturday', 'when' => 'Saturday morning'];
+$kDish = xeric_expect_form($T, $dbK, 'ruth', $dish, $wedAm);
+$kSat  = xeric_expect_form($T, $dbK, 'ruth', $sat, $wedAm);
+$friEarly = xeric_world_now($T, ep('2026-07-31 07:30'));    // Ruth at the Bluebird counter
+$stateOf  = fn(PDO $d, string $h, string $k) => (array_values(array_filter(xeric_expects_for($d, $h),
+                fn($e) => $e['key'] === $k))[0]['state'] ?? '');
+
+// Standing there since before the promise was made is not keeping it: the
+// promise and its keeping cannot be the same visit.
+xeric_player_move($dbK, 'bluebird', (int)$wedAm['epoch'] - 60);
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: a body that was already there when the promise was made keeps nothing',
+    $stateOf($dbK, 'ruth', (string)$kDish) === 'open');
+
+$memBefore = (int)$dbK->query("SELECT COUNT(*) FROM memories WHERE handle = 'ruth'")->fetchColumn();
+$evBefore  = (int)$dbK->query('SELECT COUNT(*) FROM events')->fetchColumn();
+xeric_player_move($dbK, 'bluebird', ep('2026-07-31 07:15'));
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: walking in on the morning promised closes it as kept',
+    $stateOf($dbK, 'ruth', (string)$kDish) === 'kept');
+ok('kept: and only the soonest — Saturday\'s promise is not kept by Friday\'s visit',
+    $stateOf($dbK, 'ruth', (string)$kSat) === 'open', json_encode([$kSat, xeric_expects_for($dbK, 'ruth')]));
+ok('kept: trust takes the notch a miss would have taken, the other way', xeric_trust_of($dbK, 'ruth') === 1);
+ok('kept: one ordinary memory, and no event — turning up as you said is not news',
+    (int)$dbK->query("SELECT COUNT(*) FROM memories WHERE handle = 'ruth'")->fetchColumn() === $memBefore + 1
+    && (int)$dbK->query('SELECT COUNT(*) FROM events')->fetchColumn() === $evBefore);
+$kBlock = xeric_expect_block($T, $dbK, 'ruth', $friEarly);
+ok('kept: the block reads kept, not waiting',
+    str_contains($kBlock, 'and did, Friday') && str_contains($kBlock, 'Nothing is owed on it')
+    && !str_contains($kBlock, "dish back Friday morning\" — you are expecting"), $kBlock);
+ok('kept: and still carries no clock', !preg_match('/\d{1,2}:\d{2}/', $kBlock));
+$rLate = xeric_constructs_tick($T, $dbK, xeric_world_now($T, ep('2026-07-31 20:00')));
+ok('kept: the fuse never burns on a kept promise — no miss that evening', $rLate['missed'] === 0
+    && $stateOf($dbK, 'ruth', (string)$kDish) === 'kept' && xeric_trust_of($dbK, 'ruth') === 1);
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: idempotent — a second tick in the same room keeps nothing twice', xeric_trust_of($dbK, 'ruth') === 1);
+
+// The extractor's half, and its gates.
+$kDot = xeric_expect_form($T, $dbK, 'dot', $dish, $wedAm);
+ok('kept: a promise cannot be kept in the same breath it is made',
+    xeric_expect_keep($T, $dbK, 'dot', $wedAm, null, XERIC_PLAYER_FIRST, 'said') === null);
+ok('kept: the extractor hearing it done keeps it, early or not',
+    xeric_expect_keep($T, $dbK, 'dot', xeric_world_now($T, ep('2026-07-30 12:00')), null, XERIC_PLAYER_FIRST, 'said') === $kDot
+    && $stateOf($dbK, 'dot', (string)$kDot) === 'kept');
+ok('kept: nothing open, nothing kept',
+    xeric_expect_keep($T, $dbK, 'dot', xeric_world_now($T, ep('2026-07-30 13:00')), null, XERIC_PLAYER_FIRST, 'said') === null);
+ok('kept: an unknown way of keeping fails closed',
+    xeric_expect_keep($T, $dbK, 'ruth', $friEarly, null, XERIC_PLAYER_FIRST, 'probably') === null);
+
+// A miss is mended by explaining, never by turning up late.
+$kH = xeric_expect_form($T, $dbK, 'harlan', $dish, $wedAm);
+xeric_constructs_tick($T, $dbK, xeric_world_now($T, ep('2026-07-31 20:00')));
+ok('kept: a promise already missed cannot be kept after the fact',
+    $stateOf($dbK, 'harlan', (string)$kH) === 'missed'
+    && xeric_expect_keep($T, $dbK, 'harlan', xeric_world_now($T, ep('2026-07-31 21:00')), null, XERIC_PLAYER_FIRST, 'said') === null);
+
+// The town's own promises, kept by the week: Dot promised Ruth Friday morning,
+// and Friday morning their schedules put them at the same counter.
+$kC = xeric_expect_form($T, $dbK, 'ruth', ['quote' => 'I will have the pie for you Friday morning',
+    'what' => 'the pie', 'when' => 'Friday morning'], xeric_world_now($T, ep('2026-07-30 09:00')), null, 'dot');
+xeric_player_move($dbK, null, ep('2026-07-31 06:00'));
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: a promise between two townspeople is kept when their week seats them together',
+    $kC !== null && $stateOf($dbK, 'ruth', (string)$kC) === 'kept' && xeric_trust_of($dbK, 'ruth', 'dot') === 1,
+    json_encode(xeric_expects_for($dbK, 'ruth')));
+ok('kept: and the player is not credited for it', xeric_trust_of($dbK, 'ruth') === 1);
+ok('kept: the chat extractor is asked to watch for it, and keeps before it forms',
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/chat.php'), 'actually DID something they had')
+    && strpos((string)file_get_contents(dirname(__DIR__) . '/chat.php'), "xeric_expect_keep(\$template")
+       < strpos((string)file_get_contents(dirname(__DIR__) . '/chat.php'), "xeric_expect_form(\$template"));
+
+$dbK = null;
+foreach ([$dbKPath, $dbKPath . '-wal', $dbKPath . '-shm'] as $f) @unlink($f);
+
 foreach ([$dbPath, $dbPath . '-wal', $dbPath . '-shm',
           $db2Path, $db2Path . '-wal', $db2Path . '-shm',
           $dbFPath, $dbFPath . '-wal', $dbFPath . '-shm'] as $f) @unlink($f);

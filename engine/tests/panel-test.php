@@ -184,6 +184,11 @@ ok('panel: the pair that WAS satisfied together is not reported as a tension',
 ok('panel: and it is said as a finding, not an apology',
     str_contains(xeric_panel_say($T, $hung), 'that is the answer')
     && str_contains(xeric_panel_say($T, $hung), 'Ada Reyes'));
+ok('panel: each side of the tension is named, not gendered (Ada and Tom, never she and he)',
+    str_contains(xeric_panel_say($T, $hung), 'Ada Reyes will not have it that')
+    && str_contains(xeric_panel_say($T, $hung), 'Tom Vance will not have it that')
+    && !preg_match('/\b(she|he|her|him|his|hers)\b/i', xeric_panel_say($T, $hung)),
+    xeric_panel_say($T, $hung));
 
 ok('panel: a room nobody has proposed anything to says so plainly',
     xeric_panel_verdict($T, fresh('quiet'))['state'] === 'nothing');

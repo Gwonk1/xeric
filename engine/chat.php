@@ -973,7 +973,12 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             . "Else null. Report their words exactly; do not judge whether it was firm.\n"
             . "- \"explained\": true only if {$userName} gave a reason or apology for having missed "
             . "something they were expected at. Else false.\n"
-            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false }\nNo prose outside the JSON."],
+            // The third watch, and the only good ending a promise had been
+            // missing (constructs.php, KEEPING IT). Same split: the model says
+            // it happened, code decides whether there was anything to keep.
+            . "- \"kept\": true only if, in this conversation, {$userName} actually DID something they had "
+            . "earlier promised {$name} (brought the thing, turned up, called). Not a new promise. Else false.\n"
+            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false, \"kept\": false }\nNo prose outside the JSON."],
     ];
 
     try {
@@ -1023,6 +1028,10 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // soft — a malformed proposal forms nothing, and an explanation with no
     // repairable miss repairs nothing — so the memory path above never pays
     // for their problems.
+    // Kept BEFORE formed: a harvest that both keeps an old promise and makes a
+    // new one must not let the new row be the one it closes (and keep refuses a
+    // row formed this very moment anyway).
+    if (!empty($raw['kept'])) xeric_expect_keep($template, $db, $speaker, $now, null, $player, 'said');
     xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null,
                       $now, null, null, $player);
     if (!empty($raw['explained'])) xeric_expect_repair($template, $db, $speaker, $now, null, $player);
@@ -1170,7 +1179,8 @@ function xeric_chat_pace_gate(array $t, string $speaker, ?array $presenceRow,
     $since = $realNow - $lastCharAt;
     if ($since >= $cool) return ['wait' => 0, 'why' => ''];
 
-    $name = xeric_chat_speaker_name($t, $speaker) ?? 'She';
+    // A speaker with no name on record is not thereby a woman.
+    $name = xeric_chat_speaker_name($t, $speaker) ?? 'This person';
     $busy = $presenceRow !== null && ($presenceRow['where'] ?? null) !== null
             && empty($presenceRow['at_home']);
     return [

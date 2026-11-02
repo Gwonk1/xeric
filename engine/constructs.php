@@ -45,6 +45,36 @@
  * same explanation should not work on everybody. No explanation at all lets
  * the window close and the residue harden into an ordinary memory.
  *
+ * ── KEEPING IT ───────────────────────────────────────────────────────────
+ * An expectation used to have only bad endings: open could become missed (and
+ * then repaired or hardened) or, for the dead, released. Nothing ever closed
+ * one because the promised thing HAPPENED, so the user could walk into the
+ * Bluebird on Friday morning with Ruth's casserole dish in hand, and four
+ * hours later the fuse burned anyway: Ruth "waited", lost a notch of trust,
+ * and said nothing about it in small ways. A ledger that can only record
+ * failure is not a relationship, it is a grievance generator.
+ *
+ * So `kept` is a fourth terminal state, reached two ways, both gated in code:
+ *   1. THE BODY WAS THERE. On the day the promise was for (from that local
+ *      midnight to the miss), the person who promised stands where the
+ *      listener is: the player's body (`player.where`, arrived AFTER the
+ *      promise was made, so a promise said across the counter is not kept by
+ *      the act of saying it) or, for a promise between two townspeople, their
+ *      own week putting them in the same room. This is read off position and
+ *      schedule — a fact, no model.
+ *   2. THE EXTRACTOR HEARD IT DONE. The same harvest that reports `explained`
+ *      reports `kept`: the user did, in this conversation, the thing they had
+ *      promised. The model spots it; this file decides whether there is an
+ *      open expectation of THAT player, formed before this turn, whose miss has
+ *      not fired, and closes the soonest one. Symmetric with repair.
+ * Keeping it is the mirror of missing it, by the same path: one notch of trust
+ * through xeric_trust_earn (bounded at the far ends — trust.php: past the
+ * contact band "only the things that cost something move it: a promise kept"),
+ * against whoever actually promised, and one ordinary memory. No event: a
+ * person turning up as they said is not something the town retells, and
+ * gossip feeds on what was charged. The block says so in one coarse line, so
+ * the listener's prompt and the inspector read "kept", never "expecting".
+ *
  * ── TIME ─────────────────────────────────────────────────────────────────
  * Fuses burn in WORLD time and burn during skips — a skip is real time
  * passing (docs/CONSTRUCTS.md: "time travel is real"). Detection may happen
@@ -631,6 +661,13 @@ function xeric_expect_owed(array $t, PDO $db, string $handle): string
                     . ', and has not said why. It stung more than you let on. You never narrate this; '
                     . 'it shows in small ways — what your hands do, what you leave unsaid, how long you take to answer.';
                 break;
+            case 'kept':
+                // Said once and plainly. Not gratitude on cue — a person who
+                // turned up as they said is just a person who turned up, and the
+                // weight is that nothing here is owed any more.
+                $lines[] = '- ' . $who($e) . ' said "' . $e['quote'] . '" and did, ' . $day($e['due'])
+                    . ' (' . $e['what'] . '). Nothing is owed on it.';
+                break;
             case 'repaired':
                 $lines[] = '- ' . $who($e) . ' missed ' . $e['what'] . ' ' . $day($e['due'])
                     . ' but told you why. How settled that is between you is yours to carry, in your own way.';
@@ -690,6 +727,10 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
             }
             continue;
         }
+        // KEPT BEFORE MISSED, in the same tick: the body being where it said
+        // it would be is checked first, so a tick that finds the user standing
+        // at the diner closes the promise rather than burning it.
+        xeric_expect_keep_present($t, $db, $h, $now, $note);
         foreach (xeric_expects_for($db, $h) as $e) {
             if ($e['state'] === 'open' && $epoch > $e['due'] + XERIC_EXPECT_GRACE) {
                 $name  = xeric_world_name($t, $h);
@@ -769,6 +810,131 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
         $out['gossip_faded']  = $g['faded'];
     }
     return $out;
+}
+
+// ---------------------------------------------------------------------------
+// Keeping it
+// ---------------------------------------------------------------------------
+
+/**
+ * Close the soonest open expectation of this promiser as KEPT, or decline.
+ *
+ * $of null is the person at the centre (player $player); a cast handle is one
+ * townsperson's promise to another. $how is 'there' (the body or the week put
+ * them in the room — the window opens at local midnight of the due day) or
+ * 'said' (the extractor heard it done — the window opens the moment after the
+ * promise was formed, since bringing the dish back early is still bringing it
+ * back). Either way the window CLOSES where the miss fires, due + grace: a
+ * promise that has already been missed is repaired by explaining, not kept by
+ * turning up late, and this function never touches a row that is not `open`.
+ *
+ * Fail closed throughout: no open row, the wrong promiser, the wrong player, a
+ * row formed this very moment (the promise and its keeping cannot be the same
+ * sentence), or a window not yet open — nothing changes and null comes back.
+ * $formedBefore narrows it further: only a promise made before that moment is
+ * eligible (the body's arrival, for 'there').
+ *
+ * @return string|null the arc key kept
+ */
+function xeric_expect_keep(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null,
+                           int $player = XERIC_PLAYER_FIRST, string $how = 'said', ?string $of = null,
+                           ?int $formedBefore = null): ?string
+{
+    $note  = $onNote ?? static function (string $s): void {};
+    $epoch = (int)($now['epoch'] ?? 0);
+    if (!in_array($how, ['there', 'said'], true)) return null;
+    $of = ($of === null || trim($of) === '') ? '' : trim($of);
+
+    $tz = null;
+    try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); } catch (Throwable $e) {}
+    $dayStart = static function (int $due) use ($tz): int {
+        try {
+            return (new DateTimeImmutable('@' . $due))->setTimezone($tz ?? new DateTimeZone('UTC'))
+                ->setTime(0, 0)->getTimestamp();
+        } catch (Throwable $e) { return $due; }
+    };
+
+    $best = null;
+    foreach (xeric_expects_for($db, $handle) as $e) {
+        if ($e['state'] !== 'open') continue;
+        if (trim((string)($e['of'] ?? '')) !== $of) continue;
+        if ($of === '' && (int)($e['p'] ?? XERIC_PLAYER_FIRST) !== $player) continue;
+        if ((int)($e['formed'] ?? 0) >= min($formedBefore ?? $epoch, $epoch)) continue;
+        if ($epoch > $e['due'] + XERIC_EXPECT_GRACE) continue;
+        if ($how === 'there' && $epoch < $dayStart($e['due'])) continue;
+        if ($best === null || $e['due'] < $best['due']) $best = $e;
+    }
+    if ($best === null) return null;
+
+    $name    = xeric_world_name($t, $handle);
+    $whoName = $of !== '' ? (xeric_world_name($t, $of) ?: $of)
+             : ($player > XERIC_PLAYER_FIRST ? xeric_player_name($db, $player, $t)
+                                              : (trim((string)($t['user']['name'] ?? '')) ?: 'they'));
+    $key = $best['key'];
+    $row = $best; unset($row['key']);
+    $row['state'] = 'kept'; $row['kept_at'] = $epoch; $row['kept_how'] = $how;
+
+    $db->beginTransaction();
+    try {
+        xeric_arc_set($db, $handle, $key, json_encode($row, JSON_UNESCAPED_UNICODE));
+        // The mirror of the miss, by the same path and against the same row.
+        xeric_trust_earn($db, $handle, +1, null, $of !== '' ? $of : null,
+                         $of !== '' ? XERIC_PLAYER_FIRST : (int)($best['p'] ?? XERIC_PLAYER_FIRST));
+        xeric_memory_add($db, $handle, $whoName . ' said "' . $best['quote'] . '" and did.',
+            'construct', ['expect' => $key, 'kept' => $how] + ($of !== '' ? ['of' => $of] : []), $epoch);
+        $db->commit();
+    } catch (Throwable $ex) {
+        if ($db->inTransaction()) $db->rollBack();
+        throw $ex;
+    }
+    $note('expectations: ' . $whoName . ' kept ' . $best['what'] . ' with ' . $name);
+    return $key;
+}
+
+/**
+ * The 'there' half: is whoever promised this listener something standing in
+ * the listener's room right now? Read off position and the week, no model.
+ *
+ * The player's body counts only for the first player — there is one body
+ * (`player.where`), the owner walks it — and only if it ARRIVED after the
+ * promise was formed (`player.where_since`): a promise made in person is
+ * otherwise kept by the act of making it. A townsperson's promise is kept when
+ * their own week seats them where the listener is. A listener at no place, a
+ * position that names no place, nothing to keep: nothing happens.
+ *
+ * @return string[] the arc keys kept
+ */
+function xeric_expect_keep_present(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null): array
+{
+    $open = array_filter(xeric_expects_for($db, $handle), fn($e) => $e['state'] === 'open');
+    if ($open === []) return [];
+
+    $where = xeric_world_who_is_where($t, $now, array_keys(xeric_deaths($db)));
+    $here  = $where[$handle]['where'] ?? null;
+    if ($here === null || $here === '') return [];
+
+    $kept = [];
+    // The player's body. Read lazily: travel.php sits above this file in the
+    // require graph (it pulls the sweeps, which pull chat, which pulls this).
+    require_once __DIR__ . '/travel.php';
+    $body  = xeric_player_where($t, $db);
+    $since = xeric_player_since($db);
+    if ($body !== null && $body === (string)$here && $since > 0) {
+        // One arrival keeps one promise, the soonest made before it.
+        $k = xeric_expect_keep($t, $db, $handle, $now, $onNote, XERIC_PLAYER_FIRST, 'there', null, $since);
+        if ($k !== null) $kept[] = $k;
+    }
+    // The town's own promises, kept by the week.
+    $seen = [];
+    foreach ($open as $e) {
+        $of = trim((string)($e['of'] ?? ''));
+        if ($of === '' || isset($seen[$of])) continue;
+        $seen[$of] = true;
+        if (($where[$of]['where'] ?? null) !== $here) continue;
+        $k = xeric_expect_keep($t, $db, $handle, $now, $onNote, XERIC_PLAYER_FIRST, 'there', $of);
+        if ($k !== null) $kept[] = $k;
+    }
+    return $kept;
 }
 
 // ---------------------------------------------------------------------------

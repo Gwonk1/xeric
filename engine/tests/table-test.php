@@ -285,6 +285,9 @@ $debtor = array_key_first($owe['owed']);
 ok('owed: and what they could not cover is a row that knows what it was for',
     xeric_debts_for($dbOwe, (string)$debtor) !== []
     && str_contains((string)xeric_debts_for($dbOwe, (string)$debtor)[0]['what'], 'Thursday game'));
+ok('owed: and the row says what it was for without deciding who the loser was',
+    !preg_match('/\\b(he|him|his|she|her|hers)\\b/i', (string)xeric_debts_for($dbOwe, (string)$debtor)[0]['what']),
+    (string)xeric_debts_for($dbOwe, (string)$debtor)[0]['what']);
 ok('owed: it is owed to the person who actually took it',
     (string)xeric_debts_for($dbOwe, (string)$debtor)[0]['to']
         === (string)array_key_first(array_filter($owe['net'], fn($n) => $n === max($owe['net']))));
@@ -478,6 +481,12 @@ ok('talk: it is handed the TELLS the schema has carried all along',
     str_contains($tSaw, 'counts his change twice'));
 ok('talk: and told a tell is something a person does, never announces',
     str_contains($tSaw, 'not something they announce'));
+// The tell is template prose and keeps its own pronouns ("counts his change
+// twice" is Harlan's, written that way). The engine's frame around it used to
+// add "when he is not thinking about it, he …" for every player at the table.
+ok('talk: the frame around a tell is the engine\'s and carries no pronoun',
+    str_contains($tSaw, 'tell, when not thinking about it: ')
+    && !str_contains($tSaw, 'when he is not thinking about it'), $tSaw);
 ok('talk: a model that will not answer leaves a quiet game, not a broken one',
     xeric_table_talk($T, $TABLE, $sit,
         ['base' => 'stub://', 'stub' => function () { throw new RuntimeException('down'); }]) === []);

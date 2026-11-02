@@ -169,8 +169,9 @@ if (isset($args['say'])) {
     // Progress only. The piece itself was in what she just said, which is the
     // whole point — this says that she said it, never what it was.
     $st = (array)($out['story'] ?? []);
-    foreach ((array)($st['opened'] ?? []) as $k)  fwrite(STDOUT, "  ~ she is willing to talk about $k now\n");
-    foreach ((array)($st['spilled'] ?? []) as $k) fwrite(STDOUT, "  ~ she told you $k, and she knows she did\n");
+    // Named, not pronouned: whoever was speaking, this used to say "she".
+    foreach ((array)($st['opened'] ?? []) as $k)  fwrite(STDOUT, "  ~ $name is willing to talk about $k now\n");
+    foreach ((array)($st['spilled'] ?? []) as $k) fwrite(STDOUT, "  ~ $name told you $k, and knows it\n");
     // The wrong lead is dead and the world may say so out loud. Printed here
     // because a terminal has no scene to put it in; a play view has.
     foreach ((array)($st['said'] ?? []) as $line) fwrite(STDOUT, '  (' . $line . ")\n");

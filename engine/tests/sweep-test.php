@@ -435,6 +435,14 @@ ok('places: a mill chained since 1998 is never open, at any hour of any day',
 ok('places: the documented grammar is READ — a diner that closes at two is shut in the evening',
     in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-07-30 08:00'))), true)
     && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-07-30 18:30'))), true));
+// The fixture's own canon: "The diner closes at two and does not reopen for
+// anyone." Its hours said `close_weekday`, which the reader applies Monday to
+// Friday, so Saturday — Dot works it — read as open all afternoon and evening.
+ok('places: the Bluebird closes at two on Saturday too, as its canon says',
+    in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 10:00'))), true)
+    && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 15:00'))), true)
+    && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 19:00'))), true)
+    && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-02 10:00'))), true));
 ok('places: a place with a Saturday of its own keeps it, and a closed day shuts it',
     in_array('beck_hardware', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 09:00'))), true)
     && !in_array('beck_hardware', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 15:00'))), true)
@@ -448,6 +456,42 @@ ok('places: and hours nobody can read still mean open, because the bag is free-f
 // ---------------------------------------------------------------------------
 // 6. The wall: the protected character and what they must not know
 // ---------------------------------------------------------------------------
+
+// W3, THE TABLE. Milldale's child role hides `economies.thursday_pot` and
+// declares no must_not_know, so xeric_sweep_protected() is empty and nothing
+// used to stop [pastor_dale, janelle] being a legal drop-in at First Lutheran on
+// Thursday night — the hour the sweep turns into the game itself. Fixed in the
+// engine, not the fixture: a wall that hides the ledger is already the
+// statement that she must not sit at the game that pays it (xeric_table_barred).
+$thuNight = xeric_world_now($BASE, ep('2026-07-30 19:30'));
+$seatsJanelleAtGame = static function (array $groups): bool {
+    foreach ($groups as $g) {
+        if (($g['where'] ?? null) === 'first_lutheran' && in_array('janelle', (array)$g['handles'], true)) return true;
+    }
+    return false;
+};
+ok('wall: Milldale names nobody under must_not_know — the table rule must not depend on it',
+    xeric_sweep_protected($BASE) === []);
+ok('wall: on Thursday night no legal group seats Janelle at her father\'s game',
+    !$seatsJanelleAtGame(xeric_sweep_groups($BASE, $thuNight))
+    && in_array('pastor_dale', array_merge(...array_map(fn($g) => (array)$g['handles'],
+        xeric_sweep_groups($BASE, $thuNight))), true),
+    json_encode(array_map(fn($g) => [$g['handles'], $g['where']], xeric_sweep_groups($BASE, $thuNight))));
+ok('wall: and over 200 draws the chooser never puts her at it',
+    (function () use ($BASE, $thuNight) {
+        $kinds = xeric_sweep_kinds_for($BASE);
+        for ($i = 0; $i < 200; $i++) {
+            $c = xeric_sweep_choose($BASE, $thuNight, $kinds, ['spine' => (bool)($i % 2)]);
+            if ($c !== null && ($c['where'] ?? null) === 'first_lutheran' && in_array('janelle', $c['handles'], true)) return false;
+        }
+        return true;
+    })());
+ok('wall: the rule is the table\'s night, not the room — Sunday she is at church like anybody',
+    !xeric_table_barred($BASE, 'first_lutheran', xeric_world_now($BASE, ep('2026-08-02 10:00')), 'janelle')
+    && xeric_table_barred($BASE, 'first_lutheran', $thuNight, 'janelle'));
+ok('wall: and it bars only those the ledger is hidden from — the pastor sits at his own game',
+    !xeric_table_barred($BASE, 'first_lutheran', $thuNight, 'pastor_dale')
+    && !xeric_table_barred($BASE, 'bluebird', $thuNight, 'janelle'));
 
 $TW = world(['secrets', 'rumors', 'slow_reveal'], [], 'ruth');
 ok('wall: the template names who is protected and from what',
