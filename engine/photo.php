@@ -47,6 +47,14 @@ require_once __DIR__ . '/state.php';    // the queue is rows; clock.php rides in
 require_once __DIR__ . '/clock.php';    // render-time prompts read the world's own now
 
 /**
+ * The floor's framing, in words. One constant because two composers say it —
+ * a photograph here and a whole room in scene.php — and the structural rule
+ * is only structural if both of them say exactly the same thing.
+ */
+const XERIC_PHOTO_FLOOR_FRAMING = 'a wholesome everyday photograph, fully clothed, ordinary daylight, '
+                                . 'suitable for a family album';
+
+/**
  * The image machine, if this install has one. Null is dormant, and dormant
  * is the shipping state: XERIC_IMAGE_BASE names an endpoint when one exists
  * (any provider — the adapter that speaks to it lives beside llm.php the day
@@ -283,8 +291,7 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
     // ladder's own language.
     if ($who !== null && $who['minor']) {
         $eff = 'sfw';
-        $bits[] = 'a wholesome everyday photograph, fully clothed, ordinary daylight, '
-                . 'suitable for a family album';
+        $bits[] = XERIC_PHOTO_FLOOR_FRAMING;
     } else {
         $bits[] = match ($eff) {
             'sfw', 'pg' => 'a wholesome everyday photograph, nothing suggestive',

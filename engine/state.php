@@ -217,6 +217,38 @@ function xeric_state_migrate(PDO $db): void
     // exactly one row each however many times they are offered.
     $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_photo_jobs_one ON photo_jobs(kind, subject)');
 
+    // scene_jobs: views of a room the world owes the player (engine/scene.php).
+    // Keyed by WHAT THE ROOM LOOKS LIKE, not by when it was asked: the
+    // fingerprint folds the place, its furniture, the light, the sky and who
+    // is standing in it, so a second visit in the same light to the same
+    // company is the same row and costs nothing. `prompt` is the composed
+    // paragraph as asked, kept for the inspector and rendered as stored. No
+    // `approved` column and no world_state gate: choosing the machine was the
+    // consent. done_at doubles as the claim stamp while a row is working,
+    // exactly as it does on photo_jobs — and, while a machine that answered
+    // "later" holds remote_job, as the time it was asked, which is what the
+    // reaper's patience is measured from.
+    $db->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS scene_jobs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            key         TEXT    NOT NULL,                  -- a place key
+            fingerprint TEXT    NOT NULL,                  -- sha1 of what the room looks like
+            status      TEXT    NOT NULL DEFAULT 'pending',-- pending | working | done | failed
+            tries       INTEGER NOT NULL DEFAULT 0,
+            kind        TEXT    NOT NULL DEFAULT '',       -- image | pano | splat | glb | viewer, once done
+            file        TEXT    NOT NULL DEFAULT '',       -- relative to the world's scenes dir; '' for a viewer
+            url         TEXT,                              -- a viewer scene's link; NULL for anything with bytes
+            mime        TEXT    NOT NULL DEFAULT '',       -- what the machine said it made
+            prompt      TEXT    NOT NULL DEFAULT '',       -- the paragraph as asked
+            meta        TEXT    NOT NULL DEFAULT '{}',     -- the machine's own meta, JSON, as it came
+            remote_job  TEXT,                              -- the machine's job id while it says "later"
+            created_at  INTEGER NOT NULL,
+            done_at     INTEGER,
+            UNIQUE(key, fingerprint)
+        )
+    SQL);
+    $db->exec('CREATE INDEX IF NOT EXISTS idx_scene_jobs_key ON scene_jobs(key, status)');
+
     // reminders: the one thing in this database that runs on REAL time. A world
     // keeps its own clock and everything else here is stamped with it — but
     // somebody who asked to be reminded on Thursday meant the Thursday they are
