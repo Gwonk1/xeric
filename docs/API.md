@@ -7,10 +7,12 @@ hands the answer to a shaper in `forge/web/api-lib.php`; if a client needs a
 fact that is not here, the fact goes into the engine first (where.php's rule),
 never into the client and never only into this file.
 
-**This is the read half.** Every route is a `GET`. The verbs (say, go, look,
-skip, rewind, hear, read, the room) and the link and join ceremonies that hand
-a device its token are the write half, still to come
-([FUTURE.md](FUTURE.md), M2 and Appendix C).
+**Both halves.** The reads call existing functions directly. The verbs (go,
+look, say, read, skip, rewind, hear, the room, a line read aloud) each
+`require` the existing script unchanged — where.php, scene.php, say.php,
+tick.php, hear.php, room.php, speak.php — through boot.php's two seams, so
+their doors, limits and refusals are theirs and arrive enveloped. The link and
+join ceremonies hand a device its token ([FUTURE.md](FUTURE.md), Appendix C).
 
 ---
 
@@ -72,10 +74,13 @@ Every refusal, with the HTTP status that matches it:
 ```
 
 `kind` is a short machine-readable word; `error` is for people and may be
-reworded at any time. Kinds the read half raises: `token` (401),
-`cross_site` (403), `guest` (403), `no_world`, `no_route`, `version`,
-`no_character`, `no_look`, `no_message`, `not_rendered`, `no_job` (404),
-`method` (405), `limit` (429), `bug` (500). A refusal raised deep inside the
+reworded at any time. Kinds raised here: `token` (401), `cross_site`,
+`guest`, `host`, `insecure` (403), `no_world`, `no_route`, `version`,
+`no_character`, `no_look`, `no_message`, `not_rendered`, `no_voice`,
+`no_job` (404), `method` (405), `code` (410), `limit`, `locked` (429),
+`bug` (500). The verb scripts add their own — `travel` (400), `pace` (429,
+with `retry_after`), `paused`, `detached`, `room`, `quiet` (409),
+`model_down`, `busy` (503), `refused` (422) — unchanged. A refusal raised deep inside the
 app (a limit, an owner-only door, the floor under every page) arrives in the
 same envelope: api.php registers its shaper with boot.php's
 `xeric_web_json_shaper()`, which every JSON body in the app passes through.
@@ -131,11 +136,102 @@ affirmation **and** the token's own `adult` bit, handed to
 happens at generation, so a thread or a render made earlier for an adult
 session reads as it was made.
 
-**Today**: cookie and solo, and tokens resolved read-only. Nothing in the app
-mints a token yet; `xeric_api_token_mint()` is used only by the tests. The
-link (same person, second device) and join (a new player) ceremonies, built on
-pair.php's five-minute, single-use, hashed, rate-limited codes, are the write
-half's.
+**Seen, never cookied.** Every Bearer-identified call marks the device row
+and the session record seen (to the minute), so a session used only through a
+headset is not swept as idle — through `xeric_session_seen()`, which sends no
+`Set-Cookie`. (`xeric_session_touch()` would hand the device the owner's raw
+sid, a credential no revoke could take back.)
+
+**Tokens work on api.php and nowhere else.** Machine admin stays on the box:
+`link.php`, `model.php`, `power.php`, `notify.php` and the forge never read
+an `Authorization` header (a device is a stranger there), and `link.php`
+refuses a request that carries one outright.
+
+**The Host pin (DNS rebinding).** A page whose name has been re-pointed at
+127.0.0.1 is same-origin to itself and its requests arrive from this machine
+— on a solo install, the owner, with no cookie at all. So a **solo**-identified
+request whose `Host` is not `127.0.0.1`, `localhost`, `[::1]`, an IP literal
+(rebinding needs a name) or the configured bind host (`XERIC_BIND`, or
+`XERIC_HOST`), on this server's port (`SERVER_PORT` / `XERIC_PORT`), is a
+**403 `host`**. Bearer requests are not pinned (a token is not ambient);
+`link.php` pins too, because a rebound page could otherwise mint a code there
+and read it. The proper home is `xeric_web_solo()` in boot.php, where it would
+cover every page; until it moves there it is enforced by the API and link.php.
+
+---
+
+## Getting a token
+
+Two ceremonies, both on pair.php's discipline — eight characters from an
+alphabet with no 0/O/1/I/L, five minutes, single use, stored hashed, the burn
+and the mint in one transaction, and a door that shuts after wrong guesses.
+Every wrong answer (never minted, run out, already used) is one sentence and
+one status, **410 `code`**; the lockout is **429 `locked`** with `Retry-After`.
+Neither route asks who is calling — the code is the credential — but both
+refuse cross-site.
+
+### `POST link {code, label?}` — the same person, a second device
+
+The owner opens **`link.php`** on the box (solo, or their cookie; never a
+token), presses *Make a code*, and types it into the device. The answer is a
+token for **the owner's own session**, role `owner`:
+
+```json
+{ "api": "1.0", "ok": true, "token": "xd1_…", "role": "owner", "label": "the headset",
+  "adult": true, "device": 7 }
+```
+
+The **adult bit** is set at link time from the session's affirmation (and
+again as it stands at redemption); ticking *For a child* on link.php mints it
+lowered. On link.php the owner sees this session's devices (label, role,
+adult, last seen), can **lower** one (a kids' headset is one flag) and can
+**unlink** one — its next request is a 401. Nothing raises a bit. The link
+door shuts for 120 s after **5** wrong codes, machine-wide (a guesser does not
+say whose code they guess at). On `--lan` link.php also draws a QR of
+`http://LAN:8787/api.php/v1/#link=CODE` — the code in the fragment, which no
+server ever logs.
+
+```sh
+curl -s -H 'Content-Type: application/json' -d '{"code":"7KQ4MZ2P","label":"the headset"}' $X/link
+```
+
+### `POST join {world, code, name}` — a new player
+
+A code from the owner's *invite someone* (play.php, `a=invite`), redeemed
+exactly as join.php redeems it — the owner's real `world.db`,
+`xeric_pair_claim()` (8 wrong guesses per world shut it), a new session that
+remembers which player it is — with a token handed back instead of a
+redirect. Role `guest`, and `adult: false`: the guest's session was never
+asked. A guest chats and skips; walking, looking, hearing, the room's doors
+and rendering a voice are the owner's and answer 403 `guest` from the scripts
+themselves. (A guest session with no machine attached that opens a running
+world stops its clock, as a browser guest's does; that is xeric_play_open's
+reconcile and the API does not paper over it.)
+
+```json
+{ "api": "1.0", "ok": true, "token": "xd1_…", "role": "guest", "world": "milldale",
+  "player": 2, "label": "Sam", "adult": false }
+```
+
+```sh
+curl -s -H 'Content-Type: application/json' -d '{"world":"milldale","code":"H8RT3WQX","name":"Sam"}' $X/join
+```
+
+### The secure-context rule
+
+A Bearer token is a long-lived credential; over plain http on a LAN, anybody
+who reads one packet has it. So **`POST link` and `POST join` refuse to mint
+(403 `insecure`, and the code is not used up) over plain http unless**:
+
+- the request is over TLS (`HTTPS` set by the server); or
+- the client is **loopback** (127.0.0.1 / ::1). Two no-TLS setups land here:
+  **Quest Link** with desktop Chrome at `http://127.0.0.1:8787`, and a Quest
+  in developer mode with **`adb reverse tcp:8787 tcp:8787`**. So does
+  **`tailscale serve --bg http://127.0.0.1:8787`**, which terminates TLS on
+  the tailnet and hands the request on from loopback — the recipe for any
+  other device; or
+- the operator has set **`XERIC_LAN_TOKENS=1`**, accepting the risk on a
+  network they trust.
 
 ---
 
@@ -145,15 +241,15 @@ half's.
 
 ```json
 { "api": "1.0", "ok": true, "version": "1.0", "versions": ["v1"],
-  "auth": { "modes": ["bearer", "solo"], "via": "solo", "role": "owner", "link": false, "join": false },
+  "auth": { "modes": ["bearer", "solo"], "via": "solo", "role": "owner", "link": true, "join": true },
   "features": { "model": true, "scene": false, "voice": true, "image": false, "ears": false,
-                "pulse": true, "sse": true, "write": false } }
+                "pulse": true, "sse": true, "write": true } }
 ```
 
 `auth.modes` is what this install accepts (`cookie` or `solo`, plus
 `bearer`); `auth.via` is how this request was identified. `features` says
 which machines this session has configured — **booleans only, never an
-address or a key**. `write` turns true when the write half lands.
+address or a key**. `write` is true: the verbs below are served.
 
 ```sh
 curl -s $X/
@@ -205,15 +301,18 @@ connection open.
   "where": "bluebird", "here": ["dot"], "last_message": 412, "last_event": 37,
   "unread": [{"handle": "ruth", "n": 2}],
   "scenes": {"pending": 0, "working": 1, "done": 9, "failed": 0, "latest": 14},
-  "beat": 1793612345, "room": null,
+  "beat": 1793612345,
+  "room": {"conv": 51, "place": "bluebird", "last": 430, "turn": true, "typing": "dot",
+           "present": ["dot", "ruth"], "said": 2, "beats": 3},
   "cursor": "9f2c…", "epoch": 1793608745, "server": 1793612345 }
 ```
 
 **The cursor** is a hash of: the clock's offset, whether it is paused, where
 the player is, who is where right now (the whole cast, so a schedule turning
 over counts), the newest message id, the newest event id, the unread counts,
-the room-render queue (`scenes`), the heart's last beat, and (when the room on
-the web lands) the open room. It is **not** a hash of the epoch: a running
+the room-render queue (`scenes`), the heart's last beat, and the open room
+(`room`: room.php's own summary, cut to what moves — so the cursor moves when
+somebody at the table types, speaks, comes or goes, or the table closes). It is **not** a hash of the epoch: a running
 clock changes every second and a client runs it from `offset`.
 
 **The ETag is the cursor.** Send it back as `If-None-Match` and an unchanged
@@ -240,7 +339,7 @@ curl -s $X/worlds/milldale/map
 ### `GET worlds/{w}/look` — the room you stand in
 
 xeric_play_look_view() with the machine **not** probed (`machine.up` is
-false; the read half never calls a machine), plus `world`. `brief` is the
+false; a read never calls a machine), plus `world`. `brief` is the
 engine's observables-only brief or null; `scene` the newest showable view
 {id, kind, fingerprint, mime, url, src, meta, stale} or null; `day[]` the room
 through its day; `sound` {line, fingerprint, src, mime} or null; `pending`;
@@ -279,7 +378,7 @@ highest id in the answer (or `since`): pass it as the next `since`.
 
 Reading a thread **puts its unread dot out**, as play.php does. The learn
 signal ("this person, not that one") is not recorded by a read; that is the
-write half's `POST threads/{h}/read`.
+`POST threads/{h}/read`.
 
 ```sh
 curl -s "$X/worlds/milldale/threads/dot?since=410"
@@ -291,7 +390,7 @@ The clip a character's line was last voiced with, if it is still on disk,
 sniffed as speak.php sniffs it. **A cached clip only**: a line never read
 aloud is a 404 `not_rendered`, because rendering spends the owner's voice
 machine and that is a verb. The player's and the narrator's lines have no
-voice (404 `no_message`).
+voice (404 `no_message`). `POST` the same route to render a miss (below).
 
 ```sh
 curl -s -o line.mp3 $X/worlds/milldale/messages/412/audio
@@ -320,14 +419,85 @@ curl -sN -H 'Accept: text/event-stream' "$X/jobs/a3f…"
 
 ---
 
-## For whoever builds the write half
+## The verbs
 
-- boot.php has the two seams: `xeric_web_input_set(array)` hands a verb
-  script the body the router read; `xeric_web_json_shaper()` is already
-  registered by api.php, so `require`ing say.php or where.php inside api.php
-  answers in the envelope. Reuse `xeric_api_shape_state()` for the `state` a
-  verb answers with and `xeric_api_shape_look()` for a look.
-- The pulse has a `room` slot (marked `SEAM(room)` in api-lib.php) waiting for
-  the room on the web.
-- Tokens: `xeric_api_token_mint()` and `xeric_api_token_resolve()` are in
-  api-lib.php; the table has `revoked_at` for `DELETE me/devices/{id}`.
+Every verb is a `POST` (the room's poll is a `GET`); a wrong method on a real
+route is **405** with `Allow`. The world, the handle and the action come from
+the path, never the body, and only the fields a verb takes are read from the
+body (a `rewind` sent to `skip` is not heard). Bodies are JSON (or a form;
+`hear` is multipart).
+
+**CSRF.** Bearer-identified requests pass the scripts' cross-site guard — a
+browser never sends an `Authorization` header on its own, and a page on
+another origin that tried would need a CORS preflight this API never answers.
+Cookie- and solo-identified cross-site requests are refused (403
+`cross_site`) on every method before any script runs. Owner doors and limits
+are the scripts' own and arrive enveloped; so does a script's bodiless
+refusal (speak.php's bare 404).
+
+**Shaped on the way out** like everything else, plus: the world is named; a
+`state` (say.php's) carries the runnable clock (`epoch`, `offset`, `server`);
+a job's `stream` is the v1 `jobs/{id}` route, never progress.php; a said line
+carries its `epoch` beside `when`, as do the room's rows.
+
+| route | the script | answers |
+|---|---|---|
+| `POST worlds/{w}/go {to}` | where.php | `went` {from, to, minutes, open, who, scene} + the map. `to` absent/null is leaving the map |
+| `POST worlds/{w}/look` | scene.php `a=look` | `{job, stream, fingerprint, pending, sound}`; 409 with no scene machine |
+| `POST worlds/{w}/threads/{h}/say {text}` | say.php | `{id, text, when, epoch, name, seconds, waited, photo, story, state}`; 429 `pace` / `queued` with `Retry-After` |
+| `POST worlds/{w}/threads/{h}/read` | what play.php's a=thread does beyond the thread: `xeric_play_mark_read` + `xeric_learn_read` | `{handle, read, unread (as it was), conversation_id, learned}` |
+| `POST worlds/{w}/skip {span}` | tick.php | `{job, stream, span, label, from}`; follow the job |
+| `POST worlds/{w}/rewind` | tick.php `rewind` | xeric_rewind's answer; 409 when there is nothing to take back |
+| `POST worlds/{w}/hear` multipart `{audio, h?}` | hear.php | `{text}` — text only; the client puts it in the box and says it |
+| `GET worlds/{w}/room?after=<id>&c=<conv>` | room.php's poll | `{live, conv, rows[{id, who, h, name, text, when, epoch}], last, poll, guest}` |
+| `POST worlds/{w}/room/say {text}` | room.php `a=say` | `{id, text, epoch, opened, conv, live}` |
+| `POST worlds/{w}/room/carry` | room.php `a=carry` | `{}`; 409 `quiet` is the room keeping quiet |
+| `POST worlds/{w}/room/leave` | room.php `a=leave` | `{conv}` |
+| `POST worlds/{w}/messages/{id}/audio` | speak.php | the clip's bytes: a hit is a file read, a **miss renders** (owner door, `reroll` meter); `GET` stays cache-only |
+
+```sh
+T='Authorization: Bearer xd1_…'; J='Content-Type: application/json'; W=$X/worlds/milldale
+curl -s -H "$T" -H "$J" -d '{"to":"beck_hardware"}'          $W/go
+curl -s -H "$T" -X POST                                      $W/look
+curl -s -H "$T" -H "$J" -d '{"text":"Is there coffee?"}'     $W/threads/dot/say
+curl -s -H "$T" -X POST                                      $W/threads/dot/read
+curl -s -H "$T" -H "$J" -d '{"span":"evening"}'              $W/skip
+curl -s -H "$T" -X POST                                      $W/rewind
+curl -s -H "$T" -F audio=@line.webm -F h=dot                 $W/hear
+curl -s -H "$T"                                              "$W/room?after=412"
+curl -s -H "$T" -H "$J" -d '{"text":"Morning, all."}'        $W/room/say
+curl -s -H "$T" -X POST                                      $W/room/carry
+curl -s -H "$T" -X POST                                      $W/room/leave
+curl -s -H "$T" -X POST -o line.mp3                          $W/messages/412/audio
+```
+
+---
+
+## One exchange, worked
+
+Appendix C's sequence — aim at Dot's tag in a headset, pinch, hold and speak,
+release, hear her answer — is five calls:
+
+```sh
+# 1. look: the room you stand in, the tags' people in brief, the view's src
+curl -s -H "$T" $W/look
+#   → {"brief": {"key": "bluebird", …}, "scene": {"src": "api.php/v1/worlds/milldale/look/…"}, …}
+
+# 2. read: the pinch on Dot's tag focuses her thread — the dot out, the learn signal
+curl -s -H "$T" -X POST $W/threads/dot/read
+#   → {"handle": "dot", "read": true, "unread": 1, "learned": true, …}
+
+# 3. hear: what was said while holding, as text (the caption the player checks)
+curl -s -H "$T" -F audio=@hold.webm -F h=dot $W/hear
+#   → {"text": "Is the pie fresh today?"}
+
+# 4. say: the caption, said — one chat turn (429 pace/queued: wait Retry-After)
+curl -s -H "$T" -H "$J" -d '{"text":"Is the pie fresh today?"}' $W/threads/dot/say
+#   → {"id": 431, "text": "Baked at five.", "epoch": 1793608800, "state": {…}, …}
+
+# 5. audio: her line out loud — a miss renders on the owner's voice machine, once
+curl -s -H "$T" -X POST -o dot.mp3 $W/messages/431/audio
+```
+
+Then the pulse's cursor moves (a new message), and a second device reading
+the same world sees it at its next conditional `GET pulse`.

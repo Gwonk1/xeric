@@ -1613,7 +1613,7 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
               '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php', '/speak.php',
-              '/hear.php', '/room.php', '/api.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php',
+              '/hear.php', '/room.php', '/api.php', '/link.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php',
               '/xeric.css', '/xeric-shelf.css', '/xeric-view.js', '/forge/xeric.css?v=0123456789abcdef'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
@@ -1626,7 +1626,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
           'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php', 'speak.php',
-          'debrief.php', 'join.php', 'hear.php', 'api.php', 'room.php'];
+          'debrief.php', 'join.php', 'hear.php', 'api.php', 'room.php', 'link.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);

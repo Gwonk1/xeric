@@ -233,45 +233,89 @@ $guest = json_decode($child("xeric_web_json_shaper('xeric_api_envelope');\n"
 ok('and so does an owner refusal', is_array($guest) && $guest['ok'] === false && $guest['kind'] === 'guest'
     && $guest['api'] === XERIC_API_VERSION, json_encode($guest));
 
-// -- the server ---------------------------------------------------------------
+// -- the servers ----------------------------------------------------------------
+//
+// Two app servers (one cookie, one solo) and a THIRD, the machine: a stub that
+// speaks the OpenAI wire for a model, a voice and a pair of ears, on loopback,
+// logging every call — because the verbs are the real scripts, and the real
+// scripts (and the workers they detach) reach their machines over HTTP. It is
+// written into the scratch dir and served from there, never from the tree.
 
-$serve = function (string $solo) use ($tmp, $WEB): array {
-    $port = 0;
-    for ($try = 8700 + random_int(0, 150); $try < 8999; $try++) {
+$machine = $tmp . '/machine';
+@mkdir($machine, 0775, true);
+file_put_contents($machine . '/stub.php', <<<'PHP'
+<?php
+$path = (string)parse_url((string)($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
+$in   = json_decode((string)file_get_contents('php://input'), true);
+file_put_contents(__DIR__ . '/calls.log', ($_SERVER['REQUEST_METHOD'] ?? '') . ' ' . $path . "\n", FILE_APPEND | LOCK_EX);
+if ($path === '/v1/audio/speech') {
+    header('Content-Type: audio/mpeg');
+    echo 'ID3' . str_repeat("\x00", 64) . 'stub-voice';
+    return true;
+}
+header('Content-Type: application/json');
+if ($path === '/v1/audio/transcriptions') { echo json_encode(['text' => 'Is the pie fresh today?']); return true; }
+if ($path === '/v1/chat/completions') {
+    $json = is_array($in) && isset($in['response_format']);
+    $say  = $json ? '{"memories": [], "events": [], "beats": []}' : 'Coffee is on. Sit anywhere you like.';
+    echo json_encode(['choices' => [['message' => ['role' => 'assistant', 'content' => $say]]],
+                      'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5]]);
+    return true;
+}
+if ($path === '/v1/audio/voices' || $path === '/v1/voices') { http_response_code(404); echo '{}'; return true; }
+echo json_encode(['object' => 'list', 'data' => [['id' => 'stub']]]);
+return true;
+PHP);
+
+$freePort = function (): int {
+    for ($try = 8700 + random_int(0, 250); $try < 9199; $try++) {
         $probe = @fsockopen('127.0.0.1', $try, $e1, $e2, 0.2);
-        if ($probe === false) { $port = $try; break; }
+        if ($probe === false) return $try;
         fclose($probe);
     }
-    $env = 'XERIC_DATA_DIR=' . escapeshellarg($tmp) . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
-         . ' XERIC_LOCAL_BASE=http://127.0.0.1:1 XERIC_SOLO=' . $solo . ' PHP_CLI_SERVER_WORKERS=2';
+    return 0;
+};
+$listen = function (int $port, string $env, string $docroot, string $router) use ($tmp): int {
     $pid = (int)trim((string)shell_exec($env . ' ' . escapeshellarg(PHP_BINARY) . ' -S 127.0.0.1:' . $port
-        . ' -t ' . escapeshellarg($WEB) . ' ' . escapeshellarg($WEB . '/router.php')
+        . ' -t ' . escapeshellarg($docroot) . ' ' . escapeshellarg($router)
         . ' > ' . escapeshellarg($tmp . '/server-' . $port . '.log') . ' 2>&1 & echo $!'));
     for ($i = 0; $i < 60; $i++) {
         $s = @fsockopen('127.0.0.1', $port, $e1, $e2, 0.3);
-        if ($s !== false) { fclose($s); return [$port, $pid]; }
+        if ($s !== false) { fclose($s); return $pid; }
         usleep(150000);
     }
-    return [0, $pid];
+    return -$pid;
+};
+$mport = $freePort();
+$mpid  = $listen($mport, 'PHP_CLI_SERVER_WORKERS=4', $machine, $machine . '/stub.php');
+$MACHINE = 'http://127.0.0.1:' . $mport;
+
+$serve = function (string $solo) use ($tmp, $WEB, $freePort, $listen, $MACHINE): array {
+    $port = $freePort();
+    $env = 'XERIC_DATA_DIR=' . escapeshellarg($tmp) . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
+         . ' XERIC_LOCAL_BASE=http://127.0.0.1:1 XERIC_SOLO=' . $solo . ' PHP_CLI_SERVER_WORKERS=4'
+         . ' XERIC_VOICE_BASE=' . $MACHINE . ' XERIC_EARS_BASE=' . $MACHINE;
+    $pid = $listen($port, $env, $WEB, $WEB . '/router.php');
+    return $pid > 0 ? [$port, $pid] : [0, -$pid];
 };
 [$port, $pid]   = $serve('0');
 [$sport, $spid] = $serve('1');
-register_shutdown_function(function () use ($pid, $spid, $tmp): void {
-    if ($pid > 0) @posix_kill($pid, 15) || @shell_exec('kill ' . $pid);
-    if ($spid > 0) @posix_kill($spid, 15) || @shell_exec('kill ' . $spid);
-    usleep(200000);
+register_shutdown_function(function () use ($pid, $spid, $mpid, $tmp): void {
+    foreach ([$pid, $spid, abs($mpid)] as $p) if ($p > 0) @posix_kill($p, 15) || @shell_exec('kill ' . $p);
+    usleep(300000);
     rmtree($tmp);
 });
-ok('two test servers answer, one cookie and one solo', $port > 0 && $sport > 0);
-if ($port === 0 || $sport === 0) { echo "\nno server\n"; exit(1); }
+ok('two test servers answer, one cookie and one solo, and a stub machine beside them',
+    $port > 0 && $sport > 0 && $mpid > 0);
+if ($port === 0 || $sport === 0 || $mpid <= 0) { echo "\nno server\n"; exit(1); }
 
 /** One request. [status, headers (lowercased), body, decoded]. */
-function req(int $port, string $path, array $headers = [], string $method = 'GET'): array
+function req(int $port, string $path, array $headers = [], string $method = 'GET', ?string $content = null): array
 {
     $ctx = stream_context_create(['http' => [
-        'method' => $method, 'ignore_errors' => true, 'timeout' => 20, 'follow_location' => 0,
+        'method' => $method, 'ignore_errors' => true, 'timeout' => 60, 'follow_location' => 0,
         'header' => implode("\r\n", $headers),
-    ]]);
+    ] + ($content !== null ? ['content' => $content] : [])]);
     $body = @file_get_contents('http://127.0.0.1:' . $port . $path, false, $ctx);
     $hs = function_exists('http_get_last_response_headers') ? (http_get_last_response_headers() ?? [])
         : ($http_response_header ?? []);
@@ -281,7 +325,8 @@ function req(int $port, string $path, array $headers = [], string $method = 'GET
         if (preg_match('#^HTTP/\S+\s+(\d{3})#', $line, $m)) { $status = (int)$m[1]; $h = []; continue; }
         if (str_contains($line, ':')) {
             [$k, $v] = explode(':', $line, 2);
-            $h[strtolower(trim($k))] = trim($v);
+            $k = strtolower(trim($k));
+            $h[$k] = isset($h[$k]) && $k === 'set-cookie' ? $h[$k] . "\n" . trim($v) : trim($v);
         }
     }
     $body = $body === false ? '' : $body;
@@ -476,6 +521,351 @@ ok('where.php answers as it always has: no envelope, no header', $st === 200 && 
     && !isset($h['xeric-api']) && ($d['ok'] ?? null) === true);
 [$st, $h, , $d] = req($port, '/play.php?w=' . $slug . '&a=state', $C);
 ok('play.php a=state still carries its HTML', $st === 200 && isset($d['cast_html']) && !isset($d['api']));
+
+// ===========================================================================
+// THE WRITE HALF
+// ===========================================================================
+
+echo "\n# the write half: a world that is running, a machine that answers\n";
+
+// A second world, running, with three people always at the Bluebird so the
+// room has company whatever the wall clock says (room-web-test's fixture),
+// and the owner's model pointed at the stub machine.
+$vslug = 'api-verbs';
+$vT = $fixT;
+$every = [0, 1, 2, 3, 4, 5, 6];
+foreach ($vT['cast']['characters'] as &$vc) {
+    $vc['week'] = match ((string)$vc['handle']) {
+        'ruth', 'pastor_dale', 'dot' => [['days' => $every, 'where' => 'bluebird', 'doing' => 'at the counter']],
+        'janelle'                    => [['days' => $every, 'where' => 'first_lutheran', 'doing' => 'setting up']],
+        default                      => [['days' => $every, 'where' => 'beck_hardware', 'doing' => 'at the till']],
+    };
+}
+unset($vc);
+$vdir = xeric_web_worlds_dir() . '/' . $vslug;
+@mkdir($vdir, 0775, true);
+file_put_contents($vdir . '/world-template.json', json_encode($vT, $J));
+file_put_contents($vdir . '/seed.json', json_encode(xeric_forge_default_seed($vT), $J));
+xeric_session_use($A);
+xeric_session_claim($vslug, $A);
+xeric_web_session_edit(function (array &$s) use ($MACHINE): void {
+    $s['model'] = ['kind' => 'local', 'local' => $MACHINE, 'base' => '', 'model' => ''];
+}, $A);
+$vw  = xeric_play_open($vslug, null, true);
+$vdb = $vw['db'];
+if (xeric_clock_is_paused($vdb)) xeric_clock_resume($vdb);
+xeric_player_move($vdb, 'bluebird', xeric_clock_epoch($vdb));
+$V   = '/api.php/v1/worlds/' . $vslug;
+$JS  = 'Content-Type: application/json';
+$calls = fn(): string => (string)@file_get_contents($machine . '/calls.log');
+ok('the owner\'s world is running and they stand at the Bluebird',
+    !xeric_clock_is_paused($vdb) && xeric_player_where($vT, $vdb) === 'bluebird');
+
+echo "\n# the link ceremony\n";
+
+[$st, , $html] = req($port, '/link.php', $C, 'POST', 'a=mint&label=' . rawurlencode('the headset'));
+$code = preg_match('#id="code">([A-Z0-9]{8})<#', $html, $mm) ? $mm[1] : '';
+ok('the owner mints a link code on link.php, shown once', $st === 200 && strlen($code) === 8, substr(strip_tags($html), 0, 200));
+[$st, $h, , $d] = req($port, '/api.php/v1/link', [$JS], 'POST', json_encode(['code' => strtolower($code)]));
+$OT = (string)($d['token'] ?? '');
+$bodies['link'] = $d ?? [];
+$ODEV = (int)($d['device'] ?? 0);
+ok('redeemed over loopback it is a token for the SAME person, role owner, enveloped',
+    $st === 200 && ($d['api'] ?? '') === '1.0' && ($d['ok'] ?? null) === true && ($d['role'] ?? '') === 'owner'
+    && preg_match(XERIC_API_TOKEN_RE, $OT) === 1 && ($d['label'] ?? '') === 'the headset' && $ODEV > 0
+    && ($d['adult'] ?? null) === true, json_encode($d));
+ok('and it resolves to the owner\'s session', (xeric_api_token_resolve($OT)['sid'] ?? '') === $A);
+[$st, , , $d] = req($port, '/api.php/v1/link', [$JS], 'POST', json_encode(['code' => $code]));
+ok('the same code a second time is spent: 410', $st === 410 && ($d['kind'] ?? '') === 'code' && !isset($d['token']));
+
+$good = xeric_api_link_new($A, 'spare')['code'];
+$locked = 0;
+for ($i = 1; $i <= 5; $i++) {
+    [$st, $h, , $d] = req($port, '/api.php/v1/link', [$JS], 'POST', json_encode(['code' => 'ZZZZ' . $i . '222']));
+    if ($st === 429) { $locked = $i; break; }
+    if ($st !== 410) break;
+}
+ok('wrong codes, five at most, and the door shuts: 429 locked with Retry-After',
+    $locked > 0 && $locked <= 5 && ($d['kind'] ?? '') === 'locked' && (int)($h['retry-after'] ?? 0) > 0, "$st after $i");
+[$st, , , $d] = req($port, '/api.php/v1/link', [$JS], 'POST', json_encode(['code' => $good]));
+ok('and while it is shut even a good code is refused', $st === 429 && !isset($d['token']));
+xeric_api_tokens_db()->exec('DELETE FROM api_door');
+[$st, , , $d] = req($port, '/api.php/v1/link', [$JS], 'POST', json_encode(['code' => $good]));
+ok('a good code that waited out the lock still works (it was not burned)', $st === 200 && isset($d['token']));
+$SPARE = (string)($d['token'] ?? '');
+
+[$st, $h, , $d] = req($port, '/api.php/v1/link', $C);
+ok('a GET of link is 405 with Allow', $st === 405 && str_contains($h['allow'] ?? '', 'POST'));
+[$st, , , $d] = req($port, '/api.php/v1/link', [$JS, 'Sec-Fetch-Site: cross-site'], 'POST', json_encode(['code' => 'X']));
+ok('a ceremony from another site is refused', $st === 403 && ($d['kind'] ?? '') === 'cross_site');
+
+echo "\n# the verbs, as the owner's device\n";
+
+$B = ['Authorization: Bearer ' . $OT];
+[$st, $h, , $d] = req($port, $V . '/go', array_merge($B, [$JS]), 'POST', json_encode(['to' => 'beck_hardware']));
+$bodies['go'] = $d ?? [];
+ok('go moves the player: enveloped, the map after, and the world agrees',
+    $st === 200 && ($d['ok'] ?? null) === true && ($d['world'] ?? '') === $vslug
+    && ($d['went']['to'] ?? '') === 'beck_hardware' && ($d['you']['where'] ?? '') === 'beck_hardware'
+    && xeric_player_where($vT, $vdb) === 'beck_hardware', "$st " . json_encode($d));
+ok('a Bearer answer sets no cookie: the device never holds the owner\'s sid', !isset($h['set-cookie']),
+    (string)($h['set-cookie'] ?? ''));
+$seen = xeric_api_tokens_db()->query('SELECT seen_at FROM api_tokens WHERE id = ' . $ODEV)->fetchColumn();
+ok('and the device is seen', (int)$seen >= time() - 120);
+[$st, , , $d] = req($port, $V . '/go', array_merge($B, [$JS]), 'POST', json_encode(['to' => 'the_moon']));
+ok('a place that is not there is the script\'s own refusal, enveloped', $st === 400 && ($d['ok'] ?? null) === false
+    && ($d['kind'] ?? '') === 'travel');
+req($port, $V . '/go', array_merge($B, [$JS]), 'POST', json_encode(['to' => 'bluebird']));
+ok('and back to the Bluebird', xeric_player_where($vT, $vdb) === 'bluebird');
+
+$before = (int)$vdb->query('SELECT COUNT(*) FROM messages')->fetchColumn();
+[$st, , , $d] = req($port, $V . '/threads/dot/say', array_merge($B, [$JS]), 'POST',
+    json_encode(['text' => 'Is there coffee?', 'world' => 'api-town']));
+$bodies['say'] = $d ?? [];
+$after = (int)$vdb->query('SELECT COUNT(*) FROM messages')->fetchColumn();
+$REPLY = (int)($d['id'] ?? 0);
+ok('say to the stub model appends the turn and answers with it', $st === 200 && ($d['ok'] ?? null) === true
+    && $after === $before + 2 && ($d['text'] ?? '') === 'Coffee is on. Sit anywhere you like.'
+    && $REPLY > 0 && !isset($d['mid']), "$st " . substr(json_encode($d), 0, 300));
+ok('in the world the path named, never the body\'s', ($d['world'] ?? '') === $vslug
+    && (int)$db->query("SELECT COUNT(*) FROM messages WHERE content = 'Is there coffee?'")->fetchColumn() === 0);
+ok('with the reply\'s epoch beside its when, and the state as v1 reads it',
+    is_int($d['epoch'] ?? null) && $d['epoch'] > 0 && is_int($d['state']['clock']['offset'] ?? null)
+    && is_int($d['state']['clock']['server'] ?? null) && !has_html_key($d));
+
+$pc = xeric_conversation_for($vdb, 'pastor_dale');
+xeric_message_append($vdb, $pc, 'character', 'pastor_dale', 'Sunday, then.');
+xeric_message_append($vdb, $pc, 'character', 'pastor_dale', 'Bring the casserole dish back.');
+$vdb->prepare('UPDATE conversations SET unread = 2 WHERE id = ?')->execute([$pc]);
+$sig0 = (int)$vdb->query("SELECT COUNT(*) FROM signals WHERE kind = 'dwell' AND handle = 'pastor_dale'")->fetchColumn();
+[$st, , , $d] = req($port, $V . '/threads/pastor_dale/read', $B, 'POST');
+$bodies['read'] = $d ?? [];
+$sig1 = (int)$vdb->query("SELECT COUNT(*) FROM signals WHERE kind = 'dwell' AND handle = 'pastor_dale'")->fetchColumn();
+ok('read clears unread and records the learn signal, as play.php\'s a=thread does',
+    $st === 200 && ($d['unread'] ?? -1) === 2 && ($d['read'] ?? null) === true && ($d['learned'] ?? null) === true
+    && (int)xeric_conversation_get($vdb, $pc)['unread'] === 0 && $sig1 === $sig0 + 1, json_encode($d));
+[$st, , , $d] = req($port, $V . '/threads/nobody/read', $B, 'POST');
+ok('read of nobody is 404', $st === 404 && ($d['kind'] ?? '') === 'no_character');
+
+[$st, , , $d] = req($port, $V . '/look', $B, 'POST');
+ok('look POST is scene.php\'s look: with no scene machine, its own refusal, enveloped',
+    $st === 409 && ($d['ok'] ?? null) === false && ($d['api'] ?? '') === '1.0' && ($d['kind'] ?? '') !== '',
+    "$st " . json_encode($d));
+
+$off0 = xeric_clock_offset($vdb);
+[$st, , , $d] = req($port, $V . '/skip', array_merge($B, [$JS]), 'POST', json_encode(['span' => '1h', 'rewind' => 1]));
+$bodies['skip'] = $d ?? [];
+$sjob = (string)($d['job'] ?? '');
+ok('skip starts tick.php\'s worker and points at the v1 job route', $st === 200 && $sjob !== ''
+    && ($d['stream'] ?? '') === '/api.php/v1/jobs/' . $sjob, "$st " . json_encode($d));
+$done = false;
+for ($i = 0; $i < 120 && $sjob !== ''; $i++) {
+    [, , , $jd] = req($port, '/api.php/v1/jobs/' . $sjob, $B);
+    if (($jd['done'] ?? false) === true) { $done = true; break; }
+    usleep(250000);
+}
+$off1 = xeric_clock_offset($vdb);
+ok('and the clock advanced an hour', $done && $off1 - $off0 >= 3500, ($off1 - $off0) . ' ' . json_encode(array_slice((array)($jd['records'] ?? []), -2)));
+[$st, , , $d] = req($port, $V . '/rewind', $B, 'POST');
+ok('rewind is tick.php\'s rewind, enveloped either way', in_array($st, [200, 409], true)
+    && ($d['api'] ?? '') === '1.0' && is_bool($d['ok'] ?? null) && !isset($d['why']), "$st " . json_encode($d));
+if ($st === 200) ok('and it took the hour back', xeric_clock_offset($vdb) < $off1);
+
+$bnd = 'xericapitest' . bin2hex(random_bytes(4));
+$mp = "--$bnd\r\nContent-Disposition: form-data; name=\"h\"\r\n\r\ndot\r\n"
+    . "--$bnd\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"line.webm\"\r\nContent-Type: audio/webm\r\n\r\n"
+    . "\x1A\x45\xDF\xA3" . str_repeat("\x00", 200) . "\r\n--$bnd--\r\n";
+[$st, , , $d] = req($port, $V . '/hear', array_merge($B, ['Content-Type: multipart/form-data; boundary=' . $bnd]), 'POST', $mp);
+$bodies['hear'] = $d ?? [];
+ok('hear sends the recording to the stub ears and answers with text', $st === 200
+    && ($d['text'] ?? '') === 'Is the pie fresh today?' && str_contains($calls(), 'POST /v1/audio/transcriptions'),
+    "$st " . json_encode($d));
+
+[$st, , , $d] = req($port, $V . '/messages/' . $REPLY . '/audio', $B);
+ok('the reply has not been read aloud: GET is cache-only, 404 not_rendered', $st === 404
+    && ($d['kind'] ?? '') === 'not_rendered');
+[$st, $h, $raw] = req($port, $V . '/messages/' . $REPLY . '/audio', $B, 'POST');
+ok('POST is a miss that renders through the stub voice', $st === 200 && ($h['content-type'] ?? '') === 'audio/mpeg'
+    && str_ends_with($raw, 'stub-voice') && substr_count($calls(), 'POST /v1/audio/speech') === 1, "$st " . substr($raw, 0, 200));
+[$st, $h, $raw] = req($port, $V . '/messages/' . $REPLY . '/audio', $B);
+ok('and a GET then hits, with no second render', $st === 200 && str_ends_with($raw, 'stub-voice')
+    && substr_count($calls(), 'POST /v1/audio/speech') === 1);
+$umid = (int)$vdb->query("SELECT MAX(id) FROM messages WHERE role = 'user'")->fetchColumn();
+[$st, , , $d] = req($port, $V . '/messages/' . $umid . '/audio', $B, 'POST');
+ok('the player\'s own line has no voice to render', $st === 404 && ($d['kind'] ?? '') === 'no_message');
+
+echo "\n# the room\n";
+
+[, $h0] = req($port, $V . '/pulse', $B);
+[$st, , , $d] = req($port, $V . '/room/say', array_merge($B, [$JS]), 'POST', json_encode(['text' => 'Morning, all.']));
+$bodies['room_say'] = $d ?? [];
+$said = (int)($d['id'] ?? 0);
+$saidAt = time();
+ok('room/say lands the line and opens the table', $st === 200 && $said > 0 && (int)($d['conv'] ?? 0) > 0
+    && is_int($d['epoch'] ?? null), "$st " . json_encode($d));
+[$st, $h1, , $p] = req($port, $V . '/pulse', array_merge($B, ['If-None-Match: ' . ($h0['etag'] ?? '')]));
+ok('the pulse\'s room slot is filled, and its cursor moved', $st === 200 && is_array($p['room'] ?? null)
+    && ($p['room']['conv'] ?? 0) === ($d['conv'] ?? -1) && ($p['room']['last'] ?? 0) >= $said, json_encode($p['room'] ?? null));
+$cast = null;
+for ($i = 0; $i < 160; $i++) {
+    [$st, , , $rd] = req($port, $V . '/room?after=' . $said, $B);
+    foreach ((array)($rd['rows'] ?? []) as $row) if (($row['who'] ?? '') === 'them') { $cast = $row; break 2; }
+    usleep(250000);
+}
+$bodies['room'] = $rd ?? [];
+$castAt = $cast !== null ? (int)$vdb->query('SELECT created_at FROM messages WHERE id = ' . (int)$cast['id'])->fetchColumn() : 0;
+ok('the poll yields a cast row from the stub model, after the line it answers',
+    $cast !== null && (int)$cast['id'] > $said && is_int($cast['epoch'] ?? null) && ($rd['ok'] ?? null) === true,
+    json_encode($rd));
+ok('and the row was written at or after it was due: never before the line it answers', $castAt >= $saidAt - 1,
+    "$castAt vs $saidAt");
+[, , , $p2] = req($port, $V . '/pulse', $B);
+ok('the pulse\'s room carries the newest row', ($p2['room']['last'] ?? 0) >= (int)($cast['id'] ?? PHP_INT_MAX));
+[$st, , , $d] = req($port, $V . '/room/carry', $B, 'POST');
+ok('carry answers enveloped (a quiet room is a 409, not an error)', in_array($st, [200, 409], true)
+    && ($d['api'] ?? '') === '1.0');
+for ($i = 0; $i < 60; $i++) {
+    [$st, , , $d] = req($port, $V . '/room/leave', $B, 'POST');
+    if ($st === 200) break;
+    usleep(250000);
+}
+ok('leave seals the table', $st === 200 && ($d['ok'] ?? null) === true, "$st " . json_encode($d));
+
+echo "\n# join: a new player\n";
+
+xeric_state_migrate($vdb);
+$inv = xeric_pair_new($vdb, 'Sam')['code'];
+[$st, , , $d] = req($port, '/api.php/v1/join', [$JS], 'POST', json_encode(['world' => $vslug, 'code' => $inv, 'name' => 'Sam']));
+$bodies['join'] = $d ?? [];
+$GT = (string)($d['token'] ?? '');
+$gres = xeric_api_token_resolve($GT);
+ok('join is join.php\'s ceremony: a guest token for a new session, a new player', $st === 200
+    && ($d['role'] ?? '') === 'guest' && (int)($d['player'] ?? 0) >= 2 && $gres !== null && $gres['sid'] !== $A
+    && $gres['adult'] === false && xeric_session_player($vslug, $gres['sid']) === (int)$d['player'], "$st " . json_encode($d));
+[$st, , , $d] = req($port, '/api.php/v1/join', [$JS], 'POST', json_encode(['world' => $vslug, 'code' => $inv, 'name' => 'Sam']));
+ok('the invite is spent', $st === 410 && ($d['kind'] ?? '') === 'code');
+$G = ['Authorization: Bearer ' . $GT];
+// The guest's own machine choice, as room-web-test gives its guest one: a
+// session with nothing attached that opens a running world stops its clock
+// (xeric_play_open's reconcile) — true of a guest who came in through
+// join.php in a browser too, and nothing the API should paper over.
+if ($gres !== null) {
+    xeric_web_session_edit(function (array &$s) use ($MACHINE): void {
+        $s['model'] = ['kind' => 'local', 'local' => $MACHINE, 'base' => '', 'model' => ''];
+    }, $gres['sid']);
+}
+$gb = (int)$vdb->query('SELECT COUNT(*) FROM messages')->fetchColumn();
+[$st, , , $d] = req($port, $V . '/threads/janelle/say', array_merge($G, [$JS]), 'POST', json_encode(['text' => 'Hello, I am Sam.']));
+ok('the guest can say, into the owner\'s own evening', $st === 200 && ($d['ok'] ?? null) === true
+    && (int)$vdb->query('SELECT COUNT(*) FROM messages')->fetchColumn() === $gb + 2, "$st " . json_encode($d));
+[$st, , , $d] = req($port, $V . '/go', array_merge($G, [$JS]), 'POST', json_encode(['to' => 'beck_hardware']));
+ok('and is 403 guest on go: the owner door is go\'s own', $st === 403 && ($d['kind'] ?? '') === 'guest'
+    && xeric_player_where($vT, $vdb) === 'bluebird');
+[$st, , , $d] = req($port, $V . '/hear', array_merge($G, ['Content-Type: multipart/form-data; boundary=' . $bnd]), 'POST', $mp);
+ok('and on hear: the ears are the owner\'s', $st === 403 && ($d['kind'] ?? '') === 'guest');
+[$st, , , $d] = req($port, $V, $G);
+ok('a guest token carries adult=false, and it clamps', $st === 200 && ($d['guest'] ?? null) === true
+    && ($d['rating'] ?? '') === xeric_rating_clamp('mature', false), (string)($d['rating'] ?? ''));
+
+echo "\n# the devices, on link.php\n";
+
+[$st, , $html] = req($port, '/link.php', $C);
+ok('link.php lists this session\'s devices: label, role, adult, last seen',
+    $st === 200 && str_contains($html, 'data-device="' . $ODEV . '"') && str_contains($html, 'the headset'));
+[$st, , $html] = req($port, '/link.php', array_merge($C, ['Authorization: Bearer ' . $OT]));
+ok('and refuses a device token outright', $st === 403 && !str_contains($html, 'the headset'));
+[$st] = req($port, '/link.php', array_merge($C, ['Sec-Fetch-Site: cross-site']));
+ok('and anything from another site', $st === 403);
+[$st, , , $d] = req($port, $V, $B);
+ok('the owner\'s headset reads the world at its rating', ($d['rating'] ?? '') === 'mature');
+req($port, '/link.php', $C, 'POST', 'a=lower&id=' . $ODEV);
+[$st, , , $d] = req($port, $V, $B);
+ok('lowered on link.php, the same token is a kids\' headset', $st === 200
+    && ($d['rating'] ?? '') === xeric_rating_clamp('mature', false));
+ok('and nothing raises it back', !function_exists('xeric_api_device_raise')
+    && (int)xeric_api_tokens_db()->query('SELECT adult FROM api_tokens WHERE id = ' . $ODEV)->fetchColumn() === 0);
+req($port, '/link.php', $C, 'POST', 'a=revoke&id=' . $ODEV);
+[$st, , , $d] = req($port, $V . '/pulse', $B);
+ok('revoked on link.php, the token is a 401', $st === 401 && ($d['kind'] ?? '') === 'token');
+[$st] = req($port, '/link.php', $C, 'POST', 'a=revoke&id=' . (int)xeric_api_token_resolve($GT)['id']);
+[$st, , , $d] = req($port, $V . '/pulse', $G);
+ok('a guest\'s device is not the owner\'s to revoke from their own list (it is the guest\'s session)', $st === 200);
+
+echo "\n# the doors around the verbs\n";
+
+$S = ['Authorization: Bearer ' . $SPARE];
+[$st, $h, , $d] = req($port, $V . '/go', $S);
+ok('a GET of a verb is 405 with Allow: POST', $st === 405 && ($h['allow'] ?? '') === 'POST' && ($d['kind'] ?? '') === 'method');
+[$st, $h] = req($port, $V . '/threads/dot', $S, 'POST');
+ok('a POST to a read is 405 with Allow: GET', $st === 405 && str_contains($h['allow'] ?? '', 'GET'));
+[$st, $h] = req($port, $V . '/room', $S, 'POST');
+ok('the room poll is a GET', $st === 405);
+[$st, , , $d] = req($port, $V . '/go', array_merge($C, [$JS, 'Sec-Fetch-Site: cross-site']), 'POST', json_encode(['to' => 'beck_hardware']));
+ok('a cookie-identified cross-site go is refused', $st === 403 && ($d['kind'] ?? '') === 'cross_site'
+    && xeric_player_where($vT, $vdb) === 'bluebird');
+[$st, , , $d] = req($sport, $V . '/go', ['Origin: https://evil.example', $JS], 'POST', json_encode(['to' => 'beck_hardware']));
+ok('and a solo-identified one', $st === 403 && ($d['kind'] ?? '') === 'cross_site');
+[$st, , , $d] = req($port, $V . '/go', array_merge($S, [$JS, 'Sec-Fetch-Site: cross-site']), 'POST', json_encode(['to' => 'beck_hardware']));
+ok('a Bearer-identified one passes: no browser sends that header on its own', $st === 200
+    && xeric_player_where($vT, $vdb) === 'beck_hardware', "$st " . json_encode($d));
+[$st, , , $d] = req($port, $V . '/go', array_merge($C, [$JS]), 'POST', json_encode(['to' => 'bluebird']));
+ok('and the cookie owner, same-site, walks too', $st === 200 && xeric_player_where($vT, $vdb) === 'bluebird');
+
+echo "\n# DNS rebinding: the Host pin\n";
+
+[$st, , , $d] = req($sport, '/api.php/v1/', ['Host: evil.example:' . $sport]);
+ok('a solo request naming a foreign Host is 403 host', $st === 403 && ($d['kind'] ?? '') === 'host'
+    && ($d['api'] ?? '') === '1.0');
+[$st, , , $d] = req($sport, $V . '/go', ['Host: rebound.example', $JS], 'POST', json_encode(['to' => 'beck_hardware']));
+ok('verbs included', $st === 403 && ($d['kind'] ?? '') === 'host' && xeric_player_where($vT, $vdb) === 'bluebird');
+// (A GET by `localhost` is boot.php's one-name redirect to 127.0.0.1 before
+// anything else runs, so the pin is asked by a POST.)
+[$st, , , $d] = req($sport, $V . '/threads/dot/read', ['Host: localhost:' . $sport], 'POST');
+ok('localhost on this port is the owner', $st === 200 && ($d['read'] ?? null) === true, "$st " . json_encode($d));
+[$st] = req($sport, '/api.php/v1/', ['Host: 127.0.0.1:1']);
+ok('a port this server is not listening on is refused too', $st === 403);
+[$st, , , $d] = req($sport, '/api.php/v1/', ['Host: evil.example', 'Authorization: Bearer ' . $SPARE]);
+ok('a Bearer request is not ambient and is not pinned', $st === 200 && ($d['auth']['via'] ?? '') === 'bearer');
+[$st] = req($sport, '/link.php', ['Host: evil.example:' . $sport]);
+ok('and link.php, whose code a rebound page could otherwise read, pins it as well', $st === 403);
+$pin = fn(string $host, array $more = []) => xeric_api_host_pinned(['HTTP_HOST' => $host, 'SERVER_PORT' => '8787'] + $more);
+ok('the pin, unit by unit: [::1], an IP literal, the bound name; not a lookalike',
+    $pin('[::1]:8787') && $pin('192.168.1.20:8787') && $pin('LOCALHOST') && !$pin('localhost.evil.example')
+    && !$pin('127.0.0.1.nip.io:8787') && !$pin('evil.example'));
+
+echo "\n# a token over plain http is a key in the clear\n";
+
+/** api.php, run as one request in a child with the peer and environment given. */
+$asPeer = function (string $peer, array $post, string $route, string $env = '') use ($tmp, $WEB): array {
+    $boot = '$_SERVER["REMOTE_ADDR"] = ' . var_export($peer, true) . '; $_SERVER["REQUEST_METHOD"] = "POST";'
+        . ' $_SERVER["PATH_INFO"] = ' . var_export($route, true) . '; $_SERVER["HTTP_HOST"] = "192.168.1.5:8787";'
+        . ' $_POST = ' . var_export($post, true) . ';'
+        . ' register_shutdown_function(function () { echo "\n@@STATUS " . http_response_code(); });'
+        . ' require ' . var_export($WEB . '/api.php', true) . ';';
+    $cmd = $env . ' XERIC_DATA_DIR=' . escapeshellarg($tmp) . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
+         . ' XERIC_LOCAL_BASE=http://127.0.0.1:1 XERIC_SOLO=0 ' . escapeshellarg(PHP_BINARY)
+         . ' -d error_reporting=0 -r ' . escapeshellarg($boot) . ' 2>&1';
+    $raw = (string)shell_exec($cmd);
+    $status = preg_match('/@@STATUS (\d+)\s*$/', $raw, $m) ? (int)$m[1] : 0;
+    $j = json_decode(trim((string)preg_replace('/@@STATUS \d+\s*$/', '', $raw)), true);
+    return [$status, is_array($j) ? $j : null, $raw];
+};
+$lan = xeric_api_link_new($A, 'phone on the wifi')['code'];
+[$st, $d, $raw] = $asPeer('192.168.1.20', ['code' => $lan], '/v1/link');
+ok('POST link from a LAN peer over plain http is refused: 403 insecure', $st === 403 && ($d['kind'] ?? '') === 'insecure'
+    && !isset($d['token']), "$st " . substr($raw, 0, 200));
+ok('and the refusal names the two no-TLS setups and the tailscale recipe', str_contains((string)($d['error'] ?? ''), 'adb reverse')
+    && str_contains((string)($d['error'] ?? ''), 'Quest Link') && str_contains((string)($d['error'] ?? ''), 'tailscale serve'));
+$inv2 = xeric_pair_new($vdb, '')['code'];
+[$st, $d] = $asPeer('192.168.1.20', ['world' => $vslug, 'code' => $inv2, 'name' => 'Ann'], '/v1/join');
+ok('so is POST join', $st === 403 && ($d['kind'] ?? '') === 'insecure');
+[$st, $d] = $asPeer('192.168.1.20', ['code' => $lan], '/v1/link', 'XERIC_LAN_TOKENS=1');
+ok('with XERIC_LAN_TOKENS=1 the operator has said yes, and the same code (never burned) mints',
+    $st === 200 && ($d['role'] ?? '') === 'owner' && isset($d['token']), "$st " . json_encode($d));
+ok('TLS is enough on its own', xeric_api_mint_refusal(['HTTPS' => 'on', 'REMOTE_ADDR' => '10.0.0.9']) === null
+    && xeric_api_mint_refusal(['REMOTE_ADDR' => '::1']) === null
+    && xeric_api_mint_refusal(['HTTPS' => 'off', 'REMOTE_ADDR' => '10.0.0.9']) !== null);
+
 
 echo "\n# the contract\n";
 

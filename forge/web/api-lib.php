@@ -14,9 +14,13 @@
  *     its own: whether this device may be shown adult material at all. The
  *     store is a web-layer concern — a world database knows nothing about
  *     devices — so it is its own small SQLite file in the data dir, created
- *     here, not in engine/state.php. Only the read half is built: tokens are
- *     resolved, and minted only by the tests. The link and join ceremonies
- *     that hand one to a person are the write half's.
+ *     here, not in engine/state.php. A token is handed to a person by one of
+ *     two ceremonies built on pair.php's discipline (8 characters, 5 minutes,
+ *     single use, hashed, a lockout): LINK (the owner mints a code on the box,
+ *     link.php; the device becomes the same person) and JOIN (a pair code from
+ *     the invite; the device becomes a new player). Tokens work on api.php and
+ *     nowhere else: link.php, model.php, power.php, notify.php and the forge
+ *     never read an Authorization header, so a device is a stranger there.
  *
  *  2. THE ENVELOPE. Every body leaves as {api, ok, …}; a refusal is
  *     {api, ok:false, error, kind}. The inconsistencies the old wire grew
@@ -27,13 +31,17 @@
  *     registered it, which is how refusals raised deep inside come out shaped.
  *
  *  3. THE PER-ROUTE SHAPERS. A read calls the existing function directly and
- *     hands its answer to a shaper here; the shaper is a function so the write
- *     half can reuse it on the `state` a verb answers with.
+ *     hands its answer to a shaper here; a verb `require`s the existing script
+ *     (where.php, say.php, tick.php, …) through boot.php's two seams, and its
+ *     answer passes through xeric_api_shape_verb() on the way into the
+ *     envelope. Nothing a verb does is reimplemented here: the doors, the
+ *     limits and the refusals are the scripts' own.
  */
 
 declare(strict_types=1);
 
 require_once __DIR__ . '/play-lib.php';
+require_once XERIC_WEB_LIB . '/engine/pair.php';
 
 /** The contract's version: major in the path, the whole of it here and in a header. */
 const XERIC_API_VERSION = '1.0';
@@ -46,6 +54,14 @@ const XERIC_API_TOKEN_RE = '/^xd1_[a-f0-9]{64}$/';
 
 /** The two things a device can be: the same person (a link) or a new player (a join). */
 const XERIC_API_ROLES = ['owner', 'guest'];
+
+/**
+ * Wrong link codes before the door stops answering, and for how long. Tighter
+ * than pair.php's eight: a pair code lets somebody PLAY one world, a link code
+ * makes a device the owner.
+ */
+const XERIC_API_LINK_TRIES = 5;
+const XERIC_API_LINK_LOCK  = 120;
 
 // ---------------------------------------------------------------------------
 // The token store
@@ -79,6 +95,20 @@ function xeric_api_tokens_db(): PDO
         )
     SQL);
     $db->exec('CREATE INDEX IF NOT EXISTS idx_api_tokens_sid ON api_tokens(sid)');
+    // The link codes waiting to be typed into a device, hashed as pair.php
+    // hashes its own, and the door's two numbers (wrong tries, locked until).
+    $db->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS api_links (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            hash        TEXT    NOT NULL UNIQUE,           -- xeric_pair_hash of 'link:' + the code
+            sid         TEXT    NOT NULL,                  -- the session the device will be
+            label       TEXT    NOT NULL DEFAULT '',
+            adult       INTEGER NOT NULL DEFAULT 0,        -- the bit the token will carry
+            dies        INTEGER NOT NULL,
+            created_at  INTEGER NOT NULL
+        )
+    SQL);
+    $db->exec('CREATE TABLE IF NOT EXISTS api_door (k TEXT PRIMARY KEY, v INTEGER NOT NULL)');
     @chmod($path, 0600);
     return $db;
 }
@@ -86,10 +116,8 @@ function xeric_api_tokens_db(): PDO
 /**
  * A new device token for a session. Returned once; only its hash is kept.
  *
- * USED ONLY BY THE TESTS FOR NOW. The ceremonies that hand a token to a
- * person — link (the owner shows a code, the device becomes the same person)
- * and join (a new player) — are the write half's, built on pair.php's
- * discipline. Until then nothing in the app calls this.
+ * Called by the two ceremonies (xeric_api_link_claim, xeric_api_join) and by
+ * the tests; nothing else hands one out.
  */
 function xeric_api_token_mint(string $sid, string $role, string $label, bool $adult): string
 {
@@ -131,8 +159,13 @@ function xeric_api_token_resolve(string $bearer): ?array
     if (!preg_match('/^[a-f0-9]{32}$/', $sid) || !in_array((string)$row['role'], XERIC_API_ROLES, true)) return null;
     if (!is_file(xeric_web_session_path($sid))) return null;
 
-    // Seen, at most once a minute: a pulse every few seconds must not be a
-    // write every few seconds.
+    // SEEN ON EVERY AUTHENTICATED CALL, to the minute: the device row (what
+    // link.php's "last seen" reads) and the session record behind it (what
+    // the sweep reads — a session used only through a headset is not idle).
+    // At most one write a minute each, so a pulse every few seconds is not a
+    // write every few seconds. And never a Set-Cookie: xeric_session_seen()
+    // exists so this does not have to call xeric_session_touch(), which would
+    // hand the device the owner's raw sid.
     if ((int)($row['seen_at'] ?? 0) < time() - 60) {
         try {
             $db->prepare('UPDATE api_tokens SET seen_at = ? WHERE id = ?')->execute([time(), (int)$row['id']]);
@@ -140,8 +173,295 @@ function xeric_api_token_resolve(string $bearer): ?array
             // A locked store is not a reason to refuse a read.
         }
     }
+    xeric_session_seen($sid);
     return ['sid' => $sid, 'role' => (string)$row['role'], 'adult' => (int)$row['adult'] === 1,
             'id' => (int)$row['id'], 'label' => (string)$row['label']];
+}
+
+/**
+ * This session's devices, newest first: what link.php lists. Never the hash.
+ *
+ * @return list<array{id:int,label:string,role:string,adult:bool,created:int,seen:?int}>
+ */
+function xeric_api_devices(string $sid): array
+{
+    $st = xeric_api_tokens_db()->prepare('SELECT id, label, role, adult, created_at, seen_at FROM api_tokens
+                                          WHERE sid = ? AND revoked_at IS NULL ORDER BY id DESC');
+    $st->execute([$sid]);
+    $out = [];
+    foreach ($st->fetchAll() as $r) {
+        $out[] = ['id' => (int)$r['id'], 'label' => (string)$r['label'], 'role' => (string)$r['role'],
+                  'adult' => (int)$r['adult'] === 1, 'created' => (int)$r['created_at'],
+                  'seen' => $r['seen_at'] === null ? null : (int)$r['seen_at']];
+    }
+    return $out;
+}
+
+/** Revoke one of this session's devices. Somebody else's id is not found, not refused. */
+function xeric_api_device_revoke(string $sid, int $id): bool
+{
+    $st = xeric_api_tokens_db()->prepare('UPDATE api_tokens SET revoked_at = ?
+                                          WHERE id = ? AND sid = ? AND revoked_at IS NULL');
+    $st->execute([time(), $id, $sid]);
+    return $st->rowCount() > 0;
+}
+
+/**
+ * Take a device's adult bit away. LOWER ONLY: there is no function that
+ * raises it, because the only honest source of "this device may be shown
+ * adult material" is the session's affirmation at the moment of linking,
+ * and a kids' headset that could be flipped back from the API would be a
+ * kids' headset in name.
+ */
+function xeric_api_device_lower(string $sid, int $id): bool
+{
+    $st = xeric_api_tokens_db()->prepare('UPDATE api_tokens SET adult = 0
+                                          WHERE id = ? AND sid = ? AND revoked_at IS NULL AND adult = 1');
+    $st->execute([$id, $sid]);
+    return $st->rowCount() > 0;
+}
+
+// ---------------------------------------------------------------------------
+// The ceremonies — link (the same person) and join (a new player)
+// ---------------------------------------------------------------------------
+
+/**
+ * May a token be minted over THIS connection?
+ *
+ * A Bearer token is a long-lived credential: a pair code lived five minutes, a
+ * token lives until it is revoked, and over plain http on a LAN anybody on the
+ * wifi who can read one packet has it. So a token is handed out only over
+ * TLS, or to a client on this machine — which is where `adb reverse` (a Quest
+ * in developer mode) and Quest Link with desktop Chrome both land, and where
+ * `tailscale serve` hands its already-encrypted requests — or when the
+ * operator has said, with XERIC_LAN_TOKENS=1, that they understand the risk.
+ *
+ * Null when it may; otherwise the refusal, which names the ways that work.
+ */
+function xeric_api_mint_refusal(array $server): ?array
+{
+    $https = strtolower(trim((string)($server['HTTPS'] ?? '')));
+    if ($https !== '' && $https !== 'off') return null;
+    $peer = (string)($server['REMOTE_ADDR'] ?? '');
+    // No peer is the CLI: the launcher's own tooling, as xeric_web_solo() reads it.
+    if ($peer === '' || in_array($peer, ['127.0.0.1', '::1', '::ffff:127.0.0.1'], true)) return null;
+    if (in_array(strtolower(trim((string)getenv('XERIC_LAN_TOKENS'))), ['1', 'true', 'yes', 'on'], true)) return null;
+    return xeric_api_no(403, 'insecure',
+        'A device token is a long-lived key, and this connection is plain http over the network, so anybody '
+        . 'on it could read the key as it was handed over. No token was made and the code was not used. Two '
+        . 'setups need no TLS: Quest Link with desktop Chrome at http://127.0.0.1:8787, or a Quest in developer '
+        . 'mode with `adb reverse tcp:8787 tcp:8787` (the headset then reaches this machine as itself). For '
+        . 'anything else, put TLS in front: `tailscale serve --bg http://127.0.0.1:8787` and use the https '
+        . 'address it prints. An operator who accepts the risk on a network they trust can set XERIC_LAN_TOKENS=1.');
+}
+
+/** A link code, normalised the way somebody types one: case, spaces and dashes forgiven. */
+function xeric_api_link_norm(string $code): string
+{
+    return strtoupper((string)preg_replace('/[\s\-]+/', '', $code));
+}
+
+/**
+ * Mint a link code for this session. Returns the plaintext ONCE.
+ *
+ * pair.php's code (its alphabet, its length) and its hash, with its lifetime
+ * and its cap on how many may wait. The bit the token will carry is decided
+ * HERE, from the session's affirmation at this moment: a session that has
+ * not affirmed cannot mint an adult device, and an owner who says "this one
+ * is the kids' headset" mints it lowered.
+ *
+ * @return array{code:string,dies:int,ttl:int,adult:bool}
+ * @throws RuntimeException when too many codes are already waiting
+ */
+function xeric_api_link_new(string $sid, string $label = '', bool $adult = true): array
+{
+    if (!preg_match('/^[a-f0-9]{32}$/', $sid)) throw new InvalidArgumentException('not a session id');
+    $db  = xeric_api_tokens_db();
+    $now = time();
+    $db->prepare('DELETE FROM api_links WHERE dies <= ?')->execute([$now]);
+    $st = $db->prepare('SELECT COUNT(*) FROM api_links WHERE sid = ?');
+    $st->execute([$sid]);
+    if ((int)$st->fetchColumn() >= XERIC_PAIR_MAX) {
+        throw new RuntimeException('There are already ' . XERIC_PAIR_MAX
+            . ' link codes waiting. Use one, or let them run out.');
+    }
+    $adult = $adult && xeric_session_adult($sid);
+    $code  = xeric_pair_code();
+    $label = mb_substr(trim((string)preg_replace('/\s+/u', ' ', $label)), 0, 60);
+    $db->prepare('INSERT INTO api_links (hash, sid, label, adult, dies, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+       ->execute([xeric_pair_hash('link:' . $code), $sid, $label, $adult ? 1 : 0, $now + XERIC_PAIR_TTL, $now]);
+    return ['code' => $code, 'dies' => $now + XERIC_PAIR_TTL, 'ttl' => XERIC_PAIR_TTL, 'adult' => $adult];
+}
+
+/** Put this session's waiting link codes out. */
+function xeric_api_link_clear(string $sid): void
+{
+    xeric_api_tokens_db()->prepare('DELETE FROM api_links WHERE sid = ?')->execute([$sid]);
+}
+
+/** Seconds the link door is still shut for; 0 when it is answering. */
+function xeric_api_link_locked(?int $now = null): int
+{
+    $st = xeric_api_tokens_db()->query("SELECT v FROM api_door WHERE k = 'locked'");
+    $until = (int)($st->fetchColumn() ?: 0);
+    $st->closeCursor();
+    $now = $now ?? time();
+    return $until > $now ? $until - $now : 0;
+}
+
+/**
+ * Somebody typed a link code into a device. A token for the SAME person, or a
+ * refusal for the router.
+ *
+ * pair.php's rules, kept: every wrong answer — never minted, run out, already
+ * used — gets one sentence and one status (410), because the difference is
+ * information; wrong tries are counted and past XERIC_API_LINK_TRIES the door
+ * shuts for XERIC_API_LINK_LOCK seconds (429), for everybody, since a guesser
+ * does not say whose code they are guessing at; and the burn and the mint are
+ * one transaction, so two devices typing one code at once cannot both get in.
+ * The door is the whole machine's, not a world's: a link code names a person.
+ */
+function xeric_api_link_claim(string $code, string $label = ''): array
+{
+    $db  = xeric_api_tokens_db();
+    $now = time();
+    $want = xeric_pair_hash('link:' . xeric_api_link_norm($code));
+
+    $db->exec('BEGIN IMMEDIATE');
+    try {
+        $locked = (int)($db->query("SELECT v FROM api_door WHERE k = 'locked'")->fetchColumn() ?: 0);
+        if ($locked > $now) {
+            $db->exec('COMMIT');
+            $wait = $locked - $now;
+            return xeric_api_no(429, 'locked', 'Too many wrong codes. Try again in '
+                . max(1, (int)ceil($wait / 10) * 10) . ' seconds.', ['Retry-After' => (string)$wait]);
+        }
+        $db->prepare('DELETE FROM api_links WHERE dies <= ?')->execute([$now]);
+        $st = $db->prepare('SELECT * FROM api_links WHERE hash = ? LIMIT 1');
+        $st->execute([$want]);
+        $row = $st->fetch();
+        $st->closeCursor();
+
+        $sid = $row ? (string)$row['sid'] : '';
+        if (!$row || !is_file(xeric_web_session_path($sid))) {
+            $tries = (int)($db->query("SELECT v FROM api_door WHERE k = 'tries'")->fetchColumn() ?: 0) + 1;
+            $put = $db->prepare('INSERT INTO api_door (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v');
+            if ($tries >= XERIC_API_LINK_TRIES) {
+                $put->execute(['locked', $now + XERIC_API_LINK_LOCK]);
+                $put->execute(['tries', 0]);
+            } else {
+                $put->execute(['tries', $tries]);
+            }
+            if ($row) $db->prepare('DELETE FROM api_links WHERE id = ?')->execute([(int)$row['id']]);
+            $db->exec('COMMIT');
+            if ($tries >= XERIC_API_LINK_TRIES) {
+                return xeric_api_no(429, 'locked', 'Too many wrong codes. Try again in '
+                    . XERIC_API_LINK_LOCK . ' seconds.', ['Retry-After' => (string)XERIC_API_LINK_LOCK]);
+            }
+            return xeric_api_no(410, 'code', 'That code is not good: it may have been used already, or run '
+                . 'out. Make another one on link.php.');
+        }
+
+        // Burned FIRST, in the same transaction as the mint.
+        $db->prepare('DELETE FROM api_links WHERE id = ?')->execute([(int)$row['id']]);
+        $db->exec("INSERT INTO api_door (k, v) VALUES ('tries', 0) ON CONFLICT(k) DO UPDATE SET v = 0");
+        $label = trim($label) !== '' ? $label : (string)$row['label'];
+        // The bit as minted, and the session's affirmation as it stands NOW:
+        // an owner who took the affirmation back in the five minutes between
+        // has not linked an adult device.
+        $adult = (int)$row['adult'] === 1 && xeric_session_adult($sid);
+        $token = xeric_api_token_mint($sid, 'owner', $label !== '' ? $label : 'a device', $adult);
+        $db->exec('COMMIT');
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) $db->exec('ROLLBACK');
+        throw $e;
+    }
+    $id = (int)$db->query('SELECT last_insert_rowid()')->fetchColumn();
+    return xeric_api_yes(['token' => $token, 'role' => 'owner', 'label' => $label !== '' ? $label : 'a device',
+                          'adult' => $adult, 'device' => $id]);
+}
+
+/**
+ * Somebody scanned an invite on a device that is not a browser: a NEW player,
+ * exactly as join.php makes one, with a token handed back instead of a
+ * redirect.
+ *
+ * join.php's own calls, in its own order: the owner's real database (never a
+ * fork — joining the owner's evening is the point), xeric_pair_claim (the
+ * burn, the lockout and the new player in one transaction), then a session
+ * that remembers which player it is. The session is new and its own: the sid
+ * is never handed out, only the token that names it. It is minted the way a
+ * new cookie is (the per-address budget), and it is never affirmed, so a
+ * guest's device carries adult=false — the guest was never asked.
+ */
+function xeric_api_join(string $slug, string $code, string $name, string $label = ''): array
+{
+    $slug = xeric_web_slug($slug);
+    $dir  = xeric_web_worlds_dir() . '/' . $slug;
+    if ($slug === '' || !is_file($dir . '/world-template.json')) {
+        return xeric_api_no(404, 'no_world', 'That code points at a world this machine does not have.');
+    }
+    $T = json_decode((string)file_get_contents($dir . '/world-template.json'), true) ?: [];
+
+    $rec = ['created' => time()];
+    if (function_exists('xeric_limit_new_session')) $rec = xeric_limit_new_session($rec);
+    if (function_exists('xeric_limit_session_denied') && xeric_limit_session_denied($rec)) {
+        return xeric_api_no(429, 'limit', 'This machine has let in as many new people today as it will.');
+    }
+
+    $name = mb_substr(trim($name), 0, 40);
+    try {
+        $db = xeric_state_open($dir . '/world.db');
+        xeric_state_migrate($db);
+        $player = xeric_pair_claim($db, $T, xeric_api_link_norm($code), $name);
+    } catch (Throwable $e) {
+        $m = trim((string)preg_replace('/^(pair|players|guest):\s*/', '', $e->getMessage()));
+        $locked = str_contains($m, 'too many wrong codes');
+        return xeric_api_no($locked ? 429 : 410, $locked ? 'locked' : 'code', $m !== '' ? ucfirst($m) : 'That code is not good.');
+    }
+
+    $sid = bin2hex(random_bytes(16));
+    xeric_web_session_edit(function (array &$s) use ($rec): void {
+        $s = $rec + $s;
+        $s['seen'] = time();
+    }, $sid);
+    xeric_session_join($slug, $player, $sid);
+    $label = trim($label) !== '' ? $label : ($name !== '' ? $name : 'a guest');
+    $token = xeric_api_token_mint($sid, 'guest', $label, false);
+    return xeric_api_yes(['token' => $token, 'role' => 'guest', 'world' => $slug, 'player' => $player,
+                          'label' => $label, 'adult' => false]);
+}
+
+/** The body the router read: JSON, or a form (multipart included). Never anything else. */
+function xeric_api_body(): array
+{
+    if ($_POST !== []) return $_POST;
+    $raw = (string)@file_get_contents('php://input');
+    $d = $raw === '' ? null : json_decode($raw, true);
+    return is_array($d) ? $d : [];
+}
+
+/**
+ * `POST link` and `POST join`: the two routes that need nobody to be anybody,
+ * because the code is the credential. Cross-site is still refused (a page on
+ * another origin has no business typing codes into this machine), and the
+ * secure-context rule is checked BEFORE the code is looked at, so a refused
+ * mint never burns the code somebody is still holding.
+ */
+function xeric_api_ceremony(string $method, string $which, array $body, array $server): array
+{
+    if ($method !== 'POST') {
+        return xeric_api_no(405, 'method', 'A ' . $which . ' is a POST.', ['Allow' => 'POST']);
+    }
+    if (xeric_web_cross_site()) {
+        return xeric_api_no(403, 'cross_site', 'That request came from another site, so it was not answered.');
+    }
+    if (($no = xeric_api_mint_refusal($server)) !== null) return $no;
+    $code = trim((string)($body['code'] ?? ''));
+    if ($code === '') return xeric_api_no(400, 'bad_request', 'There is no code in that.');
+    $label = (string)($body['label'] ?? '');
+    if ($which === 'link') return xeric_api_link_claim($code, $label);
+    return xeric_api_join((string)($body['world'] ?? $body['w'] ?? ''), $code, (string)($body['name'] ?? ''), $label);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,8 +504,12 @@ function xeric_api_identify(array $server): array
                     'error' => 'That device token is not one this machine knows, or it has been revoked.'];
         }
         xeric_session_use($tok['sid']);
+        $adult = xeric_session_adult($tok['sid']) && $tok['adult'];
+        // The device's bit, where every verb script will find it: they open
+        // worlds and start workers by asking xeric_session_adult() bare.
+        xeric_session_device(['sid' => $tok['sid'], 'adult' => $tok['adult']]);
         return ['ok' => true, 'sid' => $tok['sid'], 'via' => 'bearer', 'role' => $tok['role'],
-                'adult' => xeric_session_adult($tok['sid']) && $tok['adult']];
+                'adult' => $adult, 'device' => $tok['id']];
     }
 
     // A cookie or the machine's own identity rides along with a request
@@ -196,10 +520,61 @@ function xeric_api_identify(array $server): array
         return ['ok' => false, 'status' => 403, 'kind' => 'cross_site',
                 'error' => 'That request came from another site, so it was not answered.'];
     }
+    // DNS REBINDING. A page on evil.example whose name is re-pointed at
+    // 127.0.0.1 is same-origin to itself and its requests arrive from this
+    // machine, which on a solo install is the owner with no cookie at all.
+    // The one thing it cannot forge is the Host header: the browser sends the
+    // name it dialled. SEAM: the proper home for this is xeric_web_solo() in
+    // boot.php, where it would cover every page; it is enforced here, for
+    // the API, until that lands.
+    if (xeric_web_solo() && !xeric_api_host_pinned($server)) {
+        return ['ok' => false, 'status' => 403, 'kind' => 'host',
+                'error' => 'This machine answers its own owner only at its own address (127.0.0.1, localhost '
+                         . 'or the address it was started on), and that request named another.'];
+    }
     $sid = xeric_session_id();
     xeric_session_use($sid);
     return ['ok' => true, 'sid' => $sid, 'via' => xeric_web_solo() ? 'solo' : 'cookie',
             'role' => 'owner', 'adult' => xeric_session_adult($sid)];
+}
+
+/**
+ * Is the Host this request named one this machine answers to as itself?
+ *
+ * 127.0.0.1, localhost, [::1], and the address it was told to bind
+ * (XERIC_BIND, which ./xeric sets; XERIC_HOST when an operator names one) —
+ * and any IP literal, because rebinding needs a NAME: a browser that dialled
+ * an address sent that address, and the only address that reaches this
+ * server is this server's. A port, when given, must be the one this server
+ * is listening on (SERVER_PORT, or XERIC_PORT). No Host at all is not a
+ * browser (every browser sends one) and is let through.
+ */
+function xeric_api_host_pinned(array $server): bool
+{
+    $raw = strtolower(trim((string)($server['HTTP_HOST'] ?? '')));
+    if ($raw === '') return true;
+    if (preg_match('/^\[([0-9a-f:.]+)\](?::(\d+))?$/', $raw, $m)) {
+        $name = $m[1];
+        $port = $m[2] ?? '';
+    } elseif (preg_match('/^([^:]+)(?::(\d+))?$/', $raw, $m)) {
+        $name = rtrim($m[1], '.');
+        $port = $m[2] ?? '';
+    } else {
+        return false;
+    }
+    if ($port !== '') {
+        $ports = array_filter([(string)($server['SERVER_PORT'] ?? ''), (string)(getenv('XERIC_PORT') ?: '')]);
+        if ($ports !== [] && !in_array($port, $ports, true)) return false;
+    }
+    if (filter_var($name, FILTER_VALIDATE_IP) !== false) return true;
+    $ok = ['localhost'];
+    foreach (['XERIC_BIND', 'XERIC_HOST'] as $k) {
+        $v = strtolower(trim((string)(getenv($k) ?: '')));
+        if (str_contains($v, '@')) $v = substr($v, strrpos($v, '@') + 1);   // an ssh target names its host last
+        $v = trim((string)preg_replace('/:\d+$/', '', $v), '[]');
+        if ($v !== '') $ok[] = $v;
+    }
+    return in_array($name, $ok, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -337,12 +712,37 @@ function xeric_api_look_src(?string $legacy, string $slug): ?string
  */
 function xeric_api_shape_state(array $w, string $sid): array
 {
-    $state = xeric_api_drop_html(xeric_play_state($w, $sid));
-    $state['clock']['epoch']  = (int)($state['clock']['epoch'] ?? xeric_clock_epoch($w['db']));
-    $state['clock']['offset'] = xeric_clock_offset($w['db']);
-    $state['clock']['server'] = time();
+    $state = xeric_api_shape_state_of(xeric_play_state($w, $sid), $w['db']);
     return ['world' => (string)$w['slug'], 'mine' => (bool)$w['mine'], 'guest' => xeric_play_is_guest($w),
             'rating' => xeric_world_rating($w['template']), 'queue' => xeric_queue_status()] + $state;
+}
+
+/**
+ * A xeric_play_state() already made — the one say.php answers with — as v1
+ * reads it: no HTML, and the clock a client can run by itself.
+ */
+function xeric_api_shape_state_of(array $state, PDO $db): array
+{
+    $state = xeric_api_drop_html($state);
+    $state['clock'] = (array)($state['clock'] ?? []);
+    $state['clock']['epoch']  = (int)($state['clock']['epoch'] ?? xeric_clock_epoch($db));
+    $state['clock']['offset'] = xeric_clock_offset($db);
+    $state['clock']['server'] = time();
+    return $state;
+}
+
+/** World epochs for message ids, read off the rows: [id => epoch]. */
+function xeric_api_epochs(PDO $db, array $ids): array
+{
+    $ids = array_values(array_filter(array_map('intval', $ids), fn($i) => $i > 0));
+    if ($ids === []) return [];
+    $st = $db->prepare('SELECT id, COALESCE(world_epoch, created_at) AS e FROM messages WHERE id IN ('
+        . implode(',', array_fill(0, count($ids), '?')) . ')');
+    $st->execute($ids);
+    $ep = [];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $ep[(int)$r['id']] = (int)$r['e'];
+    $st->closeCursor();
+    return $ep;
 }
 
 /** `GET worlds/{w}/look` — the brief and the view, with every `src` a v1 link. */
@@ -373,14 +773,7 @@ function xeric_api_shape_thread(PDO $db, array $th, int $since = 0): array
 {
     $msgs = array_values(array_filter((array)($th['messages'] ?? []), fn($m) => (int)($m['id'] ?? 0) > $since));
     $ids  = array_map(fn($m) => (int)$m['id'], $msgs);
-    $ep   = [];
-    if ($ids !== []) {
-        $st = $db->prepare('SELECT id, COALESCE(world_epoch, created_at) AS e FROM messages WHERE id IN ('
-            . implode(',', array_fill(0, count($ids), '?')) . ')');
-        $st->execute($ids);
-        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) $ep[(int)$r['id']] = (int)$r['e'];
-        $st->closeCursor();
-    }
+    $ep   = xeric_api_epochs($db, $ids);
     foreach ($msgs as $i => $m) $msgs[$i]['epoch'] = $ep[(int)$m['id']] ?? 0;
     $last = $ids === [] ? $since : max($ids);
     return ['conversation_id' => $th['conversation_id'] ?? null, 'since' => $since, 'last' => $last,
@@ -466,15 +859,39 @@ function xeric_api_pulse(array $w): array
         'unread'   => $unread,
         'scenes'   => $scenes,
         'beat'     => xeric_api_heart_beat(),
-        // SEAM(room): the room on the web is being built beside this
-        // (engine/room.php). When it lands, a summary of the open room — its
-        // id, its newest line id, whether it is closed — goes here, and into
-        // the hash below by riding in $body. Null until then.
-        'room'     => null,
+        // The open room, small: room.php's own public summary cut to what a
+        // client repaints for, plus its newest line — so the cursor moves when
+        // somebody at the table starts typing, speaks, arrives or leaves, or
+        // the room closes (null again). Rides in $body, so it is hashed.
+        'room'     => xeric_api_room_summary($t, $db),
     ];
     $cursor = substr(hash('sha256', json_encode([$body, $present], JSON_UNESCAPED_SLASHES)), 0, 32);
     // Not hashed: they change every second, or are only for a client's clock.
     return $body + ['cursor' => $cursor, 'epoch' => (int)$now['epoch'], 'server' => time()];
+}
+
+/**
+ * The open room as the pulse carries it, or null when nobody is at a table.
+ * xeric_play_room_public() (what room.php's poll answers `live` with), cut to
+ * the fields that change when the room does, and the id of its newest row.
+ */
+function xeric_api_room_summary(array $t, PDO $db): ?array
+{
+    try {
+        $live = xeric_room_live_get($db);
+        $pub  = xeric_play_room_public($t, $live, true);
+    } catch (Throwable $e) {
+        return null;
+    }
+    if ($pub === null) return null;
+    $st = $db->prepare('SELECT COALESCE(MAX(id), 0) FROM messages WHERE conversation_id = ?');
+    $st->execute([(int)$pub['conv']]);
+    $last = (int)$st->fetchColumn();
+    $st->closeCursor();
+    return ['conv' => (int)$pub['conv'], 'place' => (string)$pub['place'], 'last' => $last,
+            'turn' => (bool)$pub['turn'], 'typing' => $pub['typing']['h'] ?? null,
+            'present' => array_column((array)$pub['present'], 'h'),
+            'said' => (int)$pub['said'], 'beats' => (int)$pub['beats']];
 }
 
 /** Does an If-None-Match header name this ETag? */
@@ -503,9 +920,9 @@ function xeric_api_index(array $who): array
             'modes' => ['bearer', xeric_web_solo() ? 'solo' : 'cookie'],
             'via'   => (string)$who['via'],
             'role'  => (string)$who['role'],
-            // The ceremonies that hand out a token are the write half's.
-            'link'  => false,
-            'join'  => false,
+            // The ceremonies that hand out a token: POST link, POST join.
+            'link'  => true,
+            'join'  => true,
         ],
         'features' => [
             'model'  => (static function (string $sid): bool {
@@ -517,7 +934,7 @@ function xeric_api_index(array $who): array
             'ears'   => $is('xeric_ears_endpoint'),
             'pulse'  => true,
             'sse'    => true,
-            'write'  => false,
+            'write'  => true,
         ],
     ];
 }
@@ -560,34 +977,239 @@ function xeric_api_bytes(string $bytes, string $mime, array $headers = []): arra
 }
 
 /**
- * Answer one GET. The router (api.php) has set the base and identified the
- * caller; this picks the route and calls the existing function behind it.
+ * Which route this is, and the methods it answers. Null for none.
  *
- * @return array{status:int,headers:array,body?:?array,bytes?:string,delegate?:string,query?:array}
+ * ONE TABLE, so a wrong method on a real route is a 405 that says what the
+ * route does take (Allow), and a path that is no route is a 404 whatever the
+ * method. The ceremonies (`link`, `join`) are not here: they need nobody to
+ * be anybody, so api.php answers them before asking who is calling.
+ *
+ * @return ?array{0:string,1:list<string>}
  */
-function xeric_api_route(string $method, array $seg, array $get, array $server, array $who): array
+function xeric_api_match(array $r): ?array
 {
-    if (!in_array($method, ['GET', 'HEAD'], true)) {
-        return xeric_api_no(405, 'method', 'The read half of v1 answers GET only.', ['Allow' => 'GET, HEAD']);
+    $GH  = ['GET', 'HEAD'];
+    $P   = ['POST'];
+    $n   = count($r);
+    if ($n === 0) return ['index', $GH];
+    if ($r[0] === 'worlds' && $n === 1) return ['worlds', $GH];
+    if ($r[0] === 'jobs' && $n === 2) return ['job', $GH];
+    if ($r[0] !== 'worlds' || $n < 2) return null;
+    if ($n === 2) return ['world', $GH];
+
+    $what = (string)$r[2];
+    if ($n === 3) {
+        return match ($what) {
+            'pulse' => ['pulse', $GH],
+            'map'   => ['map', $GH],
+            'look'  => ['look', ['GET', 'HEAD', 'POST']],
+            'go'    => ['go', $P],
+            'skip'  => ['skip', $P],
+            'rewind'=> ['rewind', $P],
+            'hear'  => ['hear', $P],
+            'room'  => ['room', ['GET']],
+            default => null,
+        };
     }
+    if ($what === 'look' && $n === 5) return ['look_bytes', $GH];
+    if ($what === 'threads' && $n === 4) return ['thread', $GH];
+    if ($what === 'threads' && $n === 5 && in_array($r[4], ['say', 'read'], true)) return [(string)$r[4], $P];
+    if ($what === 'messages' && $n === 5 && $r[4] === 'audio') return ['audio', ['GET', 'HEAD', 'POST']];
+    if ($what === 'room' && $n === 4 && in_array($r[3], ['say', 'carry', 'leave'], true)) return ['room_' . $r[3], $P];
+    return null;
+}
+
+/**
+ * A verb, as the router hands it to api.php: which script, and what it is to
+ * be told. The script is `require`d unchanged — its doors (owner, limits,
+ * pace, queue) are its own and arrive enveloped through the shaper seam.
+ *
+ * ONLY THE FIELDS THE VERB TAKES are passed from the body, and the world (and
+ * handle, and action) come from the path, never from the body: a body that
+ * says `"rewind": 1` to a skip, or names another world, is not heard.
+ */
+function xeric_api_verb(string $name, string $slug, array $body, array $get = [], string $method = 'POST',
+                        array $extra = []): array
+{
+    $pick = static function (array $keys) use ($body): array {
+        $out = [];
+        foreach ($keys as $k) if (array_key_exists($k, $body)) $out[$k] = $body[$k];
+        return $out;
+    };
+    $w = ['w' => $slug, 'world' => $slug];
+    [$script, $input] = match ($name) {
+        'go'        => ['where.php', $pick(['to']) + $w],
+        'look'      => ['scene.php', ['a' => 'look'] + $w],
+        'say'       => ['say.php', $pick(['text']) + ['handle' => (string)($extra['handle'] ?? '')] + $w],
+        'skip'      => ['tick.php', $pick(['span']) + $w],
+        'rewind'    => ['tick.php', ['rewind' => 1] + $w],
+        'hear'      => ['hear.php', ['h' => (string)($body['h'] ?? $body['handle'] ?? '')] + $w],
+        'room'      => ['room.php', null],
+        'room_say'  => ['room.php', $pick(['text']) + ['a' => 'say'] + $w],
+        'room_carry'=> ['room.php', ['a' => 'carry'] + $w],
+        'room_leave'=> ['room.php', ['a' => 'leave'] + $w],
+        'audio'     => ['speak.php', null],
+    };
+    if (str_starts_with($name, 'room_')) $get = ['w' => $slug, 'a' => substr($name, 5)];
+    return ['status' => 200, 'headers' => [], 'verb' => [
+        'name' => $name, 'script' => $script, 'slug' => $slug, 'method' => $method,
+        'input' => $input, 'get' => $get,
+    ]];
+}
+
+/**
+ * Get the request ready for a verb script, and hand back the path to require.
+ *
+ *  - the shaper: the verb's answer through xeric_api_shape_verb, then the
+ *    envelope — refusals raised anywhere inside included;
+ *  - the body through xeric_web_input_set, and $_GET and the method the
+ *    script reads;
+ *  - BEARER PASSES THE CROSS-SITE GUARD. The scripts' guard
+ *    (xeric_web_input → xeric_web_csrf_guard, xeric_web_spend_guard) exists
+ *    because a cookie and the solo identity ride along with any request a
+ *    browser sends. An Authorization header never does: a page on another
+ *    origin that tried to set one would need a CORS preflight this API never
+ *    answers, so a Bearer request in hand is not a forged one. The two
+ *    headers the guard reads are therefore dropped for a Bearer-identified
+ *    request — cookie and solo were already refused cross-site, on every
+ *    method, by xeric_api_identify();
+ *  - hear.php runs its request half only when it IS the request, so it is
+ *    told it is;
+ *  - a refusal some script answers with a status and no body (speak.php's
+ *    bare 404) still leaves enveloped (xeric_api_bare_refusal).
+ */
+function xeric_api_verb_prepare(array $v, array $who): string
+{
+    $name  = (string)$v['name'];
+    $slug  = (string)$v['slug'];
+    $adult = (bool)$who['adult'];
+    xeric_web_json_shaper(function (array $b, int $st) use ($name, $slug, $adult): array {
+        return xeric_api_envelope(xeric_api_shape_verb($name, $b, $st, $slug, $adult), $st);
+    });
+    xeric_web_input_set($v['input']);
+    $_GET = (array)$v['get'];
+    $_SERVER['REQUEST_METHOD'] = (string)$v['method'];
+    if (($who['via'] ?? '') === 'bearer') unset($_SERVER['HTTP_SEC_FETCH_SITE'], $_SERVER['HTTP_ORIGIN']);
+
+    $script = __DIR__ . '/' . basename((string)$v['script']);
+    if (basename($script) === 'hear.php') $_SERVER['SCRIPT_FILENAME'] = (string)realpath($script);
+
+    ob_start();
+    register_shutdown_function('xeric_api_bare_refusal', $name === 'audio'
+        ? ['no_message', 'That line has no voice in this world.']
+        : ['not_found', 'There is nothing here by that name.']);
+    return $script;
+}
+
+/** A status with no body, at the end of a verb: the same refusal, enveloped. */
+function xeric_api_bare_refusal(array $default): void
+{
+    $st = http_response_code();
+    if (!is_int($st) || $st < 400 || headers_sent()) return;
+    if (ob_get_level() > 0 && ob_get_length() > 0) return;
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    echo json_encode(xeric_api_envelope(['error' => (string)$default[1],
+        'kind' => $st === 404 ? (string)$default[0] : xeric_api_kind_for($st)], $st),
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
+/**
+ * A verb's answer, as v1 reads it, before the envelope: the world named; a
+ * `state` (say.php's) with the clock a client can run; a job pointed at the
+ * v1 jobs route rather than progress.php; and the message epochs the read
+ * half promises beside every display `when` (the reply's, a room's rows').
+ * Refusals pass through untouched: the envelope shapes those.
+ */
+function xeric_api_shape_verb(string $name, array $body, int $status, string $slug, bool $adult): array
+{
+    if ($status >= 400 || isset($body['error']) || (array_key_exists('ok', $body) && !$body['ok'])) return $body;
+
+    $db = null;
+    $open = static function () use (&$db, $slug, $adult): ?PDO {
+        if ($db === null) {
+            try { $db = xeric_play_open($slug, null, $adult)['db']; } catch (Throwable $e) { $db = false; }
+        }
+        return $db instanceof PDO ? $db : null;
+    };
+
+    if (is_array($body['state'] ?? null) && ($d = $open()) !== null) {
+        $body['state'] = xeric_api_shape_state_of($body['state'], $d);
+    }
+    $mid = (int)($body['mid'] ?? $body['id'] ?? 0);
+    if (in_array($name, ['say', 'room_say'], true) && $mid > 0 && ($d = $open()) !== null) {
+        $body['epoch'] = xeric_api_epochs($d, [$mid])[$mid] ?? 0;
+    }
+    if ($name === 'room' && is_array($body['rows'] ?? null) && $body['rows'] !== [] && ($d = $open()) !== null) {
+        $ep = xeric_api_epochs($d, array_column($body['rows'], 'id'));
+        foreach ($body['rows'] as $i => $row) $body['rows'][$i]['epoch'] = $ep[(int)($row['id'] ?? 0)] ?? 0;
+    }
+    if (is_string($body['job'] ?? null) && $body['job'] !== '' && xeric_web_job_ok($body['job'])) {
+        $body['stream'] = xeric_api_url(['jobs', $body['job']]);
+    } elseif (is_string($body['stream'] ?? null) && str_starts_with($body['stream'], 'progress.php')) {
+        unset($body['stream']);
+    }
+    return ['world' => $slug] + $body;
+}
+
+/**
+ * `POST threads/{h}/read` — what play.php's a=thread does beyond the thread:
+ * the unread count read BEFORE the dot goes out, the dot put out
+ * (xeric_play_mark_read), and the learn signal (xeric_learn_read) — "this
+ * person, not that one", the cheapest thing anybody does that means anything,
+ * attributed to whoever is at the centre. Never for an empty thread: a tap
+ * that opened nothing says nothing (learn.php).
+ */
+function xeric_api_read(array $w, string $handle): array
+{
+    $db   = $w['db'];
+    $conv = xeric_conversation_find($db, $handle, 'chat');
+    $unread = $conv !== null ? (int)$conv['unread'] : 0;
+    $signal = null;
+    if ($conv !== null) {
+        xeric_play_mark_read($db, (int)$conv['id']);
+        $signal = xeric_learn_read($db, $handle, $unread, xeric_clock_epoch($db),
+            xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST);
+    }
+    return ['world' => (string)$w['slug'], 'handle' => $handle, 'read' => $conv !== null,
+            'unread' => $unread, 'conversation_id' => $conv !== null ? (int)$conv['id'] : null,
+            'learned' => $signal !== null && (int)$signal > 0];
+}
+
+/**
+ * Answer one request. The router (api.php) has set the base and identified
+ * the caller; this picks the route and calls the existing function behind
+ * it — or, for a verb, names the existing script api.php is to require.
+ *
+ * @return array{status:int,headers:array,body?:?array,bytes?:string,delegate?:string,query?:array,verb?:array}
+ */
+function xeric_api_route(string $method, array $seg, array $get, array $server, array $who, array $body = []): array
+{
     if ($seg === []) {
+        if (!in_array($method, ['GET', 'HEAD'], true)) {
+            return xeric_api_no(405, 'method', 'This answers GET only.', ['Allow' => 'GET, HEAD']);
+        }
         return xeric_api_yes(['versions' => [XERIC_API_MAJOR],
                               'base' => xeric_api_url([])]);
     }
     if ($seg[0] !== XERIC_API_MAJOR) {
         return xeric_api_no(404, 'version', 'This machine speaks ' . XERIC_API_MAJOR . '.');
     }
-    $r   = array_slice($seg, 1);
-    $n   = count($r);
-    $sid = (string)$who['sid'];
-
-    if ($n === 0) return xeric_api_yes(xeric_api_index($who));
-
-    if ($r[0] === 'worlds' && $n === 1) {
-        return xeric_api_yes(['worlds' => xeric_play_worlds($sid)]);
+    $r     = array_slice($seg, 1);
+    $n     = count($r);
+    $sid   = (string)$who['sid'];
+    $match = xeric_api_match($r);
+    if ($match === null) return xeric_api_no(404, 'no_route', 'There is no such route in v1.');
+    [$name, $allow] = $match;
+    if (!in_array($method, $allow, true)) {
+        return xeric_api_no(405, 'method', 'That route answers ' . implode(', ', $allow) . '.',
+                            ['Allow' => implode(', ', $allow)]);
     }
 
-    if ($r[0] === 'jobs' && $n === 2) {
+    if ($name === 'index') return xeric_api_yes(xeric_api_index($who));
+    if ($name === 'worlds') return xeric_api_yes(['worlds' => xeric_play_worlds($sid)]);
+
+    if ($name === 'job') {
         $id = (string)$r[1];
         if (!xeric_web_job_ok($id) || !is_file(xeric_web_job_path($id))) {
             return xeric_api_no(404, 'no_job', 'That is not a job this machine is running.');
@@ -600,20 +1222,29 @@ function xeric_api_route(string $method, array $seg, array $get, array $server, 
         return xeric_api_yes(xeric_api_shape_job($id, xeric_web_job_read($id, $from)));
     }
 
-    if ($r[0] !== 'worlds' || $n < 2) return xeric_api_no(404, 'no_route', 'There is no such route in v1.');
+    $slug = xeric_web_slug((string)$r[1]);
 
-    $o = xeric_api_open((string)$r[1], (bool)$who['adult']);
+    // THE VERBS THAT ARE A SCRIPT, required as they are. Each opens the world
+    // itself, as the page it is, so it is not opened here.
+    if (in_array($name, ['go', 'say', 'skip', 'rewind', 'hear', 'room', 'room_say', 'room_carry', 'room_leave'], true)
+        || ($name === 'look' && $method === 'POST')) {
+        if ($slug === '') return xeric_api_no(404, 'no_world', 'which xeric?');
+        $q = $name === 'room' ? ['w' => $slug, 'after' => (string)max(0, (int)($get['after'] ?? 0))]
+            + (isset($get['c']) ? ['c' => (string)(int)$get['c']] : []) : [];
+        return xeric_api_verb($name, $slug, $body, $q, $name === 'room' ? 'GET' : 'POST',
+                              ['handle' => (string)($r[3] ?? '')]);
+    }
+
+    $o = xeric_api_open($slug, (bool)$who['adult']);
     if (isset($o['no'])) return $o['no'];
     $w    = $o['w'];
     $slug = (string)$w['slug'];
     $t    = $w['template'];
     $db   = $w['db'];
 
-    if ($n === 2) return xeric_api_yes(xeric_api_shape_state($w, $sid));
+    if ($name === 'world') return xeric_api_yes(xeric_api_shape_state($w, $sid));
 
-    $what = (string)$r[2];
-
-    if ($what === 'pulse' && $n === 3) {
+    if ($name === 'pulse') {
         $p    = xeric_api_pulse($w);
         $etag = '"' . $p['cursor'] . '"';
         $h    = ['ETag' => $etag, 'Cache-Control' => 'private, no-cache', 'Vary' => 'Authorization, Cookie'];
@@ -623,15 +1254,15 @@ function xeric_api_route(string $method, array $seg, array $get, array $server, 
         return xeric_api_yes($p, $h);
     }
 
-    if ($what === 'map' && $n === 3) {
+    if ($name === 'map') {
         return xeric_api_yes(['world' => $slug] + xeric_travel_map($t, $db));
     }
 
-    if ($what === 'look' && $n === 3) {
+    if ($name === 'look') {
         return xeric_api_yes(xeric_api_shape_look(xeric_play_look_view($t, $db, $slug, null, false), $slug));
     }
 
-    if ($what === 'look' && $n === 5) {
+    if ($name === 'look_bytes') {
         // scene.php's bytes, by scene.php's own function: the same sniffing,
         // the same allowlist, the same attachment rule.
         $file = xeric_play_look_file($db, (string)$r[3], (string)$r[4]);
@@ -643,16 +1274,16 @@ function xeric_api_route(string $method, array $seg, array $get, array $server, 
         ]);
     }
 
-    if ($what === 'threads' && $n === 4) {
+    if ($name === 'thread' || $name === 'read') {
         $handle = (string)$r[3];
         $c = xeric_world_character($t, $handle);
         if ($c === null) return xeric_api_no(404, 'no_character', 'Nobody in this xeric answers to that name.');
+        if ($name === 'read') return xeric_api_yes(xeric_api_read($w, $handle));
         $since = max(0, (int)($get['since'] ?? 0));
         // Reading a thread puts its unread dot out, exactly as play.php's
         // a=thread does (xeric_play_thread). The learn signal — "this person,
         // not that one" — is NOT recorded here: that is a statement about a
-        // screen somebody is looking at, and it is the write half's
-        // `POST threads/{h}/read`.
+        // screen somebody is looking at, and it is `POST threads/{h}/read`.
         $th   = xeric_play_thread($t, $db, $handle, $since > 0 ? 500 : 60);
         $gone = xeric_deaths($db)[$handle] ?? null;
         return xeric_api_yes(['world' => $slug, 'handle' => $handle,
@@ -661,18 +1292,30 @@ function xeric_api_route(string $method, array $seg, array $get, array $server, 
             'one_line' => (string)($c['one_line'] ?? '')] + xeric_api_shape_thread($db, $th, $since));
     }
 
-    if ($what === 'messages' && $n === 5 && $r[4] === 'audio') {
-        // A CACHED CLIP ONLY. Rendering a new one spends the owner's voice
-        // machine, which is a verb, and verbs are the write half's. What has
-        // already been said aloud is anybody's who can read the thread.
+    if ($name === 'audio') {
         $msg = xeric_play_spoken($db, (int)$r[3]);
         if ($msg === null) return xeric_api_no(404, 'no_message', 'That line has no voice in this world.');
+
+        if ($method === 'POST') {
+            // A MISS RENDERS: speak.php, required as it is — its door (the
+            // owner's machine), its spend guard and its `reroll` meter are
+            // spent on a miss and only on a miss; a hit is a file read.
+            if (xeric_voice_endpoint() === null) {
+                return xeric_api_no(404, 'no_voice', 'There is no voice machine set up here.');
+            }
+            return xeric_api_verb('audio', $slug, [], ['w' => $slug, 'm' => (string)(int)$msg['id']], 'GET');
+        }
+
+        // GET: A CACHED CLIP ONLY. Rendering spends the owner's voice
+        // machine, which is the POST. What has already been said aloud is
+        // anybody's who can read the thread.
         $row  = xeric_voice_of($db, (int)$msg['id']);
         $dir  = dirname((string)$w['db_path']) . '/voice';
         $clip = $row === null ? null
               : xeric_play_voice_bytes($dir . '/' . basename((string)$row['file']), (string)$row['mime'], true);
         if ($clip === null) {
-            return xeric_api_no(404, 'not_rendered', 'That line has not been read aloud yet.');
+            return xeric_api_no(404, 'not_rendered', 'That line has not been read aloud yet. POST to this '
+                . 'route to have it read.');
         }
         return xeric_api_bytes($clip['bytes'], $clip['mime'],
             ['Content-Disposition' => 'inline', 'Cache-Control' => 'private, max-age=86400']);
