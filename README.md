@@ -44,6 +44,8 @@ and how to read the inspector when something surprises you.
 missing. [`docs/WORLD_TEMPLATE.md`](docs/WORLD_TEMPLATE.md) is the template
 schema, worked end to end against `engine/fixtures/milldale.json` — the
 fictional world the engine is tested with.
+[`docs/VIEWPORT.md`](docs/VIEWPORT.md) is the viewport: what the engine tells a
+machine about the room you are standing in, and what it never will.
 
 ## Architecture (the short version)
 
@@ -54,7 +56,7 @@ fictional world the engine is tested with.
 | **engine** | PHP + SQLite + cron sweeps. Prompt assembly, event generation, proactive contact, photo pipeline, temperature physics. |
 | **setup forge** | A one-time pass by a capable model (remote or local) that writes your world. Runtime then runs on small local models. |
 | **story overlay** | An optional mystery laid over a finished world as a sidecar file: beats, who is wrong about what, and an ending the world survives. |
-| **media** *(planned)* | Optional image generation (identity-stable characters via seed + appearance anchoring), optional overnight video. The template already carries the fields — `photos.enabled`, `face_seed` — but no pipeline ships in this tree. |
+| **media** | Photo composition (identity-stable characters via seed + appearance anchoring) and the viewport — the room you stand in, as a panorama or a still. Both are composed in code and dormant until you choose a machine; no machine, no renders, no errors. |
 
 ## License
 

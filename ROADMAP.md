@@ -69,20 +69,14 @@ they say there.
 
 ### Giving the player a body
 
-The world already has geography. Places carry hours, aliases and residents;
-every character's week says where they are; the engine resolves all of it to a
-room at any minute of the clock. What is missing is one field — there is no
-`user.where`, so **the player is a disembodied phone hovering over the county**.
-
-**Do not start with the map. Start with travel time.** A map you click that
-teleports you is a menu with a nicer background; what makes geography real is
-that moving costs a turn. Walk to the diner, four minutes. Drive out to the
-mill, twenty. The moment that is true, schedule data the engine has had since
-day one stops being a status line and becomes a puzzle — *she is off at two and
-I cannot get there by two.*
-
-`null` is a real position: being nowhere on the map is the same state as a
-character being off shift, and prints the same way.
+**Shipped.** `engine/travel.php` gave the player the missing field —
+`xeric_player_where`, moved by `xeric_travel_go` — and `where.php` serves the
+town as data for every client built on it. It started with travel time, not
+the map, because a map you click that teleports you is a menu with a nicer
+background: a trip burns its minutes on the world clock, so schedule data the
+engine has had since day one became a puzzle — *she is off at two and I cannot
+get there by two.* `null` stayed a real position, printed the way a character
+off shift is.
 
 ### The room — three-way conversation
 
@@ -181,8 +175,35 @@ starts.
 
 ### A viewport onto the world
 
-Much further out: something to look at. The engine already carries the fields
-for identity-stable character portraits. No pipeline ships in this tree.
+**Shipped: the room you are standing in, rendered by a machine you choose.**
+`engine/scene.php` composes, in code, what the room looks like at this minute —
+the place and its interior on photo.php's seeds, the light bucketed by hour, the
+sky the cast was told, who is here and what they are wearing — and hands it to
+a scene machine: a 360° panorama you drag to look around, a still, or a link to
+a hosted room. With no scene machine it falls back to the image machine for a
+still; with neither it does nothing, and nothing is an error. The whole of it
+is in [docs/VIEWPORT.md](docs/VIEWPORT.md).
+
+**This is the bet `where.php` made, cashed in.** The surface was always meant
+to be the cheap, replaceable part and the world model the part that is not, and
+a first-person view was named as a client of `xeric_travel_map()` from the day
+travel was written. It turned out to need nothing from a renderer that the
+engine did not already know: position, presence, the clock, the weather, the
+seeds. The new code is a composer and a queue, not a second world model — and
+because it reads only observables, a wall cannot leak through it by being
+mis-filtered. Scenes are keyed by what the room looks like rather than the
+minute, so two visits in the same light to the same company are one render.
+
+Next, in rough order of how much they would change:
+
+- **Streaming**, when a world model that streams can hold a room still — today
+  they reinvent the booths when you turn your head.
+- **Walking inside a splat.** The envelope already accepts splats and meshes;
+  the play view offers them as downloads. Standing in one is a viewer, and
+  walking out of its door must still be a trip that costs minutes.
+- **A scene per hour, rendered by the heart overnight** — opt-in, because it
+  spends money on a remote machine — so the room is already there when you
+  arrive in the morning light.
 
 ---
 

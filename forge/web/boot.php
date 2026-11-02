@@ -1087,6 +1087,55 @@ xeric_photo_meter(function (array $u, string $where = ''): void {
     }
 });
 
+// AND THE ROOMS, BESIDE THE PICTURES. engine/scene.php is photo.php one size
+// up — a whole room at this minute rather than a face — and it is wired the
+// same way for the same reasons: the machines screen's stored address first
+// (the visitor's own session, which a detached scene-worker is forced into),
+// then the environment, then, inside the engine and without being asked, the
+// image machine above drawing the room as a still. `off` is "explicitly none"
+// and stops even that fallback: an owner who said no rooms meant no rooms.
+// THE KEY IS NEVER STORED. XERIC_SCENE_KEY, environment only — the same
+// discipline as every other machine on that screen, because a session file is
+// a thing that gets copied, swept, and read by whoever has the disk.
+require_once $XERIC_LIB . '/engine/scene.php';
+
+xeric_scene_source(function () {
+    try {
+        $sc = (array)(xeric_web_session_read()['scene'] ?? []);
+    } catch (Throwable $e) {
+        return null;                                   // no session: fall to env
+    }
+    if (($sc['off'] ?? false) === true) return false;  // explicitly none, env and image ignored
+    $base = trim((string)($sc['base'] ?? ''));
+    if ($base === '') return null;
+    $kind = strtolower((string)($sc['kind'] ?? 'generic'));
+    $auth = trim((string)($sc['auth'] ?? 'bearer'));
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_SCENE_KEY') ?: ''),
+            'kind' => in_array($kind, ['generic', 'image'], true) ? $kind : 'generic',
+            // Re-checked here although model.php checked it on the way in: the
+            // engine also refuses a header name that is not one, and a session
+            // file is an input like any other.
+            'auth' => preg_match('/^[A-Za-z0-9-]{1,64}$/', $auth) ? $auth : 'bearer'];
+});
+
+// Rooms on the same ledger, counted as rooms. A scene is not a photograph any
+// more than a photograph is a thousand tokens: the meter says what was made.
+xeric_scene_meter(function (array $u, string $where = ''): void {
+    $key = xeric_web_meter_key($where);
+    try {
+        xeric_web_session_edit(function (array &$s) use ($u, $key): void {
+            $by  = (array)($s['tokens']['by'] ?? []);
+            $row = (array)($by[$key] ?? []);
+            $row['scenes'] = (int)($row['scenes'] ?? 0) + max(1, (int)($u['scenes'] ?? 1));
+            $row['calls']  = (int)($row['calls'] ?? 0) + 1;
+            $by[$key] = $row;
+            $s['tokens'] = ['by' => $by] + (array)($s['tokens'] ?? []);
+        });
+    } catch (Throwable $e) {
+        // No session to write to. The room was still drawn.
+    }
+});
+
 /**
  * Where this visitor's notifications go, and what they are for.
  *
@@ -1134,7 +1183,7 @@ function xeric_web_meter_key(string $base): string
 function xeric_web_tokens(?string $sid = null, string $at = ''): array
 {
     $by  = (array)(xeric_web_session_read($sid)['tokens']['by'] ?? []);
-    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0];
+    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0, 'scenes' => 0];
 
     $want = $at === '' ? null : xeric_web_meter_key($at);
     foreach ($by as $key => $row) {
@@ -1143,6 +1192,7 @@ function xeric_web_tokens(?string $sid = null, string $at = ''): array
         $out['out']    += (int)($row['out'] ?? 0);
         $out['calls']  += (int)($row['calls'] ?? 0);
         $out['images'] += (int)($row['images'] ?? 0);
+        $out['scenes'] += (int)($row['scenes'] ?? 0);
     }
     return $out;
 }

@@ -57,6 +57,27 @@ with a reroll button, 159 editable fields, and every knowledge wall written out
 in plain English — because a wall the forge got wrong is a secret told to the
 wrong person, and you are the only one who can catch that.
 
+### Seeing the room
+
+The play view can show you the room you are standing in — a 360° panorama you
+drag to look around, or a still — once there is a machine to draw it. Choose
+one on **the machines screen** (the *Scene machine* card), or set it and skip
+the screen:
+
+```bash
+XERIC_SCENE_BASE=http://127.0.0.1:9100   # anything that speaks POST /v1/scenes
+XERIC_SCENE_KIND=generic                 # or image
+XERIC_SCENE_AUTH=x-api-key               # where the key goes; default bearer
+XERIC_SCENE_KEY=...                      # environment only, never stored
+```
+
+No scene machine and an image machine already set up? The viewport falls back
+to it and gives you **a still of the room from where you stand**. Neither, and
+there is simply no view — nothing breaks. Press **look** in the sidebar and the
+room is asked for; a second look in the same light with the same people is the
+same picture, not a second render. The request format, and how to put a proxy
+in front of a panorama service, is in [`docs/VIEWPORT.md`](docs/VIEWPORT.md).
+
 ## Reading the inspector — the tuning tool
 
 `why.php?w=<slug>` is the index, and it is the thing to reach for whenever the

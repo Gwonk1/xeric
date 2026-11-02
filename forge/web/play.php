@@ -432,6 +432,12 @@ if ($action !== '') {
             'cast_html' => xeric_play_cast_html(
                 xeric_play_cast($w['template'], $w['db'], $nowW),
                 (string)$w['slug'], (bool)$w['mine']),
+            // The room, too: somebody walking in while you stand there is the
+            // view changing, and this is the only beat that hears about it
+            // between your own presses. A read of canon and the queue, never
+            // of the machine, so it costs what the cast row costs.
+            'look_html' => xeric_play_look_html($w['template'], $w['db'], $nowW,
+                (string)$w['slug'], !xeric_play_is_guest($w)),
         ]);
     }
 
@@ -945,6 +951,18 @@ echo '<style>' . xeric_play_css() . '
 /* a photo in a thread bubble: the picture, its caption underneath */
 .mphoto { display:block; max-width:100%; max-height:280px; border-radius:.6rem; margin:0 0 .25rem; }
 .mcap { display:block; font-size:.72rem; font-style:italic; opacity:.75; }
+/* what you see: the room, the width of the panel, rounded like a photo in a thread */
+.lookimg { display:block; width:100%; height:auto; border-radius:.6rem; margin:0 0 .25rem; }
+.lookpanobox { margin:0 0 .25rem; }
+.lookpano { display:block; width:100%; aspect-ratio:16/9; border-radius:.6rem; background:var(--bg-2);
+  cursor:grab; touch-action:none; }
+.lookpano.grabbing { cursor:grabbing; }
+.lookpano:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+.lookmeta { font-size:.75rem; color:var(--fg-dim); margin:0 0 .4rem; }
+.lookstale { display:inline-block; font-size:.68rem; padding:.05rem .45rem; border-radius:999px;
+  border:1px solid var(--line); color:var(--fg-dim); margin-left:.3rem; }
+.lookprose { margin:0 0 .5rem; }
+.lookdev { font-size:.8rem; color:var(--fg-dim); font-style:italic; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
 </style>';
@@ -1293,6 +1311,14 @@ echo '<style>' . xeric_play_css() . '
       <div class="log" id="ticklog" aria-live="polite"></div>
       <div class="feed" id="feed"></div>
     </div>
+
+    <!-- what you see: the room you are standing in, from where you stand
+         (engine/scene.php composes it, scene.php serves it). Above "where you
+         are" because it is the same fact said as a picture, and a picture is
+         read first. -->
+    <h2>what you see</h2>
+    <p class="note warn" id="lookerr" hidden></p>
+    <div id="look"><?= $state['look_html'] ?></div>
 
     <h2>where you are</h2>
     <p class="note warn" id="goerr" hidden></p>
@@ -2070,6 +2096,247 @@ echo '<style>' . xeric_play_css() . '
   }
   bindGo();
 
+  // -- what you see ------------------------------------------------------------
+  // #look is server-rendered like #where and repainted from the same state
+  // payload, so a trip, a skip or somebody walking in changes the view for
+  // free. Two things live here because they are behaviour, not markup: the
+  // look button (POST scene.php, then follow the job over progress.php like
+  // every other long thing on this page), and the panorama viewer.
+  //
+  // lookHtml is the STRING the server sent, not the DOM's re-serialisation
+  // of it (which differs in its quoting), so an unchanged view compares equal.
+  var lookEs = null, lookPoll = null, lookView = null, lookHtml = <?= js($state['look_html']) ?>;
+  var lookYaw = {};                                   // where you were facing, per view, across repaints
+  function bindLook() {
+    if (lookView) { lookView.destroy(); lookView = null; }
+    var box = document.querySelector('#look .lookpanobox');
+    if (box) lookView = pano(box);
+    var img = document.querySelector('#look .lookimg');
+    // Bound, not an onerror= attribute: the CSP grants no inline handlers.
+    if (img) img.addEventListener('error', function () { this.remove(); });
+    $$('#look [data-look]').forEach(function (b) {
+      b.addEventListener('click', function () { look(b); });
+    });
+    armLookPoll();
+  }
+
+  // A reload in the middle of a render has no job to follow; it comes back
+  // and looks again, gently, until the room is in. Re-armed on every repaint,
+  // changed or not, because "still developing" is an unchanged sidebar.
+  function armLookPoll() {
+    clearTimeout(lookPoll);
+    if (lookEs || !document.querySelector('#look [data-pending]')) return;
+    lookPoll = setTimeout(function () { if (document.hidden) armLookPoll(); else refreshState(); }, 15000);
+  }
+
+  function look(btn) {
+    btn.disabled = true;
+    $('#lookerr').hidden = true;
+    fetch('scene.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ w: W, a: 'look' })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j.ok) throw new Error(res.j.error || 'the room could not be asked for');
+        if (res.j.job) followLook(res.j.job);
+        refreshState();                                // "developing…", from the one renderer
+      })
+      .catch(function (e) {
+        $('#lookerr').textContent = e.message;
+        $('#lookerr').hidden = false;
+        btn.disabled = false;
+      });
+  }
+
+  function followLook(job) {
+    if (lookEs) lookEs.close();
+    lookEs = new EventSource('progress.php?job=' + encodeURIComponent(job));
+    function line(m) {
+      var d = {}; try { d = JSON.parse(m.data); } catch (e) {}
+      var el = document.querySelector('#look .lookdev');
+      if (el && (d.message || d.text)) el.textContent = 'developing… ' + (d.message || d.text);
+    }
+    ['hello', 'note', 'queue'].forEach(function (k) { lookEs.addEventListener(k, line); });
+    function end() { if (lookEs) lookEs.close(); lookEs = null; refreshState(); }
+    lookEs.addEventListener('done', end);
+    // progress.php's `failed` is the job's own error; onerror is the transport.
+    lookEs.addEventListener('failed', function (m) {
+      var d = {}; try { d = JSON.parse(m.data); } catch (e) {}
+      $('#lookerr').textContent = d.message || 'the room did not develop';
+      $('#lookerr').hidden = false;
+      end();
+    });
+    lookEs.onerror = function () { if (lookEs && lookEs.readyState === 2) end(); };
+  }
+
+  // THE LOOK-AROUND. An equirectangular panorama is a sphere unrolled: every
+  // pixel's column is a compass bearing and its row an elevation. To look
+  // through it, each pixel of the canvas is turned into a ray from your eye
+  // (its position on a virtual screen tan(fov/2) wide), the ray is turned by
+  // where you are facing (pitch, then yaw), and the ray's bearing and
+  // elevation say which texel of the panorama it hits. That is the whole
+  // viewer, and it is one fragment shader. No library, because the CSP loads
+  // none and because there is nothing here a library would add.
+  //
+  // FRAMES ONLY ON DEMAND: one draw per drag, wheel or key, coalesced through
+  // requestAnimationFrame. A still sidebar costs nothing. WebGL first; a 2D
+  // canvas that pans the strip sideways if there is no WebGL; the plain image
+  // if there is no canvas at all.
+  function pano(box) {
+    var cv = box.querySelector('canvas'), src = box.dataset.src;
+    var v = lookYaw[src] || { yaw: 0, pitch: 0, fov: 1.4 };
+    lookYaw[src] = v;
+    var img = new Image(), gl = null, g2 = null, prog = null, tex = null, raf = 0, dead = false;
+    function plain() {
+      if (dead) return;
+      var im = document.createElement('img');
+      im.className = 'lookimg'; im.src = src; im.alt = box.dataset.alt || '';
+      box.replaceWith(im);
+      dead = true;
+    }
+    try { gl = cv.getContext('webgl', { antialias: false, preserveDrawingBuffer: false }); } catch (e) { gl = null; }
+    if (gl) {
+      var vs = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
+      var fs = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n'
+        + 'uniform sampler2D t;uniform vec2 r;uniform float y,p,f;'
+        + 'void main(){vec2 q=(gl_FragCoord.xy/r)*2.0-1.0;q.x*=r.x/r.y;'
+        + 'vec3 d=normalize(vec3(q.x*f,q.y*f,-1.0));'
+        + 'float cp=cos(p),sp=sin(p);d=vec3(d.x,d.y*cp-d.z*sp,d.y*sp+d.z*cp);'
+        + 'float cy=cos(y),sy=sin(y);d=vec3(d.x*cy+d.z*sy,d.y,-d.x*sy+d.z*cy);'
+        + 'float lon=atan(d.x,-d.z);float lat=asin(clamp(d.y,-1.0,1.0));'
+        + 'gl_FragColor=texture2D(t,vec2(fract(lon/6.2831853+0.5),0.5-lat/3.1415927));}';
+      var sh = function (type, text) {
+        var s = gl.createShader(type); gl.shaderSource(s, text); gl.compileShader(s);
+        return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
+      };
+      var a = sh(gl.VERTEX_SHADER, vs), b = sh(gl.FRAGMENT_SHADER, fs);
+      if (a && b) {
+        prog = gl.createProgram(); gl.attachShader(prog, a); gl.attachShader(prog, b); gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) prog = null;
+      }
+      if (!prog) gl = null;
+    }
+    if (!gl) { try { g2 = cv.getContext('2d'); } catch (e) { g2 = null; } }
+    if (!gl && !g2) { plain(); return { destroy: function () {} }; }
+
+    function size() {
+      var dpr = Math.min(window.devicePixelRatio || 1, 2);
+      var w = Math.max(1, Math.round(cv.clientWidth * dpr)), h = Math.max(1, Math.round(cv.clientHeight * dpr));
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    }
+    // THE SEAM: one frame from three plain numbers — yaw (radians, positive
+    // turns you left), pitch (radians, positive looks up) and fov (vertical,
+    // radians). Nothing in here reads the drag state, so anything that wants
+    // to aim the view (a name tag at a bearing, a day strip, a headset) calls
+    // this with its own numbers.
+    function drawAt(yaw, pitch, fov) {
+      if (dead || !img.complete || !img.naturalWidth) return;
+      size();
+      if (gl) {
+        gl.viewport(0, 0, cv.width, cv.height);
+        gl.useProgram(prog);
+        gl.uniform2f(gl.getUniformLocation(prog, 'r'), cv.width, cv.height);
+        gl.uniform1f(gl.getUniformLocation(prog, 'y'), yaw);
+        gl.uniform1f(gl.getUniformLocation(prog, 'p'), pitch);
+        gl.uniform1f(gl.getUniformLocation(prog, 'f'), Math.tan(fov / 2));
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        return;
+      }
+      // The strip, twice its height so a band about the horizon fills the
+      // frame, drawn three times side by side so turning never runs off the
+      // end. Positive yaw slides it right, the same way the shader turns.
+      var h = cv.height * 2, w = h * img.naturalWidth / img.naturalHeight;
+      var x = (((yaw / (2 * Math.PI)) % 1 + 1) % 1) * w - w / 2 + cv.width / 2;
+      var y0 = -cv.height / 2 + pitch / Math.PI * h;
+      g2.clearRect(0, 0, cv.width, cv.height);
+      for (var i = -1; i <= 1; i++) g2.drawImage(img, x + i * w, y0, w, h);
+    }
+    function ask() {
+      if (!raf) raf = requestAnimationFrame(function () { raf = 0; drawAt(v.yaw, v.pitch, v.fov); });
+    }
+    function turn(dx, dy) {
+      v.yaw += dx; v.pitch = Math.max(-1.45, Math.min(1.45, v.pitch + dy)); ask();
+    }
+
+    img.addEventListener('load', function () {
+      if (dead) return;
+      if (gl) {
+        var source = img, max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
+        if (img.naturalWidth > max) {               // a phone's ceiling: shrink once, on a 2D canvas
+          var c2 = document.createElement('canvas');
+          c2.width = max; c2.height = Math.round(max * img.naturalHeight / img.naturalWidth);
+          c2.getContext('2d').drawImage(img, 0, 0, c2.width, c2.height);
+          source = c2;
+        }
+        var buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+        var loc = gl.getAttribLocation(prog, 'a');
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        // No mipmaps and clamp both ways: a panorama is never a power of two,
+        // and WebGL 1 will only sample one of those like this. The wrap at the
+        // seam is done in the shader with fract().
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, source); }
+        catch (e) { plain(); return; }
+      }
+      ask();
+    });
+    img.addEventListener('error', function () { dead = true; box.remove(); });
+    img.src = src;                                    // same origin: img-src 'self', and no tainted texture
+
+    var drag = null;
+    cv.addEventListener('pointerdown', function (e) {
+      drag = { x: e.clientX, y: e.clientY };
+      cv.setPointerCapture(e.pointerId);
+      cv.classList.add('grabbing');
+    });
+    cv.addEventListener('pointermove', function (e) {
+      if (!drag) return;
+      // A drag across the whole canvas turns you by the field of view: the
+      // room moves under the finger at the speed the finger moves.
+      var k = v.fov / Math.max(1, cv.clientHeight);
+      turn((e.clientX - drag.x) * k, (e.clientY - drag.y) * k);
+      drag = { x: e.clientX, y: e.clientY };
+    });
+    function up() { drag = null; cv.classList.remove('grabbing'); }
+    cv.addEventListener('pointerup', up);
+    cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      v.fov = Math.max(0.5, Math.min(2.0, v.fov * (e.deltaY > 0 ? 1.08 : 1 / 1.08)));
+      ask();
+    }, { passive: false });
+    cv.addEventListener('keydown', function (e) {
+      var s = 0.12;
+      if (e.key === 'ArrowLeft')       turn(s, 0);     // positive yaw is turning left
+      else if (e.key === 'ArrowRight') turn(-s, 0);
+      else if (e.key === 'ArrowUp')    turn(0, s);
+      else if (e.key === 'ArrowDown')  turn(0, -s);
+      else return;
+      e.preventDefault();
+    });
+    window.addEventListener('resize', ask);
+    return {
+      view: v, draw: drawAt, redraw: ask,
+      destroy: function () {
+        dead = true;
+        window.removeEventListener('resize', ask);
+        if (raf) cancelAnimationFrame(raf);
+        // Hand the context back: a page that repaints its sidebar after every
+        // turn would otherwise collect WebGL contexts until the browser drops one.
+        if (gl) { var lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); }
+      }
+    };
+  }
+  bindLook();
+
   // Death, and undoing it. Same shape as go(): no model, no job, no queue — one
   // row written and a ledger read back, so it answers inline.
   //
@@ -2238,6 +2505,12 @@ echo '<style>' . xeric_play_css() . '
     if (state.cast) LASTCAST = state.cast;
     if (state.cast_html) { $('#cast').innerHTML = state.cast_html; bindCast(); }
     if (state.where_html) { $('#where').innerHTML = state.where_html; bindGo(); }
+    // Only when it changed: a panorama somebody has turned to face the door
+    // should not snap back to the start because a turn repainted the sidebar.
+    if (typeof state.look_html === 'string' && state.look_html !== lookHtml) {
+      lookHtml = state.look_html; $('#look').innerHTML = lookHtml; bindLook();
+    }
+    armLookPoll();
     if (state.fate_html) { $('#fate').innerHTML = state.fate_html; bindFate(); }
     if (state.panel_html) $('#panel').innerHTML = state.panel_html;
     if (state.past_html) $('#past').innerHTML = state.past_html;  // the history, with its reasoning one tap away
@@ -3377,6 +3650,11 @@ echo '<style>' . xeric_play_css() . '
             bindCast();
           }
           lastCastHtml = d.cast_html;
+        }
+        // Compared against the string last painted, so an unchanged room never
+        // rebuilds a panorama somebody has turned to face the door.
+        if (typeof d.look_html === 'string' && d.look_html !== lookHtml && $('#look')) {
+          lookHtml = d.look_html; $('#look').innerHTML = lookHtml; bindLook();
         }
         if (typeof d.compass === 'string' && $('#scompass')
             && $('#scompass').innerHTML !== d.compass) {

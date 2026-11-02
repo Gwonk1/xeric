@@ -113,7 +113,8 @@ function xeric_web_meter_html(?string $sid = null, string $at = ''): string
     return '<span class="meter"' . $extra . ' data-n="' . $n . '" title="'
         . h(number_format($t['in']) . ' in · ' . number_format($t['out']) . ' out · '
             . number_format($t['calls']) . ' calls this session'
-            . ($img > 0 ? ' · ' . number_format($img) . ' photos' : '')) . '">'
+            . ($img > 0 ? ' · ' . number_format($img) . ' photos' : '')
+            . ((int)($t['scenes'] ?? 0) > 0 ? ' · ' . number_format((int)$t['scenes']) . ' rooms' : '')) . '">'
         . 'Tokens wasted: <b>' . h(xeric_web_tokens_short($n)) . '</b>'
         . ($img > 0 ? ' <i class="mimg">+' . $img . ' 📷</i>' : '') . '</span>';
 }

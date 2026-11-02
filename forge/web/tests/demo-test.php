@@ -1508,14 +1508,14 @@ $denied = function (string $uri) use ($patterns): bool {
 // patterns are anchored (^|/) and closed (/|$) for exactly those two shapes.
 $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/state.php',
              '/worker.php', '/tick-worker.php', '/reroll-worker.php', '/addchar-worker.php',
-             '/photo-worker.php', '/story-worker.php', '/forge/worker.php',
+             '/photo-worker.php', '/scene-worker.php', '/story-worker.php', '/forge/worker.php',
              '/heart.php', '/router.php',
              '/worker.php/extra', '/boot.php', '/ui.php', '/play-lib.php', '/review-lib.php',
              '/why-lib.php', '/session.php', '/limits.php', '/queue.php',
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
-              '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php',
+              '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php',
               '/forge/forge.php', '/forge/play.php'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
@@ -1527,7 +1527,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 // list is a hand-written enumeration, and a hand-written enumeration goes stale.
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
-          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php',
+          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php',
           'debrief.php', 'join.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {

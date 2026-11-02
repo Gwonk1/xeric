@@ -1973,6 +1973,12 @@ function xeric_play_state(array $w, ?string $sid = null): array
         'cast_html'  => xeric_play_cast_html($cast, (string)$w['slug'], (bool)$w['mine']),
         'where'      => $map,
         'where_html' => xeric_play_where_html($map, (string)$w['slug']),
+        // What you see, beside where you are and for the same reason: a trip,
+        // a skip, or somebody walking in changes the room, and the state
+        // payload is what refreshState repaints from — so travelling repaints
+        // the view for free. Owner-or-own-copy may press look (the same door
+        // scene.php's POST keeps); a guest in the owner's real world may not.
+        'look_html'  => xeric_play_look_html($t, $db, $now, (string)$w['slug'], !xeric_play_is_guest($w)),
         'fate_html'  => xeric_play_fate_html($t, $db, $cast),
         // The meter is server-rendered chrome, so without this it holds whatever
         // it said when the page loaded — which for a counter somebody is reading
@@ -3908,6 +3914,307 @@ function xeric_play_where_html(array $map, string $slug = ''): string
              . '<span class="pgo">›</span></button></li>';
     }
     return $out . '</ul>';
+}
+
+// ---------------------------------------------------------------------------
+// What you see: the viewport's web half (engine/scene.php is the other)
+// ---------------------------------------------------------------------------
+//
+// THE ROOM IS DESCRIBED BEFORE IT IS DRAWN, and described by the engine. Every
+// state of #look below is a reading of xeric_scene_brief() and the scene_jobs
+// table and nothing else: no client works out who is in the room or what the
+// light is doing, for exactly the reason where.php gives about position — the
+// day somebody builds a headset on this, the headset asks the same question
+// and gets the same answer.
+//
+// ONE READER, THREE CALLERS. scene.php's GET answers in JSON, play.php's
+// sidebar renders HTML, and the bytes GET decides what may be served; all of
+// them go through xeric_play_look(), so the picture on the page, the brief a
+// client was handed, and the file the server is willing to send cannot
+// disagree about which row is the room.
+
+/**
+ * Where this database keeps its rooms: beside the db, under scenes/. Read off
+ * the open connection rather than passed in, because the db a page opened IS
+ * the copy whose rooms these are — a fork's db lives in the visitor's session
+ * folder, and its scenes dir is there too, never beside the owner's file.
+ */
+function xeric_play_scenes_dir(PDO $db): string
+{
+    $file = '';
+    try {
+        foreach ($db->query('PRAGMA database_list')->fetchAll() as $r) {
+            if ((string)($r['name'] ?? '') === 'main') $file = (string)($r['file'] ?? '');
+        }
+    } catch (Throwable $e) {
+        $file = '';
+    }
+    // An in-memory db (a test) has no folder; '' makes every file check fail
+    // closed rather than resolving against the working directory.
+    return $file === '' ? '' : dirname($file) . '/scenes';
+}
+
+/**
+ * Does a done row have something to show? A viewer is a link and needs no
+ * file; everything else needs its bytes on THIS disk, beside THIS db. A row
+ * whose file is missing (a fork's inherited row, a scenes dir somebody
+ * deleted) is not a view, it is a broken image waiting to happen.
+ */
+function xeric_play_look_has(array $row, string $scenesDir): bool
+{
+    if ((string)($row['status'] ?? '') !== 'done') return false;
+    if ((string)($row['kind'] ?? '') === 'viewer') {
+        $u = (string)($row['url'] ?? '');
+        return in_array(strtolower((string)parse_url($u, PHP_URL_SCHEME)), ['http', 'https'], true);
+    }
+    $f = basename((string)($row['file'] ?? ''));
+    if ($f === '' || $scenesDir === '' || !is_file($scenesDir . '/' . $f)) return false;
+    // A still or a panorama must BE one before an <img> is pointed at it —
+    // the bytes GET would refuse it anyway, and a refused picture is a broken
+    // icon on the sidebar. getimagesize reads the header, not the file, so
+    // this costs a few bytes per repaint rather than a 4096-wide panorama.
+    if (in_array((string)($row['kind'] ?? ''), ['image', 'pano'], true)) {
+        $mime = (string)(@getimagesize($scenesDir . '/' . $f)['mime'] ?? '');
+        return in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true);
+    }
+    return true;
+}
+
+/**
+ * The viewport, read once: the brief for where you stand, the newest view of
+ * that room that can actually be shown, whether it is out of date, and whether
+ * the current look is already being made.
+ *
+ * @return array{brief:?array,row:?array,stale:bool,pending:bool,failed:bool,scenes_dir:string}
+ */
+function xeric_play_look(array $t, PDO $db, ?array $now = null): array
+{
+    $out = ['brief' => null, 'row' => null, 'stale' => false, 'pending' => false,
+            'failed' => false, 'scenes_dir' => xeric_play_scenes_dir($db)];
+    $brief = xeric_scene_brief($t, $db, null, $now);
+    if ($brief === null) return $out;
+    $out['brief'] = $brief;
+
+    $cur = xeric_scene_of($db, (string)$brief['key'], (string)$brief['fingerprint']);
+    if ($cur !== null) {
+        $out['pending'] = in_array((string)$cur['status'], ['pending', 'working'], true);
+        $out['failed']  = (string)$cur['status'] === 'failed';
+    }
+    // The CURRENT look first, when it is done and showable; otherwise the
+    // newest finished view of the room, whatever it looked like then — a
+    // stale room is better than a blank one, provided it says so.
+    $row = ($cur !== null && xeric_play_look_has($cur, $out['scenes_dir'])) ? $cur
+         : xeric_scene_latest($db, (string)$brief['key']);
+    if ($row !== null && xeric_play_look_has($row, $out['scenes_dir'])) {
+        $out['row']   = $row;
+        $out['stale'] = (string)$row['fingerprint'] !== (string)$brief['fingerprint'];
+    }
+    return $out;
+}
+
+/**
+ * The JSON scene.php answers a GET with. The brief whole (it is observables
+ * only, the engine's own promise, and nothing in it is not already on the map
+ * or in a portrait), the row trimmed to what a viewer needs, and the machine
+ * asked — the one network call in here, which is why the sidebar does not
+ * make it and this does.
+ */
+function xeric_play_look_view(array $t, PDO $db, string $slug, ?array $now = null, bool $probe = true): array
+{
+    $l  = xeric_play_look($t, $db, $now);
+    $ep = xeric_scene_endpoint();
+    $scene = null;
+    if ($l['row'] !== null) {
+        $r    = $l['row'];
+        $meta = json_decode((string)($r['meta'] ?? '{}'), true);
+        $scene = [
+            'id'          => (int)$r['id'],
+            'kind'        => (string)$r['kind'],
+            'fingerprint' => (string)$r['fingerprint'],
+            'mime'        => (string)$r['mime'],
+            'url'         => (string)$r['kind'] === 'viewer' ? (string)$r['url'] : null,
+            'src'         => (string)$r['kind'] === 'viewer' ? null
+                             : xeric_play_look_src($slug, (string)$r['key'], (string)$r['fingerprint']),
+            'meta'        => (object)(is_array($meta) ? $meta : []),
+            'stale'       => $l['stale'],
+        ];
+    }
+    return [
+        'ok'      => true,
+        'brief'   => $l['brief'],
+        'scene'   => $scene,
+        'pending' => $l['pending'],
+        'machine' => [
+            'up'     => $probe && $ep !== null && xeric_scene_up($ep, 3),
+            'costly' => $ep !== null && xeric_scene_costly($ep),
+            'kind'   => $ep === null ? null : (string)($ep['kind'] ?? ''),
+        ],
+    ];
+}
+
+/** Where a row's bytes are asked for. Built in one place so the page and the JSON agree. */
+function xeric_play_look_src(string $slug, string $key, string $fp): string
+{
+    return 'scene.php?w=' . rawurlencode($slug) . '&k=' . rawurlencode($key) . '&f=' . rawurlencode($fp);
+}
+
+/**
+ * What the bytes GET may serve for (key, fingerprint), or null for a 404.
+ *
+ * TWO RULES AND NO THIRD. A still or a panorama is served inline ONLY if its
+ * bytes sniff as an image — photo.php's own rule, because a docroot that
+ * echoes unverified bytes under an image type is a stored-XSS delivery
+ * service. A splat or a glb is not something a browser renders, so it is
+ * served only under a type on a two-entry allowlist, as an ATTACHMENT, with
+ * nosniff: whatever is in it is saved, never executed. A viewer row has no
+ * bytes at all. The path is the row's file column, basename()d, under this
+ * db's own scenes dir — never a user string.
+ *
+ * @return ?array{path:string,mime:string,inline:bool,name:string,bytes:string}
+ */
+function xeric_play_look_file(PDO $db, string $key, string $fp): ?array
+{
+    if ($key === '' || strlen($key) > 64 || !preg_match('/^[a-f0-9]{40}$/', $fp)) return null;
+    $row = xeric_scene_of($db, $key, $fp);
+    if ($row === null || (string)$row['status'] !== 'done' || (string)$row['file'] === '') return null;
+    $dir = xeric_play_scenes_dir($db);
+    if ($dir === '') return null;
+    $path = $dir . '/' . basename((string)$row['file']);
+    if (!is_file($path)) return null;
+
+    $bytes = (string)file_get_contents($path);
+    $kind  = (string)$row['kind'];
+    if (in_array($kind, ['image', 'pano'], true)) {
+        $mime = (string)(@getimagesizefromstring($bytes)['mime'] ?? '');
+        if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true)) return null;
+        return ['path' => $path, 'mime' => $mime, 'inline' => true, 'name' => basename($path), 'bytes' => $bytes];
+    }
+    if (in_array($kind, ['splat', 'glb'], true)) {
+        $mime = (string)$row['mime'];
+        if (!in_array($mime, ['model/gltf-binary', 'application/octet-stream'], true)) return null;
+        return ['path' => $path, 'mime' => $mime, 'inline' => false, 'name' => basename($path), 'bytes' => $bytes];
+    }
+    return null;
+}
+
+/**
+ * The room in a sentence or three, from the brief's own fields — the name, the
+ * light, the sky, the state of the door, and who is standing in it doing what.
+ * NOT the brief's `prompt`: that is a paragraph addressed to a provider (it
+ * names the vantage and ends on the rating clause) and reading it aloud to the
+ * player would be reading them the stage directions. No pronouns: names and
+ * the week's own words carry everyone, the same rule the prompt keeps.
+ */
+function xeric_play_look_prose(array $b): string
+{
+    $sky = ucfirst((string)$b['light']);
+    $wx  = trim((string)$b['weather']);
+    $out = '<b>' . h((string)$b['name']) . '</b> — ' . h($sky) . '.'
+         . ($wx !== '' ? ' ' . h(rtrim($wx, '.') . '.') : '');
+    if (!empty($b['dark']))   $out .= ' The place has gone dark.';
+    elseif (empty($b['open'])) $out .= ' It is shut at this hour.';
+    if ($b['who'] === []) {
+        $out .= ' Nobody else is here.';
+    } else {
+        $bits = [];
+        foreach ($b['who'] as $p) {
+            $d = rtrim(trim((string)$p['doing']), '.');
+            $bits[] = h((string)$p['name']) . ($d !== '' ? ', ' . h($d) : (!empty($p['at_home']) ? ', at home' : ''));
+        }
+        $out .= ' Here: ' . implode('; ', $bits) . '.';
+    }
+    return '<p class="lookprose">' . $out . '</p>';
+}
+
+/**
+ * #look, rendered. The states, in the order they are decided:
+ *
+ *   nowhere           one line, and an invitation to walk.
+ *   no view yet       the room in prose, and a look button.
+ *   image             the still, its light and sky under it.
+ *   pano              a canvas the page's own script turns into a look-around
+ *                     (play.php, bindLook); the image is the fallback.
+ *   viewer            a link out, NEVER a frame: this app sends
+ *                     frame-ancestors 'none' and frames nothing either,
+ *                     because a third party's page inside ours is a page
+ *                     that can read where you are standing.
+ *   splat / glb       a download, said plainly, because a browser tab is not
+ *                     where those are looked at yet.
+ *
+ * Over any of them: "from an earlier hour" when the view is of a room that
+ * has since changed, and "developing…" while the current look is being made.
+ *
+ * THE BUTTON IS SHOWN, NOT PROBED. Whether a machine is CONFIGURED is a read
+ * of the session; whether it is ANSWERING is a network call, and this renders
+ * on every turn's repaint. So configured lights the button and the POST asks
+ * the machine — and says so, with a 409 in plain words, if nobody answers.
+ */
+function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool $mine): string
+{
+    try {
+        $l = xeric_play_look($t, $db, $now);
+    } catch (Throwable $e) {
+        // A world from before scene_jobs, a locked table: the sidebar still
+        // draws. The view is a nicety; the rest of the screen is not.
+        return '<p class="quiet">The room cannot be shown right now.</p>';
+    }
+    $b = $l['brief'];
+    if ($b === null) {
+        return '<p class="quiet">You are nowhere in particular. Walk somewhere and the room will show itself.</p>';
+    }
+
+    $ep  = null;
+    try { $ep = xeric_scene_endpoint(); } catch (Throwable $e) { $ep = null; }
+    $row = $l['row'];
+    $out = '';
+
+    $meta = '<p class="lookmeta">' . h(ucfirst((string)$b['light']))
+          . (trim((string)$b['weather']) !== '' ? ' · ' . h(rtrim(trim((string)$b['weather']), '.')) : '');
+
+    if ($row !== null) {
+        $kind = (string)$row['kind'];
+        $src  = xeric_play_look_src($slug, (string)$row['key'], (string)$row['fingerprint']);
+        $alt  = (string)$b['name'] . ', ' . (string)$b['light'];
+        if ($kind === 'image') {
+            $out .= '<img class="lookimg" src="' . h($src) . '" alt="' . h($alt) . '">';
+        } elseif ($kind === 'pano') {
+            $out .= '<div class="lookpanobox" data-src="' . h($src) . '" data-alt="' . h($alt) . '">'
+                  . '<canvas class="lookpano" tabindex="0" role="img" aria-label="'
+                  . h('A look around ' . (string)$b['name'] . '. Drag, or use the arrow keys, to turn; scroll to zoom.')
+                  . '"></canvas></div>';
+        } elseif ($kind === 'viewer') {
+            $out .= '<p><a class="lookview" href="' . h((string)$row['url'])
+                  . '" target="_blank" rel="noopener noreferrer">open the room in its viewer</a></p>';
+        } else {
+            $ext = ltrim(strrchr(basename((string)$row['file']), '.') ?: '.' . $kind, '.');
+            $out .= '<p><a class="lookdl" href="' . h($src) . '" download>download the room (.' . h($ext) . ')</a></p>'
+                  . '<p class="note">This app shows panoramas and stills inline; a ' . h($kind)
+                  . ' opens in a viewer of your own.</p>';
+        }
+        $out .= $meta . ($l['stale'] ? ' <span class="lookstale">from an earlier hour</span>' : '') . '</p>';
+    } else {
+        $out .= xeric_play_look_prose($b);
+    }
+
+    if ($l['pending']) {
+        // data-pending is what the page's script watches for: a reload in the
+        // middle of a render still knows to come back and look.
+        return $out . '<p class="lookdev" data-pending="1">developing…</p>';
+    }
+    if ($row !== null && !$l['stale']) return $out;
+
+    if (empty($b['enabled'])) {
+        return $out . '<p class="note">This world does not draw its rooms.</p>';
+    }
+    if ($l['failed']) {
+        $out .= '<p class="note">The machine could not make this room last time.</p>';
+    }
+    if (!$mine) return $out;
+    if ($ep === null) {
+        return $out . '<p class="lookact"><button type="button" class="nbtn" data-look disabled>look</button>'
+             . ' <span class="note">no scene machine — set one on the <a href="model.php">machines screen</a></span></p>';
+    }
+    return $out . '<p class="lookact"><button type="button" class="nbtn" data-look>look</button></p>';
 }
 
 /**

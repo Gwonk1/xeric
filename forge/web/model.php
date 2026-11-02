@@ -8,6 +8,8 @@
  *     POST {act:off}              nothing is the one, and stop the clocks
  *     POST {act:add, base}        remember an address
  *     POST {act:drop, i}          forget one
+ *     GET  model.php?a=sceneup    is the scene machine (or the still-drawing image machine) answering
+ *     POST {act:scene, base, kind, auth}   the scene machine; sceneoff = no rooms; scenedefault = the fallback
  *
  * A machine is an address and nothing else. Its kind is read off the host —
  * api.anthropic.com speaks Anthropic, anything else public speaks the OpenAI
@@ -98,6 +100,16 @@ if ((string)($_GET['a'] ?? '') === 'probe') {
 if ((string)($_GET['a'] ?? '') === 'iprobe') {
     $ep = xeric_image_endpoint();
     xeric_web_json(['up' => $ep !== null && xeric_image_up($ep, 4)]);
+}
+
+// -- is the scene machine answering ------------------------------------------
+// The same rule as the image lamp: the configured machine only — which, with
+// no scene machine set, is the image machine drawing rooms as stills, and the
+// lamp tells the truth about that too.
+if (in_array('sceneup', [(string)($_GET['a'] ?? ''), (string)($_GET['act'] ?? '')], true)) {
+    $ep = xeric_scene_endpoint();
+    xeric_web_json(['up' => $ep !== null && xeric_scene_up($ep, 4),
+                    'kind' => $ep === null ? null : (isset($ep['image_kind']) ? 'still' : (string)($ep['kind'] ?? ''))]);
 }
 
 // -- what else is on this machine --------------------------------------------
@@ -191,6 +203,52 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         // XERIC_IMAGE_BASE is ignored for this session. Worlds fall back to
         // captions, which is the photo's own graceful floor.
         xeric_web_session_edit(function (array &$s): void { $s['image'] = ['off' => true]; }, $sid);
+        header('Location: model.php');
+        exit;
+    }
+
+    // -- the scene machine ---------------------------------------------------
+    // The image machine's discipline, one size up: an address in the session,
+    // read at call time by the engine's resolver (boot.php), held to the same
+    // private-address boundary as every other address on this screen. The KEY
+    // is never stored — XERIC_SCENE_KEY, environment only. What is stored is
+    // which dialect it speaks (`generic`, the engine's own scene contract, or
+    // `image`, the common images API) and where its key goes (`bearer`, or a
+    // header name). Nothing is probed or harvested here: there is no LoRA
+    // shelf for a room machine, and the lamp asks after it once the page is up.
+    if ($act === 'scene') {
+        $b = trim((string)($_POST['base'] ?? ''));
+        if ($b !== '' && !preg_match('#^https?://#i', $b)) $b = 'http://' . $b;
+        $b    = rtrim($b, '/');
+        $host = strtolower((string)(parse_url($b, PHP_URL_HOST) ?? ''));
+        $ok   = $b !== '' && filter_var($b, FILTER_VALIDATE_URL) !== false && $host !== '';
+        if ($ok && !xeric_web_host_open($host) && !$edit) $ok = false;
+        if ($ok) {
+            $kind = (string)($_POST['kind'] ?? 'generic') === 'image' ? 'image' : 'generic';
+            // A header NAME or bearer, and nothing that could carry a line
+            // break into a request: a typo becomes bearer, never an injection.
+            $auth = trim((string)($_POST['auth'] ?? ''));
+            if ($auth === '' || !preg_match('/^[A-Za-z0-9-]{1,64}$/', $auth)) $auth = 'bearer';
+            xeric_web_session_edit(function (array &$s) use ($b, $kind, $auth): void {
+                $s['scene'] = ['base' => $b, 'kind' => $kind, 'auth' => strtolower($auth) === 'bearer' ? 'bearer' : $auth];
+            }, $sid);
+            header('Location: model.php');
+            exit;
+        }
+        header('Location: model.php?no=' . rawurlencode(xeric_model_no($b, $host, $edit)));
+        exit;
+    }
+    if ($act === 'sceneoff') {
+        // Explicitly none — and that includes the still the image machine
+        // would otherwise draw. Somebody who said no rooms meant no rooms.
+        xeric_web_session_edit(function (array &$s): void { $s['scene'] = ['off' => true]; }, $sid);
+        header('Location: model.php');
+        exit;
+    }
+    if ($act === 'scenedefault') {
+        // Back to the fallback: forget the choice, so the environment and
+        // then the image machine are asked again.
+        xeric_web_session_edit(function (array &$s): void { unset($s['scene']); }, $sid);
         header('Location: model.php');
         exit;
     }
@@ -703,6 +761,94 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
   </section>
 
 
+  <!-- ROOMS. The viewport's machine: whatever turns "what is here, now" into
+       something to look at. Always shown, unlike the imaging card, because it
+       is set by typing an address rather than found by a scan — and because
+       it says what happens WITHOUT one, which is the most useful sentence on
+       it for most installs. -->
+  <?php
+    $scSess = (array)(xeric_web_session_read($sid)['scene'] ?? []);
+    $scOff  = ($scSess['off'] ?? false) === true;
+    $scEp   = xeric_scene_endpoint();
+    $scStill = $scEp !== null && isset($scEp['image_kind']);   // the engine's fallback: the image machine
+  ?>
+  <section class="found" id="scenes">
+    <h2 class="fh">Scene machine</h2>
+    <p class="mnote">What draws the room you are standing in, on the play screen&rsquo;s
+      &ldquo;what you see&rdquo;. It is sent one paragraph of prose and a structured brief
+      &mdash; the place, its furniture, the light, the sky, who is there and what they look
+      like, nothing anybody is keeping secret &mdash; as a POST to
+      <code>{address}/v1/scenes</code>, and answers with a still, a panorama, or a link to a
+      room it hosts. With no scene machine set but an image machine connected, the room is
+      drawn as a still by the image machine instead; nothing here is needed for that.</p>
+    <ul class="mlist">
+    <?php if ($scEp !== null && !$scStill): ?>
+      <li><div class="opt fopt">
+        <span class="thead"><span class="t"><?= h(preg_replace('#^https?://#', '', (string)($scEp['base'] ?? 'a test machine'))) ?></span></span>
+        <p class="whois"><span class="wname">the scene machine<?= (string)($scEp['kind'] ?? '') === 'image' ? ', speaking the images API' : '' ?></span>
+          <span class="wmodel" id="scenelamp">checking…</span></p>
+        <?php if (xeric_scene_costly($scEp)): ?>
+        <p class="whois"><strong>This address is not on this computer: every render bills an API
+          key</strong> (XERIC_SCENE_KEY, environment only — keys are never stored here). The meter
+          counts every one, but the meter is a receipt, not a limit — set spending caps with your
+          provider.</p>
+        <?php else: ?>
+        <p class="whois">Local: renders cost your own electricity and GPU time, nothing metered.
+          Every render is still counted on the meter.</p>
+        <?php endif; ?>
+        <div class="mact"><form method="post" action="model.php">
+          <input type="hidden" name="act" value="sceneoff">
+          <button type="submit" class="btn">Disconnect</button>
+        </form></div>
+      </div></li>
+    <?php elseif ($scStill): ?>
+      <li><div class="opt fopt">
+        <span class="thead"><span class="t">rooms drawn as stills</span></span>
+        <p class="whois"><span class="wname">by the image machine at
+          <?= h(preg_replace('#^https?://#', '', (string)($scEp['base'] ?? ''))) ?></span>
+          <span class="wmodel" id="scenelamp">checking…</span></p>
+        <?php if (xeric_scene_costly($scEp)): ?>
+        <p class="whois"><strong>This address is not on this computer: every render bills an API
+          key</strong> (XERIC_IMAGE_KEY, environment only — keys are never stored here). The meter
+          counts every one, but the meter is a receipt, not a limit — set spending caps with your
+          provider.</p>
+        <?php endif; ?>
+        <div class="mact"><form method="post" action="model.php">
+          <input type="hidden" name="act" value="sceneoff">
+          <button type="submit" class="btn">No rooms</button>
+        </form></div>
+      </div></li>
+    <?php elseif ($scOff): ?>
+      <li><div class="opt fopt">
+        <span class="thead"><span class="t">no rooms</span></span>
+        <p class="whois">Rooms are not drawn for this browser, not even as stills.</p>
+        <div class="mact"><form method="post" action="model.php">
+          <input type="hidden" name="act" value="scenedefault">
+          <button type="submit" class="btn">Draw them again</button>
+        </form></div>
+      </div></li>
+    <?php endif; ?>
+      <li><form method="post" action="model.php" class="opt fopt">
+        <input type="hidden" name="act" value="scene">
+        <span class="thead"><span class="t">Connect a scene machine</span></span>
+        <p class="whois"><input type="text" name="base" inputmode="url" autocapitalize="off"
+          autocorrect="off" spellcheck="false" placeholder="host:port" aria-label="scene machine address"></p>
+        <p class="whois">
+          <label>speaks <select name="kind">
+            <option value="generic">the scene contract (/v1/scenes)</option>
+            <option value="image">the images API (a still)</option>
+          </select></label>
+          <label>key goes in <input type="text" name="auth" value="bearer" size="12"
+            autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="where the key goes"></label>
+        </p>
+        <p class="whois"><span class="wmodel">&ldquo;bearer&rdquo; is Authorization: Bearer; anything
+          else is the header&rsquo;s own name, like x-api-key. The key itself comes from
+          XERIC_SCENE_KEY and is never stored here.</span></p>
+        <div class="mact"><button type="submit" class="btn join">Connect</button></div>
+      </form></li>
+    </ul>
+  </section>
+
   <p class="corner"><?= xeric_web_meter_html() ?> · <a href="play.php">back</a></p>
 </div>
 
@@ -796,6 +942,21 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
           : 'not answering right now — worlds fall back to captions, which still works';
       })
       .catch(function () { artlamp.textContent = 'not answering right now'; });
+  }
+
+  // The scene machine's lamp, the same shape: asked after the page is up, and
+  // it says what a room will look like when somebody presses look.
+  var scenelamp = document.getElementById('scenelamp');
+  if (scenelamp) {
+    fetch('model.php?a=sceneup').then(function (r) { return r.json(); })
+      .then(function (d) {
+        scenelamp.textContent = d && d.up
+          ? (d.kind === 'still'
+              ? 'answering — rooms are drawn as stills when somebody looks'
+              : 'answering — each look draws the room as it stands')
+          : 'not answering right now — the room is still described in words';
+      })
+      .catch(function () { scenelamp.textContent = 'not answering right now'; });
   }
 
   function paintFound(sectionId, listId, rows, addable) {

@@ -655,7 +655,19 @@ Design principles, learned the hard way:
       "two_pass_refine": 0.40,
       "rating_gate": "model"                // an sfw image model simply is one
     },
-    "video": { "enabled": false }           // overnight queue, optional
+    "video": { "enabled": false },          // overnight queue, optional
+    "scene": {                              // the viewport: the room from where
+                                            // you stand (docs/VIEWPORT.md). A
+                                            // missing block is these defaults
+      "enabled": true,                      // false: nothing is ever queued
+      "vantage": "first_person",            // | "establishing" — anything else
+                                            // is first_person, never an error
+      "style": "",                          // a clause before the rating
+      "kinds": ["pano", "image"],           // asked for in this order, from
+                                            // pano | image | splat | glb | viewer
+      "quality": "full",                    // | "draft" — anything else is full
+      "negative": ""                        // sent only when set
+    }
   },
 
   // ── engine.json lives NEXT TO this, not in it ──────────────────────────
@@ -663,6 +675,9 @@ Design principles, learned the hard way:
   //   "remote model for setup" pattern: big model builds the world once,
   //   small model lives in it daily},
   //   "image_model": {..., "rating": "explicit"},   ← rating lives HERE
+  //   the scene machine's address, kind (generic | image) and auth header
+  //   live here or in XERIC_SCENE_BASE / _KIND / _AUTH — never the key,
+  //   which is XERIC_SCENE_KEY in the environment and nowhere else
   //   "temps": { "floor": 0.55, "ceiling": 1.65, "room_share": 0.85 } }
 }
 ```

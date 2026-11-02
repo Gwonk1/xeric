@@ -34,10 +34,11 @@ Options -Indexes
 # view's time control. reroll-worker.php is the review step's re-run of one forge
 # pass, addchar-worker.php writes one new person into a running world, and
 # panel-worker.php puts a proposal to a discussion room, table-worker.php plays a night at a table. photo-worker.php is the reaper that develops a world's
-# photographs, and story-worker.php writes a mystery over a
-# running town. All
-# six are CLI programs that happen to live here.
-<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|photo-worker|story-worker|panel-worker|table-worker|heart|router)\.php(/|$)#">
+# photographs, scene-worker.php develops the room the player is standing in
+# (and waits on a scene machine that said "later"), and story-worker.php
+# writes a mystery over a running town. All of them are CLI programs that
+# happen to live here.
+<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|photo-worker|scene-worker|story-worker|panel-worker|table-worker|heart|router)\.php(/|$)#">
   Require all denied
 </If>
 

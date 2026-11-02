@@ -612,6 +612,16 @@ function xeric_session_fork_clear(string $path): bool
         // owner's conversation. Portraits and places are re-offered idempotently
         // by the backfill, so only the message ones need clearing.
         "DELETE FROM photo_jobs WHERE kind = 'message'",
+        // Views of rooms are PLACE views, not the owner's private life, and
+        // could be kept — but their bytes live beside the OWNER'S db, and a
+        // fork's scenes dir is its own (scene.php serves only from there). A
+        // done row left behind would be a broken picture on the stranger's
+        // sidebar, and worse, the one row for that look: the queue is one row
+        // per (place, fingerprint), so it would answer every later press in
+        // the fork with a file that is not there. Only a viewer link, which
+        // has no file, survives; anything still in flight was the owner's ask
+        // on the owner's machine and goes too.
+        "DELETE FROM scene_jobs WHERE NOT (status = 'done' AND kind = 'viewer')",
     ];
 
     try {
