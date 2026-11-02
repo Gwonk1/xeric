@@ -3875,4 +3875,20 @@ foreach (['XERIC_LOCAL_BASE' => $pkBase, 'XERIC_LOCAL_KEY' => $pkKey, 'XERIC_API
     if ($v === false) putenv($k); else putenv("$k=$v");
 }
 
+
+// A GET THAT SPENDS CARRIES THE GUARD. The CSRF guard checks POST; these three
+// GETs reach the model or a metered machine, and an <img> on another site is a
+// GET sent with the owner's cookie. Each must call the spend guard.
+echo "\n# a GET that spends\n";
+$W = dirname(__DIR__);
+ok('speak.php guards a cache miss against a cross-site GET',
+    substr_count((string)file_get_contents($W . '/speak.php'), 'xeric_web_spend_guard()') >= 1);
+$pl = (string)file_get_contents($W . '/play.php');
+ok('hint and suggest guard themselves', substr_count($pl, 'xeric_web_spend_guard()') >= 2);
+$_SERVER['HTTP_SEC_FETCH_SITE'] = 'cross-site';
+ok('and the guard sees a cross-site fetch for what it is', xeric_web_cross_site() === true);
+$_SERVER['HTTP_SEC_FETCH_SITE'] = 'same-origin';
+ok('while a same-origin fetch passes', xeric_web_cross_site() === false);
+unset($_SERVER['HTTP_SEC_FETCH_SITE']);
+
 exit($FAILED === 0 ? 0 : 1);

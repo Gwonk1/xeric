@@ -1526,6 +1526,19 @@ function xeric_web_cross_site(): bool
 function xeric_web_csrf_guard(): void
 {
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') return;
+    xeric_web_spend_guard();
+}
+
+/**
+ * A GET THAT SPENDS IS A POST THAT FORGOT TO SAY SO. The guard above checks
+ * POST because a body is where a cross-site page can put a payload — but a
+ * handful of GETs reach the model or a metered machine (a hint, a suggestion,
+ * a voice clip not yet rendered), and an <img> on somebody else's page is a
+ * GET the owner's browser sends with the owner's cookie. Any path that spends
+ * calls this on every method.
+ */
+function xeric_web_spend_guard(): void
+{
     if (!xeric_web_cross_site()) return;
     xeric_web_json(['error' => 'That request came from another site, so it was not carried out.',
                     'kind'  => 'cross_site'], 403);

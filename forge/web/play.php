@@ -572,6 +572,7 @@ if ($action !== '') {
     // SPEND the story, which is xeric_play_hint()'s problem and is written into
     // its prompt: it points, it does not tell.
     if ($action === 'hint') {
+        xeric_web_spend_guard();   // a GET, and it reaches the model
         // METERED LIKE A MESSAGE, because that is what it costs. The only thing
         // standing here was a six-second queue hold, which is a MUTEX and not a
         // quota: it serialises callers, it does not bound them. So a loop over
@@ -609,6 +610,7 @@ if ($action !== '') {
     // suggestion that closes the conversation politely is the one thing worse
     // than no suggestion, because it is easier to accept than to reject.
     if ($action === 'suggest') {
+        xeric_web_spend_guard();   // a GET, and it reaches the model
         $handle = trim((string)($_GET['h'] ?? ''));
         $c = xeric_world_character($w['template'], $handle);
         if ($c === null) xeric_web_json(['error' => 'nobody by that name'], 400);

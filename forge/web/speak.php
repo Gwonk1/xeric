@@ -78,6 +78,7 @@ try {
         // keeps. Then the rate limit, metered as a `reroll` like the look:
         // closer to redrawing something than to saying a sentence.
         function () use ($w, $sid): void {
+            xeric_web_spend_guard();              // a GET that renders is a GET that spends
             xeric_play_owner_only($w, 'having a new line read aloud');
             xeric_limit_guard(xeric_limit_check('reroll', ['sid' => $sid]));
         });
