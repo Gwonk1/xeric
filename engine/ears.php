@@ -349,8 +349,10 @@ function xeric_ears_transcribe(array $ep, string $bytes, string $type, array $op
     $base = rtrim(trim((string)($ep['base'] ?? '')), '/');
     if ($base === '') throw new RuntimeException('ears: no ears machine is configured');
     $r = xeric_ears_http($base . '/v1/audio/transcriptions', $ep, $fields, $bytes, $file, $type,
-                         (int)($ep['timeout'] ?? 60));
-    if ($r === null) throw new RuntimeException('ears: the ears machine did not answer');
+                         (int)($opts['timeout'] ?? $ep['timeout'] ?? 60));
+    // Nothing answered at all — a closed port, a timeout — is the machine not
+    // answering: 503, distinct from a machine that answered and said no.
+    if ($r === null) throw new RuntimeException('ears: the ears machine is not answering right now', 503);
     if ($r['status'] < 200 || $r['status'] >= 300) {
         throw new RuntimeException('ears: the ears machine said HTTP ' . $r['status'] . xeric_voice_why($r['body']));
     }
@@ -407,10 +409,16 @@ function xeric_ears_http(string $url, array $ep, array $fields, string $bytes, s
  *      with the type claimed, is a 415 — before anything is spent;
  *   3. the length, where the container says (a WAV): past
  *      XERIC_EARS_MAX_SECONDS is a 413;
- *   4. the machine. None, or one configured but not answering, is null —
- *      dormant, never an error;
+ *   4. the machine. None is null — dormant, never an error;
  *   5. the call (xeric_ears_transcribe; a refusal throws in its own words,
- *      with no code), the meter, and the words (xeric_ears_clean).
+ *      with no code, and a machine that does not answer at all throws 503),
+ *      the meter, and the words (xeric_ears_clean).
+ *
+ * NO PRE-PROBE. This used to ask xeric_ears_up() first — a second round
+ * trip on its own 3 s timeout, before every line — although the call itself
+ * already tells "did not answer" from "said no". The call is the probe; the
+ * caller's timeout ($opts['timeout'], else the endpoint's) is its timeout.
+ * xeric_ears_up() stays for the machines card's lamp.
  *
  * Refusals in 1–3 throw a RuntimeException whose code is the HTTP status the
  * web layer answers with. Nothing is kept: the bytes go out of scope with
@@ -435,7 +443,7 @@ function xeric_ears_hear(string $bytes, string $mime, array $opts = [], ?array $
     }
 
     $ep ??= xeric_ears_endpoint();
-    if ($ep === null || !xeric_ears_up($ep)) return null;
+    if ($ep === null) return null;
 
     $r = xeric_ears_transcribe($ep, $bytes, $type, $opts);
     $seconds = is_numeric($r['usage']['seconds'] ?? null) ? (float)$r['usage']['seconds'] : (float)($secs ?? 0);

@@ -161,9 +161,17 @@ if ($ticket === '') {
 }
 
 // The skip is going ahead: the conversation it interrupts is over, sealed
-// BEFORE the worker starts so its sweep never sees a live table. Landed by the
-// next room worker or the heart — the skip worker has its own hold.
-try { xeric_room_seal($w['db'], 'skip', $now); } catch (Throwable $e) { /* the heart will find it */ }
+// BEFORE the worker starts so its sweep never sees a live table. And then
+// LANDED, by a room worker of its own with no turn to carry (lease ''), the
+// way where.php and room.php's leave land theirs: a seal nothing is sent for
+// sits until the heart happens by, and a world with no heart never closes it.
+// The room worker waits in line behind the skip like anybody else.
+try {
+    if (xeric_room_seal($w['db'], 'skip', $now) !== null) {
+        xeric_web_spawn(xeric_web_job_new(), ['slug' => (string)$w['slug'], 'sid' => $sid,
+            'db' => (string)$w['db_path'], 'adult' => xeric_session_adult($sid), 'lease' => ''], 'room-worker.php');
+    }
+} catch (Throwable $e) { /* the heart will find it */ }
 
 // -- start it ----------------------------------------------------------------
 $job = xeric_web_job_new();

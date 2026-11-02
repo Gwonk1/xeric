@@ -776,6 +776,21 @@ ok('kept: the chat extractor is asked to watch for it, and keeps before it forms
     && strpos((string)file_get_contents(dirname(__DIR__) . '/chat.php'), "xeric_expect_keep(\$template")
        < strpos((string)file_get_contents(dirname(__DIR__) . '/chat.php'), "xeric_expect_form(\$template"));
 
+// ONE READ OF THE TOWN PER TICK: who is where (the whole cast against the
+// deaths) and the body's position are the same for every holder at one
+// instant, so the keep is handed them, never recomputes them per handle.
+foreach (['dot', 'harlan', 'janelle'] as $hh) xeric_expect_form($T, $dbK, $hh, $sat, $wedAm);
+$holders = count(array_filter(array_map(fn($c) => (string)$c['handle'], $T['cast']['characters']),
+    fn($hh) => array_filter(xeric_expects_for($dbK, $hh), fn($e) => $e['state'] === 'open') !== []));
+$reads0 = xeric_constructs_presence_reads();
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: presence is resolved once a tick, however many holders have something open',
+    $holders >= 3 && xeric_constructs_presence_reads() - $reads0 === 1, $holders . ' holders, '
+    . (xeric_constructs_presence_reads() - $reads0) . ' reads');
+$reads0 = xeric_constructs_presence_reads();
+xeric_expect_keep_present($T, $dbK, 'janelle', $friEarly);
+ok('kept: and a caller with nothing in hand still gets it read for them', xeric_constructs_presence_reads() - $reads0 === 1);
+
 $dbK = null;
 foreach ([$dbKPath, $dbKPath . '-wal', $dbKPath . '-shm'] as $f) @unlink($f);
 

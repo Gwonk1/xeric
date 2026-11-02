@@ -930,6 +930,38 @@ ok('silence: the player\'s own silence is noticed, through a cast mouth',
     $s1['notice'] === '__you' && str_contains(json_encode($s1['messages']), 'Walt has not said a word in a while'));
 ok('silence: and only once per stretch', !str_contains(json_encode($s2['messages']), 'Walt has not said a word'));
 
+// -- a player with no name: the word "you" is not them -----------------------
+// The template may leave user.name empty. That person was seated as the
+// literal 'you', and the mention test then found them in almost every line:
+// the floor came back after one beat, every memory was heat, and the prompts
+// read "you are not texting you … Answer you".
+$TY = $T; $TY['user']['name'] = '';
+$dbY = fresh_db('live-nameless'); $cY = [];
+$epY = stub_room($cY, [], null, fn(int $n) => [1 => 'I told you the urn was on, Ruth.', 2 => 'You never listen to me, Dale.'][$n] ?? 'Mm, you know.');
+xeric_player_move($dbY, 'first_lutheran', (int)$SUN['epoch']);
+$liveY = xeric_room_open($TY, $dbY, $SUN, 'first_lutheran', ['id' => 1, 'name' => '']);
+$liveY['conv'] = xeric_conversation_create($dbY, '', 'room', 'first_lutheran');
+xeric_world_state_set($dbY, XERIC_ROOM_LIVE, json_encode($liveY));
+ok('nameless: seated as the visitor, never the word you', $liveY['names']['__you'] === 'the visitor'
+    && $liveY['player']['named'] === false && xeric_room_you_mention($liveY) === XERIC_ROOM_NAMELESS, json_encode($liveY['player']));
+ok('nameless: the mention test refuses a pronoun or the bare word as a name',
+    !xeric_age_mentions('What do you think?', 'you', 'you') && !xeric_age_mentions('I told them.', 'them', 'them')
+    && !xeric_age_mentions('I saw you there.', XERIC_ROOM_NAMELESS, XERIC_ROOM_NAMELESS)
+    && xeric_age_mentions('What do you think, Walt?', 'Walt', 'Walt'));
+ok('nameless: a memory with "you" in it is no heat about them',
+    xeric_room_heat_you([['text' => 'Ruth told you about the urn.']], [], xeric_room_you_mention($liveY)) === 0);
+live_say($TY, $dbY, $SUN, 'Morning, all of you.');
+xeric_room_live_edit($dbY, function (?array &$live): void { $live['budget'] = 3; });
+$y1 = live_beat($TY, $dbY, $SUN, $epY, ['seed' => 'n']);
+$y2 = live_beat($TY, $dbY, $SUN, $epY, ['seed' => 'n']);
+ok('nameless: two beats, and "you" in a cast line never hands the floor back',
+    ($y1['carry']['floor'] ?? '') !== 'named you' && ($y2['carry']['floor'] ?? '') !== 'named you'
+    && count(array_filter($cY, fn($c) => $c['tag'] === 'chat')) === 2, json_encode([$y1['carry'], $y2['carry']]));
+$bytesY = json_encode($cY, JSON_UNESCAPED_UNICODE);
+ok('nameless: no prompt says "texting you" or "Answer you"',
+    !str_contains($bytesY, 'texting you') && !str_contains($bytesY, 'Answer you') && !str_contains($bytesY, 'you: Morning')
+    && str_contains($bytesY, 'The visitor just said that') && str_contains($bytesY, 'the visitor: Morning'), mb_substr($bytesY, 0, 200));
+
 // -- presence: exits, arrivals, the minor seal -------------------------------
 $TA = reweek($T, 'dot', [['days' => [0], 'from' => '11:58', 'to' => '13:00', 'where' => 'first_lutheran', 'doing' => 'late from the diner']]);
 $dbP = fresh_db('live-presence');

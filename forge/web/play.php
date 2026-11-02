@@ -4096,7 +4096,10 @@ echo xeric_play_css_link() . '<style>
     fetch('room.php?w=' + encodeURIComponent(W) + '&after=' + ROOM.after + (ROOM.conv ? '&c=' + ROOM.conv : ''))
       .then(function (r) { return r.json(); })
       .then(function (d) {
-        if (!d || !d.ok) return;
+        // A transient refusal (a 500, a 404 while a fork settles) is not the
+        // end of the room: say nothing and ask again, like the network
+        // failure below. Returning here without the timer froze the strip.
+        if (!d || !d.ok) { ROOM.timer = setTimeout(roomPoll, 6000); return; }
         var was = ROOM.live;
         roomPaint(d);
         // A live room that ends, or a fresh one opening, moves the cursor

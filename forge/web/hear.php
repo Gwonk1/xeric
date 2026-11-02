@@ -93,7 +93,7 @@ function xeric_hear(array $w, string $sid, string $bytes, string $mime, string $
         $why  = xeric_web_note_safe((string)preg_replace('/^ears: /', '', $e->getMessage()));
         return [in_array($code, [400, 413, 415], true) ? $code : 503, ['error' => $why]];
     }
-    if ($r === null) return [503, ['error' => 'the ears machine is not answering right now']];
+    if ($r === null) return [404, ['error' => 'There is no ears machine set up here.']];
 
     xeric_limit_note('hear', ['sid' => $sid]);   // it listened: the seat is spent
     return [200, ['ok' => true, 'text' => $r['text']]];

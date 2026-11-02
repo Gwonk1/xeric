@@ -195,7 +195,9 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
                 $rh = xeric_queue_take('say', XERIC_HEART_MODEL_WAIT, 'heart:' . $slug);
                 if (($rh['ok'] ?? false) === true) {
                     try {
-                        $n = count(xeric_play_room_land($w, xeric_llm_up($endpoint, 6) ? $endpoint : null));
+                        // A model that is not answering keeps the seal for the
+                        // next pass; it never lands the close without its diaries.
+                        $n = count(xeric_play_room_land_up($w, $endpoint) ?? []);
                         if ($n > 0) $say($slug . ': closed ' . $n . ' conversation' . ($n === 1 ? '' : 's'));
                     } finally {
                         xeric_queue_release($rh['hold'] ?? $rh);

@@ -340,6 +340,142 @@ ok('a fork has no live room and no sealed one waiting',
 ok('nor any diary a room of the owner\'s wrote', (int)$cdb->query("SELECT COUNT(*) FROM memories WHERE source LIKE 'room%'")->fetchColumn() === 0);
 
 // ---------------------------------------------------------------------------
+echo "\n# the close waits for a model\n";
+
+/** The diary machine: extracts answer with one memory per head, named for them. */
+function diarist(): array
+{
+    return ['base' => 'stub://', 'stub' => function (string $tag, array $msgs): array|string {
+        if ($tag !== 'extract') return 'A line.';
+        preg_match('/Write 0-3 things (.+?) would still know/', (string)$msgs[1]['content'], $m);
+        return ['memories' => [($m[1] ?? 'Somebody') . ' sat a while at the counter with the visitor and the coffee.']];
+    }];
+}
+$roomEvent = function (PDO $db, int $conv): ?array {
+    foreach (xeric_events_recent($db, 20) as $e) {
+        $tr = json_decode((string)(xeric_world_state_get($db, 'why:event:' . (int)$e['id']) ?? ''), true);
+        if (is_array($tr) && (int)($tr['conversation'] ?? 0) === $conv) return $e + ['trail' => $tr];
+    }
+    return null;
+};
+$roomDiaries = fn(PDO $db): int => (int)$db->query("SELECT COUNT(*) FROM memories WHERE source = 'room.you'")->fetchColumn();
+
+$convD = (int)xeric_room_live_get($db)['conv'];
+xeric_room_seal($db, 'stepped back', xeric_clock_now($db, $T));
+$downLand = xeric_play_room_land_up($w, ['base' => 'http://127.0.0.1:1', 'kind' => 'local']);
+ok('a sealed room with the model down keeps its seal — no event, no forfeited diaries',
+    $downLand === null && isset(xeric_room_seals($db)[$convD]) && $roomEvent($db, $convD) === null);
+$diariesD = $roomDiaries($db);
+$upLand = xeric_play_room_land_up($w, diarist());
+ok('and with the model up it lands: one event, the diaries, the seal gone',
+    is_array($upLand) && !isset(xeric_room_seals($db)[$convD]) && $roomEvent($db, $convD) !== null
+    && $roomDiaries($db) > $diariesD, json_encode($upLand));
+ok('the heart and the room worker both land only through it',
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/heart.php'), 'xeric_play_room_land_up($w, $endpoint)')
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/room-worker.php'), 'xeric_play_room_land_up($w, $endpoint)')
+    && !preg_match('/xeric_play_room_land\(\$w, [^)]*\? \$endpoint : null\)/',
+        file_get_contents(dirname(__DIR__) . '/heart.php') . file_get_contents(dirname(__DIR__) . '/room-worker.php')));
+
+// ---------------------------------------------------------------------------
+echo "\n# the lease outlives a slow beat\n";
+
+$sL = xeric_play_room_say($w, 'Slow morning, Ruth?');
+$freshLater = [];
+$rL = xeric_play_room_run($w, $A, (string)$sL['lease'], [
+    'endpoint' => function (string $h) use ($db): array {
+        return ['base' => 'stub://', 'stub' => function (string $tag) use ($db): string {
+            // The model took most of the lease: by the time it answers, half a
+            // second of it is left (a 108-second beat on a 120-second lease).
+            xeric_room_live_edit($db, function (?array &$l): void { $l['lease']['until'] = microtime(true) + 0.5; });
+            return 'Slow enough.';
+        }];
+    },
+    'up' => false, 'wait' => 2.0, 'seed' => 'slow',
+    'sleep' => function (float $s) use ($db, &$freshLater): void {
+        // The reading-time gap, and a line the player might send in it: would
+        // it find the turn still carried, or start a second worker?
+        $freshLater[] = xeric_room_lease_fresh(xeric_room_live_get($db), microtime(true) + 60);
+    },
+]);
+ok('a slow call renews the lease the moment it returns: one worker, nothing discarded as not ours',
+    $freshLater !== [] && !in_array(false, $freshLater, true) && $rL['beats'] >= 1 && $rL['dropped'] === 0
+    && $rL['stopped'] !== 'not ours', json_encode([$rL, $freshLater]));
+$pvSrc = (string)file_get_contents(dirname(__DIR__) . '/play-view.php');
+ok('and every queue update while it waits in line renews it too',
+    (bool)preg_match('/function \(int \$ahead, int \$eta, string \$phrase\).{0,400}xeric_play_room_renew\(\$live\)/s', $pvSrc));
+$probe = ['lease' => ['id' => 'x', 'until' => microtime(true) + 1]];
+xeric_play_room_renew($probe);
+ok('the renewal is a full lease from now', $probe['lease']['until'] > microtime(true) + XERIC_ROOM_LEASE - 2
+    && $probe['lease']['id'] === 'x');
+
+// ---------------------------------------------------------------------------
+echo "\n# a skip lands its own close\n";
+
+// A model on loopback, so the skip is let through and the close has diaries
+// to write — the heart is never asked. SKIPS when no server can be started.
+$fake = $tmp . '/fake-model';
+@mkdir($fake, 0775, true);
+file_put_contents($fake . '/router.php', <<<'ROUTER'
+<?php
+$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+header('Content-Type: application/json');
+if ($path === '/v1/models') { echo '{"data":[{"id":"fake"}]}'; return; }
+if ($path === '/v1/chat/completions') {
+    $j = json_decode((string)file_get_contents('php://input'), true) ?: [];
+    $all = json_encode($j['messages'] ?? []);
+    $name = preg_match('/Write 0-3 things (.+?) would still know/', $all, $m) ? $m[1] : 'Somebody';
+    $content = json_encode(['memories' => [$name . ' heard the hour go by at the counter, mid-conversation.']]);
+    echo json_encode(['choices' => [['message' => ['role' => 'assistant', 'content' => $content]]],
+                      'usage' => ['prompt_tokens' => 1, 'completion_tokens' => 1]]);
+    return;
+}
+http_response_code(404); echo '{}';
+ROUTER);
+$sock = @stream_socket_server('tcp://127.0.0.1:0');
+$mport = $sock ? (int)substr((string)strrchr((string)stream_socket_get_name($sock, false), ':'), 1) : 0;
+if ($sock) fclose($sock);
+$mproc = $mport > 0 ? @proc_open([PHP_BINARY, '-S', '127.0.0.1:' . $mport, $fake . '/router.php'],
+    [0 => ['pipe', 'r'], 1 => ['file', $fake . '/server.log', 'a'], 2 => ['file', $fake . '/server.log', 'a']], $mpipes) : false;
+$mlive = false;
+for ($i = 0; is_resource($mproc) && $i < 60 && !$mlive; $i++) {
+    $c = @fsockopen('127.0.0.1', $mport, $en, $es, 0.2);
+    if ($c) { fclose($c); $mlive = true; } else usleep(50000);
+}
+if (!$mlive) {
+    echo "ok   - SKIPPED: no loopback model could be started here; the land-only-when-up checks above still hold\n";
+} else {
+    xeric_web_session_edit(function (array &$s) use ($mport): void {
+        $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:' . $mport, 'base' => '', 'model' => ''];
+    }, $A);
+    $sK = xeric_play_room_say($w, 'One more cup and then I am off.');
+    xeric_play_room_run($w, $A, (string)$sK['lease'], ['endpoint' => fn(string $h): array => stub($calls),
+        'up' => false, 'wait' => 2.0, 'sleep' => fn(float $s) => null]);
+    xeric_room_live_edit($db, function (?array &$l): void { $l['lease'] = null; $l['budget'] = 0; });
+    $convK = (int)xeric_room_live_get($db)['conv'];
+    $diariesK = $roomDiaries($db);
+    $skip = page('tick.php', $A, ['w' => $slug], ['w' => $slug, 'span' => 'hour']);
+    ok('the skip goes, and seals the room it interrupts',
+        $skip['status'] === 200 && xeric_room_live_get($db) === null, $skip['status'] . ' ' . mb_substr($skip['raw'], 0, 200));
+    $evK = null;
+    for ($i = 0; $i < 150 && ($evK === null || isset(xeric_room_seals($db)[$convK])); $i++) {
+        usleep(200000);
+        $evK = $roomEvent($db, $convK);
+    }
+    ok('and a room worker of its own lands the close — event and diaries, no heart',
+        $evK !== null && ($evK['trail']['ended'] ?? '') === 'skip' && !isset(xeric_room_seals($db)[$convK])
+        && $roomDiaries($db) > $diariesK, json_encode([$evK['trail']['ended'] ?? null, $roomDiaries($db) - $diariesK]));
+    // Let the skip itself finish before anything else touches this database.
+    for ($i = 0; $i < 150 && (xeric_queue_busy() || (array)(xeric_queue_state()['line'] ?? []) !== []); $i++) usleep(200000);
+    xeric_web_session_edit(function (array &$s): void {
+        $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:1', 'base' => '', 'model' => ''];
+    }, $A);
+}
+if (is_resource($mproc)) { proc_terminate($mproc); proc_close($mproc); }
+ok('tick.php sends a room worker after the seal, as where.php and the leave do',
+    (bool)preg_match("/xeric_room_seal\(\\\$w\['db'\], 'skip', \\\$now\) !== null\).{0,300}'lease' => ''\], 'room-worker\.php'/s",
+        (string)file_get_contents(dirname(__DIR__) . '/tick.php')));
+
+// ---------------------------------------------------------------------------
 echo "\n# who came and went, in the view\n";
 
 xeric_room_seal($db, 'stepped back', xeric_clock_now($db, $T));
@@ -376,6 +512,13 @@ ok('each cast bubble has a speaker through speak.php', str_contains($pp, "if (VO
 ok('the people in the view light up as they talk', str_contains($pp, "b.classList.toggle('typing'")
     && str_contains($pp, "b.classList.toggle('speaking'"));
 ok('a guest gets no composer', str_contains($pp, "if (ROOM.guest) { $('#rcompose').hidden = true;"));
+$pollFn = preg_match('/function roomPoll\(\) \{.*?\n  \}\n/s', $pp, $mm) ? $mm[0] : '';
+ok('a poll answered without ok:true asks again on the slow beat, never freezes the strip',
+    str_contains($pollFn, 'if (!d || !d.ok) { ROOM.timer = setTimeout(roomPoll, 6000); return; }')
+    && !str_contains($pollFn, 'if (!d || !d.ok) return;'), mb_substr($pollFn, 0, 120));
+$sayFn = (string)(preg_match('/function xeric_play_room_say\(.*?\n\}\n/s', (string)file_get_contents(dirname(__DIR__) . '/play-view.php'), $mm) ? $mm[0] : '');
+ok('a line opens with one tick and one edit — no third transaction resealing what the tick sealed',
+    $sayFn !== '' && substr_count($sayFn, 'xeric_room_live_edit(') === 1 && substr_count($sayFn, 'xeric_play_room_tick(') === 1);
 ok('every bubble is escaped on the way in', str_contains($pp, "esc(r.text)") && !preg_match('/innerHTML\s*=\s*r\.text/', $pp));
 
 // ---------------------------------------------------------------------------

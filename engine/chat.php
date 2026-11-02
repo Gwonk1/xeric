@@ -464,7 +464,12 @@ function xeric_age_minors(array $t): array
 function xeric_age_mentions(string $text, string $handle, string $name): bool
 {
     $skip = ['the' => 1, 'and' => 1, 'old' => 1, 'young' => 1, 'kid' => 1, 'boy' => 1, 'girl' => 1,
-             'son' => 1, 'daughter' => 1, 'mrs' => 1, 'mr' => 1, 'ms' => 1, 'little' => 1];
+             'son' => 1, 'daughter' => 1, 'mrs' => 1, 'mr' => 1, 'ms' => 1, 'little' => 1]
+          // A PRONOUN IS NOT A NAME. A nameless player was once seated as
+          // 'you', and the bare word matched nearly every line in a room; no
+          // form of any pronoun xeric_pronouns() knows, nor "you", is ever a
+          // needle. Read from its one table, so this file spells none of them.
+          + xeric_pronoun_words();
 
     $needles = [$handle, str_replace('_', ' ', $handle), $name];
     foreach (preg_split('/\s+/u', $name) ?: [] as $part) $needles[] = $part;
@@ -472,6 +477,7 @@ function xeric_age_mentions(string $text, string $handle, string $name): bool
     foreach (array_unique($needles) as $n) {
         $n = trim((string)$n);
         if (mb_strlen($n) < 3 || isset($skip[mb_strtolower($n)])) continue;
+        if (!preg_match('/\p{L}/u', $n)) continue;          // a sentinel, never a word (XERIC_ROOM_NAMELESS)
         if (preg_match('/\b' . preg_quote($n, '/') . '\b/iu', $text)) return true;
     }
     return false;

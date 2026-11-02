@@ -98,8 +98,8 @@ ok('model, language and key come from the environment when it says them',
     $ep['model'] === 'large-v3' && $ep['language'] === 'en' && $ep['key'] === 'sk-ears-test', json_encode($ep));
 putenv('XERIC_EARS_LANGUAGE=not a language');
 ok('a language that is not one is "let the machine tell", not an error', xeric_ears_endpoint()['language'] === '');
-ok('a configured machine that is not answering is down, and hears nothing',
-    !xeric_ears_up() && xeric_ears_hear($WEBM, 'audio/webm') === null);
+ok('a configured machine that is not answering is down on the lamp, and a line put to it is a 503',
+    !xeric_ears_up() && throws(fn() => xeric_ears_hear($WEBM, 'audio/webm'), 'not answering', 503));
 ok('loopback is the owner\'s own electricity', !xeric_ears_costly());
 putenv('XERIC_EARS_BASE=https://api.example.com');
 ok('anywhere else is somebody\'s meter', xeric_ears_costly());
@@ -215,13 +215,14 @@ file_put_contents($router, <<<'FAKE'
 // A transcriber in thirty lines. /ok hears what the prompt names; /refuse
 // refuses the way a real server does; /pretend answers 200 with no text.
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+file_put_contents((string)getenv('XERIC_FAKE_EARS_LOG') . '.hits', ($_SERVER['REQUEST_METHOD'] ?? '') . ' ' . $path . "\n", FILE_APPEND);
 $json = function (int $code, $body): bool {
     http_response_code($code);
     header('Content-Type: application/json');
     echo json_encode($body);
     return true;
 };
-if (!preg_match('#^/(ok|refuse|pretend)(/.*)?$#', $path, $m)) return $json(404, ['detail' => 'Not Found']);
+if (!preg_match('#^/(ok|refuse|pretend|slow)(/.*)?$#', $path, $m)) return $json(404, ['detail' => 'Not Found']);
 [$kind, $rest] = [$m[1], $m[2] ?? '/'];
 if ($rest === '/') { echo 'an ears machine'; return true; }
 if ($rest === '/v1/audio/transcriptions' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
@@ -234,6 +235,7 @@ if ($rest === '/v1/audio/transcriptions' && ($_SERVER['REQUEST_METHOD'] ?? '') =
     ]) . "\n", FILE_APPEND);
     if ($kind === 'refuse')  return $json(400, ['error' => ['message' => 'Audio file is too short']]);
     if ($kind === 'pretend') return $json(200, ['ok' => true]);
+    if ($kind === 'slow')    sleep(3);
     return $json(200, ['text' => 'Morning, ' . explode(',', (string)($_POST['prompt'] ?? 'nobody'))[0] . '.',
                        'usage' => ['type' => 'duration', 'seconds' => 3]]);
 }
@@ -287,8 +289,16 @@ ok('wire: a machine that refuses says why, and the reason reaches the error',
     throws(fn() => xeric_ears_hear($WEBM, 'audio/webm', [], ['base' => $base . '/refuse']), 'HTTP 400: Audio file is too short'));
 ok('wire: a 200 with no transcript is an error page wearing a success code',
     throws(fn() => xeric_ears_hear($WEBM, 'audio/webm', [], ['base' => $base . '/pretend']), 'without a transcript'));
-ok('wire: a closed port hears nothing, quickly, and that is not an error',
-    xeric_ears_hear($WEBM, 'audio/webm', [], ['base' => 'http://127.0.0.1:1']) === null);
+ok('wire: a closed port is a machine not answering, quickly: 503, not a refusal in its words',
+    throws(fn() => xeric_ears_hear($WEBM, 'audio/webm', [], ['base' => 'http://127.0.0.1:1']), 'not answering', 503));
+$hits = array_values(array_filter(file($wire . '.hits', FILE_IGNORE_NEW_LINES) ?: [], fn($l) => str_contains($l, '/ok')));
+ok('wire: one line heard is ONE request — the call is the probe, no liveness round trip before it',
+    $hits === ['POST /ok/v1/audio/transcriptions'], json_encode($hits));
+$t0 = microtime(true);
+$slow = throws(fn() => xeric_ears_hear($WEBM, 'audio/webm', ['timeout' => 1], ['base' => $base . '/slow', 'timeout' => 60]),
+               'not answering', 503);
+ok('wire: the caller\'s timeout is the call\'s — a machine slower than it is not answering, 503',
+    $slow && microtime(true) - $t0 < 2.8, round(microtime(true) - $t0, 2) . 's');
 
 // ---------------------------------------------------------------------------
 

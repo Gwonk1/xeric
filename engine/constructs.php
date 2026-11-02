@@ -707,6 +707,7 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
     $out   = ['missed' => 0, 'hardened' => 0, 'gossip_born' => 0, 'gossip_spread' => 0, 'gossip_faded' => 0];
     $user  = trim((string)($t['user']['name'] ?? '')) ?: 'they';
     $gone  = xeric_deaths($db);
+    $presence = $body = null;                         // resolved once, on first need (below)
 
     foreach ((array)($t['cast']['characters'] ?? []) as $c) {
         $h = (string)($c['handle'] ?? '');
@@ -735,8 +736,22 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
         // KEPT BEFORE MISSED, in the same tick: the body being where it said
         // it would be is checked first, so a tick that finds the user standing
         // at the diner closes the promise rather than burning it.
-        xeric_expect_keep_present($t, $db, $h, $now, $note);
-        foreach (xeric_expects_for($db, $h) as $e) {
+        //
+        // ONE READ OF THE TOWN PER TICK. Who is where (the whole cast against
+        // the deaths) and where the body is are the same for every holder at
+        // one instant, so they are resolved once, the first time a holder has
+        // anything open, and handed down with the rows already read — the
+        // keep used to recompute both, and re-read the rows, once per handle.
+        $rows = xeric_expects_for($db, $h);
+        $open = array_values(array_filter($rows, fn($e) => $e['state'] === 'open'));
+        $kept = [];
+        if ($open !== []) {
+            $presence ??= xeric_constructs_presence($t, $now, $gone);
+            $body     ??= xeric_constructs_body($t, $db);
+            $kept = xeric_expect_keep_present($t, $db, $h, $now, $note, $open, $presence, $body);
+        }
+        // A keep changed a row's state; only then is there anything to re-read.
+        foreach ($kept === [] ? $rows : xeric_expects_for($db, $h) as $e) {
             if ($e['state'] === 'open' && $epoch > $e['due'] + XERIC_EXPECT_GRACE) {
                 $name  = xeric_world_name($t, $h);
                 // WHO DID NOT COME. Absent means the person at the centre;
@@ -897,6 +912,32 @@ function xeric_expect_keep(array $t, PDO $db, string $handle, array $now, ?calla
 }
 
 /**
+ * Who is where, for the keep: the whole cast against the deaths, at $now.
+ * Once per tick (xeric_constructs_tick); the count is for the test that says so.
+ */
+function xeric_constructs_presence(array $t, array $now, array $gone): array
+{
+    xeric_constructs_presence_reads(1);
+    return xeric_world_who_is_where($t, $now, array_keys($gone));
+}
+
+/** How many times presence has been resolved in this process. A seam for the suite; +$n to count. */
+function xeric_constructs_presence_reads(int $n = 0): int
+{
+    static $reads = 0;
+    return $reads += $n;
+}
+
+/** The player's body, for the keep: where it stands and since when. */
+function xeric_constructs_body(array $t, PDO $db): array
+{
+    // Read lazily: travel.php sits above this file in the require graph (it
+    // pulls the sweeps, which pull chat, which pulls this).
+    require_once __DIR__ . '/travel.php';
+    return ['where' => xeric_player_where($t, $db), 'since' => xeric_player_since($db)];
+}
+
+/**
  * The 'there' half: is whoever promised this listener something standing in
  * the listener's room right now? Read off position and the week, no model.
  *
@@ -907,23 +948,27 @@ function xeric_expect_keep(array $t, PDO $db, string $handle, array $now, ?calla
  * their own week seats them where the listener is. A listener at no place, a
  * position that names no place, nothing to keep: nothing happens.
  *
+ * $open, $where and $body are what the tick already read (the open rows, the
+ * town's presence, ['where' => …, 'since' => …]); a caller without them gets
+ * them read here, the same reads.
+ *
  * @return string[] the arc keys kept
  */
-function xeric_expect_keep_present(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null): array
+function xeric_expect_keep_present(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null,
+                                   ?array $open = null, ?array $where = null, ?array $body = null): array
 {
-    $open = array_filter(xeric_expects_for($db, $handle), fn($e) => $e['state'] === 'open');
+    $open ??= array_filter(xeric_expects_for($db, $handle), fn($e) => $e['state'] === 'open');
     if ($open === []) return [];
 
-    $where = xeric_world_who_is_where($t, $now, array_keys(xeric_deaths($db)));
+    $where ??= xeric_constructs_presence($t, $now, xeric_deaths($db));
     $here  = $where[$handle]['where'] ?? null;
     if ($here === null || $here === '') return [];
 
     $kept = [];
-    // The player's body. Read lazily: travel.php sits above this file in the
-    // require graph (it pulls the sweeps, which pull chat, which pulls this).
-    require_once __DIR__ . '/travel.php';
-    $body  = xeric_player_where($t, $db);
-    $since = xeric_player_since($db);
+    // The player's body.
+    $body  ??= xeric_constructs_body($t, $db);
+    $since = (int)$body['since'];
+    $body  = $body['where'];
     if ($body !== null && $body === (string)$here && $since > 0) {
         // One arrival keeps one promise, the soonest made before it.
         $k = xeric_expect_keep($t, $db, $handle, $now, $onNote, XERIC_PLAYER_FIRST, 'there', null, $since);

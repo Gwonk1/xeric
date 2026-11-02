@@ -71,8 +71,12 @@ try {
         if ($got['ok'] ?? false) {
             $lock = $got['hold'];
             try {
-                $landed = xeric_play_room_land($w, $endpoint !== null && xeric_llm_up($endpoint, 6) ? $endpoint : null);
-                xeric_web_job_append($job, ['k' => 'note', 'message' => count($landed) . ' conversation(s) closed']);
+                // Only with the model up: a probe that fails is a seal kept for
+                // the next pass, never diaries forfeited (xeric_play_room_land_up).
+                $landed = xeric_play_room_land_up($w, $endpoint);
+                xeric_web_job_append($job, ['k' => 'note', 'message' => $landed === null
+                    ? 'the model is not answering; the close waits, nothing is lost'
+                    : count($landed) . ' conversation(s) closed']);
             } finally {
                 xeric_queue_release($lock);
             }

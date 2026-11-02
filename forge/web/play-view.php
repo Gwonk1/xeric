@@ -888,9 +888,12 @@ function xeric_play_room_player(array $w): array
 {
     $id = xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST;
     $t  = $w['template'];
+    // No name is no name: '' here, and xeric_room_open seats them under a
+    // sentinel for mentions and "the visitor" for prose. The literal 'you'
+    // this used to hand over was a word the mention test found everywhere.
     $name = $id > XERIC_PLAYER_FIRST
         ? xeric_player_name($w['db'], $id, $t)
-        : (trim((string)($t['user']['name'] ?? '')) ?: 'you');
+        : trim((string)($t['user']['name'] ?? ''));
     return ['id' => $id, 'name' => $name];
 }
 
@@ -919,7 +922,7 @@ function xeric_play_room_public(array $t, ?array $live, bool $mine): ?array
         'conv'       => (int)$live['conv'],
         'place'      => (string)$live['place'],
         'place_name' => (string)($live['room']['place_name'] ?? ''),
-        'you'        => (string)($names[XERIC_ROOM_YOU] ?? 'you'),
+        'you'        => xeric_room_you_named($live) ? xeric_room_you_name($live) : 'you',
         'present'    => $present,
         'far'        => array_values(array_map(fn($h) => (string)($names[$h] ?? xeric_world_name($t, (string)$h)), (array)$live['far'])),
         'typing'     => $typing,
@@ -937,6 +940,7 @@ function xeric_play_room_public(array $t, ?array $live, bool $mine): ?array
 function xeric_play_room_rows(array $t, array $live, array $rows): array
 {
     $names = (array)$live['names'];
+    $me    = xeric_room_you_named($live) ? xeric_room_you_name($live) : 'you';   // the page's own lane says you
     $out = [];
     foreach ($rows as $r) {
         $role = (string)$r['role'];
@@ -945,7 +949,7 @@ function xeric_play_room_rows(array $t, array $live, array $rows): array
             'id'   => (int)$r['id'],
             'who'  => $role === 'user' ? 'me' : ($role === 'character' && $h !== '' ? 'them' : 'narr'),
             'h'    => $role === 'character' ? $h : ($role === 'user' ? XERIC_ROOM_YOU : ''),
-            'name' => $role === 'user' ? (string)($names[XERIC_ROOM_YOU] ?? 'you')
+            'name' => $role === 'user' ? $me
                     : ($role === 'character' ? (string)($names[$h] ?? xeric_world_name($t, $h)) : ''),
             'text' => (string)$r['content'],
             'when' => $r['world_epoch'] !== null ? xeric_play_stamp($t, (int)$r['world_epoch']) : '',
@@ -1019,13 +1023,11 @@ function xeric_play_room_say(array $w, string $text, ?array $now = null): array
     $player = xeric_play_room_player($w);
 
     // First, whatever the last session owes: a room in another place, or one
-    // that has gone quiet, closes before this line opens the next.
+    // that has gone quiet, closes before this line opens the next. One edit:
+    // the tick's xeric_room_over() already reads 'you left' off the same
+    // position this line was given, so a second "seal it if elsewhere" pass
+    // was a transaction that could never change anything.
     xeric_play_room_tick($w, $now);
-    xeric_room_live_edit($db, function (?array &$live) use ($db, $where, $now): void {
-        if ($live !== null && (string)$live['place'] !== $where && !xeric_room_lease_fresh($live)) {
-            xeric_room_seal_here($db, $live, 'you left', $now);
-        }
-    });
 
     return xeric_room_live_edit($db, function (?array &$live) use ($t, $db, $where, $now, $player, $text): array {
         if ($live !== null && (string)$live['place'] !== $where) {
@@ -1107,6 +1109,19 @@ function xeric_play_room_carry(array $w, ?string $sid = null): array
     });
 }
 
+/**
+ * KEEP THE TURN OURS. The lease is good for XERIC_ROOM_LEASE from now. A beat
+ * is a wait in line, a probe and a call — on a slow model that is most of
+ * the lease, so renewing it only at the top of the beat let it lapse mid-call:
+ * the next line spawned a second worker and the first one's finished, already
+ * charged line was thrown away as "not ours". The worker renews at the top,
+ * on every queue update while it waits, and the moment the call returns.
+ */
+function xeric_play_room_renew(array &$live): void
+{
+    if (is_array($live['lease'] ?? null)) $live['lease']['until'] = microtime(true) + XERIC_ROOM_LEASE;
+}
+
 /** Is a turn being carried right now? A skip must not move the clock under it. */
 function xeric_play_room_midturn(PDO $db): bool
 {
@@ -1176,7 +1191,7 @@ function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []
             $draw  = xeric_room_next($t, $db, $live, $lines);
             $sp    = (string)$draw['speaker'];
             $live['typing'] = ['h' => $sp, 'at' => microtime(true), 'queue' => ''];
-            $live['lease']['until'] = microtime(true) + XERIC_ROOM_LEASE;
+            xeric_play_room_renew($live);
             return ['draw' => $draw, 'seq' => (int)$live['seq'], 'live' => $live, 'lines' => $lines];
         });
         if (isset($plan['stop'])) {
@@ -1193,7 +1208,9 @@ function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []
             $got = xeric_queue_take('say', (float)($o['wait'] ?? XERIC_QUEUE_SAY_WAIT), $sid,
                 function (int $ahead, int $eta, string $phrase) use ($db, $ours): void {
                     xeric_room_live_edit($db, function (?array &$live) use ($ours, $phrase): void {
-                        if ($ours($live) && is_array($live['typing'] ?? null)) $live['typing']['queue'] = ucfirst($phrase);
+                        if (!$ours($live)) return;
+                        xeric_play_room_renew($live);
+                        if (is_array($live['typing'] ?? null)) $live['typing']['queue'] = ucfirst($phrase);
                     });
                 });
             if (!($got['ok'] ?? false)) {
@@ -1245,6 +1262,7 @@ function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []
         $waiting = (array)($q['line'] ?? []) !== [];
         $res = xeric_room_live_edit($db, function (?array &$live) use ($ours, $plan, $beat, $draw, $ready, $sp): array {
             if (!$ours($live)) return ['stop' => true];
+            xeric_play_room_renew($live);                 // the call is back: the lease runs from here
             if ((int)$live['seq'] !== (int)$plan['seq']) {
                 $live['dropped'][] = ['speaker' => $sp, 'why' => 'you spoke first'];
                 $live['typing'] = null;
@@ -1290,6 +1308,21 @@ function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []
         $out['beats']++;
     }
     return $out;
+}
+
+/**
+ * THE CLOSE, ONLY WITH A MODEL TO WRITE IT. The heart and the room worker
+ * used to land a seal with endpoint null whenever the probe failed at that
+ * instant — one hiccup forfeited every head's diary and deleted the seal that
+ * would have retried them. A seal is retried by design, so a model that is not
+ * answering is a seal left for the next pass: null here, nothing touched.
+ *
+ * @return ?array what xeric_play_room_land() landed, or null when the model is down
+ */
+function xeric_play_room_land_up(array $w, ?array $endpoint, int $timeout = 6): ?array
+{
+    if ($endpoint === null || !xeric_llm_up($endpoint, $timeout)) return null;
+    return xeric_play_room_land($w, $endpoint);
 }
 
 /**
