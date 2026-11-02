@@ -1,0 +1,80 @@
+# Every suite the QUICKSTART loop runs, on the oldest PHP bootstrap accepts and
+# the one this was developed on. No composer, no npm install: the suites need
+# PHP with its extensions, a browser for the smoke test and Node for the
+# viewer's harness, and nothing else.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  suites:
+    name: suites (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.3']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_sqlite, sqlite3, mbstring, zlib, ctype, openssl
+          coverage: none
+          tools: none
+
+      # The smoke test drives real headless Chrome; the viewer test runs the
+      # page's JavaScript in Node. Both SKIP on a machine without them, which
+      # here would be a vacuous pass, so the REQUIRE flags below make a
+      # missing browser or Node a failure instead.
+      - id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: versions
+        run: |
+          php -v
+          php -m
+          "${{ steps.chrome.outputs.chrome-path }}" --version
+          node --version
+
+      - name: every suite
+        shell: bash
+        env:
+          XERIC_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          XERIC_REQUIRE_BROWSER: '1'
+          XERIC_REQUIRE_NODE: '1'
+        run: |
+          set -u -o pipefail
+          log="$RUNNER_TEMP/suites.log"
+          : > "$log"
+          n=0
+          for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php; do
+            n=$((n + 1))
+            echo "::group::$t"
+            if ! php "$t" 2>&1 | tee -a "$log"; then
+              echo "::endgroup::"
+              echo "::error title=suite failed::$t"
+              echo "FAILED: $t"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+          oks=$(grep -c '^ok ' "$log" || true)
+          skips=$(grep -c '^SKIP ' "$log" || true)
+          echo "$n suites, $oks ok, $skips skipped"
+          grep '^SKIP ' "$log" || true
+          echo "### $n suites, $oks ok, $skips skipped" >> "$GITHUB_STEP_SUMMARY"

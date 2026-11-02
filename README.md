@@ -36,7 +36,10 @@ session.
 
 **Beta.** The engine runs end to end: the forge builds a world from an
 interview, the review step lets you edit or reroll any of it, and the play view
-is a world you can talk to and skip time inside. Twenty-four test suites, all green.
+is a world you can talk to and skip time inside. Thirty test suites, run on
+PHP 8.1 and 8.3 on every push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml));
+how to run them yourself is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and what is
+known and not yet fixed is in [`docs/PUNCHLIST.md`](docs/PUNCHLIST.md).
 
 Start with [`QUICKSTART.md`](QUICKSTART.md) — what you need, how to start it,
 and how to read the inspector when something surprises you.

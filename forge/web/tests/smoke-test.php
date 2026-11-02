@@ -44,16 +44,55 @@ function ok(string $name, bool $cond, string $detail = ''): void
 echo "# the smoke test — every page, in a browser, with the JS running\n";
 
 // -- is there a browser at all -----------------------------------------------
+// XERIC_CHROME names one explicitly. Otherwise chrome-headless-shell is tried
+// FIRST: it is the headless-only build, it needs no D-Bus and no zygote, and
+// in a sandbox without a session bus it is the one that answers — full Chrome
+// there starts, logs D-Bus errors and never dumps the DOM (every visit times
+// out), whatever flags it is given.
 $chrome = '';
-foreach (['google-chrome', 'chromium', 'chromium-browser', 'google-chrome-stable'] as $c) {
+$named = (string)getenv('XERIC_CHROME');
+if ($named !== '' && is_executable($named)) $chrome = $named;
+foreach (['chrome-headless-shell', 'google-chrome', 'chromium', 'chromium-browser', 'google-chrome-stable', 'chrome'] as $c) {
+    if ($chrome !== '') break;
     $p = trim((string)@shell_exec('command -v ' . escapeshellarg($c) . ' 2>/dev/null'));
     if ($p !== '') { $chrome = $p; break; }
 }
 if ($chrome === '') {
-    echo "ok   - (skipped: no chrome or chromium on this machine, which is not a failure)\n";
-    echo "\nall good\n";
+    // A SKIP, SAID AS ONE. This used to print "ok - (skipped ...)", which a CI
+    // log counts as a pass: the suite went green on a machine that never ran
+    // it. The SKIP line is what a reader (and the CI grep) looks for.
+    // XERIC_REQUIRE_BROWSER=1 (CI sets it) turns the skip into a failure, so
+    // a runner that lost its browser goes red instead of quietly green.
+    if (getenv('XERIC_REQUIRE_BROWSER') === '1') {
+        echo "FAIL - smoke-test: no browser, and XERIC_REQUIRE_BROWSER=1 says there must be one\n\n1 failed\n";
+        exit(1);
+    }
+    echo "SKIP - smoke-test: 0 of its checks ran (no chrome, chromium or chrome-headless-shell; set XERIC_CHROME to point at one)\n";
+    echo "\nskipped\n";
     exit(0);
 }
+echo "# browser: $chrome\n";
+
+// CAN IT DUMP A PAGE AT ALL. One trivial page first, with a short fuse: a
+// browser that starts and never answers (full Chrome in a container with no
+// D-Bus does exactly that, whatever flags it is given) would otherwise time
+// out on every page below, one after another, for minutes — and then read as
+// twenty broken pages instead of one missing piece of plumbing.
+$probeDir = sys_get_temp_dir() . '/xeric-smoke-probe-' . getmypid();
+@mkdir($probeDir, 0775, true);
+$probe = (string)@shell_exec('timeout 20 ' . escapeshellarg($chrome)
+    . ' --headless=new --disable-gpu --no-sandbox --disable-dbus --disable-dev-shm-usage --no-first-run'
+    . ' --user-data-dir=' . escapeshellarg($probeDir)
+    . ' --dump-dom ' . escapeshellarg('data:text/html,<p>x</p><script>document.body.append("ran")</script>')
+    . ' 2>/dev/null');
+@shell_exec('rm -rf ' . escapeshellarg($probeDir));
+if (!str_contains($probe, '</script>ran')) {           // the text node the script added, not its source
+    echo "FAIL - the browser can load a trivial page and run its script (it did not answer in 20 s: "
+       . "headless Chrome without a session bus hangs like this; point XERIC_CHROME at chrome-headless-shell)\n";
+    echo "\n1 failed\n";
+    exit(1);
+}
+ok('the browser loads a trivial page and runs its script', true);
 
 // -- a throwaway everything --------------------------------------------------
 $tmp = sys_get_temp_dir() . '/xeric-smoke-' . getmypid();
@@ -131,9 +170,14 @@ $visit = function (string $path) use ($chrome, $port, $tmp): array {
     $url = 'http://127.0.0.1:' . $port . $path;
     $err = $tmp . '/chrome.err';
     $cmd = escapeshellarg($chrome)
-         . ' --headless --disable-gpu --no-sandbox --no-first-run --disable-extensions'
+         // --headless=new is ignored by chrome-headless-shell and selects the
+         // modern headless mode in full Chrome; --disable-dbus and
+         // --disable-dev-shm-usage are for containers with no session bus and
+         // a tiny /dev/shm (CI runners, sandboxes).
+         . ' --headless=new --disable-gpu --no-sandbox --disable-dbus --disable-dev-shm-usage'
+         . ' --no-first-run --disable-extensions'
          . ' --user-data-dir=' . escapeshellarg($tmp . '/profile')
-         . ' --virtual-time-budget=4000 --enable-logging=stderr --v=0 --dump-dom '
+         . ' --virtual-time-budget=8000 --enable-logging=stderr --v=0 --dump-dom '
          . escapeshellarg($url) . ' 2> ' . escapeshellarg($err);
     $dom = (string)@shell_exec('timeout 45 ' . $cmd);
     $log = (string)@file_get_contents($err);

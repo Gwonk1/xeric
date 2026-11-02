@@ -417,8 +417,16 @@ foreach (['http://127.0.0.1:9/x' => 'this machine',
     ok("egress: $what is not somewhere a phone notification goes",
         xeric_web_host_open((string)parse_url($u, PHP_URL_HOST)) === false, $u);
 }
-ok('egress: and a real notification host still is',
-    xeric_web_host_open('ntfy.sh') === true);
+// NEEDS REAL DNS. xeric_web_host_open resolves the name, and offline (or in a
+// sandbox with no resolver) a public name cannot be told from a private one —
+// so the check is skipped, said as a SKIP, when the name does not resolve.
+// gethostbyname returns its input unchanged on failure.
+if (gethostbyname('ntfy.sh') === 'ntfy.sh') {
+    echo "SKIP - egress: and a real notification host still is (ntfy.sh does not resolve here: no DNS)\n";
+} else {
+    ok('egress: and a real notification host still is',
+        xeric_web_host_open('ntfy.sh') === true);
+}
 $nfy = (string)file_get_contents(dirname(__DIR__) . '/notify.php');
 ok('egress: the page that SAVES it applies that fence',
     str_contains($nfy, 'xeric_web_host_open((string)parse_url($url, PHP_URL_HOST))'));
@@ -1604,7 +1612,7 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
               '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php', '/speak.php',
-              '/forge/forge.php', '/forge/play.php'];
+              '/hear.php', '/forge/forge.php', '/forge/play.php'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
 ok('every include, worker and test path is denied', $served === [], implode(' ', $served));
@@ -1616,7 +1624,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
           'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php', 'speak.php',
-          'debrief.php', 'join.php'];
+          'debrief.php', 'join.php', 'hear.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);

@@ -177,14 +177,25 @@ php engine/chat-cli.php --world=worlds/<slug> --speaker=<handle> --say="..."
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h --no-learn
 
-# the test suites — all of them, no exceptions
-for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php; do php "$t" || break; done
+# the test suites — all of them, no exceptions; stops at the first that fails
+for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php; do php "$t" || { echo "FAILED: $t"; break; }; done
 
-# the last of those is the smoke test: it starts a throwaway server, loads
-# every page in headless Chrome, and fails on any uncaught javascript. It
-# SKIPS when there is no browser installed, which is not a failure.
-php forge/web/tests/smoke-test.php
+# two of those need something besides PHP, and say SKIP (exit 0) without it:
+#   smoke-test.php  starts a throwaway server, loads every page in headless
+#                   Chrome, and fails on any uncaught javascript. Needs chrome,
+#                   chromium or chrome-headless-shell; XERIC_CHROME names one.
+#   viewer-test.php runs the play view's panorama, headset, day-strip and
+#                   speaker JavaScript in Node against a fake DOM and WebGL.
+# A SKIP line is not a pass: CI sets XERIC_REQUIRE_BROWSER=1 and
+# XERIC_REQUIRE_NODE=1 so a missing tool fails there instead.
+XERIC_CHROME=/path/to/chrome-headless-shell php forge/web/tests/smoke-test.php
 ```
+
+In a container with no D-Bus session bus (some sandboxes), full Chrome starts
+and never dumps a page whatever flags it is given; the smoke test notices in
+twenty seconds and says so. `chrome-headless-shell` does not need the bus.
+The one demo-test check that needs real DNS says SKIP when offline.
+CONTRIBUTING.md has the rest.
 
 ## Running it where other people can reach it
 
