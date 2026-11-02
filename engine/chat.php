@@ -54,6 +54,7 @@ require_once __DIR__ . '/learn.php';     // where a turn is written down as a si
 require_once __DIR__ . '/death.php';     // the dead do not answer
 require_once __DIR__ . '/notify.php';    // "remind me" — the one clock that is not the world's
 require_once __DIR__ . '/constructs.php'; // promises heard, kept, missed, explained
+require_once __DIR__ . '/confide.php';    // what she asked you to keep, and whether you did
 require_once __DIR__ . '/llm.php';
 
 /** A text message, not an essay. Anything past this is collapsed at a full stop. */
@@ -935,6 +936,10 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     $turns = xeric_messages_recent($db, $convId, XERIC_CHAT_EXTRACT_WINDOW);
     if (count($turns) < 2) return 0;                     // nothing has happened yet
 
+    // Where the last harvest stopped reading — so the confidence watch below
+    // reads each line once, the way the memory harvest does.
+    $readTo = xeric_arc_int($db, $speaker, 'extract.last_message_id', 0);
+
     $existing = xeric_memories_for($db, $speaker, 40);
     $known    = array_map(fn($m) => (string)$m['text'], $existing);
 
@@ -984,7 +989,14 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             // it happened, code decides whether there was anything to keep.
             . "- \"kept\": true only if, in this conversation, {$userName} actually DID something they had "
             . "earlier promised {$name} (brought the thing, turned up, called). Not a new promise. Else false.\n"
-            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false, \"kept\": false }\nNo prose outside the JSON."],
+            // The fourth watch, and the one with the most riding on it: a
+            // confidence (confide.php). Same split again — the model reports
+            // her exact words, code checks they carry an explicit ask and are
+            // really in what she said.
+            . "- \"confided\": if {$name} told {$userName} something and explicitly asked them to keep it "
+            . "(\"don't tell\", \"between us\", \"keep this to yourself\"), return {\"quote\": {$name}'s exact words, "
+            . "\"what\": the thing itself in under 10 words, \"not\": [names of anyone who must not hear it]}. Else null.\n"
+            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false, \"kept\": false, \"confided\": null }\nNo prose outside the JSON."],
     ];
 
     try {
@@ -1040,7 +1052,31 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     if (!empty($raw['kept'])) xeric_expect_keep($template, $db, $speaker, $now, null, $player, 'said');
     xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null,
                       $now, null, null, $player);
-    if (!empty($raw['explained'])) xeric_expect_repair($template, $db, $speaker, $now, null, $player);
+    // An explanation repairs the freshest miss; with none to repair it owns up
+    // to a confidence let out; with neither, it thaws a grudge that hardened
+    // past both windows. One explanation, one thing mended.
+    if (!empty($raw['explained'])
+        && xeric_expect_repair($template, $db, $speaker, $now, null, $player) === null
+        && xeric_confide_mend($template, $db, $speaker, $now, $player) === null) {
+        xeric_grudge_thaw($template, $db, $speaker, '', $player, $now);
+    }
+
+    // THE CONFIDENCE, both directions, on the lines this harvest is the first
+    // to read: what she asked the person at the centre to keep (her words,
+    // checked against what she actually said), and whether they just repeated
+    // somebody else's to her. Code-only; neither can fail the harvest.
+    try {
+        $herLines = $theirLines = [];
+        foreach ($turns as $tn) {
+            if ((int)($tn['id'] ?? 0) <= $readTo) continue;
+            $role = (string)($tn['role'] ?? '');
+            if ($role === 'character') $herLines[]   = (string)$tn['content'];
+            elseif ($role === 'user')  $theirLines[] = (string)$tn['content'];
+        }
+        xeric_confide_repeat($template, $db, $speaker, $theirLines, $now, $player);
+        xeric_confide_to_player($template, $db, $speaker, is_array($raw['confided'] ?? null) ? $raw['confided'] : null,
+                                $now, $player, implode("\n", $herLines));
+    } catch (Throwable $e) { /* a confidence lost is re-proposed next harvest */ }
 
     return count($keep);
 }

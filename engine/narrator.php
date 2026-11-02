@@ -453,9 +453,24 @@ function xeric_narrator_prompt(array $t, PDO $db, array $now, string $question, 
     $lived = xeric_narrator_lived($t, $db, $now, $opts);
     $asker = trim((string)($t['user']['name'] ?? '')) ?: 'The one who lives here';
 
+    // WHAT WAS ALREADY ASKED, so "and why?" means something. Only the
+    // narrator's own past exchanges with the asker — answers that already came
+    // out through the discretion above, so carrying them back in leaks nothing
+    // the asker was not already told. Capped: a follow-up needs the last few,
+    // not a transcript, and this block rides the volatile half of the prompt.
+    $past = [];
+    foreach (array_slice((array)($opts['history'] ?? []), -XERIC_NARRATOR_HISTORY) as $ex) {
+        $q = xeric_narrator_quote((string)($ex['q'] ?? ''), 300);
+        $a = xeric_narrator_quote((string)($ex['a'] ?? ''), 600);
+        if ($q === '' || $a === '') continue;
+        $past[] = '- ' . $asker . ' asked: ' . $q . "\n  You answered: " . $a;
+    }
+    $history = $past === [] ? '' : "WHAT YOU HAVE ALREADY BEEN ASKED (oldest first)\n" . implode("\n", $past) . "\n\n";
+
     // The question is the last thing in the last message, where a model pays
     // the most attention — the same seat the clock holds in a chat turn.
     $user = $lived['text'] . "\n\n"
+        . $history
         . "THE QUESTION\n"
         . $asker . ' asks you: ' . trim($question) . "\n\n"
         . 'Answer as the narrator: a few plain sentences, the reason where the record '
@@ -476,6 +491,35 @@ function xeric_narrator_prompt(array $t, PDO $db, array $now, string $question, 
         ],
         'sources' => $lived['sources'],
     ];
+}
+
+/** Past exchanges a follow-up question carries back in, at most. */
+const XERIC_NARRATOR_HISTORY = 3;
+
+/** The narrator's own way of declining. Engine canon, like the discretion block. */
+const XERIC_NARRATOR_DECLINE = 'That is not mine to say.';
+
+/**
+ * REFUSALS ARE IN VOICE, NOT IN ERROR (docs/NARRATOR.md). The system prompt
+ * asks for that; this makes it arithmetic for the one shape a small model
+ * falls back to under pressure — the assistant's apology, the policy line, the
+ * mention of a prompt or its instructions. Any of those is replaced whole by
+ * the narrator's own decline, never edited: a policy sentence with the policy
+ * words cut out still has the shape of a refusal that knows what it is
+ * refusing. An empty reply gets the same line, so a model that said nothing
+ * is not a blank bubble. Everything else passes untouched.
+ */
+function xeric_narrator_in_voice(string $text): string
+{
+    $s = trim($text);
+    $s = trim((string)preg_replace('/^\s*(?:the\s+)?narrator\s*:\s*/iu', '', $s));
+    if ($s === '') return XERIC_NARRATOR_DECLINE;
+    $policy = '/\b(?:as an ai|an ai (?:model|assistant)|language model|i\'?m sorry,? but|i am sorry,? but'
+        . '|i apologi[sz]e|system (?:prompt|message)|my (?:instructions|guidelines|programming)'
+        . '|content polic(?:y|ies)|i(?:\'m| am) not able to (?:help|assist|provide|share)'
+        . '|i can(?:not|\'t|’t) (?:help|assist) with)\b/iu';
+    if (preg_match($policy, $s) === 1) return XERIC_NARRATOR_DECLINE;
+    return $s;
 }
 
 // ---------------------------------------------------------------------------
@@ -542,7 +586,7 @@ function xeric_narrator_ask(array $t, PDO $db, string $question, array $now, arr
     $usage['ms'] = (int)round((microtime(true) - $t0) * 1000);
 
     return [
-        'text'     => trim($text),
+        'text'     => xeric_narrator_in_voice($text),
         'usage'    => $usage,
         'sources'  => $built['sources'],
         'messages' => $built['messages'],
@@ -1421,4 +1465,60 @@ function xeric_narrator_leans(array $t, PDO $db, int $epoch, array $opts = []): 
         ];
     }
     return $out;
+}
+
+/**
+ * DELIVERY, marked where the hour lands. xeric_sweep_window() calls this
+ * inside the event's own transaction, with the leans it was handed and the
+ * hour it just wrote: every offered intent this hour realized — by the same
+ * two doors xeric_narrator_intent_match() argues, nothing looser — is marked
+ * `done` on the spot, citing the event, `via: sweep`. Settling would find the
+ * same match on the next listing; marking it here means the beat stops pulling
+ * from the very next window of the same catch-up, and the event's trail can
+ * say which intent it delivered (by number — the words stay in the ledger).
+ *
+ * @param int[] $ns     the intent numbers the sweep was offered
+ * @param array $event  {world_epoch, participants, place, title, prose, id}
+ * @return int[] the numbers delivered by this hour
+ */
+function xeric_narrator_intents_deliver(PDO $db, array $ns, array $event, string $kind): array
+{
+    if ($ns === []) return [];
+    $all = xeric_narrator_intents($db);
+    $out = [];
+    foreach (array_unique(array_map('intval', $ns)) as $n) {
+        $in = $all[$n] ?? null;
+        if ($in === null || (string)($in['state'] ?? '') !== 'live') continue;
+        $door = xeric_narrator_intent_match($in, $event, $kind !== '' ? $kind : null);
+        if ($door === null) continue;
+        $in['state'] = 'done';
+        $in['done']  = ['event' => (int)($event['id'] ?? 0), 'world_epoch' => (int)($event['world_epoch'] ?? 0),
+                        'by' => $door, 'via' => 'sweep'];
+        xeric_world_state_set($db, xeric_narrator_intent_key($n),
+            json_encode($in, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $out[] = $n;
+    }
+    return $out;
+}
+
+// ---------------------------------------------------------------------------
+// The fourth power — AUTHOR, deliberately not built
+// ---------------------------------------------------------------------------
+//
+// docs/NARRATOR.md §4: create and change world content on request, every write
+// validated and "one undo away". The second half is the blocker. The review
+// page's undo is ONE copy deep (prev-copy before save), and the rewind is one
+// skip deep; an author that can invent a character, retire one and rewrite an
+// hour in one sitting needs an undo that walks back through all three, in
+// order, across template AND database. Until that exists this stub is the
+// whole power, and it refuses — loudly, in a sentence, so nothing can wire
+// "author" into a surface and discover later that it silently did nothing.
+
+/**
+ * @throws RuntimeException always: author waits for a deeper undo.
+ */
+function xeric_narrator_author_refuses(array $t, PDO $db, string $request): never
+{
+    throw new RuntimeException('narrator: author is not built. It changes the world, and it waits for an '
+        . 'undo deeper than one step (docs/NARRATOR.md, "Author"). Nothing was written.');
 }

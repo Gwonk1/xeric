@@ -861,6 +861,11 @@ function xeric_world_minutes(?string $hhmm): ?int
  *         look up without converting. The dead are absent entirely rather than
  *         present with a null room: `where === null` already means off shift,
  *         and a caller cannot be asked to tell "at home" from "in the ground".
+ *         A row the Director staged also carries `staged: true` and its
+ *         `staging` id.
+ * @param PDO|null $db the world's database, so live stagings are honoured;
+ *                     null reads the schedule alone (and any stagings a
+ *                     dressed template carries).
  */
 /**
  * Where somebody lives, or null for a character the world gave no home.
@@ -879,7 +884,7 @@ function xeric_world_home_of(array $t, string $handle): ?string
     return null;
 }
 
-function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): array
+function xeric_world_who_is_where(array $t, array $now, ?array $dead = null, ?PDO $db = null): array
 {
     $dow  = (int)($now['dow'] ?? 0);
     $mins = xeric_world_minutes((string)($now['hhmm'] ?? '')) ?? 0;
@@ -918,6 +923,15 @@ function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): ar
             }
         }
         $out[$handle] = $row;
+    }
+    // THE DIRECTOR (engine/director.php) changes the set, never the
+    // performance: a live staging puts its people at its place, `staged: true`,
+    // on top of the schedule above — read from $db when one is given, or from a
+    // template xeric_director_dress() carried them in (the sweeps pass none).
+    // Neither present, nothing is loaded and the schedule's answer stands.
+    if ($db !== null || !empty($t['_director']['stagings'])) {
+        require_once __DIR__ . '/director.php';
+        $out = xeric_director_apply($t, $now, $out, $db);
     }
     return $out;
 }

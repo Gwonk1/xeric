@@ -669,6 +669,27 @@ Design principles, learned the hard way:
     "duets": { "enabled": true, "offscreen_per_night": 1 }
   },
 
+  // ── the director: the set, never the performance (docs/DIRECTOR.md) ───
+  // Puts two or three people in the same room for an hour; never decides what
+  // they say there. OPT-IN: a missing block, or one whose `rules` is empty, is
+  // a world the Director never touches — no rows, presence is the schedule.
+  "director": {
+    "rules": [],                            // any of "narrator" | "apart" |
+                                            // "player"; unknown names ignored
+    "per_day": 2,                           // stagings per world-day, at most
+    "apart_days": 7,                        // `apart`: days one orbit's pair
+                                            // may go without an hour together
+    "player_gap": 2,                        // `player`: how far apart two
+                                            // people's trust in you must be
+    "minutes": 60,                          // how long a staging holds (≤ 120)
+    "lookahead_hours": 24                   // how far ahead a rule looks for
+                                            // an hour everybody is free
+  },
+  // A week[] block may carry `"unmissable": true` (never staged away from) or
+  // `false` (always may be). Unmarked, a block at a place of kind `work`, or at
+  // a non-home place that lists the person (or their same_as fixture) as a
+  // resident, is their job and is unmissable.
+
   // ── media: identity-preserving image pipeline ──────────────────────────
   "media": {
     "images": {
@@ -759,6 +780,30 @@ mapping and what each system does.
 
 Milldale's own template says `"motivation": "companionship"` — free text, one
 keyword hit away from `company`, which is exactly the path most worlds take.
+
+### The constructs, and `forge.armed`
+
+What the resolver arms lands in `forge.armed` (and `forge.disarmed`). The
+constructs ([CONSTRUCTS.md](CONSTRUCTS.md)) read it: each is armed by **its own
+name** or by one of the systems a preset already arms. A world with no
+`forge.armed` at all predates arming and gets every construct; an armed list
+that names none of a construct's words switches it off.
+
+| Construct | Its own name | Also armed by |
+|---|---|---|
+| expectations | `expectations` | — |
+| gossip ripple | `rumors` | — |
+| debts | `favors` | `a_debt`, `alliances_that_cost` |
+| confidences | `confidences` | `private_history`, `attraction`, `arcs`, `secrets` |
+| anticipation | `anticipation` | `expectations`, `visits` |
+| news | `news` | `gentle_proactive_contact`, `remembering` |
+| worry | `worry` | `gentle_proactive_contact` |
+| grudges | `grudges` (or `grudge`) | `expectations`, `people_who_remember`, `private_history` |
+| rituals | `rituals` (or `ritual`) | `daily_rhythms`, `faith` |
+| milestones | `milestones` (or `milestone`) | `arcs`, `remembering` |
+
+The six sibling names are not in `XERIC_SYSTEMS`, so the forge's resolver never
+proposes them; a hand-edited `forge.armed` may carry them.
 
 ---
 

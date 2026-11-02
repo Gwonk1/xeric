@@ -73,6 +73,7 @@ declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 
 require_once __DIR__ . '/play-lib.php';
+require_once XERIC_WEB_LIB . '/engine/director.php';   // the set, never the performance
 
 const XERIC_HEART_MAX_WINDOWS = 6;    // hours lived per world per tick
 const XERIC_HEART_MODEL_WAIT  = 2.0;  // seconds to wait for the model before giving up
@@ -182,6 +183,10 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         // The tick is idempotent, and a miss detected here is stamped at the
         // hour the person actually waited (constructs.php).
         try { xeric_constructs_tick($T, $db, xeric_clock_now($db, $T)); } catch (Throwable $e) { /* next tick retries */ }
+        // Cast-to-cast fuses (the constructs agent's seam), when that lands.
+        if (function_exists('xeric_constructs_cast_tick')) {
+            try { xeric_constructs_cast_tick($T, $db, xeric_clock_now($db, $T)); } catch (Throwable $e) { /* next tick retries */ }
+        }
 
         // Reminders first, and whatever else happens. They need no model, they
         // are the thing somebody explicitly asked for, and they must not be
@@ -223,6 +228,18 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         }
 
         if (xeric_clock_is_paused($db)) continue;         // stopped means stopped
+
+        // THE DIRECTOR (engine/director.php), before the hours, so a staging it
+        // makes for the next hour is standing there when the sweep reaches it.
+        // No model, once per world-hour, and nothing at all unless the
+        // template's `director.rules` lists a rule — it is opt-in.
+        try {
+            foreach (xeric_director_tick($T, $db, xeric_clock_now($db, $T))['staged'] as $st) {
+                $say($slug . ': staged ' . implode(' and ', $st['who']) . ' at ' . $st['where'] . ', ' . $st['why']);
+            }
+        } catch (Throwable $e) {
+            $say($slug . ': the director, ' . $e->getMessage());
+        }
 
         $size = (int)($T['events']['window_seconds'] ?? XERIC_SWEEP_WINDOW);
         $now  = xeric_clock_now($db, $T);
@@ -289,7 +306,9 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
                     return (bool)$a['ok'];
                 };
             }
-            $r = xeric_sweep_catchup($T, $db, $endpoint, $from, $to, $sweepOpts);
+            // The sweep reads presence with no database, so the stagings ride
+            // in on the template; a world with none gets $T back untouched.
+            $r = xeric_sweep_catchup(xeric_director_dress($T, $db), $db, $endpoint, $from, $to, $sweepOpts);
             if (($r['stopped'] ?? '') === 'budget' && is_array($short)) {
                 xeric_budget_stopped($db, xeric_clock_now($db, $T), $short);
                 $say($slug . ': stopped living hours, ' . (string)($short['reason'] ?? 'budget'));
@@ -333,6 +352,13 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
                                    is_array($ping) ? $ping : null, (int)$after['epoch'],
                                    ['no_model' => xeric_queue_expired($hold['hold'] ?? $hold) || $broke, 'timeout' => 60]);
             if ($lp['learned'] > 0) $say($slug . ': learned ' . $lp['learned'] . ' thing' . ($lp['learned'] === 1 ? '' : 's'));
+
+            // Sleep, the consolidation pass (the sleep agent's seam), under the
+            // same hold, when that lands.
+            if (function_exists('xeric_sleep_pass')) {
+                try { xeric_sleep_pass($T, $db, $after, $endpoint); }
+                catch (Throwable $e) { $say($slug . ': sleep, ' . $e->getMessage()); }
+            }
         } catch (Throwable $e) {
             $say($slug . ': ' . $e->getMessage());
         } finally {

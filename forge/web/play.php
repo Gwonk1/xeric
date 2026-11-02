@@ -569,20 +569,23 @@ if ($action !== '') {
     }
 
     // -- the narrator --------------------------------------------------------
-    // THE ONE THING THAT CAN SEE THE BOARD. Every character knows only what they
-    // know — that is the engine, and the walls exist to keep it true. This is not
-    // a character: it is the thing a player can ask when they are lost, and
-    // seeing everything is what makes it able to answer. What it may not do is
-    // SPEND the story, which is xeric_play_hint()'s problem and is written into
-    // its prompt: it points, it does not tell.
+    // THE ONE THING THAT CAN SEE THE BOARD, and now the real thing: the
+    // engine's ask (engine/narrator.php) — full canon, no walls, and the
+    // discretion rules that keep it from spending the story: it never
+    // unravels a mystery, never says where a hidden thing is, never discusses
+    // its own write-ahead, never hands over a character's secret because it
+    // knows it, and declines in its own voice. The exchange is kept as the
+    // narrator's thread (kind `narrator`, handle ''), shown back in the pane.
+    //
+    // THE OWNER, OR SOMEBODY IN THEIR OWN COPY. A guest on a pairing code is
+    // in the owner's evening, and the narrator reads every head in it — so a
+    // guest is refused before anything is spent.
     if ($action === 'hint') {
         xeric_web_spend_guard();   // a GET, and it reaches the model
+        xeric_play_owner_only($w, 'asking the narrator');
         // METERED LIKE A MESSAGE, because that is what it costs. The only thing
         // standing here was a six-second queue hold, which is a MUTEX and not a
-        // quota: it serialises callers, it does not bound them. So a loop over
-        // `a=hint` — no ownership check, no cookie needed, any world on the
-        // shelf — walked straight past the demo's thirty-messages-an-hour cap
-        // and held the GPU for as long as somebody cared to keep asking.
+        // quota: it serialises callers, it does not bound them.
         xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 
         try { $endpoint = xeric_play_endpoint($sid); }
@@ -592,16 +595,56 @@ if ($action !== '') {
         if (($hold['ok'] ?? false) !== true) {
             xeric_web_json(['error' => 'The model is busy. Ask again in a moment.', 'kind' => 'busy'], 503);
         }
+        // The work starts: the seat the check took is spent, not given back
+        // at the end of the request (limits.php — a check alone holds a seat).
+        xeric_limit_note('message', ['sid' => $sid]);
         try {
-            $line = xeric_play_hint($w['template'], $w['db'],
-                                    (string)($_GET['ask'] ?? ''), $endpoint);
+            $said = xeric_play_narrator_ask($w, (string)($_GET['ask'] ?? ''), $endpoint);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
             xeric_web_json(['error' => 'nothing came back', 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
-        if (trim($line) === '') xeric_web_json(['error' => 'nothing came back'], 502);
-        xeric_web_json(['ok' => true, 'text' => $line]);
+        xeric_web_json(['ok' => true, 'text' => $said['text'], 'question' => $said['question'],
+                        'kept' => $said['stored']]);
+    }
+
+    // -- taking a staging back (the Director's, engine/director.php) -----------
+    // The owner's alone. The inspector lists stagings; this is its one write.
+    if ($action === 'unstage') {
+        xeric_web_spend_guard();
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner takes a staging back.', 'kind' => 'guest'], 403);
+        $in = xeric_web_input();
+        $gone = function_exists('xeric_director_cancel')
+            ? xeric_director_cancel($w['db'], (int)($in['id'] ?? 0), xeric_clock_epoch($w['db'])) : null;
+        if ($gone === null) xeric_web_json(['error' => 'There is no staging with that number left to take back.'], 404);
+        xeric_web_json(['ok' => true, 'note' => 'Taken back. Everybody goes where their week says.']);
+    }
+
+    // -- writing ahead -------------------------------------------------------
+    // One sentence, an intended beat. A PULL, NEVER A SCRIPT: the sweeps lean
+    // toward hours that could realize it (×2, bounded), and the words stay
+    // here — what reaches a sweep is the people it names and a kind of hour.
+    // The owner's alone: it is the shape of what is coming.
+    if ($action === 'intend' || $action === 'unintend') {
+        xeric_web_spend_guard();
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner writes ahead in a xeric.', 'kind' => 'guest'], 403);
+        $in = xeric_web_input();
+        if ($action === 'intend') {
+            try {
+                $made = xeric_play_narrator_intend($w, (string)($in['text'] ?? ''));
+            } catch (Throwable $e) {
+                xeric_web_json(['error' => preg_replace('/^narrator: /', '', $e->getMessage())], 422);
+            }
+            $note = 'Written ahead. The world will lean toward it, and may never find room.';
+            if ($made['notes'] !== []) $note .= ' ' . ucfirst((string)$made['notes'][0]) . '.';
+        } else {
+            if (xeric_play_narrator_retire($w, (int)($in['n'] ?? 0)) === null) {
+                xeric_web_json(['error' => 'There is no live beat with that number.'], 404);
+            }
+            $note = 'Taken back.';
+        }
+        xeric_web_json(['ok' => true, 'note' => $note, 'html' => xeric_play_narrator_intents_html($w)]);
     }
 
     // -- a line you might say ----------------------------------------------
@@ -633,6 +676,7 @@ if ($action !== '') {
         if (($hold['ok'] ?? false) !== true) {
             xeric_web_json(['error' => 'the model is busy', 'kind' => 'busy'], 503);
         }
+        xeric_limit_note('message', ['sid' => $sid]);   // the work starts: keep the seat
         try {
             $line = xeric_play_suggest($w['template'], $w['db'], $handle, $endpoint);
         } catch (Throwable $e) {
@@ -1041,6 +1085,14 @@ echo xeric_play_css_link() . '<style>
 #room .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
 #room .rctl { display:flex; gap:.5rem; align-items:center; margin:.35rem 0 0; font-size:.75rem; color:var(--fg-dim); }
 #room .rctl .grow { flex:1 1 auto; }
+/* the narrator write-ahead: intended beats, struck when delivered */
+.nahead { margin:.6rem 0 0; font-size:.85rem; }
+.nahead summary { cursor:pointer; color:var(--fg-dim); }
+.nahead .intents { list-style:none; padding:0; margin:.4rem 0; }
+.nahead .intent { margin:.25rem 0; }
+.nahead .intent.done s { opacity:.7; }
+.nahead .intent.off { opacity:.55; }
+.nahead input { flex:1 1 auto; min-width:0; }
 </style>';
 ?>
 <!-- THE CHIP BAR, ACROSS THE WHOLE WINDOW. Everybody, always, so a thread is a
@@ -1232,13 +1284,33 @@ echo xeric_play_css_link() . '<style>
       </nav>
     </div>
 
-    <ul class="msgs" id="nmsgs"></ul>
+    <?php $narrPane = xeric_play_narrator_pane_html($w); $narrGuest = xeric_play_is_guest($w); ?>
+    <!-- The last few exchanges, kept (the narrator's own thread, kind
+         `narrator`, handle ''). Server-rendered so the pane opens on them. -->
+    <ul class="msgs" id="nmsgs"><?= $narrPane['msgs'] ?></ul>
     <div class="thinking" id="nthinking" hidden><i></i><i></i><i></i><span>looking at where things stand</span></div>
     <p class="note warn" id="nerr" hidden></p>
+    <?php if ($narrGuest): ?>
+    <p class="note">The narrator answers whoever this xeric belongs to. You are a guest in it.</p>
+    <?php else: ?>
     <div class="composer">
-      <textarea id="ncomposer" rows="1" placeholder="what are you stuck on?" autocomplete="off"></textarea>
+      <textarea id="ncomposer" rows="1" placeholder="ask the world anything: why, who, where" autocomplete="off" maxlength="600"></textarea>
       <button class="btn" type="button" id="nsend">Ask</button>
     </div>
+    <?php endif; ?>
+    <?php if ($w['mine']): ?>
+    <!-- WRITE AHEAD. One sentence, an intended beat: the sweeps lean toward
+         it and are never ordered to write it. The words are shown here and
+         nowhere else; a struck-through line is one an hour delivered. -->
+    <details class="nahead" id="nahead">
+      <summary>write ahead <span class="quiet">— a beat the world should lean toward</span></summary>
+      <ul class="intents" id="nintents"><?= $narrPane['intents'] ?></ul>
+      <div class="composer">
+        <input id="nintend" type="text" maxlength="240" placeholder="e.g. Dot and Theo end up at the same meal, and it does not go well" autocomplete="off">
+        <button class="btn" type="button" id="nintendgo">Write ahead</button>
+      </div>
+    </details>
+    <?php endif; ?>
   </section>
 
   <!-- ------------------------------------------------------------- the book -->
@@ -3678,9 +3750,9 @@ echo xeric_play_css_link() . '<style>
   // the same lane the world's own voice uses inside a thread, and for the same
   // reason: this is not somebody who texted you.
   //
-  // NOTHING IS STORED. A hint is about where you are stuck right now; keeping a
-  // transcript of them would turn a way out of being stuck into one more thing
-  // to read.
+  // KEPT, A FEW AT A TIME. The engine's ask is a read; the play view keeps the
+  // exchange as the narrator's own thread and opens the pane on the last few,
+  // because "and why?" only means something after the first answer.
   function narrSay(who, text) {
     var li = document.createElement('li');
     li.className = who;
@@ -3722,10 +3794,42 @@ echo xeric_play_css_link() . '<style>
     $('#asknarr').addEventListener('click', function () {
       show('narr');
       // Opened cold, it answers the unasked question: what now.
-      if (!$('#nmsgs').children.length) askNarrator('');
+      // A guest has no box to ask with, and is not asked for.
+      if (!$('#nmsgs').children.length && $('#ncomposer')) askNarrator('');
     });
   }
   if ($('#nagain')) $('#nagain').addEventListener('click', function () { askNarrator(''); });
+
+  // -- writing ahead (the owner's) -------------------------------------------
+  function intentPost(a, body) {
+    return fetch('play.php?a=' + a + '&w=' + encodeURIComponent(W), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.ok) { $('#nintents').innerHTML = d.html; bindRetire(); toast(d.note || 'kept'); return true; }
+        toast((d && d.error) || 'that did not take'); return false;
+      })
+      .catch(function () { toast('that did not take'); return false; });
+  }
+  function bindRetire() {
+    $$('#nintents .iretire').forEach(function (b) {
+      b.addEventListener('click', function () { b.disabled = true; intentPost('unintend', { n: parseInt(b.dataset.n, 10) }); });
+    });
+  }
+  if ($('#nintendgo')) {
+    bindRetire();
+    var sendIntent = function () {
+      var box = $('#nintend'), t = box.value.trim();
+      if (!t) return;
+      $('#nintendgo').disabled = true;
+      intentPost('intend', { text: t }).then(function (ok) {
+        $('#nintendgo').disabled = false;
+        if (ok) box.value = '';
+      });
+    };
+    $('#nintendgo').addEventListener('click', sendIntent);
+    $('#nintend').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendIntent(); } });
+  }
   if ($('#nsend')) {
     $('#nsend').addEventListener('click', function () {
       var box = $('#ncomposer'), t = box.value.trim();

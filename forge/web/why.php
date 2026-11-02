@@ -40,7 +40,15 @@
  *     that cannot explain itself reads as the world being moody. learn.php
  *     produces every figure on the page; nothing here re-derives one.
  *
- * Read-only, start to finish. No model call, no write, no clock moved.
+ *  4. WHAT HAS GONE QUIETLY WRONG?  ?w=<slug>&audit=1
+ *     The narrator's audit (engine/narrator.php, investigate), on demand and
+ *     for the owner: dropped threads, absent characters, unpaid debts and
+ *     contradictions, each linked to what it names. The one place here a model
+ *     may be called — to read the threads — metered like a message and at most
+ *     once per world-hour (kept in a file under the data dir).
+ *
+ * Read-only, start to finish. No write to the world, no clock moved; the audit
+ * above is the only model call.
  *
  * AND ONLY FOR ITS OWNER. Read-only is not the same as harmless: what this page
  * reads is the assembled system message, and prompt.php puts "You hold this back:
@@ -264,6 +272,20 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
         ? 'yes, this one touches what this xeric is keeping quiet'
         : (!empty($tr['could_spine']) ? 'no, this kind could have been, and the roll said not this time'
                                       : 'no, this kind of hour is never about the secret') ?></div></div>
+      <?php $ln = (array)($tr['lean'] ?? []); $dl = (array)($tr['intents_delivered'] ?? []);
+      if ($ln !== [] || $dl !== []): ?>
+      <div class="row"><div class="k">the narrator</div><div class="v"><?php
+        $bits = [];
+        if ($ln !== []) {
+            $bits[] = 'leaned by the narrator\'s intent #' . implode(', #', array_map('intval', (array)($ln['intents'] ?? [])))
+                . (!empty($ln['kind']) ? ', this kind of hour tried at ×2' : '')
+                . (!empty($ln['chose']) ? ', and the room it pulled toward won (×2)' : (!empty($ln['groups']) ? ', though another room won the draw' : ''));
+        }
+        if ($dl !== []) $bits[] = 'this hour delivered intent #' . implode(', #', array_map('intval', $dl));
+        echo h(implode('; ', $bits));
+      ?><br><span class="quiet">a pull, never a script: by number only, the words are the owner's, on
+        <a href="play.php?w=<?= h(rawurlencode($w['slug'])) ?>">the narrator's pane</a></span></div></div>
+      <?php endif; ?>
       <?php if (!empty($tr['protagonist'])): ?>
       <div class="row"><div class="k">protagonist</div><div class="v">the person carrying this xeric was in it, their groups are weighted ×3 on purpose</div></div>
       <?php endif; ?>
@@ -376,6 +398,71 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
 // ===========================================================================
 // What it has learned
 // ===========================================================================
+} elseif (!empty($_GET['audit'])) {
+    // THE NARRATOR'S AUDIT (docs/NARRATOR.md §2, investigate): the failures
+    // that accumulate quietly, as observations with the rows they stand on.
+    // Arithmetic always; the one model read (questions asked and never
+    // answered) only for the owner, metered like a message, at most once per
+    // world-hour — the result is kept in a file under the data dir, never in
+    // the world's database, so this page still writes nothing to the world.
+    $auditNote = '';
+    if (!$w['mine']) {
+        echo '<h1>The narrator\'s audit</h1><p class="note warn">The audit is for whoever this xeric belongs to.</p>';
+    } else {
+        // A GET NEVER SPENDS. Reading the page is the arithmetic (or this
+        // world-hour's kept audit); reading the threads with the model is the
+        // button below, a POST, metered like a message.
+        $endpointA = null;
+        $wantRead  = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
+        if ($wantRead) {
+            xeric_web_spend_guard();
+            $lim = xeric_limit_check('message', ['sid' => xeric_session_id()]);
+            if (($lim['ok'] ?? false) === true) {
+                try { $endpointA = xeric_play_endpoint(); }
+                catch (Throwable $e) { $auditNote = 'No machine is attached, so the threads were not read: arithmetic only.'; }
+            } else {
+                $auditNote = (string)($lim['message'] ?? 'The meter is full.') . ' Arithmetic only, this time.';
+            }
+        }
+        try {
+            $audit = xeric_play_narrator_audit($w, $endpointA, $endpointA !== null);
+        } catch (Throwable $e) {
+            // FAIL CLOSED: a model that would not answer leaves the arithmetic,
+            // which needs nothing but the rows.
+            $audit = xeric_play_narrator_audit($w, null, true);
+            $auditNote = 'The model did not answer, so the threads were not read: arithmetic only.';
+        }
+        // Charged only for a read that happened: no threads to read, or a
+        // model that never answered, gives the seat back with the request.
+        if ($endpointA !== null && !empty($audit['model']['asked'])) {
+            xeric_limit_note('message', ['sid' => xeric_session_id()]);
+        }
+        ?>
+  <h1>The narrator's audit</h1>
+  <p class="sub"><?= h((string)$T['meta']['name']) ?> at <?= h(xeric_play_when($now)) ?>. Observations, not
+    fixes: threads dropped, people gone quiet, debts nobody collected, and contradictions in the record,
+    each with the rows it stands on. <?= !empty($audit['cached']) ? 'Read earlier this world-hour.' : '' ?>
+    <?= !empty($audit['model']['asked'])
+        ? 'The model read the threads and kept ' . (int)$audit['model']['kept'] . ' finding(s), dropped '
+          . (int)$audit['model']['dropped'] . ' it could not stand behind.'
+        : '' ?></p>
+  <?php if ($auditNote !== ''): ?><p class="quiet"><?= h($auditNote) ?></p><?php endif; ?>
+  <div class="naudit"><?= xeric_play_narrator_audit_html($T, $audit, (string)$w['slug']) ?></div>
+  <?php if (empty($audit['model']['asked'])): ?>
+  <form method="post" action="why.php?w=<?= h(rawurlencode($w['slug'])) ?>&amp;audit=1">
+    <button class="btn" type="submit">Read the threads too</button>
+    <span class="quiet">the model looks for questions asked and never answered; costs what a message costs,
+      and is kept for this world-hour</span>
+  </form>
+  <?php endif; ?>
+  <p class="quiet">The same checks the continuity benchmark counts. The narrator's discretion holds even
+    here: it says a pressure pressed nothing, never what the pressure is.</p>
+        <?php
+    }
+    ?>
+  <p class="jump"><a href="why.php?w=<?= h(rawurlencode($w['slug'])) ?>">every character and every event →</a></p>
+<?php
+
 } elseif (!empty($_GET['learn'])) {
     // Every number below is learn.php's own answer, asked the way the engine
     // asks: the weights through xeric_learn_kind_weights (so the kill switch
@@ -586,6 +673,49 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     </ul>
   <?php endif; ?>
 
+  <?php
+  // THE DIRECTOR'S STAGINGS (engine/director.php): the set, never the
+  // performance. Read through xeric_director_why(); the owner's cancel is a
+  // POST to play.php?a=unstage, so this page itself still writes nothing.
+  $dirWhy = function_exists('xeric_director_why') ? xeric_director_why($db, $now) : ['live' => [], 'planned' => [], 'recent' => []];
+  if ($dirWhy['live'] !== [] || $dirWhy['planned'] !== [] || $dirWhy['recent'] !== []): ?>
+  <h2>what the director has staged</h2>
+  <ul class="sys" id="dstagings">
+    <?php foreach (['live' => 'now', 'planned' => 'coming', 'recent' => 'ended'] as $bucket => $word):
+      foreach ($dirWhy[$bucket] as $sg): ?>
+    <li class="<?= $bucket === 'recent' ? 'off' : '' ?>"><span class="k"><?= h($word) ?> · #<?= (int)$sg['id'] ?></span>
+      <span class="v"><?= h(xeric_join_list(array_map(fn($hh) => xeric_world_name($T, (string)$hh), (array)$sg['who']))) ?>
+        at <?= h(xeric_world_place_name($T, (string)$sg['where'])) ?>,
+        <?= h(xeric_play_stamp($T, (int)$sg['from'])) ?> to <?= h(xeric_play_stamp($T, (int)$sg['to'])) ?>
+        <br><span class="quiet"><?= h((string)$sg['why']) ?> · <?= h((string)$sg['source']) ?></span>
+        <?php if ($w['mine'] && $bucket !== 'recent'): ?>
+        <button type="button" class="nbtn dcancel" data-id="<?= (int)$sg['id'] ?>">take it back</button>
+        <?php endif; ?></span></li>
+    <?php endforeach; endforeach; ?>
+  </ul>
+  <?php if ($w['mine']): ?>
+  <script nonce="<?= h(xeric_web_nonce()) ?>">
+  document.querySelectorAll('#dstagings .dcancel').forEach(function (b) {
+    b.addEventListener('click', function () {
+      b.disabled = true;
+      fetch('play.php?a=unstage&w=' + encodeURIComponent(<?= json_encode((string)$w['slug'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: parseInt(b.dataset.id, 10) }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (d && d.ok) location.reload(); else { b.disabled = false; alert((d && d.error) || 'that did not take'); } })
+        .catch(function () { b.disabled = false; });
+    });
+  });
+  </script>
+  <?php endif; endif; ?>
+
+  <?php if ($w['mine']): ?>
+  <h2>the narrator's audit</h2>
+  <p class="quiet"><a href="why.php?w=<?= h(rawurlencode($w['slug'])) ?>&amp;audit=1">Ask the narrator to
+    investigate →</a> dropped threads, absent characters, unpaid debts and contradictions, with links to
+    what they name. The arithmetic is free; reading the threads costs what a message costs.</p>
+  <?php endif; ?>
+
   <h2>what it has learned</h2>
   <p class="quiet"><a href="why.php?w=<?= h(rawurlencode($w['slug'])) ?>&amp;learn=1">The learning layer,
     from the evidence up →</a> the newest signals in plain language, the per-kind weights and their
@@ -598,7 +728,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
 <?php } ?>
 
   <footer>The inspector reads <code>worlds/<?= h($w['slug']) ?>/</code> and the database this browser plays
-    against. It never calls a model and never writes anything.</footer>
+    against. It never writes to the world, and calls a model only when the owner asks for the audit.</footer>
 </main>
 </html>
 <?php

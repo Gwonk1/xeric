@@ -1626,7 +1626,7 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
              '/photo-worker.php', '/scene-worker.php', '/story-worker.php', '/room-worker.php', '/forge/worker.php',
              '/heart.php', '/router.php',
              '/worker.php/extra', '/boot.php', '/ui.php', '/play-lib.php', '/review-lib.php',
-             '/model-lib.php', '/play-shelf.php', '/play-view.php', '/play-book.php', '/play-watch.php',
+             '/model-lib.php', '/play-shelf.php', '/play-view.php', '/play-book.php', '/play-watch.php', '/play-narrator.php',
              '/why-lib.php', '/api-lib.php', '/session.php', '/limits.php', '/queue.php',
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',

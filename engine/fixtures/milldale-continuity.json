@@ -4,12 +4,16 @@
         "Times are WORLD time: dN is the Nth day from `start`, in the world's timezone.",
         "Thursday 15 October 2026 to Saturday 17 October: well clear of the 1 November DST change.",
         "Nothing here is a secret: the facts are things Walt says out loud, and the canaries are",
-        "the Thursday game's own words, looked for in the heads walled away from that table."
+        "the Thursday game's own words, looked for in the heads walled away from that table.",
+        "`sleep: true` runs xeric_sleep_pass at each night's first tick in the dreams window, with",
+        "every prompt built just before and after (the sleep probes). At the template's default",
+        "after_days (14) three days leave nothing old enough; engine/tests/sleep-test.php patches it to 1."
     ],
     "name": "milldale-continuity",
     "world": "milldale.json",
     "start": "2026-10-15",
     "days": 3,
+    "sleep": true,
     "patch": {
         "forge.armed": ["daily_rhythms", "visits", "shared_meals", "expectations", "rumors", "gentle_proactive_contact"],
         "forge.disarmed": []
@@ -45,11 +49,11 @@
     ],
     "facts": [
         {"id": "pie", "holder": "dot", "said": "d1 07:20", "keywords": ["doctor", "pie"],
-         "parts": ["WHAT YOU REMEMBER", "transcript"]},
+         "parts": ["WHAT YOU KNOW", "WHAT YOU REMEMBER", "transcript"]},
         {"id": "casserole_dish", "holder": "ruth", "said": "d1 10:00", "keywords": ["casserole dish"],
-         "parts": ["WHAT YOU REMEMBER", "transcript", "WHAT YOU ARE OWED"]},
+         "parts": ["WHAT YOU KNOW", "WHAT YOU REMEMBER", "transcript", "WHAT YOU ARE OWED"]},
         {"id": "harlan_dead", "holder": "*", "said": "d2 10:00", "keywords": ["Harlan Beck"],
-         "parts": ["RIGHT NOW", "WHAT YOU REMEMBER"]}
+         "parts": ["RIGHT NOW", "WHAT YOU KNOW", "WHAT YOU REMEMBER"]}
     ],
     "promises": [
         {"id": "dot_noon", "holder": "dot", "said": "d1 07:35", "expect": "missed_then_repaired"},

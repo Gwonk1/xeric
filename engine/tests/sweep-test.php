@@ -2751,6 +2751,55 @@ ok('live room: and a real sweep with the session in the db leaves them out',
 xeric_world_state_set($dbLR, 'room:live', json_encode(['conv' => 1, 'present' => ['ruth'], 'ended' => 'quiet']));
 ok('live room: a session that has ended holds nobody', xeric_sweep_live_room($dbLR) === []);
 
+// ---------------------------------------------------------------------------
+// The narrator's lean (write-ahead): a weight, bounded, and nothing without it
+// ---------------------------------------------------------------------------
+echo "\n# the narrator's lean\n";
+
+// Two armed kinds, both reachable at Thursday 18:30. Base share of the second
+// is about a half; leaned ×2 it is about two thirds. Bounded means exactly
+// that: well short of every hour, because a pull that always wins is a script.
+$kindsNL = xeric_sweep_kinds_for($T2);
+$leanK   = array_keys($kindsNL)[1];
+$baseN = $leanN = 0;
+for ($s = 1; $s <= 400; $s++) {
+    mt_srand(9000 + $s);
+    $c0 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false]);
+    mt_srand(9000 + $s);
+    $c1 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false, 'intents' => [['n' => 1, 'kind' => $leanK]]]);
+    if ($c0 !== null && $c0['kind']['key'] === $leanK) $baseN++;
+    if ($c1 !== null && $c1['kind']['key'] === $leanK) $leanN++;
+}
+ok('lean: a kind the narrator intends is chosen more often', $leanN > $baseN + 20, "base $baseN, lean $leanN of 400");
+ok('lean: and bounded — a ×2 weight, never a script (under 3 in 4 hours)',
+    $leanN < 300 && $leanN - $baseN < 120, "base $baseN, lean $leanN of 400");
+mt_srand(31);
+$n0 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false]);
+mt_srand(31);
+$n1 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false, 'intents' => []]);
+ok('lean: no lean is the draw it always was, byte for byte', json_encode($n0) === json_encode($n1));
+ok('lean: and its trail says no lean happened', array_key_exists('lean', $n0['trail']) && $n0['trail']['lean'] === null);
+
+// CATCHUP READS THE LEDGER. With no intent recorded the stretch is exactly the
+// stretch an explicit empty list walks; with one, the trail carries its number.
+$dbNL0 = fresh_db('lean-none');
+$dbNL1 = fresh_db('lean-empty');
+$fromNL = ep('2026-07-30 14:00');
+$cuA = xeric_sweep_catchup($T2, $dbNL0, stub_event(), $fromNL, $fromNL + 4 * 3600, ['chance' => 1.0, 'seed' => 44, 'max_events' => 2]);
+$cuB = xeric_sweep_catchup($T2, $dbNL1, stub_event(), $fromNL, $fromNL + 4 * 3600, ['chance' => 1.0, 'seed' => 44, 'max_events' => 2, 'intents' => []]);
+$shape = fn(array $r) => json_encode(array_map(fn($e) => [$e['kind'], $e['participants'], $e['place'], $e['trail']['lean'] ?? null], $r['events']));
+ok('catchup: an empty intent ledger leans nothing — same hours as an explicit empty list',
+    $cuA['events'] !== [] && $shape($cuA) === $shape($cuB), $shape($cuA) . ' vs ' . $shape($cuB));
+
+$dbNL2 = fresh_db('lean-live');
+xeric_state_seed($dbNL2, $T2);
+require_once __DIR__ . '/../narrator.php';
+xeric_narrator_intend($T2, $dbNL2, 'LEAN-SWEEP-NEEDLE a quiet one', ['epoch' => $fromNL - 3600, 'kind' => $leanK]);
+$cuC = xeric_sweep_catchup($T2, $dbNL2, stub_event(), $fromNL, $fromNL + 4 * 3600, ['chance' => 1.0, 'seed' => 44, 'max_events' => 3]);
+$leaned = array_filter($cuC['events'], fn($e) => in_array(1, (array)($e['trail']['lean']['intents'] ?? []), true));
+ok('catchup: a recorded intent reaches the chooser — the trail says "leaned by intent #1"',
+    $leaned !== [] && !str_contains(json_encode($cuC['events']), 'LEAN-SWEEP-NEEDLE'), json_encode(array_column($cuC['events'], 'kind')));
+
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);
 

@@ -2,7 +2,7 @@
 /**
  * Xeric continuity benchmark — the probes.
  *
- * Seven classes, every probe a function of the run record returning
+ * Eight classes, every probe a function of the run record returning
  * {id, class, severity, pass, score, evidence}. Evidence cites wall paths, row
  * ids, capture numbers and prompt hashes — NEVER the secret text, so a
  * scorecard can be pasted anywhere without becoming the leak it reports.
@@ -17,6 +17,10 @@
  *   media          seeds, fingerprints by minute, fingerprints by death
  *   cost           calls / characters / tokens per day and phase; cache breaks
  *   learn          tally against the script, the heart's learn pass, buckets
+ *   sleep          at each night's pass, prompts before vs after: recall of the
+ *                  scripted facts not lower, characters not higher, no wall
+ *                  quoted that was not already, facts at rest wall-clean, every
+ *                  fact with a chain and no source deleted
  */
 
 declare(strict_types=1);
@@ -149,7 +153,7 @@ function cb_parts(array $messages): array
     $parts = ['system' => $sys];
     foreach (preg_split('/\n\n/', $sys) as $block) {
         $title = strtok($block, "\n");
-        foreach (['WHAT YOU REMEMBER', 'WHAT YOU ARE OWED', 'WHAT YOU HAVE WORKED OUT'] as $t) {
+        foreach (['WHAT YOU KNOW', 'WHAT YOU REMEMBER', 'WHAT YOU ARE OWED', 'WHAT YOU HAVE WORKED OUT'] as $t) {
             if (str_starts_with((string)$title, $t)) $parts[$t] = ($parts[$t] ?? '') . $block;
         }
     }
@@ -486,7 +490,8 @@ function cb_probe_cost(array $run): array
     $prev = []; $breaks = []; $changes = 0;
     foreach ($run['builds'] as $i => $b) {
         $p = cb_parts($b['messages']);
-        $sig = [md5($p['system']), md5(($p['WHAT YOU REMEMBER'] ?? '') . '|' . ($p['WHAT YOU HAVE WORKED OUT'] ?? '') . '|' . ($p['WHAT YOU ARE OWED'] ?? ''))];
+        $sig = [md5($p['system']), md5(($p['WHAT YOU REMEMBER'] ?? '') . '|' . ($p['WHAT YOU HAVE WORKED OUT'] ?? '') . '|' . ($p['WHAT YOU ARE OWED'] ?? '')
+                                       . (isset($p['WHAT YOU KNOW']) ? '|' . $p['WHAT YOU KNOW'] : ''))];
         $h = $b['handle'];
         if (isset($prev[$h]) && $prev[$h][0] !== $sig[0]) {
             $changes++;
@@ -552,8 +557,135 @@ function cb_probe_learn(array $run): array
 }
 
 /** Every probe, in class order. */
+/**
+ * The Director is opt-in (engine/director.php), and this scenario never opts
+ * in: no rules, no stagings, and presence read through the database is the
+ * schedule's own answer at every hour lived. Expected to pass with the Director
+ * off — the day a scenario turns it on, this is the probe that has to change.
+ */
+function cb_probe_director(array $run): array
+{
+    require_once __DIR__ . '/../director.php';
+    $T = $run['T']; $db = $run['db'];
+    $rules = xeric_director_config($T)['rules'];
+    $rows  = count(xeric_director_rows($db));
+    $moved = [];
+    foreach ($run['events'] as $e) {
+        $now  = xeric_world_now($T, $e['epoch']);
+        $dead = xeric_dead_handles($db);
+        if (xeric_world_who_is_where($T, $now, $dead, $db) !== xeric_world_who_is_where($T, $now, $dead)) $moved[] = $e['id'];
+    }
+    $pass = $rules === [] && $rows === 0 && $moved === [];
+    return [cb_probe('presence.director_off', 'presence', 'hard', $pass, $pass ? 1.0 : 0.0,
+        ['rules' => $rules, 'stagings' => $rows, 'moved_at' => array_slice($moved, 0, 10)])];
+}
+
 function cb_probes(array $run): array
 {
-    return array_merge(cb_probe_walls($run), cb_probe_recall($run), cb_probe_presence($run),
-        cb_probe_relationships($run), cb_probe_media($run), cb_probe_cost($run), cb_probe_learn($run));
+    return array_merge(cb_probe_walls($run), cb_probe_recall($run), cb_probe_presence($run), cb_probe_director($run),
+        cb_probe_relationships($run), cb_probe_media($run), cb_probe_cost($run), cb_probe_learn($run), cb_probe_sleep($run));
+}
+
+// ---------------------------------------------------------------------------
+// 8. Sleep
+// ---------------------------------------------------------------------------
+
+/** The prompt parts a scripted fact's keywords are all in (never 'system'). */
+function cb_fact_parts(array $messages, array $kw): array
+{
+    $in = [];
+    foreach (cb_parts($messages) as $name => $text) {
+        if ($name === 'system') continue;
+        $lt = mb_strtolower($text);
+        $all = true;
+        foreach ($kw as $k) if (!str_contains($lt, $k)) { $all = false; break; }
+        if ($all) $in[] = $name;
+    }
+    return $in;
+}
+
+/**
+ * Sleep can never be a quiet deletion. At every night's pass the harness built
+ * every living prompt just before and just after (cb_sleep); these compare the
+ * pairs, so nothing but the pass itself differs between them.
+ */
+function cb_probe_sleep(array $run): array
+{
+    require_once __DIR__ . '/../sleep.php';
+    $T = $run['T']; $sc = $run['sc']; $db = $run['db'];
+    $out = [];
+    $nights = $run['sleeps'] ?? [];
+    $facts = xeric_sleep_has_tables($db) ? $db->query('SELECT id, handle, text FROM sleep_facts ORDER BY id')->fetchAll() : [];
+    $kept = 0; $dropped = []; $calls = 0;
+    foreach ($nights as $n) {
+        $calls += (int)($n['result']['calls'] ?? 0);
+        foreach ((array)($n['result']['characters'] ?? []) as $c) {
+            $kept += count((array)($c['kept'] ?? []));
+            foreach ((array)($c['dropped'] ?? []) as $d) {
+                $why = preg_replace('/[:,].*$/', '', (string)$d['why']) ?? '';
+                $dropped[$why] = ($dropped[$why] ?? 0) + 1;
+            }
+        }
+    }
+    ksort($dropped);
+    $linked = xeric_sleep_has_tables($db) ? (int)$db->query('SELECT COUNT(*) FROM sleep_links')->fetchColumn() : 0;
+    $out[] = cb_probe('sleep.summary', 'sleep', 'info', true, 1.0,
+        ['nights' => count($nights), 'calls' => $calls, 'facts' => count($facts), 'kept' => $kept,
+         'consolidated' => $linked, 'dropped' => $dropped]);
+
+    // Recall: every scripted fact a holder carried just before, they carry just after.
+    $pairs = 0; $lost = [];
+    foreach ($nights as $n) {
+        foreach ((array)($sc['facts'] ?? []) as $f) {
+            if (cb_at($T, $sc, (string)$f['said']) > $n['epoch']) continue;
+            $kw = array_map('mb_strtolower', (array)$f['keywords']);
+            $holders = (string)$f['holder'] === '*' ? array_keys($n['before']) : [(string)$f['holder']];
+            foreach ($holders as $h) {
+                if (!isset($n['before'][$h], $n['after'][$h])) continue;
+                $was = cb_fact_parts($n['before'][$h], $kw);
+                if ($was === []) continue;
+                $pairs++;
+                if (cb_fact_parts($n['after'][$h], $kw) === []) $lost[] = ['fact' => $f['id'], 'holder' => $h, 'day' => $n['day'], 'was_in' => $was];
+            }
+        }
+    }
+    $out[] = cb_probe('sleep.recall', 'sleep', 'hard', $lost === [], $pairs ? 1 - count($lost) / $pairs : 1.0,
+        ['pairs' => $pairs, 'lost' => $lost]);
+
+    // Size: no prompt is longer after its night's sleep than before it.
+    $chars = [0, 0]; $longer = [];
+    foreach ($nights as $n) foreach ($n['before'] as $h => $b) {
+        if (!isset($n['after'][$h])) continue;
+        $x = strlen((string)$b[0]['content']); $y = strlen((string)$n['after'][$h][0]['content']);
+        $chars[0] += $x; $chars[1] += $y;
+        if ($y > $x) $longer[] = ['holder' => $h, 'day' => $n['day'], 'before' => $x, 'after' => $y];
+    }
+    $out[] = cb_probe('sleep.shorter', 'sleep', 'hard', $longer === [], $chars[1] ? min(1.0, $chars[0] / $chars[1]) : 1.0,
+        ['system_chars_before' => $chars[0], 'system_chars_after' => $chars[1], 'longer' => $longer]);
+
+    // Walls: no fact at rest quotes what its holder is walled from, and no prompt
+    // after sleep quotes a wall path the same prompt before it did not.
+    $hits = [];
+    foreach ($facts as $f) foreach (cb_quotes($T, $sc, (string)$f['handle'], (string)$f['text']) as $path) $hits[] = ['fact' => (int)$f['id'], 'viewer' => $f['handle'], 'path' => $path];
+    foreach ($nights as $n) foreach ($n['after'] as $h => $a) {
+        $was = cb_quotes($T, $sc, $h, cb_hay($n['before'][$h] ?? []));
+        foreach (array_diff(cb_quotes($T, $sc, $h, cb_hay($a)), $was) as $path) $hits[] = ['night' => $n['day'], 'viewer' => $h, 'path' => $path, 'prompt' => cb_h(cb_hay($a))];
+    }
+    $out[] = cb_probe('sleep.walls', 'sleep', 'hard', $hits === [], $hits === [] ? 1.0 : 0.0,
+        ['facts_checked' => count($facts), 'hits' => array_slice($hits, 0, 25)]);
+
+    // Chains: every fact stands for at least one memory of its own holder, every
+    // such memory still exists, and no night's pass removed a memory row.
+    $broken = [];
+    foreach ($facts as $f) {
+        $ch = xeric_sleep_chain($db, (int)$f['id']);
+        $own = $ch === null ? [] : array_filter($ch['sources'], fn($m) => (string)$m['handle'] === (string)$f['handle']);
+        if ($ch === null || $ch['sources'] === [] || $ch['missing'] !== [] || count($own) !== count($ch['sources'])) {
+            $broken[] = ['fact' => (int)$f['id'], 'sources' => $ch === null ? 0 : count($ch['sources']), 'missing' => $ch['missing'] ?? []];
+        }
+    }
+    foreach ($nights as $n) if ($n['memories_after'] < $n['memories_before']) $broken[] = ['night' => $n['day'], 'memories_before' => $n['memories_before'], 'memories_after' => $n['memories_after']];
+    $out[] = cb_probe('sleep.chain', 'sleep', 'hard', $broken === [], $facts ? 1 - min(1, count($broken) / count($facts)) : ($broken === [] ? 1.0 : 0.0),
+        ['facts' => count($facts), 'links' => $linked, 'broken' => array_slice($broken, 0, 10)]);
+    return $out;
 }

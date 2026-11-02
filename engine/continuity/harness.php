@@ -15,6 +15,10 @@
  *   tick (heart.php)   xeric_constructs_tick → one-window xeric_sweep_catchup
  *                      → xeric_proactive_check   (+ a learn pass, only if
  *                      heart.php itself has grown one — see cb_heart_learns)
+ *                      → xeric_sleep_pass, when the scenario says `sleep: true`
+ *                      and this tick is the night's first inside its window;
+ *                      every living prompt is built just before and just after
+ *                      (cb_sleep), which is what the sleep probes compare
  *   skip (tick-worker) xeric_learn_settle → xeric_rewind_mark → xeric_clock_advance
  *                      → catchup window by window → proactive → xeric_learn_pend
  *                      → xeric_lessons_distil → xeric_rewind_commit
@@ -45,7 +49,9 @@ require_once __DIR__ . '/../travel.php';
 require_once __DIR__ . '/../narrator.php';
 require_once __DIR__ . '/../scene.php';
 require_once __DIR__ . '/../photo.php';
+require_once __DIR__ . '/../sleep.php';
 require_once __DIR__ . '/standin.php';
+require_once __DIR__ . '/oracle.php';
 
 const CB_WINDOW         = 3600;
 const CB_SKIP_MAX_EVENTS  = 3;    // forge/web/play-lib.php XERIC_PLAY_MAX_EVENTS
@@ -128,8 +134,9 @@ function cb_endpoint(array &$run, string $model, int $seed): array
         };
     }
 
-    $stub = function (string $tag, array $msgs, array $opts) use (&$run, $inner, $base) {
-        $out  = $inner($tag, $msgs, $opts);
+    $sleeper = ($model === 'standin' || $model === 'leaky') ? cb_sleep_standin($T, $model === 'leaky') : null;
+    $stub = function (string $tag, array $msgs, array $opts) use (&$run, $inner, $base, $sleeper) {
+        $out  = ($tag === 'sleep' && $sleeper !== null) ? $sleeper($msgs) : $inner($tag, $msgs, $opts);
         $in   = 0;
         foreach ($msgs as $m) $in += strlen((string)($m['content'] ?? ''));
         $outB = strlen(is_array($out) ? (isset($out['text']) ? (string)$out['text'] : json_encode($out)) : (string)$out);
@@ -143,6 +150,8 @@ function cb_endpoint(array &$run, string $model, int $seed): array
         } elseif ($tag === 'sweep') {
             preg_match_all('/^- \[([a-z0-9_]+)\]/mu', (string)($msgs[1]['content'] ?? ''), $hm);
             $viewers = $hm[1];                 // a sweep prompt counts against everybody in the room
+        } elseif ($tag === 'sleep') {
+            if (preg_match('/^WHOSE: .* \(([a-z0-9_]+)\)$/mu', (string)($msgs[1]['content'] ?? ''), $sm)) $viewers[] = $sm[1];
         }
         $run['calls'][] = [
             'n' => count($run['calls']), 'tag' => $tag, 'phase' => $run['phase'],
@@ -194,6 +203,13 @@ function cb_digest(PDO $db): string
         'signals'  => $q('SELECT kind, handle, subject, n, lag, note, processed, world_epoch FROM signals ORDER BY world_epoch, kind, handle, subject'),
         'deaths'   => $q('SELECT handle, world_epoch, how FROM deaths ORDER BY handle'),
     ];
+    // What sleep wrote, only once it has written anything, so a world that
+    // never consolidated digests exactly as it did before sleep existed.
+    if (xeric_sleep_has_tables($db) && (int)$db->query('SELECT COUNT(*) FROM sleep_facts')->fetchColumn() > 0) {
+        $parts['sleep'] = $q('SELECT f.handle, f.text, f.since, f.night, group_concat(m.text, \'|\')
+                              FROM sleep_facts f JOIN sleep_links l ON l.fact_id = f.id JOIN memories m ON m.id = l.memory_id
+                              GROUP BY f.id ORDER BY f.handle, f.since, f.text');
+    }
     return hash('sha256', json_encode($parts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
@@ -229,7 +245,7 @@ function cb_run(array $loaded, array $o = []): array
         'phase' => 'setup', 'calls' => [], 'builds' => [], 'actions' => [], 'events' => [], 'pings' => [],
         'digests' => [], 'daily' => [], 'skips' => [], 'learn_passes' => [], 'refusals' => [],
         'heart_learns' => cb_heart_learns(), 'started' => microtime(true), 'pending' => [],
-        'kill_fingerprints' => [], 'trust_log' => [], 'seq' => 0, 'tally' => [],
+        'kill_fingerprints' => [], 'trust_log' => [], 'seq' => 0, 'tally' => [], 'sleeps' => [],
     ];
     $tally0 = xeric_llm_tally();
     $endpoint = cb_endpoint($run, $model, $seed);
@@ -322,9 +338,88 @@ function cb_tick(array &$run, array $endpoint, int $every): void
             }
         }
     }
+    if (!empty($run['sc']['sleep'])) cb_sleep($run, $endpoint);
+
     $run['phase'] = 'probe';
     $now = cb_now($run);
     if ((int)substr((string)$now['hhmm'], 0, 2) % $every === 0) cb_probe_build($run, $now);
+}
+
+/**
+ * The night's sleep, measured. Every living character's prompt is built just
+ * before and just after the pass, at the same moment, so the only thing that
+ * differs between the two is what sleep did — which is what the sleep probes
+ * compare (recall not lower, characters not higher, no wall quoted that was
+ * not already quoted, every fact with a chain).
+ */
+function cb_sleep(array &$run, array $endpoint): void
+{
+    $T = $run['T']; $db = $run['db'];
+    $now = cb_now($run);
+    if (!xeric_sleep_due($T, $db, $now)) return;
+    $build = function () use ($T, $db, $now): array {
+        $out = [];
+        foreach (xeric_sleep_cast($T, $db) as $h) $out[$h] = xeric_prompt_build($T, $db, $h, $now, []);
+        return $out;
+    };
+    $count = fn() => (int)$db->query('SELECT COUNT(*) FROM memories')->fetchColumn();
+    $before = $build();
+    $m0 = $count();
+    $run['phase'] = 'sleep';
+    try { $r = xeric_sleep_pass($T, $db, $now, $endpoint); }
+    catch (Throwable $e) { $r = ['ran' => false, 'why' => $e->getMessage(), 'characters' => []]; $run['refusals'][] = ['heart', 'sleep', $e->getMessage()]; }
+    $run['sleeps'][] = ['epoch' => (int)$now['epoch'], 'day' => cb_day($T, $run['sc'], (int)$now['epoch']), 'result' => $r,
+                        'before' => $before, 'after' => $build(), 'memories_before' => $m0, 'memories_after' => $count()];
+}
+
+/**
+ * The stand-in's sleep. Honest: one fact per group, made of the sources' own
+ * words — the opening of what was said, or of the line — citing exactly the
+ * memories whose words it used. Leaky: the same, plus the two things a careless
+ * model does: it pads the first fact with something this person is walled from
+ * (the oracle's own forbidden list, so the disposer has something real to
+ * catch), and it invents one fact about somebody no source names.
+ */
+function cb_sleep_standin(array $T, bool $leaky): callable
+{
+    return function (array $msgs) use ($T, $leaky): array {
+        $u = (string)($msgs[1]['content'] ?? '');
+        $who = preg_match('/^WHOSE: .* \(([a-z0-9_]+)\)$/mu', $u, $m) ? $m[1] : '';
+        $groups = []; $g = -1;
+        foreach (explode("\n", $u) as $line) {
+            if (preg_match('/^GROUP about: (.*)$/u', $line, $x)) { $groups[++$g] = ['about' => array_map('trim', explode(',', $x[1])), 'rows' => []]; continue; }
+            if ($g >= 0 && preg_match('/^\[(\d+)\] \((\S+)\) (.+)$/u', $line, $x)) $groups[$g]['rows'][] = [(int)$x[1], $x[2], $x[3]];
+        }
+        $facts = [];
+        foreach ($groups as $gr) {
+            $cores = []; $from = [];
+            foreach ($gr['rows'] as [$id, $date, $text]) {
+                $core = preg_match('/^"([^"]+)"/u', $text, $q) ? $q[1] : $text;
+                $words = preg_split('/\s+/u', trim($core)) ?: [];
+                $core = rtrim(implode(' ', array_slice($words, 0, 12)), ' ,;—-.');
+                if (mb_strlen(implode('; ', array_merge($cores, [$core]))) > 200) break;
+                $cores[] = $core; $from[] = $id;
+            }
+            if ($from === []) continue;
+            $fact = implode('; ', $cores);
+            $facts[] = ['fact' => preg_match('/[?!]$/u', $fact) ? $fact : $fact . '.', 'about' => $gr['about'], 'since' => $gr['rows'][0][1], 'from' => $from];
+        }
+        if ($leaky && $facts !== [] && $who !== '') {
+            $forbidden = cb_forbidden($T, $who);
+            if ($forbidden !== []) {
+                $w = preg_split('/\s+/u', trim($forbidden[0]['text'])) ?: [];
+                $facts[0]['fact'] = rtrim($facts[0]['fact'], '.') . '; ' . implode(' ', array_slice($w, 0, 8));
+            }
+            $nobody = '';
+            foreach ((array)$T['cast']['characters'] as $c) {
+                $h = (string)$c['handle'];
+                if ($h !== $who && !str_contains($u, (string)$c['display_name'])) { $nobody = $h; break; }
+            }
+            if ($nobody !== '') array_unshift($facts, ['fact' => xeric_world_name($T, $nobody) . ' owes ' . xeric_world_name($T, $who) . ' forty dollars.',
+                                            'about' => [$nobody], 'since' => '2026-01-01', 'from' => [$groups[0]['rows'][0][0] ?? 0]]);
+        }
+        return ['facts' => $facts];
+    };
 }
 
 /** heart.php's xeric_heart_last_window, verbatim in effect. */

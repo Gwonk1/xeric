@@ -220,7 +220,8 @@ function xeric_proactive_check(array $t, PDO $db, array $endpoint, array $now, a
             ? 'everything that has happened lately has already been texted about'
             : 'nothing has happened yet';
         $notes = array_merge($dreamNotes, $notes);
-        return null;
+        // Nothing happened — but somebody may still have a reason of their own.
+        return xeric_proactive_construct($t, $db, $endpoint, $now, $opts, $notes);
     }
 
     // Walk the candidates; the loop body below is the original single-event
@@ -233,7 +234,125 @@ function xeric_proactive_check(array $t, PDO $db, array $endpoint, array $now, a
         $lastNotes = array_merge($lastNotes, $notes);
     }
     $notes = array_merge($dreamNotes, $lastNotes);
+    return xeric_proactive_construct($t, $db, $endpoint, $now, $opts, $notes);
+}
+
+// ---------------------------------------------------------------------------
+// The construct rung — a reason of her own
+// ---------------------------------------------------------------------------
+
+/**
+ * Somebody texts first because a construct licensed it: the plan is
+ * tomorrow, she has news you have not heard, you have been quiet longer than
+ * usual, you did not come in this morning, it has been a month. The licence
+ * is the construct's (constructs.php, xeric_constructs_licences); everything
+ * that keeps a ping from being spam is this file's and applies unchanged —
+ * quiet hours, the per-day cap, one per run, the no-nag arc, the beat, the
+ * cooldown — plus the dream rung's rule on WHO: only somebody both of you
+ * have actually talked to. A licence nobody could use stays pending; one
+ * that was used is spent, once.
+ *
+ * Runs only after the aftermath rung found nothing, and draws no dice: a
+ * licence is already the rare thing, and a seeded caller stays seeded.
+ * `constructs => false` in $opts switches it off for a caller that wants the
+ * aftermath alone.
+ */
+function xeric_proactive_construct(array $t, PDO $db, array $endpoint, array $now, array $opts, ?array &$notes = null): ?array
+{
+    $notes = (array)$notes;
+    if (array_key_exists('constructs', $opts) && !$opts['constructs']) return null;
+    $licences = xeric_constructs_licences($t, $db);
+    if ($licences === []) return null;
+
+    $epoch = (int)($now['epoch'] ?? 0);
+    $quietWhy = null;
+    if (xeric_sweep_quiet($t, $now, $quietWhy)) { $notes[] = $quietWhy ?? 'quiet hours, it can wait until morning'; return null; }
+    $day    = substr((string)($now['iso'] ?? ''), 0, 10);
+    $perDay = (int)($opts['per_day'] ?? $t['proactive']['pings']['caps']['cast_per_day'] ?? XERIC_PROACTIVE_PER_DAY);
+    $today  = (int)xeric_world_state_get($db, 'proactive:day:' . $day, '0');
+    if ($perDay > 0 && $today >= $perDay) { $notes[] = "the cast has already texted first $today times today"; return null; }
+    $cooldown = (int)($opts['cooldown_hours'] ?? $t['proactive']['pings']['caps']['per_character_hours'] ?? XERIC_PROACTIVE_COOLDOWN_HOURS) * 3600;
+    $beat     = (int)($opts['beat_minutes'] ?? XERIC_PROACTIVE_BEAT_MINUTES) * 60;
+
+    foreach ($licences as $l) {
+        $handle = $l['handle'];
+        $name   = xeric_world_name($t, $handle);
+        if (xeric_is_dead($db, $handle)) continue;
+        $conv = xeric_conversation_find($db, $handle, 'chat');
+        if ($conv === null || !xeric_sibling_knows(xeric_sibling_thread($db, $handle))) {
+            $notes[] = $name . ' has a reason to text (' . $l['kind'] . ') but the two of you have never really talked';
+            continue;
+        }
+        $convId = (int)$conv['id'];
+        $last = xeric_messages_recent($db, $convId, 1)[0] ?? null;
+        if ($last !== null && (int)$last['id'] === xeric_arc_int($db, $handle, 'proactive.last_message_id', 0)) {
+            $notes[] = $name . ' already texted first and has not been answered'; continue;
+        }
+        if ($last !== null && (string)($last['role'] ?? '') !== 'user'
+            && $epoch - (int)($last['world_epoch'] ?? 0) < $beat) {
+            $notes[] = $name . ' only just spoke, that would be piling on'; continue;
+        }
+        $lastPing = xeric_arc_int($db, $handle, 'proactive.last_epoch', 0);
+        if ($lastPing > 0 && $cooldown > 0 && ($epoch - $lastPing) < $cooldown) {
+            $notes[] = $name . ' already texted first recently'; continue;
+        }
+
+        $messages = xeric_prompt_build($t, $db, $handle, $now, [
+            'conversation_id' => $convId,
+            'tail'            => xeric_proactive_construct_tail($t, $l['hint']),
+            'history_limit'   => (int)($opts['history_limit'] ?? 12),
+            'memory_limit'    => (int)($opts['memory_limit'] ?? 12),
+        ] + array_intersect_key($opts, ['effective_rating' => 1, 'model_rating' => 1]));
+        $usage = [];
+        $t0 = microtime(true);
+        try {
+            $raw = xeric_chat_say($endpoint, $messages, [
+                'temperature' => (float)($opts['temperature'] ?? 0.95),
+                'max_tokens'  => (int)($opts['max_tokens'] ?? 180),
+            ] + array_intersect_key($opts, ['timeout' => 1]), $usage);
+        } catch (Throwable $e) {
+            throw new RuntimeException("proactive: $name did not answer, " . $e->getMessage(), 0, $e);
+        }
+        $userName = trim((string)($t['user']['name'] ?? '')) ?: 'you';
+        $text = xeric_chat_clean($raw, $name, $userName, ['max_chars' => (int)($opts['max_chars'] ?? XERIC_PROACTIVE_MAX_CHARS)]);
+        if ($text === '') throw new RuntimeException("proactive: $name wrote nothing usable (" . mb_substr(trim($raw), 0, 120) . ')');
+        $refused = xeric_age_floor($t, [$handle], [$text]);
+        if ($refused !== null) throw new RuntimeException(xeric_age_refusal('proactive', $refused));
+
+        $at = xeric_state_time();
+        $db->beginTransaction();
+        try {
+            $messageId = xeric_message_append($db, $convId, 'character', $handle, $text, $epoch, $at);
+            xeric_arc_set($db, $handle, 'proactive.last_message_id', $messageId, $at);
+            xeric_arc_set($db, $handle, 'proactive.last_epoch', $epoch, $at);
+            xeric_world_state_set($db, 'proactive:day:' . $day, $today + 1, $at);
+            xeric_constructs_licence_spend($t, $db, $handle, $l['key'], $epoch);
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            throw new RuntimeException('proactive: could not store the message, ' . $e->getMessage(), 0, $e);
+        }
+        return [
+            'handle' => $handle, 'name' => $name, 'text' => $text, 'conversation_id' => $convId,
+            'event_id' => 0, 'cold_open' => false, 'kind' => 'construct:' . $l['kind'],
+            'usage' => $usage + ['ms' => (int)round((microtime(true) - $t0) * 1000), 'reply_chars' => mb_strlen($text)],
+        ];
+    }
     return null;
+}
+
+/** The construct rung's tail: her reason, in her terms, and the same rules for how people text. */
+function xeric_proactive_construct_tail(array $t, string $hint): string
+{
+    $userName = trim((string)($t['user']['name'] ?? '')) ?: 'them';
+    return implode("\n", [
+        'YOU ARE TEXTING FIRST. Nobody asked you anything, you picked up your phone.',
+        'Why, which you will not say: ' . xeric_sentence(trim($hint)),
+        'Write the message you would actually send ' . $userName . ' right now.',
+        '- One or two lines. Mid-thought. No greeting, no "hey, so".',
+        '- Never explain why you are texting. Never say you wanted to tell them something.',
+        '- It is fine to come at it sideways, or to ask them a small unrelated thing first.',
+    ]);
 }
 
 /**

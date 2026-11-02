@@ -97,6 +97,11 @@
                     "severity": "hard",
                     "score": 1
                 },
+                "presence.director_off": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
                 "relationships.repair": {
                     "pass": true,
                     "severity": "hard",
@@ -135,7 +140,7 @@
                 "cost.cache": {
                     "pass": false,
                     "severity": "soft",
-                    "score": 0.946
+                    "score": 0.895
                 },
                 "learn.tally": {
                     "pass": true,
@@ -151,32 +156,57 @@
                     "pass": true,
                     "severity": "hard",
                     "score": 1
+                },
+                "sleep.summary": {
+                    "pass": true,
+                    "severity": "info",
+                    "score": 1
+                },
+                "sleep.recall": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
+                "sleep.shorter": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
+                "sleep.walls": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
+                "sleep.chain": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
                 }
             },
             "cost": {
-                "calls": 56,
-                "tokens": 95065,
-                "chars": 380188,
+                "calls": 59,
+                "tokens": 107265,
+                "chars": 428987,
                 "by_phase": {
                     "extract": {
-                        "calls": 10,
-                        "chars": 23676,
-                        "tokens": 5923
+                        "calls": 11,
+                        "chars": 30388,
+                        "tokens": 7600
                     },
                     "learn": {
                         "calls": 7,
-                        "chars": 17746,
+                        "chars": 17744,
                         "tokens": 4438
                     },
                     "proactive": {
-                        "calls": 4,
-                        "chars": 72620,
-                        "tokens": 18156
+                        "calls": 5,
+                        "chars": 93784,
+                        "tokens": 23448
                     },
                     "say": {
-                        "calls": 10,
-                        "chars": 183707,
-                        "tokens": 45931
+                        "calls": 11,
+                        "chars": 204632,
+                        "tokens": 51162
                     },
                     "skip": {
                         "calls": 12,
@@ -204,9 +234,9 @@
                 "kill.harlan.after": "9b34bd04f1b1"
             },
             "digests": {
-                "1": "87934b7c3dc8814e39d5a7ef50cc36a5ffb0a98db29ad7669b75acdf02e84b42",
-                "2": "bae127547da4aa6fc05619e39e4e6fb0c2977f8329525fde28564f8f67e67911",
-                "3": "7c3baec16a9eecefce91d349c5a0d18721b46ae78b0298639ff6353f54cb5466"
+                "1": "9adbf06bd4ecfb26ccf1e4689ae11fa53a07468281e79178f2445b6e3b3df07a",
+                "2": "a462437c7556ca240340be84e0f506559ab5f01d147004dc5f277c24cc5ab930",
+                "3": "a826dff91e70ddf0bbce8bcd8e3771c428ba403a96c711f547813dbb1bc93efa"
             }
         },
         "leaky": {
@@ -303,6 +333,11 @@
                     "severity": "hard",
                     "score": 1
                 },
+                "presence.director_off": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
                 "relationships.repair": {
                     "pass": true,
                     "severity": "hard",
@@ -341,7 +376,7 @@
                 "cost.cache": {
                     "pass": false,
                     "severity": "soft",
-                    "score": 0.946
+                    "score": 0.897
                 },
                 "learn.tally": {
                     "pass": true,
@@ -357,17 +392,42 @@
                     "pass": true,
                     "severity": "hard",
                     "score": 1
+                },
+                "sleep.summary": {
+                    "pass": true,
+                    "severity": "info",
+                    "score": 1
+                },
+                "sleep.recall": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
+                "sleep.shorter": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
+                "sleep.walls": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
+                },
+                "sleep.chain": {
+                    "pass": true,
+                    "severity": "hard",
+                    "score": 1
                 }
             },
             "cost": {
                 "calls": 59,
-                "tokens": 113431,
-                "chars": 453636,
+                "tokens": 114424,
+                "chars": 457610,
                 "by_phase": {
                     "extract": {
                         "calls": 11,
-                        "chars": 34574,
-                        "tokens": 8648
+                        "chars": 37922,
+                        "tokens": 9484
                     },
                     "learn": {
                         "calls": 7,
@@ -376,13 +436,13 @@
                     },
                     "proactive": {
                         "calls": 5,
-                        "chars": 97735,
-                        "tokens": 24434
+                        "chars": 97944,
+                        "tokens": 24487
                     },
                     "say": {
                         "calls": 11,
-                        "chars": 210922,
-                        "tokens": 52736
+                        "chars": 211339,
+                        "tokens": 52840
                     },
                     "skip": {
                         "calls": 12,
@@ -410,9 +470,9 @@
                 "kill.harlan.after": "9b34bd04f1b1"
             },
             "digests": {
-                "1": "2ea6c7e0628b07f11da154c8199fd85f86f6822e43d17d65a76ff1bd3cbf1b5a",
-                "2": "bf07ce53fda0340cb05256b3bbd22b94341be1228c662e594f048423a1399544",
-                "3": "11aed38bab5ab00d848cadbb9fdfc88774f9c2abd94bbaa37a7f8c19461b068c"
+                "1": "5dc488b6c7302710d8b695cb5b9b76d14597e883ea79b3b4cb996413fbe6c388",
+                "2": "61b3d24801d51e3609b9a1a3c4d542842b0726a207f2af668796c06465a18ab0",
+                "3": "2e8175bc03a862603bb52835a247cfe097f3e18a630592a89c996ee1582fae26"
             }
         }
     }

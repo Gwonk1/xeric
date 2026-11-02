@@ -102,7 +102,10 @@ function xeric_why_system_sections(array $t, PDO $db, string $handle, string $ef
                           . 'and what became of them, the favours she is carrying (a debt knows what it '
                           . 'was FOR, which is why it is a row and not a number), and what the town has '
                           . 'been saying. Her OWN ledger, so no wall applies. Day-coarse on purpose: it '
-                          . 'changes only when a state changes, never per turn.',
+                          . 'changes only when a state changes, never per turn.'
+                          // One line per construct she holds — confidence, anticipation, news,
+                          // worry, grudge, ritual, milestone — saying where it came from.
+                          . implode('', array_map(fn($l) => "\n· " . $l, xeric_constructs_why($t, $db, $handle))),
                   'text' => $owed];
     }
 

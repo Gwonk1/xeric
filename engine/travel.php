@@ -424,7 +424,7 @@ function xeric_travel_go(array $t, PDO $db, ?string $to): array
     }
     xeric_player_move($db, $to, (int)$now['epoch']);
 
-    $presence = $to === null ? [] : xeric_world_who_is_where($t, $now, xeric_dead_handles($db));
+    $presence = $to === null ? [] : xeric_world_who_is_where($t, $now, xeric_dead_handles($db), $db);
     $who      = $to === null ? [] : xeric_world_who_is_at($presence, $to);
 
     return [
@@ -617,8 +617,8 @@ function xeric_travel_comings(array $t, PDO $db, array $now, string $place, int 
     $out   = ['arrived' => [], 'left' => [], 'line' => ''];
     if ($from >= $epoch) return $out;
     $dead   = xeric_dead_handles($db);
-    $then   = xeric_world_who_is_at(xeric_world_who_is_where($t, xeric_world_now($t, $from), $dead), $place);
-    $hereNow = xeric_world_who_is_at(xeric_world_who_is_where($t, $now, $dead), $place);
+    $then   = xeric_world_who_is_at(xeric_world_who_is_where($t, xeric_world_now($t, $from), $dead, $db), $place);
+    $hereNow = xeric_world_who_is_at(xeric_world_who_is_where($t, $now, $dead, $db), $place);
     $out['arrived'] = array_values(array_diff($hereNow, $then));
     $out['left']    = array_values(array_diff($then, $hereNow));
     $out['line']    = xeric_travel_comings_line($t, $now, $place, $out['arrived'], $out['left'], $db);
@@ -669,7 +669,8 @@ function xeric_travel_map(array $t, PDO $db, ?array $now = null): array
 {
     $now      ??= xeric_clock_now($db, $t);
     $here      = xeric_player_where($t, $db);
-    $presence  = xeric_world_who_is_where($t, $now, xeric_dead_handles($db));
+    // With the database, so a Director staging stands on the map like anybody.
+    $presence  = xeric_world_who_is_where($t, $now, xeric_dead_handles($db), $db);
     $dark      = xeric_dark_places($db);
 
     $places = [];
@@ -691,7 +692,10 @@ function xeric_travel_map(array $t, PDO $db, ?array $now = null): array
             // reads off presence, put where a client is allowed to look.
             $who[] = ['handle'  => $h, 'name' => xeric_world_name($t, $h),
                       'doing'   => xeric_text($presence[$h]['doing'] ?? ''),
-                      'at_home' => !empty($presence[$h]['at_home'])];
+                      'at_home' => !empty($presence[$h]['at_home'])]
+                    // Only when true, so a world with no Director reads the
+                    // same map it always did.
+                    + (!empty($presence[$h]['staged']) ? ['staged' => true] : []);
         }
 
         $places[] = [

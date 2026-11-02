@@ -55,7 +55,7 @@ Options -Indexes
 # model-lib and the play-* parts are play-lib.php split by surface (the map is at
 # the top of play-lib.php): the same library in more files, and as much an
 # include as it ever was.
-<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|model-lib|play-shelf|play-view|play-map|play-book|play-watch|review-lib|why-lib|api-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
+<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|model-lib|play-shelf|play-view|play-map|play-book|play-watch|play-narrator|review-lib|why-lib|api-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
   Require all denied
 </If>
 

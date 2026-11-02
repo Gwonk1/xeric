@@ -72,6 +72,7 @@ require_once XERIC_WEB_LIB . '/engine/mood.php';        // the town's own needle
 require_once XERIC_WEB_LIB . '/engine/work.php';        // the shift, and how much money is allowed to matter
 require_once XERIC_WEB_LIB . '/engine/table.php';       // and the games a place holds
 require_once XERIC_WEB_LIB . '/engine/room.php';        // three to five of them, and you
+require_once XERIC_WEB_LIB . '/engine/director.php';    // the set, never the performance
 
 // The rest of this library, by surface (the map above). After the engine, so
 // each part finds what it leans on; each also requires this file, which is a
@@ -82,6 +83,7 @@ require_once __DIR__ . '/play-view.php';
 require_once __DIR__ . '/play-map.php';
 require_once __DIR__ . '/play-book.php';
 require_once __DIR__ . '/play-watch.php';
+require_once __DIR__ . '/play-narrator.php';
 
 /**
  * How many events one press of the time control may produce.
@@ -247,6 +249,10 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
     }
 
     $db = xeric_state_open((string)$pick['path']);
+    // THE DIRECTOR'S STAGINGS, worn by the template so every reader that takes
+    // no database (the prompt's room line, the cast panel, rooms, scenes, the
+    // skip) sees them. No stagings: the template comes back unchanged.
+    if (function_exists('xeric_director_dress')) $t = xeric_director_dress($t, $db);
 
     // RECONCILE THE CLOCK WITH WHETHER THERE IS A MACHINE, and do it here because
     // this is the one door every world goes through.
@@ -1753,46 +1759,20 @@ function xeric_play_overview(array $t, PDO $db): string
 }
 
 /**
- * A hint, or a nudge toward somebody. Never the answer.
- *
- * TWO SHAPES AND THE PROMPT PICKS. If the player is somewhere near the thread,
- * a hint about what to press on; if they are nowhere near it, a name and a
- * reason to go — "talk to Tom" — because a hint about a thing you have not found
- * is indistinguishable from noise.
- *
- * IT MAY NOT SPEND THE STORY. It can see what the xeric is keeping quiet and
- * saying it would end the thing the player is here for, so it is told to point
- * and not to tell. The overview is what makes a useful pointer possible; the
- * instruction is what stops it being a spoiler.
+ * The narrator, asked once. Never the answer to a mystery — the discretion
+ * rules in engine/narrator.php decide what leaves its mouth, in its own voice.
  */
 function xeric_play_hint(array $t, PDO $db, string $ask, array $endpoint): string
 {
-    $me   = trim((string)($t['user']['name'] ?? '')) ?: 'you';
-    $ask  = trim($ask);
-    $view = xeric_play_overview($t, $db);
-
-    $msgs = [
-        ['role' => 'system', 'content' =>
-            'You are the narrator of a story world, talking to the person living in it. '
-            . 'You can see everything. You never say what anybody is hiding, never explain a '
-            . 'mystery, and never describe what would happen next. You point. '
-            . 'Reply with ONE JSON object and nothing else.'],
-        ['role' => 'user', 'content' =>
-            "Here is where things stand.\n\n$view\n\n"
-            . ($ask !== '' ? "$me asks: \"$ask\"\n\n" : "$me is stuck and has not said what about.\n\n")
-            . "Answer in ONE of two ways, whichever is more use:\n"
-            . "  - a HINT: one thing worth pressing on, if they are already near it.\n"
-            . "  - a NUDGE: NAME one of the people above and say why to go to them.\n"
-            . "If they asked who to talk to, or they have spoken to nobody, NUDGE.\n\n"
-            . "Under 30 words. Second person. No spoilers: do not say what anybody is "
-            . "hiding, do not resolve anything, do not describe what will happen.\n\n"
-            . 'Reply exactly: {"say": "..."}'],
-    ];
-
-    $out = xeric_llm_json($endpoint, $msgs, ['tag' => 'hint', 'temperature' => 0.9, 'max_tokens' => 160]);
-    $v = $out['say'] ?? ($out['text'] ?? ($out['hint'] ?? ''));
-    if (is_array($v)) $v = implode(' ', array_map('strval', $v));
-    return trim(mb_substr(trim((string)$v), 0, 400));
+    // THE HINT IS THE NARRATOR NOW (docs/FUTURE.md M3): the real ask — full
+    // canon, no walls, the discretion rules in force — through the one door
+    // engine/narrator.php keeps. Signature kept so nothing that called the old
+    // 30-word hint breaks; the play view stores its exchanges through
+    // xeric_play_narrator_ask() instead, which also reads the UNCOMPOSED
+    // template. A caller here should hand over the same.
+    $now = xeric_clock_now($db, $t);
+    $q   = trim($ask) !== '' ? trim($ask) : XERIC_PLAY_NARRATOR_COLD;
+    return trim((string)xeric_narrator_ask($t, $db, $q, $now, $endpoint)['text']);
 }
 
 /**

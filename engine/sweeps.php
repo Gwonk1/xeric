@@ -803,7 +803,11 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
     // -- the one model call ------------------------------------------------
     // The live overlays ride along so the room can carry what the people in it
     // are sure of. They are the filtered set — a closed story composes nothing.
-    $written = xeric_sweep_compose($t, $db, $endpoint, $now, $chosen, ['stories' => $stories] + $opts);
+    // The leans stop at the chooser. They are handles and kind keys, never
+    // words, but the composer has no business with them at all: the lean
+    // moves the casting, and the performance is the cast's own.
+    $written = xeric_sweep_compose($t, $db, $endpoint, $now, $chosen,
+        ['stories' => $stories] + array_diff_key($opts, ['intents' => true]));
 
     if ($beat !== null) {
         $title = trim((string)($beat['as_event']['title'] ?? ''));
@@ -905,6 +909,23 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
         if (($chosen['dying'] ?? '') !== '') {
             xeric_death_kill($t, $db, (string)$chosen['dying'], $epoch, $written['title'], null, false);
         }
+
+        // AND THE INTENDED BEAT THIS HOUR DELIVERED, if it delivered one. Only
+        // the intents this sweep was offered, matched by the narrator's own two
+        // doors, marked in the hour's transaction so a rolled-back hour
+        // delivers nothing. Never fatal: a ledger row is not worth an hour.
+        $delivered = [];
+        $offered = array_values(array_filter(array_map(fn($i) => (int)($i['n'] ?? 0), (array)($opts['intents'] ?? []))));
+        if ($offered !== [] && function_exists('xeric_narrator_intents_deliver')) {
+            try {
+                $delivered = xeric_narrator_intents_deliver($db, $offered, [
+                    'id' => $eventId, 'world_epoch' => $epoch, 'place' => $chosen['where'],
+                    'participants' => array_keys($written['memories']),
+                    'title' => $written['title'], 'prose' => $written['prose'],
+                ], (string)$chosen['kind']['key']);
+            } catch (Throwable $e) { $delivered = []; }
+        }
+        if ($delivered !== []) $chosen['trail']['intents_delivered'] = $delivered;
 
         xeric_world_state_set($db, $guard, 'event ' . $eventId, $at);
         $db->commit();
@@ -1028,8 +1049,15 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
         if ($clock !== null && $at > $clock) $at = $clock;
         $now = xeric_world_now($t, $at);
 
+        // THE NARRATOR'S WRITE-AHEAD, read per window (docs/NARRATOR.md §3).
+        // Per window and not per stretch, because a beat one hour delivers must
+        // stop pulling on the next hour of the same catch-up. A caller that
+        // handed its own `intents` (a test, a CLI flag) is obeyed as given.
+        $wopts = $opts;
+        if (!array_key_exists('intents', $opts)) $wopts['intents'] = xeric_sweep_leans($t, $db, (int)$now['epoch']);
+
         try {
-            $r = xeric_sweep_run($t, $db, $endpoint, $now, $opts);
+            $r = xeric_sweep_run($t, $db, $endpoint, $now, $wopts);
             $misses = 0;
         } catch (Throwable $e) {
             // One refused hour is ordinary — a model repeats itself, an event is
@@ -1278,6 +1306,23 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
         ];
     }
     return null;
+}
+
+/**
+ * The narrator's leans for this moment, or none. The narrator sits ABOVE the
+ * sweeps (it requires this file), so it is loaded here only when a catch-up
+ * actually asks — the same lazy edge story.php keeps — and a ledger that will
+ * not read is no lean at all rather than a stopped world: write-ahead is a
+ * pull, and losing a pull costs the world nothing it was owed.
+ */
+function xeric_sweep_leans(array $t, PDO $db, int $epoch): array
+{
+    try {
+        require_once __DIR__ . '/narrator.php';
+        return xeric_narrator_leans($t, $db, $epoch);
+    } catch (Throwable $e) {
+        return [];
+    }
 }
 
 /**

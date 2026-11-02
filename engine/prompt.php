@@ -235,8 +235,10 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     $story = xeric_prompt_story($t, $speakerHandle);
     if ($story !== '') $parts[] = $story;
 
-    $memories = xeric_prompt_memories($t, $db, $speakerHandle, $memoryLimit);
-    if ($memories !== []) $parts[] = implode("\n", $memories);
+    // What sleep consolidated (WHAT YOU KNOW), then what is still raw (WHAT
+    // YOU REMEMBER), under one cap. A world that never slept renders exactly
+    // the block it always did.
+    foreach (xeric_prompt_recall($t, $db, $speakerHandle, $memoryLimit) as $block) $parts[] = implode("\n", $block);
 
     return implode("\n\n", $parts) . "\n";
 }
@@ -550,6 +552,72 @@ function xeric_prompt_memories(array $t, PDO $db, string $speakerHandle, int $li
         $out[] = '- (' . $date . ') ' . xeric_sentence($text);
     }
     return count($out) > 1 ? $out : [];
+}
+
+/**
+ * What she knows and what she remembers, as one budget (engine/sleep.php).
+ *
+ * WHAT YOU KNOW: durable facts a sleep pass wrote, each standing for older
+ * memories that no longer render on their own (they are still in the table;
+ * xeric_sleep_chain() shows which). Dated by `since`, absolute, for the same
+ * cache reason as the memories. It sits ABOVE them for the lessons' reason: it
+ * changes once a night, and the frequent change must not drag the rare one.
+ *
+ * ONE CAP, AND NEVER LONGER. Facts and raw memories share $limit lines, facts
+ * taking at most a third (the ones that stand for the most memories), and the
+ * two blocks together are never more characters than this speaker's memories
+ * would have rendered had sleep never run: xeric_prompt_memories() is rendered
+ * first as that ceiling, and the oldest raw lines go, then the thinnest facts,
+ * until the pair fits. That is what makes a prompt get shorter, not longer, as
+ * a world ages — and what the continuity benchmark's sleep class checks.
+ *
+ * @return array<int,string[]> zero, one or two blocks, each a list of lines
+ */
+function xeric_prompt_recall(array $t, PDO $db, string $speakerHandle, int $limit): array
+{
+    require_once __DIR__ . '/sleep.php';
+    $plain = xeric_prompt_memories($t, $db, $speakerHandle, $limit);
+    $facts = xeric_sleep_facts($db, $speakerHandle);
+    if ($facts === []) return $plain !== [] ? [$plain] : [];
+
+    $tzName = (string)($t['user']['timezone'] ?? 'UTC');
+    try { $tz = new DateTimeZone($tzName); } catch (Throwable $e) { $tz = new DateTimeZone('UTC'); }
+    $date = fn(int $e) => (new DateTimeImmutable('@' . $e))->setTimezone($tz)->format('D j M');
+
+    // The facts that stand for the most, newest first among equals; rendered in `since` order.
+    $share = max(1, intdiv(max(1, $limit), XERIC_SLEEP_CAP_SHARE));
+    usort($facts, fn($a, $b) => [$b['sources'], $b['since'], $b['id']] <=> [$a['sources'], $a['since'], $a['id']]);
+    $facts = array_slice($facts, 0, $share);
+    usort($facts, fn($a, $b) => [$a['since'], $a['id']] <=> [$b['since'], $b['id']]);
+
+    $raw = [];
+    foreach (xeric_sleep_memories_for($db, $speakerHandle, max(0, $limit - count($facts))) as $r) {
+        $text = trim((string)$r['text']);
+        if ($text === '') continue;
+        $when = $r['world_epoch'] !== null ? (int)$r['world_epoch'] : (int)$r['created_at'];
+        $raw[] = '- (' . $date($when) . ') ' . xeric_sentence($text);
+    }
+    $know = [];
+    foreach ($facts as $f) $know[] = ['line' => '- (since ' . $date((int)$f['since']) . ') ' . xeric_sentence((string)$f['text']), 'n' => (int)$f['sources']];
+
+    $ceiling = $plain === [] ? 0 : strlen(implode("\n", $plain));
+    $render = function () use (&$know, &$raw): array {
+        $out = [];
+        if ($know !== []) $out[] = array_merge(['WHAT YOU KNOW'], array_column($know, 'line'));
+        if ($raw !== [])  $out[] = array_merge(['WHAT YOU REMEMBER'], $raw);
+        return $out;
+    };
+    $size = function (array $blocks): int {
+        return $blocks === [] ? 0 : strlen(implode("\n\n", array_map(fn($b) => implode("\n", $b), $blocks)));
+    };
+    while ($size($render()) > $ceiling && ($raw !== [] || $know !== [])) {
+        if ($raw !== []) { array_shift($raw); continue; }
+        // the thinnest fact goes first; among equals the newest
+        $drop = 0;
+        foreach ($know as $i => $k) if ($k['n'] < $know[$drop]['n'] || ($k['n'] === $know[$drop]['n'] && $i > $drop)) $drop = $i;
+        array_splice($know, $drop, 1);
+    }
+    return $render();
 }
 
 /** One stored message → one chat turn. */
