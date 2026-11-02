@@ -208,6 +208,48 @@ Everything it writes goes through `xeric_world_validate()` and the same
 copy-before-save that the review page uses, so every authored change is one
 undo away.
 
+#### What author needs before it is built
+
+Author stays unbuilt, on purpose, and `xeric_narrator_author_refuses()` in
+`engine/narrator.php` is the whole power today: it throws a sentence and
+writes nothing, so no surface can wire "author" in and discover later that it
+did nothing. What it waits for is **a deeper undo**. The review page's undo
+is one copy deep (the prev-copy before a save) and the rewind is one skip
+deep; an author that can add a baker, retire a cousin and rewrite last
+Tuesday in one sitting needs an undo that walks back through all three, in
+order, across the template *and* the database, and is shown to the owner as a
+list of what will be undone. Until that exists, one step is not "one undo
+away" — it is one undo away from the last thing only.
+
+## Where it is wired (M3)
+
+- **Ask, in the play view.** The sidebar's "ask the narrator" is
+  `xeric_narrator_ask()` itself — full canon, no walls, the discretion rules
+  in force — not a separate hint prompt (`xeric_play_hint` keeps its
+  signature and delegates). The web keeps each exchange as a conversation of
+  kind `narrator`, handle `''` (which the book and the sidebar pass over), and
+  the pane opens on the last few; the last three ride the next question so a
+  follow-up means something. One question is one model call. Owner, or
+  somebody in their own copy — a guest on a pairing code is refused, because
+  the narrator reads every head in the owner's evening. Metered as a message.
+  A reply that comes back as an assistant's apology or a policy line is
+  replaced whole by the narrator's own decline (`xeric_narrator_in_voice`).
+- **Write-ahead, in the sweeps.** Every catch-up window reads
+  `xeric_narrator_leans()` and hands it to `xeric_sweep_choose()` as
+  `intents`. The lean is a weight, ×2, once: the named kind tried sooner, the
+  named people's room more likely, never forced. What crosses is handles and
+  a kind key — never the words — and the composer is not even handed the
+  leans. The hour that realizes a beat marks it `done` in its own transaction
+  (`via: sweep`, citing the event) and says so on its trail
+  (`intents_delivered`); the inspector reads "leaned by the narrator's intent
+  #n" off `trail.lean`. The owner writes and takes back beats on the
+  narrator pane; delivered ones are struck through.
+- **Investigate, in the inspector.** `why.php?audit=1`, owner only. Reading
+  the page is the arithmetic (free); the button that reads the threads is a
+  POST, metered like a message, kept per world-hour in a file under the data
+  dir so the world's database is still untouched. Every observation links to
+  the events and people it names.
+
 ## Two authorities, and only one of them is safe
 
 The owner's phrasing was "using the local model as a TUI so that code changes
@@ -265,3 +307,5 @@ same conversation:
 
 Write-ahead and author come after, in that order, and only once ask has shown
 the context assembly is right — because everything above depends on it.
+Ask, investigate and write-ahead are now wired (above); author waits for the
+deeper undo.

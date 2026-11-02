@@ -114,11 +114,30 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
     // takes. XERIC_PROMPT_HISTORY_CHUNK is how many turns share one cache entry.
     $history = $convId !== null
         ? xeric_messages_recent($db, (int)$convId, (int)($opts['history_limit'] ?? 20),
-                                XERIC_PROMPT_HISTORY_CHUNK)
+                                XERIC_PROMPT_HISTORY_CHUNK, xeric_state_rating())
         : [];
 
+    // WHO SAID WHAT, once more than one person at the centre has spoken in
+    // this thread — the incoming line counts, it is about to be in it. Each
+    // player line is then labelled with its speaker's roster name, so the
+    // character can tell which of them promised the dish. One voice and the
+    // labels stay off: a solo thread renders byte for byte as it always has.
+    $askingPlayer = max(XERIC_PLAYER_FIRST, (int)($opts['player'] ?? XERIC_PLAYER_FIRST));
+    $voices = [];
     foreach ($history as $m) {
-        $messages[] = xeric_prompt_turn($m);
+        if ((string)($m['role'] ?? '') === 'user') $voices[max(XERIC_PLAYER_FIRST, (int)($m['player'] ?? 0))] = true;
+    }
+    if (trim((string)($opts['user_message'] ?? '')) !== '') $voices[$askingPlayer] = true;
+    $label = null;
+    if (count($voices) > 1) {
+        $label = static function (int $p) use ($db, $t): string {
+            return xeric_player_name($db, max(XERIC_PLAYER_FIRST, $p), $t);
+        };
+    }
+
+    foreach ($history as $m) {
+        $messages[] = xeric_prompt_turn($m, $label !== null && (string)($m['role'] ?? '') === 'user'
+            ? $label((int)($m['player'] ?? 0)) : null);
     }
 
     // ---- the volatile tail ----------------------------------------------
@@ -158,6 +177,7 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
             . 'picture shows]. Rarely, and only when you would actually reach for your camera.';
     }
     $incoming = trim((string)($opts['user_message'] ?? ''));
+    if ($incoming !== '' && $label !== null) $incoming = $label($askingPlayer) . ': ' . $incoming;
 
     $last = $messages[count($messages) - 1];
     if ($incoming !== '') {
@@ -235,8 +255,10 @@ function xeric_prompt_system(array $t, PDO $db, string $speakerHandle, string $e
     $story = xeric_prompt_story($t, $speakerHandle);
     if ($story !== '') $parts[] = $story;
 
-    $memories = xeric_prompt_memories($t, $db, $speakerHandle, $memoryLimit);
-    if ($memories !== []) $parts[] = implode("\n", $memories);
+    // What sleep consolidated (WHAT YOU KNOW), then what is still raw (WHAT
+    // YOU REMEMBER), under one cap. A world that never slept renders exactly
+    // the block it always did.
+    foreach (xeric_prompt_recall($t, $db, $speakerHandle, $memoryLimit, $eff) as $block) $parts[] = implode("\n", $block);
 
     return implode("\n\n", $parts) . "\n";
 }
@@ -466,7 +488,11 @@ function xeric_prompt_fixture_voice(array $t, array $f): array
 /** Static behaviour rules. Sit next to the voice block because they are as fixed as it is. */
 function xeric_prompt_rules(array $t, string $speakerHandle, string $eff = '', string $who = ''): array
 {
-    $userName = $who !== '' ? $who : (trim((string)($t['user']['name'] ?? '')) ?: 'him');
+    // A nameless user is texted as their own object pronoun, from the template
+    // (xeric_pronouns: they/them when none is on record). This fallback was a
+    // literal 'him' — the engine deciding a gender for exactly the user it knew
+    // least about.
+    $userName = $who !== '' ? $who : (trim((string)($t['user']['name'] ?? '')) ?: xeric_pronouns($t)['obj']);
     $out = [
         'HOW YOU ANSWER',
         // THE RATING IS A STYLE, not only a gate (owner, 2026-08-02): a TV-PG
@@ -548,11 +574,104 @@ function xeric_prompt_memories(array $t, PDO $db, string $speakerHandle, int $li
     return count($out) > 1 ? $out : [];
 }
 
-/** One stored message → one chat turn. */
-function xeric_prompt_turn(array $m): array
+/**
+ * What she knows and what she remembers, as one budget (engine/sleep.php).
+ *
+ * WHAT YOU KNOW: durable facts a sleep pass wrote, each standing for older
+ * memories that no longer render on their own (they are still in the table;
+ * xeric_sleep_chain() shows which). Dated by `since`, absolute, for the same
+ * cache reason as the memories. It sits ABOVE them for the lessons' reason: it
+ * changes once a night, and the frequent change must not drag the rare one.
+ *
+ * ONE CAP, AND NEVER LONGER. Facts and raw memories share $limit lines, facts
+ * taking at most a third (the ones that stand for the most memories), and the
+ * two blocks together are never more characters than this speaker's memories
+ * would have rendered had sleep never run: xeric_prompt_memories() is rendered
+ * first as that ceiling, and the oldest raw lines go, then the thinnest facts,
+ * until the pair fits. That is what makes a prompt get shorter, not longer, as
+ * a world ages — and what the continuity benchmark's sleep class checks.
+ *
+ * A FACT KEEPS ITS SOURCES' WALLS, OR IT IS A LAUNDERING. The disposer drops a
+ * fact whose own words quote what its holder is walled from, but a fact can be
+ * clean in its words and still made of a source that quoted a wall for this
+ * very person (a leak that reached her raw memories, now paraphrased) — the
+ * grade records that as `walled_from`, and a source gated at a rating as
+ * `rating_min`. Recording it and rendering anyway would make the grade a
+ * label on an open door. So a fact walled from this speaker, or rated above
+ * what this speaker may be shown ($eff, age-floored by the caller; read off
+ * the world and the viewer when not handed in), does not render: not as a
+ * line, and not as a slot in the share. An unreadable grade fails closed.
+ *
+ * @return array<int,string[]> zero, one or two blocks, each a list of lines
+ */
+function xeric_prompt_recall(array $t, PDO $db, string $speakerHandle, int $limit, ?string $eff = null): array
+{
+    require_once __DIR__ . '/sleep.php';
+    $plain = xeric_prompt_memories($t, $db, $speakerHandle, $limit);
+    $facts = xeric_sleep_facts($db, $speakerHandle);
+    if ($facts !== []) {
+        $eff ??= xeric_viewer_rating(xeric_world_rating($t), xeric_viewer($t, ['handle' => $speakerHandle]));
+        $facts = array_values(array_filter($facts, function (array $f) use ($speakerHandle, $eff): bool {
+            $meta = $f['meta'];
+            if (!is_array($meta)) return false;
+            if (!is_array($meta['walled_from'] ?? [])) return false;
+            if (in_array($speakerHandle, array_map('strval', (array)($meta['walled_from'] ?? [])), true)) return false;
+            if (isset($meta['rating_min']) && !xeric_rating_allows($eff, ['rating_min' => (string)$meta['rating_min']])) return false;
+            return true;
+        }));
+    }
+    if ($facts === []) return $plain !== [] ? [$plain] : [];
+
+    $tzName = (string)($t['user']['timezone'] ?? 'UTC');
+    try { $tz = new DateTimeZone($tzName); } catch (Throwable $e) { $tz = new DateTimeZone('UTC'); }
+    $date = fn(int $e) => (new DateTimeImmutable('@' . $e))->setTimezone($tz)->format('D j M');
+
+    // The facts that stand for the most, newest first among equals; rendered in `since` order.
+    $share = max(1, intdiv(max(1, $limit), XERIC_SLEEP_CAP_SHARE));
+    usort($facts, fn($a, $b) => [$b['sources'], $b['since'], $b['id']] <=> [$a['sources'], $a['since'], $a['id']]);
+    $facts = array_slice($facts, 0, $share);
+    usort($facts, fn($a, $b) => [$a['since'], $a['id']] <=> [$b['since'], $b['id']]);
+
+    $raw = [];
+    foreach (xeric_sleep_memories_for($db, $speakerHandle, max(0, $limit - count($facts))) as $r) {
+        $text = trim((string)$r['text']);
+        if ($text === '') continue;
+        $when = $r['world_epoch'] !== null ? (int)$r['world_epoch'] : (int)$r['created_at'];
+        $raw[] = '- (' . $date($when) . ') ' . xeric_sentence($text);
+    }
+    $know = [];
+    foreach ($facts as $f) $know[] = ['line' => '- (since ' . $date((int)$f['since']) . ') ' . xeric_sentence((string)$f['text']), 'n' => (int)$f['sources']];
+
+    $ceiling = $plain === [] ? 0 : strlen(implode("\n", $plain));
+    $render = function () use (&$know, &$raw): array {
+        $out = [];
+        if ($know !== []) $out[] = array_merge(['WHAT YOU KNOW'], array_column($know, 'line'));
+        if ($raw !== [])  $out[] = array_merge(['WHAT YOU REMEMBER'], $raw);
+        return $out;
+    };
+    $size = function (array $blocks): int {
+        return $blocks === [] ? 0 : strlen(implode("\n\n", array_map(fn($b) => implode("\n", $b), $blocks)));
+    };
+    while ($size($render()) > $ceiling && ($raw !== [] || $know !== [])) {
+        if ($raw !== []) { array_shift($raw); continue; }
+        // the thinnest fact goes first; among equals the newest
+        $drop = 0;
+        foreach ($know as $i => $k) if ($k['n'] < $know[$drop]['n'] || ($k['n'] === $know[$drop]['n'] && $i > $drop)) $drop = $i;
+        array_splice($know, $drop, 1);
+    }
+    return $render();
+}
+
+/**
+ * One stored message → one chat turn. $who labels a player's line with their
+ * name, which xeric_prompt_build asks for only when a thread has more than
+ * one person at the centre in it; null is the unlabelled line it always was.
+ */
+function xeric_prompt_turn(array $m, ?string $who = null): array
 {
     $role    = (string)($m['role'] ?? 'user');
     $content = (string)($m['content'] ?? '');
+    if ($role === 'user' && $who !== null && $who !== '') $content = $who . ': ' . $content;
 
     if ($role === 'character') return ['role' => 'assistant', 'content' => $content];
     // Narrator lines are things the world did, not things she said. They arrive

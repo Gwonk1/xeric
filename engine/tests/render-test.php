@@ -364,6 +364,70 @@ ok('determinism: a re-decoded template renders identically',
     xeric_render_bible(xeric_template_load(__DIR__ . '/../fixtures/milldale.json'), null, 'sfw') === $narrator);
 
 // ---------------------------------------------------------------------------
+// (i) the engine writes no gendered prose of its own
+//
+// Pronouns are template data: the user's live in `user.pronouns` and resolve
+// through xeric_pronouns(); a character's, when the template carries them, are
+// the template's. The engine's own sentences use names, or those resolved
+// pronouns, or a construction that needs neither. The roadmap has recorded
+// this rule as fixed twice, and the audit still found five sites — panel's
+// "She will not have it … he will not have it", learn's he/him user, prompt's
+// 'him' fallback, table's debtor and tell frame — plus economy's "He can simply
+// hand it over". A rule that keeps coming back has to be a test, not a memo.
+//
+// So: every string literal the engine and its renderers contain is tokenised
+// (token_get_all, so comments and docblocks — which may discuss pronouns all
+// they like — are not strings and are not read) and any whole-word
+// he/him/his/she/her/hers fails, naming file:line. The allowlist is the short
+// list of places where the word is DATA, not prose the engine writes about a
+// person; each entry says why, and each is matched by file AND a fragment of
+// the literal, so a new gendered sentence on the same file still fails.
+// ---------------------------------------------------------------------------
+
+echo "\n# the engine writes no gendered prose\n";
+
+const PRONOUN_ALLOW = [
+    // Confession cues, matched against what the PLAYER typed, all three forms.
+    ['chat.php', 'pushed him'], ['chat.php', 'pushed her'],
+    // The intimacy regex: the pronoun is what disambiguates the phrase, and
+    // it is a pattern over the player's text with (him|her|them) alike.
+    ['chat.php', '(?:him|her|them)'],
+    // Stopwords for the deduper's word overlap — a list of words to ignore.
+    ['chat.php', "'he'"], ['chat.php', "'she'"], ['chat.php', "'her'"], ['chat.php', "'his'"],
+    // The sweep prompt QUOTES the narration it forbids: "No "she felt"".
+    ['sweeps.php', 'No "she felt", no "he realised"'],
+    // xeric_pronouns()'s own vocabulary table — the resolver everything else uses.
+    ['bible.php', "'he'"], ['bible.php', "'him'"], ['bible.php', "'his'"],
+    ['bible.php', "'she'"], ['bible.php', "'her'"],
+];
+
+$gendered = [];
+foreach (array_merge(glob(__DIR__ . '/../*.php'), glob(__DIR__ . '/../renderers/*.php')) as $src) {
+    foreach (token_get_all((string)file_get_contents($src)) as $tk) {
+        if (!is_array($tk) || !in_array($tk[0], [T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true)) continue;
+        if (!preg_match('/\b(he|him|his|she|her|hers)\b/i', $tk[1])) continue;
+        $file = basename($src);
+        $allowed = false;
+        foreach (PRONOUN_ALLOW as [$f, $frag]) {
+            if ($f === $file && str_contains($tk[1], $frag)) { $allowed = true; break; }
+        }
+        if (!$allowed) $gendered[] = $file . ':' . $tk[2] . ' ' . substr(trim($tk[1]), 0, 60);
+    }
+}
+ok('pronouns: no string literal in engine/*.php or engine/renderers/*.php genders a person',
+    $gendered === [], implode(' | ', $gendered));
+ok('pronouns: and the scanner can see (a planted "he" in a literal is caught)', (function () {
+    foreach (token_get_all('<?php $x = "what he could not cover";') as $tk) {
+        if (is_array($tk) && $tk[0] === T_CONSTANT_ENCAPSED_STRING
+            && preg_match('/\b(he|him|his|she|her|hers)\b/i', $tk[1])) return true;
+    }
+    return false;
+})());
+ok('pronouns: a user_grant economy names the user rather than calling them "He"',
+    xeric_economy_earn_lines(['earned_by' => ['user_grant']], 'Walt') === ['Walt can simply hand it over, and sometimes does.']
+    && !preg_match('/\bhe\b/i', implode(' ', xeric_economy_earn_lines(['earned_by' => ['user_grant']]))));
+
+// ---------------------------------------------------------------------------
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";
 exit($FAILED === 0 ? 0 : 1);

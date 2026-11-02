@@ -145,9 +145,9 @@ $speakerName = xeric_world_name($T, $handle);
 
 try {
     // Per-speaker: the pinned voice machine when one stands, else the engine
-    // (xeric_voice_endpoint falls back, never fails — a tuning choice must
+    // (xeric_play_speaker_endpoint falls back, never fails — a tuning choice must
     // not silence somebody).
-    $endpoint = xeric_voice_endpoint($T, $db, $handle, $sid);
+    $endpoint = xeric_play_speaker_endpoint($T, $db, $handle, $sid);
 } catch (Throwable $e) {
     // Nothing attached. Said as the state it is rather than as a failure, and
     // with the fix in the sentence — this is the one error on this screen whose
@@ -168,6 +168,11 @@ if (!xeric_llm_up($endpoint, 6)) {
 
 $now = xeric_clock_now($db, $T);
 $t0  = microtime(true);
+
+// The world's own ceiling (engine/budget.php), on the machine this reply would
+// spend: a world out of tokens for today says so, and names the ceiling.
+$budget = xeric_budget_allows($T, $db, $now, 'tokens', 1, xeric_budget_llm_costly($endpoint));
+if (!$budget['ok']) $done(xeric_budget_body($budget), 429);
 
 // The slot is held and the model is up, so this turn is genuinely happening:
 // charged here rather than at the door, where a 404 or a dead endpoint would
@@ -301,6 +306,8 @@ $done([
     'handle'    => $handle,
     'name'      => xeric_world_name($T, $handle),
     'text'      => (string)$out['text'],
+    // The reply's own row, for the speaker beside her bubble (speak.php).
+    'mid'       => (int)($out['message_id'] ?? 0),
     'when'      => xeric_play_stamp($T, (int)$now['epoch']),
     'seconds'   => round($took, 1),
     'waited'    => (float)($got['waited'] ?? 0),     // seconds spent in the line, honestly reported

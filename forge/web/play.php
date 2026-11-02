@@ -432,6 +432,16 @@ if ($action !== '') {
             'cast_html' => xeric_play_cast_html(
                 xeric_play_cast($w['template'], $w['db'], $nowW),
                 (string)$w['slug'], (bool)$w['mine']),
+            // The room, too: somebody walking in while you stand there is the
+            // view changing, and this is the only beat that hears about it
+            // between your own presses. A read of canon and the queue, never
+            // of the machine, so it costs what the cast row costs.
+            'look_html' => xeric_play_look_html($w['template'], $w['db'], $nowW,
+                (string)$w['slug'], !xeric_play_is_guest($w), xeric_play_room_may_sit($w)),
+            // A room somebody is talking in, so the strip opens on a second
+            // device too — the summary only; the lines ride room.php's cursor.
+            'room'      => xeric_play_room_public($w['template'], xeric_room_live_get($w['db']),
+                xeric_play_room_may_sit($w), xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST),
         ]);
     }
 
@@ -533,7 +543,7 @@ if ($action !== '') {
             // default. Sam can be one model and Lucy another; the per-model
             // prefix cache makes this cheaper than it sounds, because a
             // character pinned to a machine keeps their prefix warm THERE.
-            'voice'  => xeric_voice_choices($w['db'], $h, $sid),
+            'voice'  => xeric_play_speaker_choices($w['db'], $h, $sid),
             // The portrait's stand-in words, straight off the job row: the alt
             // text for a developed photo, the whole photo for a pending one.
             'photo_caption' => (string)((xeric_photo_of($w['db'], 'portrait', $h)['caption'] ?? '')),
@@ -549,7 +559,7 @@ if ($action !== '') {
             xeric_web_json(['error' => 'nobody by that name'], 400);
         }
         try {
-            $label = xeric_voice_set($w['db'], $h, (string)($in['base'] ?? ''), $sid);
+            $label = xeric_play_speaker_set($w['db'], $h, (string)($in['base'] ?? ''), $sid);
         } catch (Throwable $e) {
             xeric_web_json(['error' => $e->getMessage()], 422);
         }
@@ -559,19 +569,23 @@ if ($action !== '') {
     }
 
     // -- the narrator --------------------------------------------------------
-    // THE ONE THING THAT CAN SEE THE BOARD. Every character knows only what they
-    // know — that is the engine, and the walls exist to keep it true. This is not
-    // a character: it is the thing a player can ask when they are lost, and
-    // seeing everything is what makes it able to answer. What it may not do is
-    // SPEND the story, which is xeric_play_hint()'s problem and is written into
-    // its prompt: it points, it does not tell.
+    // THE ONE THING THAT CAN SEE THE BOARD, and now the real thing: the
+    // engine's ask (engine/narrator.php) — full canon, no walls, and the
+    // discretion rules that keep it from spending the story: it never
+    // unravels a mystery, never says where a hidden thing is, never discusses
+    // its own write-ahead, never hands over a character's secret because it
+    // knows it, and declines in its own voice. The exchange is kept as the
+    // narrator's thread (kind `narrator`, handle ''), shown back in the pane.
+    //
+    // THE OWNER, OR SOMEBODY IN THEIR OWN COPY. A guest on a pairing code is
+    // in the owner's evening, and the narrator reads every head in it — so a
+    // guest is refused before anything is spent.
     if ($action === 'hint') {
+        xeric_web_spend_guard();   // a GET, and it reaches the model
+        xeric_play_owner_only($w, 'asking the narrator');
         // METERED LIKE A MESSAGE, because that is what it costs. The only thing
         // standing here was a six-second queue hold, which is a MUTEX and not a
-        // quota: it serialises callers, it does not bound them. So a loop over
-        // `a=hint` — no ownership check, no cookie needed, any world on the
-        // shelf — walked straight past the demo's thirty-messages-an-hour cap
-        // and held the GPU for as long as somebody cared to keep asking.
+        // quota: it serialises callers, it does not bound them.
         xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
 
         try { $endpoint = xeric_play_endpoint($sid); }
@@ -581,16 +595,56 @@ if ($action !== '') {
         if (($hold['ok'] ?? false) !== true) {
             xeric_web_json(['error' => 'The model is busy. Ask again in a moment.', 'kind' => 'busy'], 503);
         }
+        // The work starts: the seat the check took is spent, not given back
+        // at the end of the request (limits.php — a check alone holds a seat).
+        xeric_limit_note('message', ['sid' => $sid]);
         try {
-            $line = xeric_play_hint($w['template'], $w['db'],
-                                    (string)($_GET['ask'] ?? ''), $endpoint);
+            $said = xeric_play_narrator_ask($w, (string)($_GET['ask'] ?? ''), $endpoint);
         } catch (Throwable $e) {
             xeric_queue_release($hold);
             xeric_web_json(['error' => 'nothing came back', 'kind' => 'model'], 502);
         }
         xeric_queue_release($hold);
-        if (trim($line) === '') xeric_web_json(['error' => 'nothing came back'], 502);
-        xeric_web_json(['ok' => true, 'text' => $line]);
+        xeric_web_json(['ok' => true, 'text' => $said['text'], 'question' => $said['question'],
+                        'kept' => $said['stored']]);
+    }
+
+    // -- taking a staging back (the Director's, engine/director.php) -----------
+    // The owner's alone. The inspector lists stagings; this is its one write.
+    if ($action === 'unstage') {
+        xeric_web_spend_guard();
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner takes a staging back.', 'kind' => 'guest'], 403);
+        $in = xeric_web_input();
+        $gone = function_exists('xeric_director_cancel')
+            ? xeric_director_cancel($w['db'], (int)($in['id'] ?? 0), xeric_clock_epoch($w['db'])) : null;
+        if ($gone === null) xeric_web_json(['error' => 'There is no staging with that number left to take back.'], 404);
+        xeric_web_json(['ok' => true, 'note' => 'Taken back. Everybody goes where their week says.']);
+    }
+
+    // -- writing ahead -------------------------------------------------------
+    // One sentence, an intended beat. A PULL, NEVER A SCRIPT: the sweeps lean
+    // toward hours that could realize it (×2, bounded), and the words stay
+    // here — what reaches a sweep is the people it names and a kind of hour.
+    // The owner's alone: it is the shape of what is coming.
+    if ($action === 'intend' || $action === 'unintend') {
+        xeric_web_spend_guard();
+        if (!$w['mine']) xeric_web_json(['error' => 'Only the owner writes ahead in a xeric.', 'kind' => 'guest'], 403);
+        $in = xeric_web_input();
+        if ($action === 'intend') {
+            try {
+                $made = xeric_play_narrator_intend($w, (string)($in['text'] ?? ''));
+            } catch (Throwable $e) {
+                xeric_web_json(['error' => preg_replace('/^narrator: /', '', $e->getMessage())], 422);
+            }
+            $note = 'Written ahead. The world will lean toward it, and may never find room.';
+            if ($made['notes'] !== []) $note .= ' ' . ucfirst((string)$made['notes'][0]) . '.';
+        } else {
+            if (xeric_play_narrator_retire($w, (int)($in['n'] ?? 0)) === null) {
+                xeric_web_json(['error' => 'There is no live beat with that number.'], 404);
+            }
+            $note = 'Taken back.';
+        }
+        xeric_web_json(['ok' => true, 'note' => $note, 'html' => xeric_play_narrator_intents_html($w)]);
     }
 
     // -- a line you might say ----------------------------------------------
@@ -603,6 +657,7 @@ if ($action !== '') {
     // suggestion that closes the conversation politely is the one thing worse
     // than no suggestion, because it is easier to accept than to reject.
     if ($action === 'suggest') {
+        xeric_web_spend_guard();   // a GET, and it reaches the model
         $handle = trim((string)($_GET['h'] ?? ''));
         $c = xeric_world_character($w['template'], $handle);
         if ($c === null) xeric_web_json(['error' => 'nobody by that name'], 400);
@@ -621,6 +676,7 @@ if ($action !== '') {
         if (($hold['ok'] ?? false) !== true) {
             xeric_web_json(['error' => 'the model is busy', 'kind' => 'busy'], 503);
         }
+        xeric_limit_note('message', ['sid' => $sid]);   // the work starts: keep the seat
         try {
             $line = xeric_play_suggest($w['template'], $w['db'], $handle, $endpoint);
         } catch (Throwable $e) {
@@ -678,7 +734,7 @@ if ($action !== '') {
 if ($slug === '') {
     $worlds = xeric_play_worlds($sid);
     xeric_web_head('Xeric');
-    echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
+    echo xeric_play_css_link(true);
     ?>
 <body class="shelf">
 <div class="shelfwrap">
@@ -838,7 +894,7 @@ try {
     // a world that was never here, and a world that was and has been let go.
     $gone = !is_dir(xeric_web_worlds_dir() . '/' . $slug);
     xeric_web_head('Xeric: ' . $slug);
-    echo '<style>' . xeric_play_css() . '</style>';
+    echo xeric_play_css_link();
     echo '<main><div class="top"><p class="wordmark">XERIC</p><span class="kicker">play</span></div>';
     echo '<h1>That xeric will not open</h1>';
     echo '<p class="note bad">' . h($e->getMessage()) . '</p>';
@@ -859,7 +915,7 @@ try {
 if (!xeric_review_launched($w['template'])) {
     $mine = $w['mine'];
     xeric_web_head('Xeric: ' . (string)$w['template']['meta']['name']);
-    echo '<style>' . xeric_play_css() . '</style>';
+    echo xeric_play_css_link();
     echo '<main><div class="top"><p class="wordmark">XERIC</p><span class="kicker">play</span>'
         . xeric_web_meter_html() . '<span class="count"><a href="play.php">all xerics</a></span></div>';
     echo '<h1>' . h((string)$w['template']['meta']['name']) . '</h1>';
@@ -901,8 +957,23 @@ $userName = trim((string)($T['user']['name'] ?? '')) ?: 'you';
 $userJob  = trim((string)($T['user']['occupation']['title'] ?? ''));
 $userWork = xeric_world_place_name($T, (string)($T['user']['occupation']['workplace_key'] ?? ''));
 
-xeric_web_head('Xeric: ' . (string)$T['meta']['name']);
-echo '<style>' . xeric_play_css() . '
+// Is an ears machine set for this visitor? CONFIGURED, NEVER PROBED — the
+// speaker's rule, the look's rule: the button asks the machine when it is
+// held, not the page on the way in. It also decides whether this page may
+// ask for the microphone at all (ui.php's Permissions-Policy).
+$earsOn = (function (): bool {
+    try {
+        return xeric_ears_endpoint() !== null;
+    } catch (Throwable $e) {
+        return false;
+    }
+})();
+
+// The live view's one remote origin (ui.php): the scene machine's, and only
+// when this world can go live with it; '' — the policy unchanged — otherwise.
+xeric_web_head('Xeric: ' . (string)$T['meta']['name'], ['microphone' => true, 'worker' => true,
+                                                         'stream_origin' => xeric_play_stream_origin($T, $db)]);
+echo xeric_play_css_link() . '<style>
 /* ── the ⚙ cog and its modal rows (xeric controls) ── */
 /* color set EXPLICITLY: a button never inherits text colour, it takes the
    browser ButtonText default, black, which on the dark theme is invisible. */
@@ -945,8 +1016,96 @@ echo '<style>' . xeric_play_css() . '
 /* a photo in a thread bubble: the picture, its caption underneath */
 .mphoto { display:block; max-width:100%; max-height:280px; border-radius:.6rem; margin:0 0 .25rem; }
 .mcap { display:block; font-size:.72rem; font-style:italic; opacity:.75; }
+/* the speaker beside a line a character said, and what it says when it cannot */
+.mspk { font:inherit; font-size:.8rem; line-height:1; margin-left:.35rem; padding:.1rem .3rem; border:0;
+  border-radius:.4rem; background:transparent; color:inherit; opacity:.55; cursor:pointer; vertical-align:middle; }
+.mspk:hover, .mspk:focus-visible, .mspk.on { opacity:1; }
+.mspk:focus-visible { outline:2px solid var(--fg); outline-offset:1px; }
+.mspk.loading { opacity:.35; animation:mspkpulse 1.2s ease-in-out infinite; }
+.mspk:disabled { opacity:.25; cursor:default; }
+@keyframes mspkpulse { 50% { opacity:.8; } }
+.mspkno { display:block; font-size:.7rem; font-style:italic; opacity:.7; }
+/* hold to talk, beside the composer: lit while it is listening, dim while it is sending */
+.mhear { touch-action:none; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+.mhear.on { background:var(--fg); color:var(--bg); }
+.mhear.loading { opacity:.45; animation:mspkpulse 1.2s ease-in-out infinite; }
+.mhear:disabled { opacity:.3; cursor:default; }
+/* what you see: the room, the width of the panel, rounded like a photo in a thread */
+.lookimg { display:block; width:100%; height:auto; border-radius:.6rem; margin:0 0 .25rem; }
+.lookstreambox video, .lookstreamimg { display:block; width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:.6rem;
+             background:#000; margin:0 0 .25rem; }
+.lookstreamstate { font-size:.72rem; color:var(--fg-dim); margin:0; }
+.lookliveend { font-size:.75rem; color:var(--fg-dim); font-style:italic; margin:0 0 .4rem; }
+.lookliveact { margin:.2rem 0 .3rem; }
+.lookpanobox { margin:0 0 .25rem; }
+.lookpano { display:block; width:100%; aspect-ratio:16/9; border-radius:.6rem; background:var(--bg-2);
+  cursor:grab; touch-action:none; }
+.lookpano.grabbing { cursor:grabbing; }
+.lookpano:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+/* standing inside a splat: the frame of the panorama, and the download kept small under it */
+.looksplat { display:block; width:100%; aspect-ratio:4/3; border-radius:.6rem; background:#000;
+  cursor:grab; touch-action:none; }
+.looksplat.grabbing { cursor:grabbing; }
+.looksplat:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+.looksplatstate { font-size:.75rem; color:var(--fg-dim); margin:.25rem 0 0; }
+.looksplatstate[hidden] { display:none; }
+.looksplatdl { font-size:.75rem; margin:.2rem 0 .3rem; }
+.lookmeta { font-size:.75rem; color:var(--fg-dim); margin:0 0 .4rem; }
+.lookstale { display:inline-block; font-size:.68rem; padding:.05rem .45rem; border-radius:999px;
+  border:1px solid var(--line); color:var(--fg-dim); margin-left:.3rem; }
+.lookprose { margin:0 0 .5rem; }
+.lookdev { font-size:.8rem; color:var(--fg-dim); font-style:italic; }
+/* the people in the room: buttons over every view at their bearings; the row under it is the fallback */
+.lookpanobox, .lookstill, .lookstreambox, .looksplatbox { position:relative; }
+.looktags .looktag { position:absolute; transform:translate(-50%,-50%); }
+.looktag { font:inherit; font-size:.72rem; line-height:1.2; padding:.15rem .5rem; border-radius:999px;
+  border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; white-space:nowrap; }
+.looktag:hover, .looktag:focus-visible { border-color:var(--fg); }
+.looktagrow { display:flex; flex-wrap:wrap; gap:.3rem; margin:.3rem 0 .2rem; }
+.lookxr { position:absolute; right:.5rem; bottom:.5rem; }
+/* look with the phone: the corner opposite the headset, so both can be offered at once */
+.lookgaze { position:absolute; left:.5rem; bottom:.5rem; }
+.lookgaze.on { border-color:var(--fg); }
+/* the room through its day */
+.lookday { display:flex; gap:.35rem; overflow-x:auto; margin:.2rem 0 .5rem; }
+.lookthumb { flex:0 0 auto; width:4.6rem; padding:0; border:1px solid var(--line); border-radius:.4rem;
+  background:var(--bg-2); cursor:pointer; overflow:hidden; font:inherit; color:var(--fg-dim); }
+.lookthumb img { display:block; width:100%; height:2.6rem; object-fit:cover; }
+.lookthumb span { display:block; font-size:.62rem; padding:.1rem .2rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lookthumb.cur { border-color:var(--fg); color:var(--fg); }
+.lookearlier { font-size:.72rem; color:var(--fg-dim); font-style:italic; margin:0; }
+/* what you hear */
+.looksound { font-size:.75rem; color:var(--fg-dim); font-style:italic; margin:0 0 .3rem; }
+.lookaudio { display:flex; gap:.4rem; align-items:center; margin:0 0 .5rem; }
+.lookaudio audio { height:2rem; flex:1 1 auto; min-width:0; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
+/* who came and went, in a line, and the door to the room */
+.lookbeat { font-size:.82rem; font-style:italic; color:var(--fg-dim); margin:.1rem 0 .45rem; }
+.lookroom { margin:.3rem 0 .5rem; }
+/* the people in the room as they talk: whoever is about to speak, whoever just did */
+.looktag.typing { border-color:var(--fg); animation:mspkpulse 1.2s ease-in-out infinite; }
+.looktag.speaking { border-color:var(--fg); background:var(--fg); color:var(--bg); }
+/* the room strip: the latest lines and the composer, beside the view */
+#room { border:1px solid var(--line); border-radius:.6rem; padding:.6rem .7rem; margin:0 0 1rem; background:var(--bg-2); }
+#room .rhead { font-size:.8rem; color:var(--fg-dim); margin:0 0 .4rem; }
+#room .rmsgs { max-height:22rem; overflow-y:auto; margin:0 0 .4rem; padding:0; }
+#room .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
+/* a line from another person at the centre, on this screen: theirs, not yours */
+#rmsgs li.me.peer .b { opacity:.85; border-style:dashed; }
+/* whose line, in a thread more than one person at the centre has spoken in; and a line this viewer is not shown */
+#msgs .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
+#msgs li.redacted .b, #rmsgs li.redacted .b { font-style:italic; opacity:.65; }
+#room .rctl { display:flex; gap:.5rem; align-items:center; margin:.35rem 0 0; font-size:.75rem; color:var(--fg-dim); }
+#room .rctl .grow { flex:1 1 auto; }
+/* the narrator write-ahead: intended beats, struck when delivered */
+.nahead { margin:.6rem 0 0; font-size:.85rem; }
+.nahead summary { cursor:pointer; color:var(--fg-dim); }
+.nahead .intents { list-style:none; padding:0; margin:.4rem 0; }
+.nahead .intent { margin:.25rem 0; }
+.nahead .intent.done s { opacity:.7; }
+.nahead .intent.off { opacity:.55; }
+.nahead input { flex:1 1 auto; min-width:0; }
 </style>';
 ?>
 <!-- THE CHIP BAR, ACROSS THE WHOLE WINDOW. Everybody, always, so a thread is a
@@ -1138,13 +1297,35 @@ echo '<style>' . xeric_play_css() . '
       </nav>
     </div>
 
-    <ul class="msgs" id="nmsgs"></ul>
+    <?php $narrPane = xeric_play_narrator_pane_html($w); $narrGuest = xeric_play_is_guest($w); ?>
+    <!-- The last few exchanges, kept (the narrator's own thread, kind
+         `narrator`, handle ''). Server-rendered so the pane opens on them —
+         for the owner only: a guest, refused the ask, is refused its answers
+         too, and gets an empty list (xeric_play_narrator_pane_html). -->
+    <ul class="msgs" id="nmsgs"><?= $narrPane['msgs'] ?></ul>
     <div class="thinking" id="nthinking" hidden><i></i><i></i><i></i><span>looking at where things stand</span></div>
     <p class="note warn" id="nerr" hidden></p>
+    <?php if ($narrGuest): ?>
+    <p class="note">The narrator answers whoever this xeric belongs to. You are a guest in it.</p>
+    <?php else: ?>
     <div class="composer">
-      <textarea id="ncomposer" rows="1" placeholder="what are you stuck on?" autocomplete="off"></textarea>
+      <textarea id="ncomposer" rows="1" placeholder="ask the world anything: why, who, where" autocomplete="off" maxlength="600"></textarea>
       <button class="btn" type="button" id="nsend">Ask</button>
     </div>
+    <?php endif; ?>
+    <?php if ($w['mine']): ?>
+    <!-- WRITE AHEAD. One sentence, an intended beat: the sweeps lean toward
+         it and are never ordered to write it. The words are shown here and
+         nowhere else; a struck-through line is one an hour delivered. -->
+    <details class="nahead" id="nahead">
+      <summary>write ahead <span class="quiet">— a beat the world should lean toward</span></summary>
+      <ul class="intents" id="nintents"><?= $narrPane['intents'] ?></ul>
+      <div class="composer">
+        <input id="nintend" type="text" maxlength="240" placeholder="e.g. Dot and Theo end up at the same meal, and it does not go well" autocomplete="off">
+        <button class="btn" type="button" id="nintendgo">Write ahead</button>
+      </div>
+    </details>
+    <?php endif; ?>
   </section>
 
   <!-- ------------------------------------------------------------- the book -->
@@ -1294,6 +1475,30 @@ echo '<style>' . xeric_play_css() . '
       <div class="feed" id="feed"></div>
     </div>
 
+    <!-- what you see: the room you are standing in, from where you stand
+         (engine/scene.php composes it, scene.php serves it). Above "where you
+         are" because it is the same fact said as a picture, and a picture is
+         read first. -->
+    <h2>what you see</h2>
+    <p class="note warn" id="lookerr" hidden></p>
+    <div id="look"><?= $state['look_html'] ?></div>
+    <!-- THE ROOM: three to five of them and you (engine/room.php, room.php).
+         Beside #look and never inside it: a repaint replaces #look wholesale,
+         and a conversation must not be wiped by a clock tick. The lines come
+         from room.php's own cursor; a guest reads them and has no composer. -->
+    <section id="room" hidden aria-label="the room">
+      <p class="rhead" id="rhead"></p>
+      <ul class="msgs rmsgs" id="rmsgs" aria-live="polite"></ul>
+      <div class="thinking" id="rthinking" hidden><i></i><i></i><i></i><span id="rthinkwho"></span></div>
+      <p class="note warn" id="rerr" hidden></p>
+      <div class="composer" id="rcompose">
+        <textarea id="rcomposer" rows="1" placeholder="say something to the room…" autocomplete="off"></textarea>
+        <button class="btn" type="button" id="rsay">Say</button>
+      </div>
+      <p class="rctl"><span class="grow" id="rnote"></span>
+        <button type="button" class="nbtn ghost" id="rleave">step back</button></p>
+    </section>
+
     <h2>where you are</h2>
     <p class="note warn" id="goerr" hidden></p>
     <div id="where"><?= $state['where_html'] ?></div>
@@ -1346,6 +1551,12 @@ echo '<style>' . xeric_play_css() . '
     </div>
     <div class="composer">
       <textarea id="composer" rows="1" placeholder="say something…" autocomplete="off"></textarea>
+      <?php if ($earsOn): ?>
+      <!-- HOLD TO TALK. Shown only when an ears machine is set (never probed
+           here). What it hears goes into the box above, to read and send. -->
+      <button class="btn mhear" type="button" id="hear" aria-label="hold to talk" aria-pressed="false"
+        title="hold to talk — the words go in the box for you to send">🎙</button>
+      <?php endif; ?>
       <button class="btn" type="button" id="send">Send</button>
     </div>
   </section>
@@ -1358,10 +1569,17 @@ echo '<style>' . xeric_play_css() . '
 <div id="coverlay"><div id="cmodal" role="dialog" aria-modal="true"></div></div>
 <div id="ptoast" role="status"></div>
 
+<script nonce="<?= h(xeric_web_nonce()) ?>" src="<?= h(xeric_play_asset('xeric-view.js')) ?>"></script>
+<!-- the splat viewer: static, because a nonce-only CSP lets no script add another; idle until a splat is mounted -->
+<script nonce="<?= h(xeric_web_nonce()) ?>" src="<?= h(xeric_play_asset('xeric-splat.js')) ?>"></script>
+<script nonce="<?= h(xeric_web_nonce()) ?>" src="<?= h(xeric_play_asset('xeric-map.js')) ?>"></script>
 <script nonce="<?= h(xeric_web_nonce()) ?>">
 (function () {
   'use strict';
   var W = <?= js($w['slug']) ?>;
+  // Is a voice machine set for this visitor? Configured, never probed, the
+  // look button's rule: the speaker asks the machine when it is pressed.
+  var VOICE = <?= js(xeric_play_voice_on()) ?>;
 
   // -- the rewind ------------------------------------------------------------
   // The button never fires without the card, the card never lies about what
@@ -1574,6 +1792,7 @@ echo '<style>' . xeric_play_css() . '
 
   var $  = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var XV = XericView({ world: W });                   // the viewer (xeric-view.js, loaded above)
   var screens = $$('.screen');
   var openHandle = null, busy = false;
   // When the current turn started. A fetch that never settles — a dropped
@@ -2063,12 +2282,168 @@ echo '<style>' . xeric_play_css() . '
   var going = false;
   var PERMANENT = <?= js(xeric_death_mode($w['template'], $w['db']) === XERIC_DEATH_PERMANENT) ?>;
   var LASTCAST = <?= js(array_map(fn($c) => ['handle' => $c['handle'], 'name' => $c['name']], $state['cast'])) ?>;
+  // THE TRIP LOCK. Every way to travel is a .goto — the list's <button>s and
+  // the map's SVG <g> marks — and a <g> has no .disabled: setting it was a
+  // property nobody reads, so a mark stayed live, and announced live, through
+  // the whole trip. aria-disabled plus .gooff is what both kinds wear, what the
+  // map's keys honour (xeric-map.js press) and what this click handler checks.
+  function tripLock(on) {
+    $$('.goto').forEach(function (b) {
+      b.setAttribute('aria-disabled', on ? 'true' : 'false');
+      b.classList.toggle('gooff', on);
+      if (b.tagName === 'BUTTON') b.disabled = on;
+    });
+  }
   function bindGo() {
     $$('.goto').forEach(function (b) {
-      b.addEventListener('click', function () { go(b.dataset.to, b); });
+      b.addEventListener('click', function () {
+        if (going || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('gooff')) return;
+        go(b.dataset.to, b);
+      });
     });
   }
   bindGo();
+
+  // -- what you see ------------------------------------------------------------
+  // #look is server-rendered like #where and repainted from the same state
+  // payload, so a trip, a skip or somebody walking in changes the view for
+  // free. Two things live here because they are behaviour, not markup: the
+  // look button (POST scene.php, then follow the job over progress.php like
+  // every other long thing on this page), and the panorama viewer.
+  //
+  // lookHtml is the STRING the server sent, not the DOM's re-serialisation
+  // of it (which differs in its quoting), so an unchanged view compares equal.
+  //
+  // THE VIEWER ITSELF IS xeric-view.js — the look-around, step inside, the
+  // phone, the day strip and the speaker — one static file the room strip and
+  // the stand page load too. XV holds the view on screen and where you were
+  // facing in each one; this page holds when to build it.
+  var lookEs = null, lookPoll = null, lookHtml = <?= js($state['look_html']) ?>;
+  function bindLook() {
+    // A live view (xeric-view.js's stream) survives a repaint of itself: the
+    // mount moves its element across rather than tearing it down.
+    var live = document.querySelector('#look .lookstreambox');
+    if (live) XV.mount({ kind: 'stream', box: live, onEnd: function () { refreshState(); } });
+    else XV.unmount();
+    // A machine this tab found it cannot play is not offered again (xeric-view.js liveGate).
+    XV.liveGate($$('#look [data-golive]'), 'play');
+    var box = document.querySelector('#look .lookpanobox');
+    if (box) XV.mount(box);
+    // A still: the same buttons laid over the picture at their bearings.
+    var stl = !box && !live && document.querySelector('#look .lookstill');
+    if (stl) XV.mount(stl);
+    var sc = document.querySelector('#look canvas.looksplat');      // a room to stand inside (xeric-splat.js)
+    if (sc && !box) XV.mount({ kind: 'splat', canvas: sc, url: sc.dataset.src });
+    var img = document.querySelector('#look .lookimg');
+    // Bound, not an onerror= attribute: the CSP grants no inline handlers.
+    if (img) img.addEventListener('error', function () { this.remove(); });
+    // The view the server put on screen is the one the strip calls "now".
+    $$('#look .lookthumb').forEach(function (t) { t.dataset.now = t.classList.contains('cur') ? '1' : '0'; });
+    var au = document.querySelector('#look audio'), lb = document.querySelector('#look [data-listen]');
+    if (au && lb) {
+      var says = function () {
+        lb.setAttribute('aria-pressed', au.paused ? 'false' : 'true');
+        lb.textContent = au.paused ? 'listen' : 'stop listening';
+      };
+      au.addEventListener('play', says);
+      au.addEventListener('pause', says);
+    }
+    armLookPoll();
+  }
+
+  // ONE LISTENER FOR THE WHOLE VIEW, on the box that survives every repaint:
+  // #look's insides are replaced wholesale, and a handler bound to a button
+  // that has since been thrown away is a button that does nothing.
+  if ($('#look')) $('#look').addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('button') : null;
+    if (!t || !$('#look').contains(t)) return;
+    // A person in the room is a thread, opened exactly as the cast chip opens it.
+    if (t.classList.contains('looktag')) { openThread(t.dataset.h); return; }
+    if (t.classList.contains('lookthumb')) { XV.dayView(t); return; }
+    if (t.hasAttribute('data-listen')) {
+      var au = document.querySelector('#look audio');
+      if (!au) return;
+      if (au.paused) { var p = au.play(); if (p && p.catch) p.catch(function () {}); } else au.pause();
+      return;
+    }
+    if (t.hasAttribute('data-room')) { roomOpen(true); return; }
+    if (t.hasAttribute('data-look') && !t.disabled) look(t);
+    if (t.hasAttribute('data-golive') && !t.disabled) goLive(t);
+    if (t.hasAttribute('data-liveend') && XV.lookView && XV.lookView.end) XV.lookView.end('you ended it');
+  });
+
+  // GO LIVE: the owner's press is the only way a live view starts (no heart,
+  // no reaper). The server asks the machine, keeps the session, and the
+  // repaint puts the video where the room was.
+  function goLive(btn) {
+    btn.disabled = true;
+    $('#lookerr').hidden = true;
+    fetch('stream.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ w: W, a: 'start' })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j.ok) throw new Error(res.j.error || 'the live view could not be started');
+        refreshState();
+      })
+      .catch(function (e) {
+        $('#lookerr').textContent = e.message;
+        $('#lookerr').hidden = false;
+        btn.disabled = false;
+      });
+  }
+
+
+  // A reload in the middle of a render has no job to follow; it comes back
+  // and looks again, gently, until the room is in. Re-armed on every repaint,
+  // changed or not, because "still developing" is an unchanged sidebar.
+  function armLookPoll() {
+    clearTimeout(lookPoll);
+    if (lookEs || !document.querySelector('#look [data-pending]')) return;
+    lookPoll = setTimeout(function () { if (document.hidden) armLookPoll(); else refreshState(); }, 15000);
+  }
+
+  function look(btn) {
+    btn.disabled = true;
+    $('#lookerr').hidden = true;
+    fetch('scene.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ w: W, a: 'look' })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j.ok) throw new Error(res.j.error || 'the room could not be asked for');
+        if (res.j.job) followLook(res.j.job);
+        refreshState();                                // "developing…", from the one renderer
+      })
+      .catch(function (e) {
+        $('#lookerr').textContent = e.message;
+        $('#lookerr').hidden = false;
+        btn.disabled = false;
+      });
+  }
+
+  function followLook(job) {
+    if (lookEs) lookEs.close();
+    lookEs = new EventSource('progress.php?job=' + encodeURIComponent(job));
+    function line(m) {
+      var d = {}; try { d = JSON.parse(m.data); } catch (e) {}
+      var el = document.querySelector('#look .lookdev');
+      if (el && (d.message || d.text)) el.textContent = 'developing… ' + (d.message || d.text);
+    }
+    ['hello', 'note', 'queue'].forEach(function (k) { lookEs.addEventListener(k, line); });
+    function end() { if (lookEs) lookEs.close(); lookEs = null; refreshState(); }
+    lookEs.addEventListener('done', end);
+    // progress.php's `failed` is the job's own error; onerror is the transport.
+    lookEs.addEventListener('failed', function (m) {
+      var d = {}; try { d = JSON.parse(m.data); } catch (e) {}
+      $('#lookerr').textContent = d.message || 'the room did not develop';
+      $('#lookerr').hidden = false;
+      end();
+    });
+    lookEs.onerror = function () { if (lookEs && lookEs.readyState === 2) end(); };
+  }
+
+  bindLook();
 
   // Death, and undoing it. Same shape as go(): no model, no job, no queue — one
   // row written and a ledger read back, so it answers inline.
@@ -2152,7 +2527,7 @@ echo '<style>' . xeric_play_css() . '
     if (going) return;
     going = true;
     $('#goerr').hidden = true;
-    $$('.goto').forEach(function (b) { b.disabled = true; });
+    tripLock(true);
 
     fetch('where.php', {
       method: 'POST',
@@ -2176,7 +2551,7 @@ echo '<style>' . xeric_play_css() . '
       })
       .then(function () {
         going = false;
-        $$('.goto').forEach(function (b) { b.disabled = false; });
+        tripLock(false);
       });
   }
 
@@ -2238,6 +2613,14 @@ echo '<style>' . xeric_play_css() . '
     if (state.cast) LASTCAST = state.cast;
     if (state.cast_html) { $('#cast').innerHTML = state.cast_html; bindCast(); }
     if (state.where_html) { $('#where').innerHTML = state.where_html; bindGo(); }
+    // Only when it changed: a panorama somebody has turned to face the door
+    // should not snap back to the start because a turn repainted the sidebar.
+    if (typeof state.look_html === 'string' && state.look_html !== lookHtml) {
+      lookHtml = state.look_html; $('#look').innerHTML = lookHtml; bindLook();
+    }
+    armLookPoll();
+    roomMark();
+    if (state.room && !ROOM.on) roomOpen(false);
     if (state.fate_html) { $('#fate').innerHTML = state.fate_html; bindFate(); }
     if (state.panel_html) $('#panel').innerHTML = state.panel_html;
     if (state.past_html) $('#past').innerHTML = state.past_html;  // the history, with its reasoning one tap away
@@ -2314,7 +2697,10 @@ echo '<style>' . xeric_play_css() . '
           $('#composer').placeholder = d.name + ' is dead' + (d.how ? ', ' + d.how : '') + '.';
           $('#tone').textContent = d.how || (d.name + ' is dead.');
         }
-        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when, m.photo); });
+        // A player line carries `player` (and its speaker's name in `who`) only
+        // when more than one person at the centre has spoken in this thread;
+        // then the bubble says whose it is. Otherwise it is "you", as ever.
+        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when, m.photo, m.id, m.player ? m.who : '', !!m.redacted); });
         // the dot is out now — repaint the cast behind this screen
         refreshState();
         var t = $('#composer');
@@ -2342,13 +2728,15 @@ echo '<style>' . xeric_play_css() . '
     return { text: (initials || '?').toUpperCase(), hue: h };
   }
 
-  function addMsg(who, text, when, photo) {
+  // The speaker (speak, unspeak, refuseSpeak) is in xeric-view.js: XV.speak.
+
+  function addMsg(who, text, when, photo, mid, by, redacted) {
     var li = document.createElement('li');
-    li.className = who;
+    li.className = who + (redacted ? ' redacted' : '');
 
     var face = '';
     if (who !== 'narr') {
-      var f = faceOf(who === 'me' ? (ME || 'you') : ($('#tname').textContent || '?'));
+      var f = faceOf(who === 'me' ? (by || ME || 'you') : ($('#tname').textContent || '?'));
       face = '<span class="av" style="--hue:' + f.hue + '" aria-hidden="true">' + esc(f.text) + '</span>';
     }
 
@@ -2364,8 +2752,18 @@ echo '<style>' . xeric_play_css() . '
            + '<span class="mcap">' + esc(photo.caption || text) + '</span>';
     }
 
-    li.innerHTML = face + '<span class="b">' + body
-                 + (when ? '<span class="st">' + esc(when) + '</span>' : '') + '</span>';
+    // A character's line, with an id to ask after and words rather than a
+    // photograph, gets a speaker — when a voice machine is set. The player's
+    // own bubbles never do: nobody needs to hear themselves read back.
+    var spk = '';
+    if (VOICE && who === 'them' && mid && !photo && !redacted && !/^📷/.test(String(text || ''))) {
+      spk = '<button type="button" class="mspk" data-m="' + escA(String(mid)) + '" aria-pressed="false" aria-label="hear '
+          + escA($('#tname').textContent || 'this line') + '">🔈</button>';
+    }
+    li.innerHTML = face + '<span class="b">' + (by ? '<span class="rwho">' + esc(by) + '</span>' : '') + body
+                 + (when ? '<span class="st">' + esc(when) + '</span>' : '') + spk + '</span>';
+    var sb = li.querySelector('.mspk');
+    if (sb) sb.addEventListener('click', function () { XV.speak(sb); });
     // BOUND, NOT WRITTEN AS AN ATTRIBUTE. An inline `onerror=` is inline script,
     // and the Content-Security-Policy grants no 'unsafe-inline' — so as an
     // attribute this would silently never fire, and a photo that failed to load
@@ -2564,7 +2962,7 @@ echo '<style>' . xeric_play_css() . '
           return;
         }
         pending = null;                                // the xeric has it now
-        addMsg('them', res.d.text, res.d.when);
+        addMsg('them', res.d.text, res.d.when, null, res.d.mid);
         // The photo she promised, right behind her words: the caption bubble
         // lands now, and the picture replaces it on a later repaint once the
         // reaper (running behind this conversation) has developed the film.
@@ -3378,6 +3776,13 @@ echo '<style>' . xeric_play_css() . '
           }
           lastCastHtml = d.cast_html;
         }
+        // Compared against the string last painted, so an unchanged room never
+        // rebuilds a panorama somebody has turned to face the door.
+        if (typeof d.look_html === 'string' && d.look_html !== lookHtml && $('#look')) {
+          lookHtml = d.look_html; $('#look').innerHTML = lookHtml; bindLook();
+        }
+        roomMark();
+        if (d.room && !ROOM.on) roomOpen(false);
         if (typeof d.compass === 'string' && $('#scompass')
             && $('#scompass').innerHTML !== d.compass) {
           $('#scompass').innerHTML = d.compass;
@@ -3395,9 +3800,9 @@ echo '<style>' . xeric_play_css() . '
   // the same lane the world's own voice uses inside a thread, and for the same
   // reason: this is not somebody who texted you.
   //
-  // NOTHING IS STORED. A hint is about where you are stuck right now; keeping a
-  // transcript of them would turn a way out of being stuck into one more thing
-  // to read.
+  // KEPT, A FEW AT A TIME. The engine's ask is a read; the play view keeps the
+  // exchange as the narrator's own thread and opens the pane on the last few,
+  // because "and why?" only means something after the first answer.
   function narrSay(who, text) {
     var li = document.createElement('li');
     li.className = who;
@@ -3439,10 +3844,42 @@ echo '<style>' . xeric_play_css() . '
     $('#asknarr').addEventListener('click', function () {
       show('narr');
       // Opened cold, it answers the unasked question: what now.
-      if (!$('#nmsgs').children.length) askNarrator('');
+      // A guest has no box to ask with, and is not asked for.
+      if (!$('#nmsgs').children.length && $('#ncomposer')) askNarrator('');
     });
   }
   if ($('#nagain')) $('#nagain').addEventListener('click', function () { askNarrator(''); });
+
+  // -- writing ahead (the owner's) -------------------------------------------
+  function intentPost(a, body) {
+    return fetch('play.php?a=' + a + '&w=' + encodeURIComponent(W), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.ok) { $('#nintents').innerHTML = d.html; bindRetire(); toast(d.note || 'kept'); return true; }
+        toast((d && d.error) || 'that did not take'); return false;
+      })
+      .catch(function () { toast('that did not take'); return false; });
+  }
+  function bindRetire() {
+    $$('#nintents .iretire').forEach(function (b) {
+      b.addEventListener('click', function () { b.disabled = true; intentPost('unintend', { n: parseInt(b.dataset.n, 10) }); });
+    });
+  }
+  if ($('#nintendgo')) {
+    bindRetire();
+    var sendIntent = function () {
+      var box = $('#nintend'), t = box.value.trim();
+      if (!t) return;
+      $('#nintendgo').disabled = true;
+      intentPost('intend', { text: t }).then(function (ok) {
+        $('#nintendgo').disabled = false;
+        if (ok) box.value = '';
+      });
+    };
+    $('#nintendgo').addEventListener('click', sendIntent);
+    $('#nintend').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendIntent(); } });
+  }
   if ($('#nsend')) {
     $('#nsend').addEventListener('click', function () {
       var box = $('#ncomposer'), t = box.value.trim();
@@ -3523,6 +3960,13 @@ echo '<style>' . xeric_play_css() . '
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 128) + 'px';
   });
+
+  // -- hold to talk ------------------------------------------------------------
+  // PRESS, SPEAK, LET GO, READ, SEND. The recorder is xeric-view.js's hold();
+  // the page hands it the button, whose thread is open, and how a refusal is
+  // said in the composer. The words come back into the box, never the thread.
+  var hb = document.getElementById('hear');
+  if (hb) XV.hold(hb, { handle: function () { return openHandle; }, fail: sayfail });
 
   // -- the time control ----------------------------------------------------
   var es = null, ticking = false, drops = 0;
@@ -3726,6 +4170,198 @@ echo '<style>' . xeric_play_css() . '
     var el = $('#staleerr');
     el.textContent = msg;
     el.hidden = false;
+  }
+
+
+  // -- the room ----------------------------------------------------------------
+  // Three to five of them and you. The strip polls room.php by message id —
+  // 700 ms while a turn is live, four seconds otherwise, never while the tab
+  // is hidden — and draws each row once, in the thread's own three lanes. A
+  // line exists on the server only from its due time, so the pacing is the
+  // server's and nothing here can show a line early.
+  //
+  // TALKING WITHOUT YOU is asked for from here and decided there: after 30–45
+  // idle seconds with the tab visible and nothing typed, the page asks once;
+  // a 409 is the room keeping quiet, and the page simply waits for you.
+  var ROOM = { on: false, after: 0, conv: 0, timer: null, idle: null, seen: {}, live: null,
+               guest: <?= js(!xeric_play_room_may_sit($w)) ?>, busy: false, lastSpeaker: '', speakT: null };
+
+  function roomOpen(focus) {
+    if (!$('#room')) return;
+    $('#room').hidden = false;
+    if (ROOM.guest) { $('#rcompose').hidden = true; $('#rleave').hidden = true; }
+    if (!ROOM.on) { ROOM.on = true; roomPoll(); }
+    if (focus && !ROOM.guest && window.innerWidth > 720) $('#rcomposer').focus();
+  }
+
+  // '__you' is this screen's own lane, and only it wears this viewer's face;
+  // another player's line comes as '__you.p<n>' with their name, and is drawn
+  // as their initials — never this viewer's avatar on a friend's words.
+  function roomFace(h, name) {
+    if (h === '__you' && MEFACE) return { text: MEFACE.txt, hue: MEFACE.hue };
+    var row = h && h.indexOf('__you') !== 0 && document.querySelector('#cast .person[data-h="' + h + '"]');
+    if (row && row.dataset.av) return { text: row.dataset.av, hue: parseInt(row.dataset.hue || '0', 10) };
+    var n = String(name || '?').trim(), hh = 0;
+    for (var i = 0; i < n.length; i++) hh = (hh * 31 + n.charCodeAt(i)) % 360;
+    return { text: (n.split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0); }).join('') || '?').toUpperCase(), hue: hh };
+  }
+
+  function roomRow(r) {
+    if (ROOM.seen[r.id]) return;
+    ROOM.seen[r.id] = true;
+    var li = document.createElement('li');
+    li.className = r.who + (r.redacted ? ' redacted' : '') + (r.own === false ? ' peer' : '');
+    if (r.who === 'narr') {
+      li.innerHTML = '<span class="b">' + esc(r.text) + '</span>';
+    } else {
+      var f = roomFace(r.h, r.name);
+      var spk = '';
+      if (VOICE && r.who === 'them' && r.id) {
+        spk = '<button type="button" class="mspk" data-m="' + escA(String(r.id)) + '" aria-pressed="false" aria-label="hear '
+            + escA(r.name || 'this line') + '">🔈</button>';
+      }
+      li.innerHTML = '<span class="av" style="--hue:' + f.hue + '" aria-hidden="true">' + esc(f.text) + '</span>'
+                   + '<span class="b">' + (r.who === 'them' || (r.who === 'me' && r.player) ? '<span class="rwho">' + esc(r.name) + '</span>' : '')
+                   + esc(r.text) + (r.when ? '<span class="st">' + esc(r.when) + '</span>' : '') + spk + '</span>';
+      var sb = li.querySelector('.mspk');
+      if (sb) sb.addEventListener('click', function () { XV.speak(sb); });
+    }
+    var box = $('#rmsgs');
+    var near = (box.scrollHeight - box.scrollTop - box.clientHeight) < 80;
+    box.appendChild(li);
+    if (near) box.scrollTop = box.scrollHeight;
+    if (r.who === 'them') {
+      ROOM.lastSpeaker = r.h;
+      clearTimeout(ROOM.speakT);
+      ROOM.speakT = setTimeout(function () { ROOM.lastSpeaker = ''; roomMark(); }, 6000);
+    }
+  }
+
+  // The people in the view light up as they talk: .typing for whoever is
+  // about to speak, .speaking for whoever just did. Re-applied after every
+  // repaint, because #look's buttons are new each time it is drawn.
+  function roomMark() {
+    var live = ROOM.live, typing = live && live.typing ? live.typing.h : '';
+    $$('#look .looktag[data-h]').forEach(function (b) {
+      b.classList.toggle('typing', !!typing && b.dataset.h === typing);
+      b.classList.toggle('speaking', !!ROOM.lastSpeaker && b.dataset.h === ROOM.lastSpeaker && b.dataset.h !== typing);
+    });
+  }
+
+  function roomPaint(d) {
+    ROOM.live = d.live || null;
+    if (d.conv && d.conv !== ROOM.conv) ROOM.conv = d.conv;
+    (d.rows || []).forEach(roomRow);
+    if (typeof d.last === 'number' && d.last > ROOM.after) ROOM.after = d.last;
+    var live = ROOM.live;
+    if (live) {
+      var who = live.present.map(function (p) { return p.name; });
+      // Two people at the centre: the others at the table are named too.
+      var mates = (live.players || []).map(function (p) { return p.name; }).filter(function (n) { return n !== live.you; });
+      if (live.players && live.seated === false) mates = live.players.map(function (p) { return p.name; });
+      $('#rhead').textContent = (live.place_name ? 'At ' + live.place_name + ': ' : '')
+        + (live.seated === false ? '' : 'you, ') + mates.concat(who).join(', ')
+        + (live.far && live.far.length ? ' · at the far table: ' + live.far.join(', ') : '');
+      if (live.typing) {
+        $('#rthinkwho').textContent = live.typing.queue || (live.typing.name + ' is about to say something');
+        $('#rthinking').hidden = false;
+      } else $('#rthinking').hidden = true;
+      if (live.error) { $('#rerr').textContent = live.error; $('#rerr').hidden = false; }
+      $('#rnote').textContent = live.turn ? (live.ceiling_note || '')
+        : (live.floor && live.floor !== live.you ? 'the floor is ' + live.floor + '\'s'
+        : (live.said ? 'the floor is yours' : '')) + (live.ceiling_note && !live.turn ? ' · ' + live.ceiling_note : '');
+      $('#rleave').disabled = false;
+    } else {
+      $('#rthinking').hidden = true;
+      if (ROOM.conv) $('#rnote').textContent = 'the conversation is over — what each of them took from it lands in their memory';
+      $('#rleave').disabled = true;
+    }
+    roomMark();
+    roomIdleArm();
+  }
+
+  function roomPoll() {
+    clearTimeout(ROOM.timer);
+    if (!ROOM.on) return;
+    if (document.hidden) return;                  // picked back up on visibilitychange
+    fetch('room.php?w=' + encodeURIComponent(W) + '&after=' + ROOM.after + (ROOM.conv ? '&c=' + ROOM.conv : ''))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        // A transient refusal (a 500, a 404 while a fork settles) is not the
+        // end of the room: say nothing and ask again, like the network
+        // failure below. Returning here without the timer froze the strip.
+        if (!d || !d.ok) { ROOM.timer = setTimeout(roomPoll, 6000); return; }
+        var was = ROOM.live;
+        roomPaint(d);
+        // A live room that ends, or a fresh one opening, moves the cursor
+        // over to the conversation now running.
+        if (was && !d.live) ROOM.conv = 0;
+        ROOM.timer = setTimeout(roomPoll, d.poll || 4000);
+      })
+      .catch(function () { ROOM.timer = setTimeout(roomPoll, 6000); });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && ROOM.on) roomPoll(); });
+
+  function roomPost(action, body) {
+    return fetch('room.php?w=' + encodeURIComponent(W) + '&a=' + action, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); });
+  }
+
+  function roomSay() {
+    var box = $('#rcomposer'), text = box.value.trim();
+    if (!text || ROOM.busy || ROOM.guest) return;
+    ROOM.busy = true;
+    $('#rerr').hidden = true;
+    $('#rsay').disabled = true;
+    roomPost('say', { text: text }).then(function (res) {
+      ROOM.busy = false;
+      $('#rsay').disabled = false;
+      if (!res.ok || !res.d.ok) {
+        // Refused or not, the line was never said: it stays in the box.
+        $('#rerr').textContent = (res.d && res.d.error) || 'that did not land';
+        $('#rerr').hidden = false;
+        return;
+      }
+      box.value = '';
+      box.style.height = 'auto';
+      if (res.d.conv && res.d.conv !== ROOM.conv) ROOM.conv = res.d.conv;
+      if (res.d.warn) { $('#rerr').textContent = res.d.warn; $('#rerr').hidden = false; }
+      roomPoll();
+    }).catch(function (e) {
+      ROOM.busy = false;
+      $('#rsay').disabled = false;
+      $('#rerr').textContent = 'the xeric could not be reached, ' + e.message;
+      $('#rerr').hidden = false;
+    });
+  }
+
+  function roomIdleArm() {
+    clearTimeout(ROOM.idle);
+    var live = ROOM.live;
+    if (ROOM.guest || !live || live.turn || !live.said || live.carry_left <= 0) return;
+    ROOM.idle = setTimeout(function () {
+      if (document.hidden || !ROOM.live || ROOM.live.turn) return;
+      if ($('#rcomposer').value.trim() !== '' || document.activeElement === $('#rcomposer') && $('#rcomposer').value) return;
+      roomPost('carry', {}).then(function (res) { if (res.ok && res.d.ok) roomPoll(); }).catch(function () {});
+    }, 30000 + Math.floor(Math.random() * 15000));
+  }
+
+  if ($('#room')) {
+    $('#rsay').addEventListener('click', roomSay);
+    $('#rcomposer').addEventListener('keydown', function (e) {
+      clearTimeout(ROOM.idle);
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); roomSay(); }
+    });
+    $('#rcomposer').addEventListener('input', function () {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 128) + 'px';
+    });
+    $('#rleave').addEventListener('click', function () {
+      $('#rleave').disabled = true;
+      roomPost('leave', {}).then(function () { roomPoll(); }).catch(function () { $('#rleave').disabled = false; });
+    });
+    if (<?= js($state['room'] !== null) ?>) roomOpen(false);
   }
 
   // A skip already running for this browser (a reload, a locked phone) is

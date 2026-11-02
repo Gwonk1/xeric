@@ -914,6 +914,244 @@ xeric_remind_done($dbR2, $rid3, $rNow);
 ok('remind: one already claimed elsewhere is not reported as sent',
     xeric_remind_fire($dbR1, [], 'Milldale', $rNow) === []);
 
+// ---------------------------------------------------------------------------
+// WHO SAID IT. A player id on every user line; a transcript that labels them
+// once two people have spoken; a promise put on the person who made it.
+// ---------------------------------------------------------------------------
+
+echo "\n# who said it\n";
+
+require_once __DIR__ . '/../constructs.php';
+require_once __DIR__ . '/../trust.php';
+
+// SOLO IS BYTE-IDENTICAL. The same thread written the old way (no player) and
+// the new way (player 1 on every user line) builds the same prompt, and the
+// same prompt as one that never mentions a player at all.
+$soloOld = fresh_db('who-solo-old');
+$soloNew = fresh_db('who-solo-new');
+foreach ([[$soloOld, null], [$soloNew, 1]] as [$dS, $pS]) {
+    $cS = xeric_conversation_create($dS, 'ruth', 'chat', null, 1000);
+    xeric_message_append($dS, $cS, 'user', null, 'Is the urn on?', $NOW['epoch'] - 600, 1000, $pS);
+    xeric_message_append($dS, $cS, 'character', 'ruth', 'It is always on.', $NOW['epoch'] - 590, 1001);
+}
+$pOld = xeric_prompt_build($T, $soloOld, 'ruth', $NOW, ['user_message' => 'Good.']);
+$pNew = xeric_prompt_build($T, $soloNew, 'ruth', $NOW, ['user_message' => 'Good.', 'player' => 1]);
+ok('who: a solo thread\'s prompt is byte-identical whether its rows carry a player or not',
+    json_encode($pOld) === json_encode($pNew));
+ok('who: and no line in it is labelled with anybody\'s name',
+    !str_contains(json_encode($pNew), 'Walt: '));
+ok('who: the player lands on the user row, and on nobody else\'s',
+    $soloNew->query("SELECT GROUP_CONCAT(COALESCE(player, 'null')) FROM messages ORDER BY id")->fetchColumn() === '1,null');
+
+// TWO PEOPLE IN ONE THREAD. Walt (the owner) says hello; Corey promises the dish.
+$TW  = array_merge($T, ['forge' => array_merge((array)($T['forge'] ?? []), ['armed' => ['expectations']])]);
+$dW  = fresh_db('who-two');
+$cid = xeric_player_add($dW, $TW, 'Corey');
+$seenW = null;
+xeric_chat_turn($TW, $dW, 'ruth', 'Evening, Ruth.', $NOW, stub_says('Evening, Walt.', $seenW),
+                ['learn' => false, 'remind' => false, 'player' => 1]);
+ok('who: one voice in the thread, and the incoming line is unlabelled',
+    !str_contains(json_encode($seenW), 'Walt: Evening'));
+xeric_chat_turn($TW, $dW, 'ruth', 'I will bring the dish round Saturday.', $NOW,
+                stub_says('I will hold you to that.', $seenW), ['learn' => false, 'remind' => false, 'player' => $cid]);
+$flat = implode("\n", array_column((array)$seenW, 'content'));
+ok('who: once a second person speaks, every player line is labelled with its speaker',
+    str_contains($flat, 'Walt: Evening, Ruth.') && str_contains($flat, 'Corey: I will bring the dish round Saturday.'),
+    mb_substr($flat, -400));
+ok('who: and Ruth is told she is texting the one who typed',
+    str_contains((string)($seenW[0]['content'] ?? ''), 'texting Corey'));
+ok('who: the rows say who said what',
+    $dW->query("SELECT GROUP_CONCAT(COALESCE(player, 'null')) FROM messages ORDER BY id")->fetchColumn() === '1,null,' . $cid . ',null');
+
+// The harvest is paid for by WALT's turn (player 1), and the promise is Corey's.
+$convW = (int)xeric_conversation_find($dW, 'ruth', 'chat')['id'];
+$askedW = null;
+xeric_chat_extract($TW, $dW, 'ruth', $convW, stub_says(function (string $tag, array $msgs) use (&$askedW): array {
+    $askedW = $msgs;
+    return ['memories' => [], 'promise' => ['quote' => 'I will bring the dish round Saturday',
+            'what' => 'the dish', 'when' => 'Saturday'], 'explained' => false, 'kept' => false];
+}), $NOW, 1);
+$asked = implode("\n", array_column((array)$askedW, 'content'));
+ok('who: the harvest reads the transcript with each player named',
+    str_contains($asked, 'Corey: I will bring the dish') && str_contains($asked, 'Walt: Evening, Ruth.'));
+$ex = xeric_expects_for($dW, 'ruth');
+ok('who: the expectation is the promiser\'s, not the harvest-payer\'s',
+    count($ex) === 1 && (int)($ex[0]['p'] ?? 1) === $cid, json_encode($ex));
+xeric_constructs_tick($TW, $dW, ['epoch' => (int)$ex[0]['due'] + 8 * 86400]);
+ok('who: and the miss costs Corey, and only Corey',
+    xeric_trust_of($dW, 'ruth', null, $cid) < 0 && xeric_trust_of($dW, 'ruth', null, 1) === 0,
+    xeric_trust_of($dW, 'ruth', null, $cid) . ' / ' . xeric_trust_of($dW, 'ruth', null, 1));
+ok('who: a quote that matches no line falls back to whoever ran the harvest',
+    xeric_chat_promiser([['role' => 'user', 'content' => 'hello', 'player' => 3]], ['quote' => 'see you Monday'], 2) === 2
+    && xeric_chat_promiser([['role' => 'user', 'content' => 'OK — see you, Monday!', 'player' => 3]],
+                           ['quote' => 'see you Monday'], 2) === 3);
+
+// KEPT AND EXPLAINED ARE THE SPEAKER'S TOO. Corey owns up to the missed dish,
+// and the harvest that hears it runs on Walt's turn: the repair is Corey's.
+$trC0 = xeric_trust_of($dW, 'ruth', null, $cid);
+$cW2 = xeric_conversation_for($dW, 'ruth', 'chat');
+xeric_message_append($dW, $cW2, 'user', null, 'Sorry I never came Saturday, Ruth. My truck died.', $NOW['epoch'], null, $cid);
+xeric_message_append($dW, $cW2, 'character', 'ruth', 'Well. These things happen.', $NOW['epoch']);
+$askedX = null;
+xeric_chat_extract($TW, $dW, 'ruth', $convW, stub_says(function (string $tag, array $msgs) use (&$askedX): array {
+    $askedX = $msgs;
+    return ['memories' => [], 'promise' => null, 'explained' => true, 'kept' => false];
+}), $NOW, 1);
+$exX = array_values(array_filter(xeric_expects_for($dW, 'ruth'), fn($e) => (int)($e['p'] ?? 1) === $cid));
+ok('who: an explanation heard on Walt\'s turn repairs the miss Corey owned up to, and Corey\'s trust takes the notch back',
+    ($exX[0]['state'] ?? '') === 'repaired' && xeric_trust_of($dW, 'ruth', null, $cid) === $trC0 + 1
+    && xeric_trust_of($dW, 'ruth', null, 1) === 0, json_encode($exX));
+ok('who: with two in the thread the harvest is asked whose it was; a thread of one is asked exactly as before',
+    str_contains(implode("\n", array_column((array)$askedX, 'content')), 'give the name of whoever it was')
+    && $askedWith !== null && !str_contains((string)json_encode($askedWith), 'give the name of whoever it was'));
+// Kept, by name: Corey brought the pie plate, then Walt spoke last.
+$kPlate = xeric_expect_form($TW, $dW, 'ruth', ['quote' => 'I will have your pie plate back Saturday',
+    'what' => 'the pie plate', 'when' => 'Saturday'], xeric_world_now($TW, (int)$NOW['epoch'] - 86400), null, null, $cid);
+xeric_message_append($dW, $cW2, 'user', null, 'Here is your pie plate, Ruth.', $NOW['epoch'] + 60, null, $cid);
+xeric_message_append($dW, $cW2, 'user', null, 'He even washed it.', $NOW['epoch'] + 61, null, 1);
+xeric_message_append($dW, $cW2, 'character', 'ruth', 'So he did.', $NOW['epoch'] + 62);
+xeric_chat_extract($TW, $dW, 'ruth', $convW, stub_says(['memories' => [], 'promise' => null, 'explained' => false, 'kept' => 'Corey']),
+    xeric_world_now($TW, (int)$NOW['epoch'] + 120), 1);
+$plate = array_values(array_filter(xeric_expects_for($dW, 'ruth'), fn($e) => $e['key'] === $kPlate))[0] ?? [];
+ok('who: a promise kept goes to the one the harvest names — Corey — not to the newest line\'s speaker or the harvest-payer',
+    $kPlate !== null && ($plate['state'] ?? '') === 'kept' && xeric_trust_of($dW, 'ruth', null, 1) === 0,
+    json_encode($plate));
+
+// ---------------------------------------------------------------------------
+// RATING PER VIEWER. A row carries the rating its request ran at; a viewer
+// below it reads the row emptied; an unstamped row is read as it always was.
+// ---------------------------------------------------------------------------
+
+echo "\n# rating per viewer\n";
+
+$dR = fresh_db('rating');
+$cR = xeric_conversation_create($dR, 'ruth', 'chat', null, 1000);
+xeric_state_rating('mature');
+$mR = xeric_message_append($dR, $cR, 'character', 'ruth', 'A line written for adults.', 100, 1000);
+$eR = xeric_event_add($dR, 'An adult hour', 200, 'bluebird', ['ruth'], 'What happened, in full.');
+xeric_state_rating('');
+xeric_message_append($dR, $cR, 'character', 'ruth', 'A line from before stamps.', 101, 1001);
+ok('rating: a row is stamped with the rating it was written under, and nothing set stamps nothing',
+    $dR->query('SELECT GROUP_CONCAT(rating, \'|\') FROM messages ORDER BY id')->fetchColumn() === 'mature|'
+    && $dR->query('SELECT rating FROM events')->fetchColumn() === 'mature');
+// THE VIEWER IS NAMED, never read off the process: the storage reader with
+// no viewer returns every row as written, whoever's request is running.
+xeric_state_rating('sfw');
+$readKid = xeric_messages_recent($dR, $cR, 20, 0, 'sfw');
+$evKid   = xeric_events_recent($dR, 10, 'sfw')[0];
+ok('rating: a viewer below the stamp reads the line as a gap, with no text',
+    $readKid[0]['content'] === XERIC_STATE_UNSHOWN && !empty($readKid[0]['redacted']));
+ok('rating: an unstamped row is shown to the same viewer, as today',
+    $readKid[1]['content'] === 'A line from before stamps.' && empty($readKid[1]['redacted']));
+ok('rating: and the hour is an hour, with nothing of what happened in it',
+    $evKid['title'] === XERIC_STATE_UNSHOWN_HOUR && $evKid['prose'] === '' && !empty($evKid['redacted']));
+ok('rating: and with no viewer named, a kids\' headset\'s process still reads storage whole — redaction is not a reader side effect',
+    xeric_messages_recent($dR, $cR)[0]['content'] === 'A line written for adults.' && empty(xeric_messages_recent($dR, $cR)[0]['redacted'])
+    && xeric_events_recent($dR)[0]['prose'] === 'What happened, in full.');
+ok('rating: the same rows read whole at the rating they were made under',
+    xeric_messages_recent($dR, $cR, 20, 0, 'mature')[0]['content'] === 'A line written for adults.'
+    && xeric_events_recent($dR, 10, 'mature')[0]['prose'] === 'What happened, in full.');
+ok('rating: and above it', xeric_messages_recent($dR, $cR, 20, 0, 'explicit')[0]['content'] === 'A line written for adults.');
+
+// THE HARVEST IS BACKGROUND WORK. A kids' headset's turn runs it: it reads the
+// adult lines whole (a memory is written from what was said, never from a
+// placeholder) and the watermark lands on the last row, so nothing is skipped.
+xeric_message_append($dR, $cR, 'user', null, 'And a second one for the harvest.', 102, 1002);
+$askedK = null;
+xeric_state_rating('sfw');
+xeric_chat_extract($T, $dR, 'ruth', $cR, stub_says(function (string $tag, array $msgs) use (&$askedK): array {
+    $askedK = $msgs;
+    return ['memories' => ['Ruth said something only grown-ups heard, and Walt took it in.']];
+}), $NOW);
+$lastR = (int)$dR->query('SELECT MAX(id) FROM messages WHERE conversation_id = ' . $cR)->fetchColumn();
+$flatK = implode("\n", array_column((array)$askedK, 'content'));
+ok('rating: a kids\' headset\'s turn runs the harvest over the adult lines unredacted',
+    str_contains($flatK, 'A line written for adults.') && !str_contains($flatK, XERIC_STATE_UNSHOWN), mb_substr($flatK, -300));
+ok('rating: and its watermark is the last row read, so the harvest never steps past adult lines unread',
+    xeric_arc_int($dR, 'ruth', 'extract.last_message_id', 0) === $lastR && xeric_memories_count($dR, 'ruth') === 1);
+$pK = json_encode(xeric_prompt_build($T, $dR, 'ruth', $NOW, ['conversation_id' => $cR]), JSON_UNESCAPED_UNICODE);
+ok('rating: while the character\'s prompt FOR that headset still carries the gap, not the words',
+    str_contains($pK, XERIC_STATE_UNSHOWN) && !str_contains($pK, 'A line written for adults.'), mb_substr($pK, -300));
+xeric_state_rating('');
+ok('rating: a process nobody clamped reads everything, which is every CLI and test',
+    xeric_messages_recent($dR, $cR)[0]['content'] === 'A line written for adults.'
+    && xeric_state_shown('explicit') && xeric_state_shown('', 'sfw') && !xeric_state_shown('teen', 'pg'));
+
+// ---------------------------------------------------------------------------
+// WHOLE NAMES. The harvest's "whose was it" answer names a person; a name is
+// matched whole, word-bounded, longest first — and an answer naming nobody
+// here, or two of them, credits nobody.
+// ---------------------------------------------------------------------------
+
+echo "\n# whole names\n";
+
+$AH = [2 => 'Ann', 3 => 'Hannah Cole'];
+ok('names: "Hannah" is Hannah — "Ann" is not inside her', xeric_chat_name_player('Hannah', $AH) === 3
+    && xeric_chat_name_player('hannah cole.', $AH) === 3);
+ok('names: "Ann" is Ann', xeric_chat_name_player('Ann', $AH) === 2 && xeric_chat_name_player('It was ann!', $AH) === 2);
+ok('names: two of them named is nobody, and so is a name that is not here',
+    xeric_chat_name_player('Ann and Hannah', $AH) === null && xeric_chat_name_player('Annie', $AH) === null
+    && xeric_chat_name_player('Joanna', $AH) === null);
+ok('names: longest first — "Ann Marie" is not also Ann, and "Ann" beside her is Ann\'s whole name',
+    xeric_chat_name_player('Ann Marie', [2 => 'Ann', 4 => 'Ann Marie']) === 4
+    && xeric_chat_name_player('Ann', [2 => 'Ann', 4 => 'Ann Marie']) === 2
+    && xeric_chat_name_player('Ann', [3 => 'Ann Lee', 4 => 'Ann Marie']) === null);
+// End to end: Hannah keeps a promise; the harvest names her; Ann is not credited.
+$dN  = fresh_db('names');
+$TN  = array_merge($T, ['forge' => array_merge((array)($T['forge'] ?? []), ['armed' => ['expectations']])]);
+$nAnn = xeric_player_add($dN, $TN, 'Ann');
+$nHan = xeric_player_add($dN, $TN, 'Hannah');
+$kH = xeric_expect_form($TN, $dN, 'ruth', ['quote' => 'I will have your pie plate back Saturday',
+    'what' => 'the pie plate', 'when' => 'Saturday'], xeric_world_now($TN, (int)$NOW['epoch'] - 86400), null, null, $nHan);
+$cN = xeric_conversation_for($dN, 'ruth', 'chat');
+xeric_message_append($dN, $cN, 'user', null, 'Here is your pie plate.', $NOW['epoch'], null, $nHan);
+xeric_message_append($dN, $cN, 'user', null, 'She washed it too.', $NOW['epoch'] + 1, null, $nAnn);
+xeric_message_append($dN, $cN, 'character', 'ruth', 'So she did.', $NOW['epoch'] + 2);
+xeric_chat_extract($TN, $dN, 'ruth', $cN, stub_says(['memories' => [], 'promise' => null, 'explained' => false, 'kept' => 'Hannah']),
+    xeric_world_now($TN, (int)$NOW['epoch'] + 60), $nAnn);
+ok('names: the harvest\'s "Hannah" keeps Hannah\'s promise, and Ann\'s trust is untouched',
+    (array_values(array_filter(xeric_expects_for($dN, 'ruth'), fn($e) => $e['key'] === $kH))[0]['state'] ?? '') === 'kept'
+    && xeric_trust_of($dN, 'ruth', null, $nAnn) === 0 && xeric_trust_of($dN, 'ruth', null, $nHan) === 1);
+
+// ---------------------------------------------------------------------------
+// WHOSE CONFIDENCE, WHOSE BREACH. Ruth told Ann something and asked her to
+// keep it from Harlan; Ann repeats it to Harlan in a thread Walt is in too,
+// and the harvest that reads it runs on Walt's turn. Ann broke it.
+// ---------------------------------------------------------------------------
+
+echo "\n# whose breach\n";
+
+$TCf = array_merge($T, ['forge' => array_merge((array)($T['forge'] ?? []), ['armed' => ['private_history']])]);
+$dCf = fresh_db('breach');
+$cfAnn = xeric_player_add($dCf, $TCf, 'Ann');
+$cfSaid = "Something I have not told anyone. The bank wrote about the house. Don't tell Harlan.";
+ok('breach: Ruth\'s confidence is Ann\'s to keep', xeric_confide_to_player($TCf, $dCf, 'ruth',
+    ['quote' => "Don't tell Harlan.", 'what' => 'the bank wrote about the house', 'not' => []], $NOW, $cfAnn, $cfSaid) !== null);
+$trA0 = xeric_trust_of($dCf, 'ruth', null, $cfAnn);
+$cfH = xeric_conversation_for($dCf, 'harlan', 'chat');
+xeric_message_append($dCf, $cfH, 'user', null, 'Evening, Harlan.', $NOW['epoch'], null, 1);
+xeric_message_append($dCf, $cfH, 'user', null, 'Did you hear the bank wrote to Ruth about the house?', $NOW['epoch'] + 30, null, $cfAnn);
+xeric_message_append($dCf, $cfH, 'character', 'harlan', 'Did they now.', $NOW['epoch'] + 60);
+xeric_chat_extract($TCf, $dCf, 'harlan', $cfH, stub_says(['memories' => []]), $NOW, 1);
+$cfRow = xeric_confide_told_player($dCf, 'ruth')[0] ?? [];
+ok('breach: Ann repeated it, Walt\'s turn ran the harvest, and Ann is the one who broke it',
+    ($cfRow['state'] ?? '') === 'broken' && (int)($cfRow['p'] ?? 0) === $cfAnn
+    && xeric_trust_of($dCf, 'ruth', null, $cfAnn) < $trA0 && xeric_trust_of($dCf, 'ruth', null, 1) === 0,
+    json_encode($cfRow) . ' ' . xeric_trust_of($dCf, 'ruth', null, $cfAnn) . '/' . xeric_trust_of($dCf, 'ruth', null, 1));
+// And a confidence told across a shared thread is put on whoever she was answering.
+$cfR = xeric_conversation_for($dCf, 'ruth', 'chat');
+xeric_message_append($dCf, $cfR, 'user', null, 'You look worried, Ruth.', $NOW['epoch'] + 100, null, $cfAnn);
+xeric_message_append($dCf, $cfR, 'character', 'ruth', 'The mill is closing in May. Keep this to yourself.', $NOW['epoch'] + 130);
+xeric_message_append($dCf, $cfR, 'user', null, 'Pie, anyone?', $NOW['epoch'] + 160, null, 1);
+xeric_chat_extract($TCf, $dCf, 'ruth', $cfR, stub_says(['memories' => [], 'confided' => ['quote' => 'Keep this to yourself.',
+    'what' => 'the mill is closing in May', 'not' => []]]), $NOW, 1);
+$cfNew = array_values(array_filter(xeric_confide_told_player($dCf, 'ruth'), fn($c) => str_contains((string)$c['what'], 'mill')));
+ok('breach: a confidence in a shared thread is the one she was answering\'s — Ann\'s, not the harvest-payer\'s',
+    count($cfNew) === 1 && (int)($cfNew[0]['p'] ?? 0) === $cfAnn, json_encode($cfNew));
+$dN = $dCf = null;
+$dR = null;
+$soloOld = $soloNew = $dW = null;
+
 $dbR1 = $dbR2 = null;
 
 $dbS = null;

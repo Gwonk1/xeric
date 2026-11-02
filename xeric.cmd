@@ -8,6 +8,8 @@ rem    xeric --port 9000         somewhere else
 rem    xeric --lan              reachable from your phone on the same wifi
 rem    xeric --data D:\xerics    keep xerics somewhere else
 rem    xeric --no-open           do not touch the browser
+rem    xeric --llm http://gpu:8080     an external llama.cpp
+rem    xeric --llm-key SECRET          llama-server --api-key, if it has one
 rem
 rem  EVERY DECISION IS IN bootstrap.php, the same file the bash launcher uses:
 rem  which PHP, which extensions are missing, which port is free, where the data
@@ -38,6 +40,9 @@ if /I "%~1"=="--help"    goto usage
 if /I "%~1"=="--port"    set "XERIC_PORT=%~2" & shift & shift & goto parse
 if /I "%~1"=="--data"    set "XERIC_DATA_DIR=%~2" & shift & shift & goto parse
 if /I "%~1"=="--lan"     set "XERIC_BIND=0.0.0.0" & shift & goto parse
+if /I "%~1"=="--llm"     set "XERIC_LOCAL_BASE=%~2" & shift & shift & goto parse
+if /I "%~1"=="--llm-key" set "XERIC_LOCAL_KEY=%~2" & shift & shift & goto parse
+if /I "%~1"=="--llm-model" set "XERIC_LOCAL_MODEL=%~2" & shift & shift & goto parse
 echo xeric: unknown option %~1 1>&2
 exit /b 2
 
@@ -47,6 +52,8 @@ echo   xeric --port 9000         somewhere else
 echo   xeric --lan              reachable from your phone on the same wifi
 echo   xeric --data D:\xerics    keep xerics somewhere else
 echo   xeric --no-open           do not touch the browser
+echo   xeric --llm http://gpu:8080     an external llama.cpp
+echo   xeric --llm-key SECRET          llama-server --api-key, if it has one
 exit /b 0
 
 :parsed
@@ -81,6 +88,7 @@ if not defined BOOTOK exit /b 1
 echo   xerics   %XERIC_WORLDS_DIR%
 echo   php      %XERIC_PHP%
 echo   xeric    %XERIC_URL%
+if not "%XERIC_LOCAL_BASE%"=="" echo   model    %XERIC_LOCAL_BASE%
 
 if "%OPEN%"=="1" start "" "%XERIC_URL%"
 

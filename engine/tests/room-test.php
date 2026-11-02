@@ -124,6 +124,14 @@ function stub_room(array &$calls, array $diaries = [], ?callable $probe = null, 
     }];
 }
 
+/** The row speak.php would voice — xeric_play_spoken()'s query, without the web layer. */
+function xeric_play_spoken_like(PDO $db, int $id): bool
+{
+    $st = $db->prepare("SELECT id FROM messages WHERE id = ? AND role = 'character' AND handle IS NOT NULL AND handle != ''");
+    $st->execute([$id]);
+    return $st->fetchColumn() !== false;
+}
+
 function whose(array $call): string
 {
     if ($call['tag'] === 'extract') {
@@ -673,6 +681,733 @@ ok('mapping: the reseating block names the whole company and sends Walt away',
     && str_contains((string)$m21d[0]['content'], 'Walt is not here'));
 ok('mapping: the scene seats them in the room the schedule agreed on',
     str_contains((string)$m21d[count($m21d) - 1]['content'], 'First Lutheran'));
+
+// ---------------------------------------------------------------------------
+// THE NARRATOR'S SKY REACHES A ROOM.
+//
+// xeric_room_messages() passed `$db` to xeric_prompt_now_block() and had no
+// such parameter, so PHP handed it null — the duet's bug, copied. The derived
+// sky was always there; the narrator's hand (xeric_weather_told, set through
+// xeric_weather_set) never was. Checked on every chat call of a real room run,
+// not on the helper alone, so the loop's wiring is what is under test.
+// ---------------------------------------------------------------------------
+
+echo "\n# the sky a room stands under\n";
+
+$dbWx = fresh_db('weather'); $cWx = [];
+xeric_weather_set($dbWx, $SUN, 'Rain since before light, and it has not let up.');
+xeric_room($T, $dbWx, $TRIO, $SUN, stub_room($cWx), ['seed' => 7, 'beats' => 4]);
+$wxChats = array_values(array_filter($cWx, fn($c) => $c['tag'] === 'chat'));
+ok('weather: every voice in the room stands in the rain the narrator called for',
+    $wxChats !== [] && array_filter($wxChats,
+        fn($c) => !str_contains(json_encode($c['msgs']), 'Rain since before light')) === [],
+    (string)count($wxChats));
+$dbWx0 = fresh_db('weather-none'); $cWx0 = [];
+xeric_room($T, $dbWx0, $TRIO, $SUN, stub_room($cWx0), ['seed' => 7, 'beats' => 4]);
+ok('weather: and a room nobody set the sky for reads the derived one, not the rain',
+    !str_contains(json_encode($cWx0), 'Rain since before light')
+    && xeric_weather_line($T, $SUN, null) !== ''
+    && str_contains(json_encode($cWx0), trim((string)json_encode(xeric_weather_line($T, $SUN, null)), '"')));
+
+// ===========================================================================
+// THE ROOM WITH YOU IN IT — the live session (FUTURE.md, Appendix A)
+//
+// The same constitution with the player standing at the table, driven the
+// way room-worker.php drives it: hear a line, draw, step (one call), carry,
+// pace, land a row, and at the end one close through the same land as above.
+// ===========================================================================
+
+echo "\n# the room with you in it\n";
+
+/** Seat Walt and the cast at $place, the way room.php opens a session. */
+function live_open(array $T, PDO $db, array $now, string $place): array
+{
+    xeric_player_move($db, $place, (int)$now['epoch']);
+    $live = xeric_room_open($T, $db, $now, $place, ['id' => 1, 'name' => 'Walt']);
+    $live['conv'] = xeric_conversation_create($db, '', 'room', $place);
+    xeric_world_state_set($db, XERIC_ROOM_LIVE, json_encode($live));
+    return $live;
+}
+
+/** Walt says something: heard, landed, booked — under the edit. */
+function live_say(array $T, PDO $db, array $now, string $text): int
+{
+    return xeric_room_live_edit($db, function (?array &$live) use ($T, $db, $now, $text): int {
+        $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
+        $heard = xeric_room_hear($T, $live, $lines, $text);
+        $mid   = xeric_message_append($db, (int)$live['conv'], 'user', null, $heard, (int)$now['epoch']);
+        xeric_room_said($live, $mid, $heard, $now);
+        return $mid;
+    });
+}
+
+/** One cast beat, start to finish. */
+function live_beat(array $T, PDO $db, array $now, array $ep, array $copts = []): array
+{
+    $live  = xeric_room_live_get($db);
+    $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
+    $draw  = xeric_room_next($T, $db, $live, $lines);
+    $beat  = xeric_room_step($T, $db, $live, $lines, $now, $ep, $draw);
+    $carry = xeric_room_live_edit($db, function (?array &$live) use ($db, $now, $beat, $draw, $copts): array {
+        $mid   = xeric_message_append($db, (int)$live['conv'], 'character', $beat['handle'], $beat['text'], (int)$now['epoch']);
+        $carry = xeric_room_carry($live, $beat, $copts);
+        xeric_room_spoke($live, $beat, $mid, $draw, $carry, $now, microtime(true));
+        return $carry;
+    });
+    return $beat + ['draw' => $draw, 'carry' => $carry];
+}
+
+/** Beats until the room hands the floor back (or $max). */
+function live_turn(array $T, PDO $db, array $now, array $ep, int $max = 6, array $copts = []): array
+{
+    $out = [];
+    for ($i = 0; $i < $max; $i++) {
+        if ((int)xeric_room_live_get($db)['budget'] <= 0) break;
+        $out[] = live_beat($T, $db, $now, $ep, $copts);
+    }
+    return $out;
+}
+
+function counts(PDO $db): string
+{
+    return xeric_events_count($db) . '/' . xeric_memories_count($db) . '/' . xeric_conversations_count($db)
+         . '/' . (int)$db->query('SELECT COUNT(*) FROM messages')->fetchColumn()
+         . '/' . (xeric_world_state_get($db, XERIC_ROOM_LIVE) === null ? 'none' : 'live');
+}
+
+// -- admission: two to five and you, or the sentence that says why not ------
+$dbL0 = fresh_db('live-refuse');
+$before = counts($dbL0);
+$one = err(fn() => xeric_room_open($T, $dbL0, $SAT, 'bluebird', ['id' => 1, 'name' => 'Walt']));
+ok('live: one person is not a room — the refusal says to open their thread',
+    str_contains($one, 'only Dot Vance is here') && str_contains($one, 'open their thread'), $one);
+$none = err(fn() => xeric_room_open($T, $dbL0, $SUN, 'the_mill', ['id' => 1, 'name' => 'Walt']));
+ok('live: nobody is not a room either', str_contains($none, 'nobody is at'), $none);
+ok('live: and opening refusals write nothing', counts($dbL0) === $before, counts($dbL0));
+
+// -- six is a crowd: the five who carry the most about you sit at your table --
+$T6 = reweek($T5, 'harlan', [['days' => [0], 'from' => '09:00', 'to' => '13:00', 'where' => 'first_lutheran', 'doing' => 'fixing a pew']]);
+$db6 = fresh_db('live-six');
+xeric_memory_add($db6, 'harlan', 'Harlan still owes Walt a straight answer about the mower.', 'auto');
+xeric_memory_add($db6, 'harlan', 'Harlan saw Walt at the feed store on Tuesday.', 'auto');
+$six = xeric_room_open($T6, $db6, $SUN, 'first_lutheran', ['id' => 1, 'name' => 'Walt']);
+ok('crowd: six present seats five, and says who is at the far table',
+    count($six['present']) === 5 && count($six['far']) === 1, json_encode([$six['present'], $six['far']]));
+ok('crowd: the one carrying the most about you is at your table', in_array('harlan', $six['present'], true));
+ok('crowd: the far table is still in the room — the floor reads it', $six['far'] !== []
+    && str_contains(err(fn() => xeric_room_hear($T6, ['seated' => array_values(array_diff($six['present'], ['theo']))]
+        + ['far' => ['theo']] + $six, [], 'All this talk makes me horny.')), 'Theo Vance'));
+
+// -- one call a beat, the player's line no call at all ------------------------
+$dbL = fresh_db('live');
+$cL  = [];
+$epL = stub_room($cL, [], null, fn(int $n) => [1 => 'Ruth, you first.', 2 => 'Fine. The urn is on.', 3 => 'Well then.'][$n] ?? 'Mm.');
+live_open($T, $dbL, $SUN, 'first_lutheran');
+live_say($T, $dbL, $SUN, 'Morning, all of you. What did I miss?');
+ok('live: the player\'s line is a row at once, and no model call', count($cL) === 0
+    && count(xeric_room_rows($dbL, (int)xeric_room_live_get($dbL)['conv'])) === 1);
+$turn = live_turn($T, $dbL, $SUN, $epL, 6, ['seed' => 'x']);
+$chatL = array_values(array_filter($cL, fn($c) => $c['tag'] === 'chat'));
+ok('live: each answering beat is exactly one call from one head',
+    count($turn) >= 1 && count($chatL) === count($turn), count($turn) . ' beats, ' . count($chatL) . ' calls');
+ok('live: a line buys at most three answers', count($turn) <= XERIC_ROOM_ANSWERS);
+ok('live: nobody answers themselves twice running',
+    count($turn) < 2 || $turn[0]['handle'] !== $turn[1]['handle']);
+$rowsL = xeric_room_rows($dbL, (int)xeric_room_live_get($dbL)['conv']);
+ok('live: the rows are the thread\'s own roles — the player as user, the cast as themselves',
+    (string)$rowsL[0]['role'] === 'user' && $rowsL[0]['handle'] === null
+    && (string)$rowsL[1]['role'] === 'character' && (string)$rowsL[1]['handle'] === $turn[0]['handle']);
+ok('live: a cast row is one speak.php can voice', xeric_play_spoken_like($dbL, (int)$rowsL[1]['id']));
+ok('live: the reseating block keeps Walt AT the table, not away from it',
+    str_contains((string)$chatL[0]['msgs'][0]['content'], 'Walt is standing right here')
+    && !str_contains((string)$chatL[0]['msgs'][0]['content'], 'Walt is not here'));
+ok('live: the player\'s line arrives labeled, and the coaching asks for an answer',
+    str_contains(json_encode($chatL[0]['msgs']), 'Walt: Morning, all of you')
+    && str_contains(json_encode($chatL[0]['msgs']), 'Walt just said that'));
+ok('live: the now-block puts Walt in the room', str_contains(json_encode($chatL[0]['msgs']), 'is here, in the room with you'));
+
+// -- naming makes them answer; several named are each owed a turn -------------
+$dbN = fresh_db('live-named'); $cN = [];
+$epN = stub_room($cN, [], null, fn(int $n) => 'Something plain, number ' . $n . '.');
+live_open($T, $dbN, $SUN, 'first_lutheran');
+live_say($T, $dbN, $SUN, 'Janelle, is the drive still bad?');
+$tN = live_turn($T, $dbN, $SUN, $epN, 1);
+ok('live: a name in the player\'s line answers first', $tN[0]['handle'] === 'janelle'
+    && $tN[0]['draw']['how'] === 'addressed', $tN[0]['handle'] . '/' . $tN[0]['draw']['how']);
+$dbN2 = fresh_db('live-named2'); $cN2 = [];
+live_open($T, $dbN2, $SUN, 'first_lutheran');
+live_say($T, $dbN2, $SUN, 'Ruth and Janelle, settle this for me.');
+$tN2 = live_turn($T, $dbN2, $SUN, stub_room($cN2, [], null, fn(int $n) => 'Plain answer ' . $n . '.'), 6, ['seed' => 'y']);
+$whoN2 = array_column($tN2, 'handle');
+ok('live: two named are both owed — two people answer in turn',
+    count($whoN2) >= 2 && in_array('ruth', array_slice($whoN2, 0, 2), true) && in_array('janelle', array_slice($whoN2, 0, 2), true)
+    && $tN2[0]['carry']['why'] === 'owed', implode(',', $whoN2));
+$trN2 = xeric_room_live_get($dbN2)['trail'];
+ok('live: the trail keeps the weights with their reach × heat breakdown, and the line by id',
+    isset($trN2[1]['weights'], $trN2[1]['reach'], $trN2[1]['heat'], $trN2[1]['mid']), json_encode($trN2[1]));
+
+// -- "Walt:" is cut ---------------------------------------------------------
+$dbC = fresh_db('live-cut'); $cC = [];
+live_open($T, $dbC, $SUN, 'first_lutheran');
+live_say($T, $dbC, $SUN, 'Anybody want coffee?');
+$tC = live_beat($T, $dbC, $SUN, stub_room($cC, [], null, fn(int $n) => "Coffee would be good.\nWalt: sure, I will get it."));
+ok('live: a model writing the player\'s line is cut at the theft', $tC['text'] === 'Coffee would be good.', $tC['text']);
+
+// -- the pairwise needles, with the player present ---------------------------
+$dbW = fresh_db('live-walls'); $cW = [];
+$epW = stub_room($cW, [], null, fn(int $n) => 'A short line, ' . $n . '.');
+live_open($T, $dbW, $SUN, 'first_lutheran');
+foreach (['Pastor, Ruth, Janelle, morning.', 'Ruth, anything new?', 'Janelle, and you?', 'Dale?'] as $line) {
+    live_say($T, $dbW, $SUN, $line);
+    live_turn($T, $dbW, $SUN, $epW, 4, ['seed' => 'w']);
+}
+$leakW = ''; $sysBy = [];
+foreach ($cW as $i => $c) {
+    $bytes = json_encode($c['msgs'], JSON_UNESCAPED_UNICODE);
+    $who   = whose($c);
+    if ($who === 'janelle' && str_contains($bytes, DALE_SECRET))        $leakW = "call $i: dale's secret reached janelle";
+    if ($who === 'janelle' && str_contains($bytes, RUTH_SECRET))        $leakW = "call $i: ruth's secret reached janelle";
+    if ($who === 'pastor_dale' && str_contains($bytes, RUTH_SECRET))    $leakW = "call $i: ruth's secret reached dale";
+    if ($who === 'pastor_dale' && str_contains($bytes, JANELLE_SECRET)) $leakW = "call $i: janelle's secret reached dale";
+    if ($who === 'ruth' && str_contains($bytes, JANELLE_SECRET))        $leakW = "call $i: janelle's secret reached ruth";
+    $sysBy[$who][(string)$c['msgs'][0]['content']] = true;
+}
+ok('live WALLS: the pairwise matrix holds with the player at the table', $leakW === '', $leakW);
+ok('live: every head spoke more than once, so the next check means something',
+    count($sysBy) === 3 && count(array_filter(array_count_values(array_map('whose', $cW)), fn($n) => $n >= 2)) === 3,
+    json_encode(array_count_values(array_map('whose', $cW))));
+ok('live PREFIX CACHE: each speaker\'s system prompt is byte-identical across the session',
+    array_filter($sysBy, fn($set) => count($set) !== 1) === [], json_encode(array_map('count', $sysBy)));
+
+// -- the carry: caps, the floor coming back, the queue, the seeded roll -------
+$base = ['conv' => 7, 'mode' => 'answer', 'budget' => 3, 'beats' => 1, 'answered' => 0, 'owed' => [],
+         'present' => ['ruth', 'pastor_dale', 'janelle'],
+         'names' => ['ruth' => 'Ruth Amberg', 'pastor_dale' => 'Pastor Dale Ostrander', 'janelle' => 'Janelle Kerr', '__you' => 'Walt']];
+$plain = ['handle' => 'ruth', 'text' => 'The urn is on.'];
+ok('carry: the line\'s budget is the ceiling', xeric_room_carry(['budget' => 1] + $base, $plain)['why'] === 'budget');
+ok('carry: a person waiting on the model outranks a room talking to itself',
+    xeric_room_carry($base, $plain, ['queue_waiting' => true])['why'] === 'queue');
+ok('carry: the hourly limit stops it', xeric_room_carry($base, $plain, ['limit_ok' => false])['why'] === 'limit');
+ok('carry: a player gone is a room that stops', xeric_room_carry($base, $plain, ['player_here' => false])['why'] === 'you left');
+ok('carry: somebody the player named and has not answered is owed the next turn',
+    xeric_room_carry(['owed' => ['janelle']] + $base, $plain)['go'] === true);
+ok('carry: the floor returns to the player when the line names them',
+    xeric_room_carry($base, ['handle' => 'ruth', 'text' => 'What do you think, Walt?'])['floor'] === 'named you');
+ok('carry: and when it asks the room a question naming nobody',
+    xeric_room_carry($base, ['handle' => 'ruth', 'text' => 'Who left the urn on?'])['floor'] === 'asked the room');
+$r1 = xeric_room_carry($base, $plain, ['seed' => 's']); $r2 = xeric_room_carry($base, $plain, ['seed' => 's']);
+ok('carry: the roll is seeded — same session, same beat, same roll — and recorded with p',
+    $r1 === $r2 && $r1['why'] === 'roll' && abs($r1['p'] - 0.55) < 1e-9 && isset($r1['roll']), json_encode($r1));
+ok('carry: p halves with each answer already given',
+    abs(xeric_room_carry(['answered' => 2] + $base, $plain, ['seed' => 's'])['p'] - 0.1375) < 1e-9);
+$gotGo = $gotStop = false;
+foreach (range(1, 40) as $i) { $r = xeric_room_carry($base, $plain, ['seed' => 'r' . $i]); $r['go'] ? $gotGo = true : $gotStop = true; }
+ok('carry: and the roll really is a roll — some seeds carry on, some hand back', $gotGo && $gotStop);
+
+$idle = ['said' => 2, 'run' => 0, 'carried' => 0, 'budget' => 0, 'lease' => null, 'ended' => null, 'beats' => 3] + $base;
+ok('alone: a watched, idle room on a local machine may take a beat', xeric_room_carry_idle($T, $idle,
+    ['queue_idle' => true, 'local' => true, 'player_here' => true])['ok']);
+ok('alone: two in a row and no more', !xeric_room_carry_idle($T, ['run' => 2] + $idle, ['queue_idle' => true, 'local' => true])['ok']);
+ok('alone: six a session and no more', !xeric_room_carry_idle($T, ['carried' => 6] + $idle, ['queue_idle' => true, 'local' => true])['ok']);
+ok('alone: never while somebody is waiting on the model', !xeric_room_carry_idle($T, $idle, ['queue_idle' => false, 'local' => true])['ok']);
+ok('alone: never on a hosted machine unless the template says so',
+    !xeric_room_carry_idle($T, $idle, ['queue_idle' => true, 'local' => false])['ok']
+    && xeric_room_carry_idle(array_replace_recursive($T, ['cast' => ['room' => ['carry_remote' => true]]]), $idle,
+        ['queue_idle' => true, 'local' => false])['ok']);
+ok('alone: and a template can turn it off', !xeric_room_carry_idle(
+    array_replace_recursive($T, ['cast' => ['room' => ['carry' => false]]]), $idle, ['queue_idle' => true, 'local' => true])['ok']);
+ok('alone: one beat, then the floor is the player\'s', xeric_room_carry(['mode' => 'idle'] + $base, $plain)['go'] === false);
+
+// -- silence, the player's included, noticed once ---------------------------
+$dbS = fresh_db('live-silence'); $cS = [];
+$epS = stub_room($cS, [], null, fn(int $n) => 'A plain line ' . $n . '.');
+live_open($T, $dbS, $SUN, 'first_lutheran');
+live_say($T, $dbS, $SUN, 'Go on, all of you.');
+xeric_room_live_edit($dbS, function (?array &$live): void { $live['streak']['__you'] = 3; $live['budget'] = 2; });
+$s1 = live_beat($T, $dbS, $SUN, $epS);
+$s2 = live_beat($T, $dbS, $SUN, $epS);
+ok('silence: the player\'s own silence is noticed, through a cast mouth',
+    $s1['notice'] === '__you' && str_contains(json_encode($s1['messages']), 'Walt has not said a word in a while'));
+ok('silence: and only once per stretch', !str_contains(json_encode($s2['messages']), 'Walt has not said a word'));
+
+// -- a player with no name: the word "you" is not them -----------------------
+// The template may leave user.name empty. That person was seated as the
+// literal 'you', and the mention test then found them in almost every line:
+// the floor came back after one beat, every memory was heat, and the prompts
+// read "you are not texting you … Answer you".
+$TY = $T; $TY['user']['name'] = '';
+$dbY = fresh_db('live-nameless'); $cY = [];
+$epY = stub_room($cY, [], null, fn(int $n) => [1 => 'I told you the urn was on, Ruth.', 2 => 'You never listen to me, Dale.'][$n] ?? 'Mm, you know.');
+xeric_player_move($dbY, 'first_lutheran', (int)$SUN['epoch']);
+$liveY = xeric_room_open($TY, $dbY, $SUN, 'first_lutheran', ['id' => 1, 'name' => '']);
+$liveY['conv'] = xeric_conversation_create($dbY, '', 'room', 'first_lutheran');
+xeric_world_state_set($dbY, XERIC_ROOM_LIVE, json_encode($liveY));
+ok('nameless: seated as the visitor, never the word you', $liveY['names']['__you'] === 'the visitor'
+    && $liveY['players'][0]['named'] === false && xeric_room_you_mention($liveY) === XERIC_ROOM_NAMELESS, json_encode($liveY['players']));
+ok('nameless: the mention test refuses a pronoun or the bare word as a name',
+    !xeric_age_mentions('What do you think?', 'you', 'you') && !xeric_age_mentions('I told them.', 'them', 'them')
+    && !xeric_age_mentions('I saw you there.', XERIC_ROOM_NAMELESS, XERIC_ROOM_NAMELESS)
+    && xeric_age_mentions('What do you think, Walt?', 'Walt', 'Walt'));
+ok('nameless: a memory with "you" in it is no heat about them',
+    xeric_room_heat_you([['text' => 'Ruth told you about the urn.']], [], xeric_room_you_mention($liveY)) === 0);
+live_say($TY, $dbY, $SUN, 'Morning, all of you.');
+xeric_room_live_edit($dbY, function (?array &$live): void { $live['budget'] = 3; });
+$y1 = live_beat($TY, $dbY, $SUN, $epY, ['seed' => 'n']);
+$y2 = live_beat($TY, $dbY, $SUN, $epY, ['seed' => 'n']);
+ok('nameless: two beats, and "you" in a cast line never hands the floor back',
+    ($y1['carry']['floor'] ?? '') !== 'named you' && ($y2['carry']['floor'] ?? '') !== 'named you'
+    && count(array_filter($cY, fn($c) => $c['tag'] === 'chat')) === 2, json_encode([$y1['carry'], $y2['carry']]));
+$bytesY = json_encode($cY, JSON_UNESCAPED_UNICODE);
+ok('nameless: no prompt says "texting you" or "Answer you"',
+    !str_contains($bytesY, 'texting you') && !str_contains($bytesY, 'Answer you') && !str_contains($bytesY, 'you: Morning')
+    && str_contains($bytesY, 'The visitor just said that') && str_contains($bytesY, 'the visitor: Morning'), mb_substr($bytesY, 0, 200));
+
+// -- presence: exits, arrivals, the minor seal -------------------------------
+$TA = reweek($T, 'dot', [['days' => [0], 'from' => '11:58', 'to' => '13:00', 'where' => 'first_lutheran', 'doing' => 'late from the diner']]);
+$dbP = fresh_db('live-presence');
+live_open($TA, $dbP, $SUNPM, 'first_lutheran');
+live_say($TA, $dbP, $SUNPM, 'Morning.');
+$LATER = xeric_world_now($TA, ep('2026-08-02 12:04'));
+$pr = xeric_room_presence($TA, $dbP, xeric_room_live_get($dbP), $LATER);
+ok('presence: the schedule takes ruth out at noon, and brings dot in', array_keys($pr['left']) === ['ruth']
+    && $pr['arrived'] === ['dot'] && $pr['minors'] === [], json_encode($pr));
+$stage = xeric_travel_comings_line($TA, $LATER, 'first_lutheran', $pr['arrived'], array_keys($pr['left']), $dbP);
+ok('presence: one stage direction, observables only, no pronouns',
+    str_starts_with($stage, 'Dot Vance comes in') && str_contains($stage, 'Ruth Amberg gets up and goes.')
+    && preg_match('/\b(he|she|him|her|his|hers)\b/i', $stage) === 0, $stage);
+xeric_room_live_edit($dbP, function (?array &$live) use ($TA, $dbP, $LATER, $pr, $stage): void {
+    $mid = xeric_message_append($dbP, (int)$live['conv'], 'narrator', null, $stage, (int)$LATER['epoch']);
+    foreach ($pr['left'] as $h => $went) xeric_room_unseat($live, $h, $mid, $went, (int)$LATER['epoch']);
+    foreach ($pr['arrived'] as $h) xeric_room_seat($TA, $live, $h, $mid, $LATER);
+});
+$liveP = xeric_room_live_get($dbP);
+$linesP = xeric_room_lines($liveP, xeric_room_rows($dbP, (int)$liveP['conv']));
+ok('presence: an adult arriving is seated, and hears only from the door',
+    in_array('dot', $liveP['present'], true) && count(xeric_room_heard($liveP, $linesP, 'dot')) === 1
+    && xeric_room_heard($liveP, $linesP, 'dot')[0]['kind'] === 'stage');
+ok('presence: the leaver hears up to the door and not after', count(xeric_room_heard($liveP, $linesP, 'ruth')) === 2
+    && !in_array('ruth', $liveP['present'], true));
+$cP = [];
+$bP = live_beat($TA, $dbP, $LATER, stub_room($cP, [], null, fn(int $n) => 'Right on time, Dot.'));
+ok('presence: the leaver is never called again', $bP['handle'] !== 'ruth' && whose($cP[0]) !== 'ruth');
+ok('presence: and the newcomer\'s system names the company as it was when they sat',
+    $liveP['seats']['dot']['others'] === ['pastor_dale', 'janelle']);
+$TM = reweek($T, 'theo', [['days' => [0], 'from' => '11:58', 'to' => '13:00', 'where' => 'first_lutheran', 'doing' => 'dragged along']]);
+$dbM = fresh_db('live-minor');
+live_open($TM, $dbM, $SUNPM, 'first_lutheran');
+$prM = xeric_room_presence($TM, $dbM, xeric_room_live_get($dbM), $LATER);
+ok('presence: a child walking in is reported apart — the ceiling cannot be re-folded mid-session',
+    $prM['minors'] === ['theo'] && !in_array('theo', $prM['arrived'], true), json_encode($prM));
+$sealM = xeric_room_seal($dbM, 'minor', $LATER);
+ok('presence: and the seal moves the session aside, freeing the table',
+    $sealM !== null && xeric_room_live_get($dbM) === null && isset(xeric_room_seals($dbM)[$sealM])
+    && xeric_room_seals($dbM)[$sealM]['ended'] === 'minor');
+
+// -- the look block's beat: who came and went in the last stretch -------------
+$dbV = fresh_db('comings');
+xeric_player_move($dbV, 'first_lutheran', ep('2026-08-02 11:00'));
+$cm = xeric_travel_comings($TA, $dbV, $LATER, 'first_lutheran');
+ok('comings: ten world-minutes back, dot came in and ruth went', $cm['arrived'] === ['dot'] && $cm['left'] === ['ruth']
+    && $cm['line'] === $stage, json_encode($cm));
+xeric_player_move($dbV, 'first_lutheran', ep('2026-08-02 12:02'));
+ok('comings: but a room you walked into after they moved had nobody coming or going — it had you',
+    xeric_travel_comings($TA, $dbV, $LATER, 'first_lutheran')['line'] === '');
+ok('comings: an hour with nobody moving says nothing at all',
+    xeric_travel_comings($T, $dbV, xeric_world_now($T, ep('2026-08-02 10:30')), 'first_lutheran')['line'] === '');
+
+// -- a beat with the player gone is refused, and calls nobody -----------------
+$dbG = fresh_db('live-gone'); $cG = [];
+live_open($T, $dbG, $SUN, 'first_lutheran');
+live_say($T, $dbG, $SUN, 'Back in a minute.');
+xeric_player_move($dbG, 'bluebird', (int)$SUN['epoch']);
+$liveG = xeric_room_live_get($dbG);
+$goneMsg = err(fn() => xeric_room_step($T, $dbG, $liveG, xeric_room_lines($liveG, xeric_room_rows($dbG, (int)$liveG['conv'])),
+    $SUN, stub_room($cG), xeric_room_next($T, $dbG, $liveG, [])));
+ok('live: a beat with the player gone is refused before any model is asked',
+    str_contains($goneMsg, 'refused') && $cG === [], $goneMsg);
+ok('live: and the world says the session is over', xeric_room_over($T, $dbG, $liveG, $SUN) === 'you left');
+ok('live: twenty quiet world-minutes end it too', xeric_room_over($T, $dbL, xeric_room_live_get($dbL),
+    xeric_world_now($T, (int)$SUN['epoch'] + XERIC_ROOM_QUIET_SECONDS)) === 'quiet');
+
+// -- the player's line is heard: the floor and the wall ----------------------
+$dbH = fresh_db('live-hear');
+live_open($T5, $dbH, $SUN, 'first_lutheran');
+$beforeH = counts($dbH);
+$hearMsg = err(fn() => live_say($T5, $dbH, $SUN, 'All this talk makes me horny.'));
+ok('hear: a sexual line with a child in the room is refused, by name', str_contains($hearMsg, 'Theo Vance')
+    && str_contains($hearMsg, 'refused'), $hearMsg);
+ok('hear: and the refusal wrote nothing', counts($dbH) === $beforeH, counts($dbH) . ' vs ' . $beforeH);
+
+// -- pacing: a floor, never a delay on top of a slow line --------------------
+$d0 = xeric_room_pace(0.0, '', 100.0, false, false, 'a');
+$d1 = xeric_room_pace($d0, 'A short line here.', 100.5, false, false, 'b');
+$d2 = xeric_room_pace($d1, str_repeat('word ', 80), $d1 + 0.1, false, false, 'c');
+$d3 = xeric_room_pace($d2, 'Short.', $d2 + 30.0, false, false, 'd');
+$d4 = xeric_room_pace($d3, 'Short.', $d3 - 5.0, true, false, 'e');
+$d5 = xeric_room_pace($d3, 'Short.', $d3 - 5.0, false, true, 'e');
+ok('pace: the first line is due when it is ready', $d0 === 100.0);
+ok('pace: due times strictly increase', $d0 < $d1 && $d1 < $d2 && $d2 < $d3 && $d3 < $d4);
+ok('pace: reading time is clamped — a speech waits at most seven seconds and change',
+    $d2 - $d1 <= (7.0 + 1.2) * 1.15 + 0.01 && $d2 - $d1 >= 7.0 * 0.85, (string)($d2 - $d1));
+ok('pace: a slow line is due the moment it is ready, never later', $d3 === round($d2 + 30.0, 3));
+ok('pace: a name tightens the gap, carrying on alone widens it', $d4 < $d5);
+ok('pace: and the jitter is deterministic', xeric_room_pace($d0, 'x y z', 101.0, false, false, 'q')
+    === xeric_room_pace($d0, 'x y z', 101.0, false, false, 'q'));
+
+// -- the close: sources, prose, trail, expectations --------------------------
+$dbX = fresh_db('live-close'); $cX = [];
+$epX = stub_room($cX, [
+    'Pastor Dale Ostrander' => ['Dale heard Walt ask after the gutters.'],
+    'Ruth Amberg'           => ['Ruth noticed Walt came in late again.'],
+    'Janelle Kerr'          => ['Janelle told Walt the drive was shorter.'],
+], null, fn(int $n) => 'Plain line ' . $n . '.');
+$liveX = live_open($T, $dbX, $SUN, 'first_lutheran');
+live_say($T, $dbX, $SUN, 'Ruth, Janelle — good morning.');
+live_turn($T, $dbX, $SUN, $epX, 4, ['seed' => 'c']);
+$convX = xeric_room_seal($dbX, 'stepped back', $SUN);
+ok('close: stepping back seals; nothing lands until the close', $convX !== null && xeric_events_count($dbX) === 0
+    && xeric_memories_count($dbX) === 0);
+$landX = xeric_room_land_live($T, $dbX, xeric_room_seals($dbX)[$convX], $epX);
+$evX   = xeric_events_recent($dbX, 1)[0];
+ok('close: one event, at the opening epoch, the player named in it',
+    xeric_events_count($dbX) === 1 && (int)$evX['world_epoch'] === (int)$SUN['epoch']
+    && str_contains((string)$evX['title'], 'walt') && str_contains((string)$evX['prose'], 'Walt'), json_encode($evX));
+ok('close: the prose is observables and names, no pronouns, nothing said',
+    preg_match('/\b(he|she|him|her|his|hers)\b/i', (string)$evX['prose']) === 0
+    && !str_contains((string)$evX['prose'], 'Plain line'), (string)$evX['prose']);
+$srcX = $dbX->query("SELECT DISTINCT source FROM memories WHERE source LIKE 'room%'")->fetchAll(PDO::FETCH_COLUMN);
+ok('close: the diaries are filed as room.you — the player was counted in the company',
+    $srcX === ['room.you'] && count($landX['memories']) === 3, json_encode($srcX));
+$diaryX = array_values(array_filter($cX, fn($c) => $c['tag'] === 'extract'));
+ok('close: and each diary prompt names Walt among the company',
+    $diaryX !== [] && array_filter($diaryX, fn($c) => !str_contains((string)$c['msgs'][1]['content'], 'Walt')) === []);
+$trX = trail($dbX, (int)$landX['event_id']);
+ok('close: the trail is the inspector\'s, kind room, live, with message ids per beat and the end reason',
+    ($trX['kind'] ?? '') === 'room' && !empty($trX['live']) && ($trX['ended'] ?? '') === 'stepped back'
+    && array_filter((array)$trX['beats'], fn($b) => isset($b['speaker']) && !isset($b['mid'])) === []
+    && (int)$trX['conversation'] === $convX, json_encode($trX));
+ok('close: the seal is gone, the thread keeps its rows', xeric_room_seals($dbX) === []
+    && count(xeric_room_rows($dbX, $convX)) >= 2);
+ok('close: a second close of the same seal cannot land it twice',
+    str_contains(err(fn() => xeric_room_land_live($T, $dbX, $liveX + ['conv' => $convX, 'ended' => 'x', 'spoke' => ['ruth' => 1]], null)),
+        'already closed') && xeric_events_count($dbX) === 1);
+
+// A promise the player made across the table is the v1 row: of nobody, which
+// means the user, held by whoever it was said to.
+$dbE = fresh_db('live-promise'); $cE = [];
+$TE = $T;   // Milldale is hand-built, so expectations are armed (xeric_expect_armed)
+live_open($TE, $dbE, $SUN, 'first_lutheran');
+live_say($TE, $dbE, $SUN, 'Ruth, I will bring the folding chairs on Saturday.');
+live_turn($TE, $dbE, $SUN, stub_room($cE, [], null, fn(int $n) => 'Good.'), 2);
+$convE = xeric_room_seal($dbE, 'stepped back', $SUN);
+$landE = xeric_room_land_live($TE, $dbE, xeric_room_seals($dbE)[$convE], null);
+$exE = array_values(array_filter(xeric_expects_for($dbE, 'ruth'), fn($e) => str_contains((string)$e['quote'], 'folding chairs')));
+ok('close: a promise the player made lands as the listener\'s expectation, of the user',
+    xeric_expect_armed($TE) && count($exE) === 1 && !isset($exE[0]['of']), json_encode(xeric_expects_for($dbE, 'ruth')));
+ok('close: with no model at the close the diaries are forfeit with a note, and the event still lands',
+    xeric_events_count($dbE) === 1 && xeric_memories_count($dbE) === 0
+    && array_filter($landE['notes'], fn($n) => str_contains($n, 'no model was attached')) !== []);
+
+// -- the narrator's sky reaches the room, and comes in through the door ------
+$dbR = fresh_db('live-weather'); $cR = [];
+xeric_weather_set($dbR, $SUN, 'Rain since before light, and it has not let up.');
+live_open($T, $dbR, $SUN, 'first_lutheran');
+live_say($T, $dbR, $SUN, 'Wet one.');
+live_beat($T, $dbR, $SUN, stub_room($cR, [], null, fn(int $n) => 'It is.'));
+ok('weather: the narrator\'s rain reaches the live room\'s call', str_contains(json_encode($cR), 'Rain since before light'));
+ok('weather: and somebody coming in shakes it off',
+    xeric_travel_comings_line($T, $SUN, 'first_lutheran', ['dot'], [], $dbR) === 'Dot Vance comes in, shaking the rain off.');
+
+// ===========================================================================
+// THE ROOM WITH TWO HUMANS IN IT (FUTURE.md M4)
+//
+// A second person at the centre sits down by speaking at the table. The draw
+// treats either of them like anybody who just spoke; the floor comes back to
+// whichever was named, or spoke last; each one's silence is noticed once; one
+// walking out leaves the other at the table, both walking out ends it; and a
+// lower-rated session folds the ceiling down for everyone.
+// ===========================================================================
+
+echo "\n# two people at the centre\n";
+
+const ANN = ['id' => 2, 'name' => 'Ann'];
+
+/** Somebody at the centre says something: seated if they were not, heard, landed, booked. */
+function live_say_as(array $T, PDO $db, array $now, string $text, array $player): int
+{
+    return xeric_room_live_edit($db, function (?array &$live) use ($T, $db, $now, $text, $player): int {
+        $seat   = xeric_room_player_of($live, (int)$player['id']);
+        $joined = $seat === null;
+        if ($joined) $seat = xeric_room_player_join($live, $player, 0);
+        $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
+        $heard = xeric_room_hear($T, $live, $lines, $text);
+        $mid   = xeric_message_append($db, (int)$live['conv'], 'user', null, $heard, (int)$now['epoch'], null, (int)$player['id']);
+        if ($joined) foreach ($live['players'] as $i => $p) if ((int)$p['id'] === (int)$player['id']) $live['players'][$i]['joined_at_row'] = $mid;
+        xeric_room_said($live, $mid, $heard, $now, (string)$seat['handle']);
+        return $mid;
+    });
+}
+
+// -- seated: the second person sits by speaking, and hears from their own line --
+$db2 = fresh_db('two'); $c2 = [];
+$ep2 = stub_room($c2, [], null, fn(int $n) => [1 => 'Morning, both of you.', 2 => 'Plain enough.'][$n] ?? 'Mm, line ' . $n . '.');
+live_open($T, $db2, $SUN, 'first_lutheran');
+xeric_player_move($db2, 'first_lutheran', (int)$SUN['epoch'], 2);
+live_say($T, $db2, $SUN, 'Morning, all.');
+$midAnn = live_say_as($T, $db2, $SUN, 'Room for one more?', ANN);
+$l2 = xeric_room_live_get($db2);
+ok('two: a second person who speaks at the table is seated, under her own handle, from her own line',
+    count($l2['players']) === 2 && $l2['players'][1]['handle'] === '__you.p2' && $l2['players'][1]['joined_at_row'] === $midAnn
+    && $l2['names']['__you.p2'] === 'Ann' && $l2['players'][0]['handle'] === '__you', json_encode($l2['players']));
+$lines2 = xeric_room_lines($l2, xeric_room_rows($db2, (int)$l2['conv']));
+ok('two: each player\'s row maps to their own seat and name', $lines2[0]['handle'] === '__you' && $lines2[0]['name'] === 'Walt'
+    && $lines2[1]['handle'] === '__you.p2' && $lines2[1]['name'] === 'Ann' && $lines2[1]['player'] === 2);
+$b2 = live_beat($T, $db2, $SUN, $ep2, ['seed' => 't']);
+$bytes2 = json_encode($b2['messages'], JSON_UNESCAPED_UNICODE);
+ok('two: the transcript is labelled per person — Walt\'s line under Walt, Ann\'s under Ann',
+    str_contains($bytes2, 'Walt: Morning, all.') && str_contains($bytes2, 'Ann: Room for one more?'), mb_substr($bytes2, -600));
+ok('two: the reseating block names both of them at the table, and the answer is owed to whoever just spoke',
+    str_contains((string)$b2['system'], 'Walt and Ann are standing right here') && str_contains($bytes2, 'Ann just said that')
+    && !str_contains((string)$b2['system'], 'Right now you are not texting Walt'), mb_substr((string)$b2['system'], -900));
+
+// -- the floor: to whoever was named, or to whoever spoke last ----------------
+$liveF = xeric_room_live_get($db2);
+$cF1 = xeric_room_carry(['budget' => 3] + $liveF, ['handle' => 'ruth', 'text' => 'What do you make of it, Ann?']);
+$cF2 = xeric_room_carry(['budget' => 3] + $liveF, ['handle' => 'ruth', 'text' => 'Walt, your turn.']);
+$cF3 = xeric_room_carry(['budget' => 3] + $liveF, ['handle' => 'ruth', 'text' => 'Who left the urn on?']);
+ok('floor: a cast line naming a player hands the floor back to THAT player',
+    $cF1['go'] === false && $cF1['floor'] === 'named you' && $cF1['to'] === '__you.p2'
+    && $cF2['to'] === '__you', json_encode([$cF1, $cF2]));
+ok('floor: a question to the room goes back to whichever player spoke last', $cF3['floor'] === 'asked the room'
+    && $cF3['to'] === '__you.p2', json_encode($cF3));
+$midW = live_say($T, $db2, $SUN, 'Ann, you tell them.');
+$lW = xeric_room_live_get($db2);
+ok('floor: a player\'s line naming the other player and none of the cast buys no answer — the floor is hers',
+    (int)$lW['budget'] === 0 && ($lW['floor'] ?? '') === '__you.p2' && end($lW['trail'])['floor'] === '__you.p2', json_encode(end($lW['trail'])));
+
+// -- the draw treats a human like anyone who just spoke -----------------------
+$dbD = fresh_db('two-draw');
+live_open($T, $dbD, $SUN, 'first_lutheran');
+xeric_player_move($dbD, 'first_lutheran', (int)$SUN['epoch'], 2);
+xeric_memory_add($dbD, 'ruth', 'Ruth still has Ann\'s good casserole dish from the funeral.', 'auto', [], $SUN['epoch'] - 86400);
+xeric_arc_set($dbD, 'janelle', 'expect.ann', json_encode(['quote' => 'I will bring it Sunday', 'what' => 'it', 'due' => $SUN['epoch'] + 9999,
+    'formed' => $SUN['epoch'] - 99, 'state' => 'open', 'p' => 2]));
+live_say($T, $dbD, $SUN, 'Morning.');
+$dW = xeric_room_next($T, $dbD, xeric_room_live_get($dbD), xeric_room_lines(xeric_room_live_get($dbD), xeric_room_rows($dbD, (int)xeric_room_live_get($dbD)['conv'])));
+live_say_as($T, $dbD, $SUN, 'Morning, everybody.', ANN);
+$lD = xeric_room_live_get($dbD);
+$dA = xeric_room_next($T, $dbD, $lD, xeric_room_lines($lD, xeric_room_rows($dbD, (int)$lD['conv'])));
+ok('draw: after Ann speaks, what each of them holds about ANN is the heat — a memory naming her, a promise she owes',
+    $dA['last'] === '__you.p2' && ($dA['heat']['ruth'] ?? 0) === 1 && ($dA['heat']['janelle'] ?? 0) >= 1
+    && ($dW['heat']['ruth'] ?? 0) === 0 && ($dW['heat']['janelle'] ?? 0) === 0, json_encode([$dW['heat'], $dA['heat']]));
+
+// -- silence, noticed for both, once each --------------------------------------
+$dbQ = fresh_db('two-silence'); $cQ = [];
+$epQ = stub_room($cQ, [], null, fn(int $n) => 'A plain line ' . $n . '.');
+live_open($T, $dbQ, $SUN, 'first_lutheran');
+xeric_player_move($dbQ, 'first_lutheran', (int)$SUN['epoch'], 2);
+live_say($T, $dbQ, $SUN, 'Go on.');
+live_say_as($T, $dbQ, $SUN, 'Yes, go on.', ANN);
+xeric_room_live_edit($dbQ, function (?array &$live): void {
+    $live['players'][0]['silence'] = 5; $live['players'][1]['silence'] = 4; $live['budget'] = 3;
+});
+$q1 = live_beat($T, $dbQ, $SUN, $epQ);
+$q2 = live_beat($T, $dbQ, $SUN, $epQ);
+$q3 = live_beat($T, $dbQ, $SUN, $epQ);
+$saidQ = fn(array $b, string $who) => str_contains(json_encode($b['messages']), $who . ' has not said a word in a while');
+ok('silence: the longer quiet is noticed first, then the other — one line each, through cast mouths',
+    $q1['notice'] === '__you' && $saidQ($q1, 'Walt') && $q2['notice'] === '__you.p2' && $saidQ($q2, 'Ann'),
+    json_encode([$q1['notice'], $q2['notice']]));
+ok('silence: and neither is noticed twice in one stretch', $q3['notice'] === null && !$saidQ($q3, 'Walt') && !$saidQ($q3, 'Ann'));
+
+// -- one leaving keeps the room; both leaving ends it --------------------------
+$dbX2 = fresh_db('two-leave'); $cX2 = [];
+live_open($T, $dbX2, $SUN, 'first_lutheran');
+xeric_player_move($dbX2, 'first_lutheran', (int)$SUN['epoch'], 2);
+live_say($T, $dbX2, $SUN, 'Morning.');
+live_say_as($T, $dbX2, $SUN, 'Morning, Ruth.', ANN);
+xeric_player_move($dbX2, 'bluebird', (int)$SUN['epoch'], 1);   // Walt walks out
+$lX = xeric_room_live_get($dbX2);
+ok('leave: one of two walking out does not end it — the other is still at the table',
+    xeric_room_over($T, $dbX2, $lX, $SUN) === null && count(xeric_room_players_here($T, $dbX2, $lX)) === 1);
+$bX = live_beat($T, $dbX2, $SUN, stub_room($cX2, [], null, fn(int $n) => 'Just us, then.'));
+ok('leave: and the room still answers the one who stayed', $bX['text'] === 'Just us, then.');
+xeric_room_live_edit($dbX2, function (?array &$live) use ($dbX2): void { xeric_room_player_leave($live, 1, 99, 0); });
+$lX = xeric_room_live_get($dbX2);
+ok('leave: the seat goes to left_players, and the session still counts both who sat', count($lX['players']) === 1
+    && count($lX['left_players']) === 1 && count(xeric_room_players_ever($lX)) === 2);
+xeric_player_move($dbX2, 'bluebird', (int)$SUN['epoch'], 2);   // and Ann
+ok('leave: both gone, and the session is over — everyone left', xeric_room_over($T, $dbX2, xeric_room_live_get($dbX2), $SUN) === 'everyone left');
+$gX = err(fn() => live_beat($T, $dbX2, $SUN, stub_room($cX2)));
+ok('leave: and nobody answers an empty table', str_contains($gX, 'refused'), $gX);
+ok('leave: a room of one walked out of still says you left', xeric_room_over($T, $dbG, $liveG, $SUN) === 'you left');
+
+// -- the ceiling folds down, never up ------------------------------------------
+$TR = $T; $TR['meta']['rating'] = 'mature';
+$dbC2 = fresh_db('two-ceiling'); $cC2 = [];
+$epC2 = stub_room($cC2, [], null, fn(int $n) => 'Line ' . $n . '.');
+xeric_player_move($dbC2, 'first_lutheran', (int)$SUN['epoch']);
+xeric_player_move($dbC2, 'first_lutheran', (int)$SUN['epoch'], 2);
+xeric_player_move($dbC2, 'first_lutheran', (int)$SUN['epoch'], 3);
+$liveC2 = xeric_room_open($TR, $dbC2, $SUN, 'first_lutheran', ['id' => 1, 'name' => 'Walt', 'rating' => 'mature']);
+$liveC2['conv'] = xeric_conversation_create($dbC2, '', 'room', 'first_lutheran');
+xeric_world_state_set($dbC2, XERIC_ROOM_LIVE, json_encode($liveC2));
+live_say($TR, $dbC2, $SUN, 'Morning.');
+$hi = live_beat($TR, $dbC2, $SUN, $epC2);
+live_say_as($TR, $dbC2, $SUN, 'Hi everybody.', ['id' => 2, 'name' => 'Ann', 'rating' => 'sfw']);
+$lC2 = xeric_room_live_get($dbC2);
+$lo = live_beat($TR, $dbC2, $SUN, $epC2);
+ok('ceiling: a kids\' headset sitting down lowers the room\'s ceiling for everybody, and the trail says so',
+    $liveC2['eff'] === 'mature' && $lC2['eff'] === 'sfw' && !empty($lC2['lowered'])
+    && array_filter($lC2['trail'], fn($b) => ($b['ceiling'] ?? '') === 'sfw' && ($b['was'] ?? '') === 'mature') !== []);
+ok('ceiling: the very next cast prompt is written at the lower rating',
+    str_contains((string)$hi['system'], 'TV-MA') && str_contains((string)$lo['system'], 'TV-G')
+    && !str_contains((string)$lo['system'], 'TV-MA'));
+live_say_as($TR, $dbC2, $SUN, 'Hello.', ['id' => 3, 'name' => 'Corey', 'rating' => 'explicit']);
+ok('ceiling: and a higher-rated seat never raises it back mid-session', xeric_room_live_get($dbC2)['eff'] === 'sfw'
+    && count(xeric_room_live_get($dbC2)['players']) === 3);
+
+// -- after the fold, every cast prompt is written for the kid at the table ---
+// Walt's adult session says something stamped mature; the cast answers; Ann's
+// kids' headset sits down and folds the ceiling. The rows are handed to the
+// beat whole (as a caller that forgot would), and the prompt still carries
+// the adult line only as a gap, though the worker carrying the beat is the
+// adult's. The close, run on the kid's request, writes
+// its diaries from what was actually said: the landing is background work.
+$dbF = fresh_db('two-fold'); $cF = [];
+$epF = stub_room($cF, ['Ruth Amberg' => ['Ruth heard Walt call the deacon a pompous old goat.']], null, fn(int $n) => 'Line ' . $n . '.');
+xeric_player_move($dbF, 'first_lutheran', (int)$SUN['epoch']);
+xeric_player_move($dbF, 'first_lutheran', (int)$SUN['epoch'], 2);
+$liveF = xeric_room_open($TR, $dbF, $SUN, 'first_lutheran', ['id' => 1, 'name' => 'Walt', 'rating' => 'mature']);
+$liveF['conv'] = xeric_conversation_create($dbF, '', 'room', 'first_lutheran');
+xeric_world_state_set($dbF, XERIC_ROOM_LIVE, json_encode($liveF));
+xeric_state_rating('mature');
+$adultMid = live_say($TR, $dbF, $SUN, 'The deacon is a pompous old goat.');
+live_beat($TR, $dbF, $SUN, $epF);
+xeric_state_rating('sfw');
+live_say_as($TR, $dbF, $SUN, 'Hi everybody.', ['id' => 2, 'name' => 'Ann', 'rating' => 'sfw']);
+xeric_state_rating('mature');                       // the beat is carried by Walt's adult worker
+$loF = live_beat($TR, $dbF, $SUN, $epF);
+xeric_state_rating('sfw');                          // and the close by Ann's kids' headset
+$bytesF = json_encode($loF['messages'], JSON_UNESCAPED_UNICODE);
+ok('fold: the cast prompt after the fold carries no adult-stamped line\'s words — a gap in its place, the kid\'s line whole',
+    (string)$dbF->query('SELECT rating FROM messages WHERE id = ' . $adultMid)->fetchColumn() === 'mature'
+    && !str_contains($bytesF, 'pompous old goat') && str_contains($bytesF, XERIC_STATE_UNSHOWN)
+    && str_contains($bytesF, 'Hi everybody.'), mb_substr($bytesF, -500));
+$convF = xeric_room_seal($dbF, 'stepped back', $SUN);
+$landF = xeric_room_land_live($TR, $dbF, xeric_room_seals($dbF)[$convF], $epF);
+$dF = array_values(array_filter($cF, fn($c) => $c['tag'] === 'extract'));
+$dFb = json_encode(array_column($dF, 'msgs'), JSON_UNESCAPED_UNICODE);
+ok('fold: a room landed with a kid at the table writes its diaries from the real lines, not placeholders',
+    $dF !== [] && str_contains($dFb, 'pompous old goat') && !str_contains($dFb, XERIC_STATE_UNSHOWN)
+    && (int)$landF['event_id'] > 0, mb_substr($dFb, 0, 400));
+xeric_state_rating('');
+
+// -- the close, with two: both in every head's company, the title, the trail ---
+$dbL2 = fresh_db('two-close'); $cL2 = [];
+$epL2 = stub_room($cL2, ['Ruth Amberg' => ['Ruth saw Walt and Ann come in together.']], null, fn(int $n) => 'Plain ' . $n . '.');
+live_open($T, $dbL2, $SUN, 'first_lutheran');
+xeric_player_move($dbL2, 'first_lutheran', (int)$SUN['epoch'], 2);
+live_say($T, $dbL2, $SUN, 'Ruth, morning.');
+live_turn($T, $dbL2, $SUN, $epL2, 2);
+live_say_as($T, $dbL2, $SUN, 'Ruth, I will bring the dish on Saturday.', ANN);
+live_turn($T, $dbL2, $SUN, $epL2, 2);
+$convL2 = xeric_room_seal($dbL2, 'stepped back', $SUN);
+$landL2 = xeric_room_land_live($T, $dbL2, xeric_room_seals($dbL2)[$convL2], $epL2);
+$evL2 = xeric_events_recent($dbL2, 1)[0];
+$trL2 = trail($dbL2, (int)$landL2['event_id']);
+$dX = array_values(array_filter($cL2, fn($c) => $c['tag'] === 'extract'));
+ok('close: the hour names both people at the centre, and every diary prompt has both in the company',
+    str_contains((string)$evL2['title'], 'walt') && str_contains((string)$evL2['title'], 'ann')
+    && $dX !== [] && array_filter($dX, fn($c) => !str_contains((string)$c['msgs'][1]['content'], 'Walt')
+        || !str_contains((string)$c['msgs'][1]['content'], 'Ann')) === [], (string)$evL2['title']);
+ok('close: the trail lists the seats, with the row each sat down at',
+    count((array)($trL2['players'] ?? [])) === 2 && ($trL2['players'][1]['name'] ?? '') === 'Ann'
+    && (int)($trL2['players'][1]['joined_at_row'] ?? 0) > 0 && str_contains((string)$trL2['why'], 'Ann sat down partway through'), json_encode($trL2['players'] ?? null));
+$exL2 = array_values(array_filter(xeric_expects_for($dbL2, 'ruth'), fn($e) => str_contains((string)$e['quote'], 'the dish')));
+ok('close: a promise made across the table is the promiser\'s own — Ann\'s, not Walt\'s',
+    count($exL2) === 1 && (int)($exL2[0]['p'] ?? 1) === 2 && !isset($exL2[0]['of']), json_encode($exL2));
+
+// -- the old shape: a live row and a seal written before seats -----------------
+$dbOS = fresh_db('old-shape'); $cOS = [];
+$old = live_open($T, $dbOS, $SUN, 'first_lutheran');
+$old['player'] = ['id' => 1, 'name' => 'Walt', 'named' => true];
+unset($old['players'], $old['left_players']);
+$old['streak']['__you'] = 2; $old['noticed']['__you'] = true;
+xeric_world_state_set($dbOS, XERIC_ROOM_LIVE, json_encode($old));
+$mOS = xeric_room_live_get($dbOS);
+ok('old shape: a live row with one `player` reads as one seat, its streak that seat\'s silence',
+    !isset($mOS['player']) && count($mOS['players']) === 1 && $mOS['players'][0]['handle'] === '__you'
+    && $mOS['players'][0]['silence'] === 2 && $mOS['players'][0]['noticed'] === true && !isset($mOS['streak']['__you']), json_encode($mOS['players']));
+live_say($T, $dbOS, $SUN, 'Morning.');
+live_turn($T, $dbOS, $SUN, stub_room($cOS, [], null, fn(int $n) => 'Fine.'), 1);
+$convOS = (int)$old['conv'];
+$sealOS = json_decode((string)xeric_world_state_get($dbOS, XERIC_ROOM_LIVE), true);
+$sealOS['player'] = ['id' => 1, 'name' => 'Walt', 'named' => true];
+unset($sealOS['players'], $sealOS['left_players']);
+$sealOS['ended'] = 'stepped back';
+xeric_world_state_delete($dbOS, XERIC_ROOM_LIVE);
+xeric_world_state_set($dbOS, XERIC_ROOM_SEAL . $convOS, json_encode($sealOS));
+$landOS = xeric_room_land_live($T, $dbOS, xeric_room_seals($dbOS)[$convOS], null);
+ok('old shape: and a seal in the old shape still lands — one event, the player named in it',
+    (int)$landOS['event_id'] > 0 && str_contains((string)xeric_events_recent($dbOS, 1)[0]['title'], 'walt'));
+
+// -- a room of one is the room it always was, to the byte ----------------------
+// Every prompt, every row, every carry receipt and the close's title, prose
+// and trail of one deterministic one-player session, hashed against the
+// engine as it stood before two humans could sit (computed then, pinned here).
+mt_srand(5);
+$dbB = fresh_db('one-byte'); $callsB = []; $nB = 0;
+$epB = ['base' => 'stub://', 'stub' => function ($tag, $msgs) use (&$callsB, &$nB) {
+    $callsB[] = [$tag, $msgs];
+    if ($tag === 'extract') return ['memories' => []];
+    $nB++;
+    return [1 => 'Ruth, you first.', 2 => 'Fine. The urn is on, Walt?', 3 => 'Well then, Janelle.', 4 => 'Who left it on?'][$nB] ?? 'Mm, line ' . $nB . '.';
+}];
+live_open($T, $dbB, $SUN, 'first_lutheran');
+$carriesB = [];
+foreach (['Morning, all of you.', 'Ruth and Janelle, settle this.', 'Hm.', 'Dale?'] as $i => $line) {
+    xeric_room_live_edit($dbB, function (?array &$live) use ($T, $dbB, $SUN, $line) {
+        $lines = xeric_room_lines($live, xeric_room_rows($dbB, (int)$live['conv']));
+        $heard = xeric_room_hear($T, $live, $lines, $line);
+        $mid = xeric_message_append($dbB, (int)$live['conv'], 'user', null, $heard, (int)$SUN['epoch'], null, 1);
+        xeric_room_said($live, $mid, $heard, $SUN);
+    });
+    if ($i === 2) xeric_room_live_edit($dbB, function (?array &$live) { foreach (array_merge($live['present'], ['__you']) as $h) $live['streak'][$h] = 4; });
+    for ($k = 0; $k < 5; $k++) {
+        $live = xeric_room_live_get($dbB);
+        if ((int)$live['budget'] <= 0) break;
+        $lines = xeric_room_lines($live, xeric_room_rows($dbB, (int)$live['conv']));
+        $draw = xeric_room_next($T, $dbB, $live, $lines);
+        $beat = xeric_room_step($T, $dbB, $live, $lines, $SUN, $epB, $draw);
+        $carriesB[] = xeric_room_live_edit($dbB, function (?array &$live) use ($dbB, $SUN, $beat, $draw) {
+            $mid = xeric_message_append($dbB, (int)$live['conv'], 'character', $beat['handle'], $beat['text'], (int)$SUN['epoch']);
+            $c = xeric_room_carry($live, $beat, ['seed' => 'fp', 'player_here' => true]);
+            xeric_room_spoke($live, $beat, $mid, $draw, $c, $SUN, 1.0);
+            return [$beat['handle'], $draw['how'], $draw['weights'], $c, $beat['notice']];
+        });
+    }
+}
+$liveB = xeric_room_live_get($dbB);
+$rowsB = array_map(fn($r) => [$r['id'], $r['role'], $r['handle'], $r['content'], $r['world_epoch'], $r['player'], $r['rating']],
+    xeric_room_rows($dbB, (int)$liveB['conv']));
+$convB = xeric_room_seal($dbB, 'stepped back', $SUN);
+$landB = xeric_room_land_live($T, $dbB, xeric_room_seals($dbB)[$convB], $epB);
+$evB = xeric_events_recent($dbB, 1)[0];
+$trB = trail($dbB, (int)$landB['event_id']);
+unset($trB['at']);
+$hashB = hash('sha256', json_encode([$callsB, $rowsB, $carriesB, $evB['title'], $evB['prose'], $trB], JSON_UNESCAPED_UNICODE));
+ok('one player: every prompt, row, receipt and the close are byte-identical to the one-player engine',
+    $hashB === '5334a1cf733c0e8c6c5f0056d093f804ed33f71cc0468142dbe957d4e3cf14fc', $hashB);
+
+// -- the old rule, pinned: xeric_room() still writes nothing until its close ---
+$dbO = fresh_db('old-rule'); $cO = [];
+$probeO = fn() => counts($dbO);
+$outO = xeric_room($T, $dbO, $TRIO, $SUN, stub_room($cO, [], $probeO), ['beats' => 3, 'seed' => 3]);
+ok('old rule: xeric_room() lands nothing until the close — no row, no thread, no live session, during any call',
+    array_filter($cO, fn($c) => $c['db'] !== '0/0/0/0/none') === [], json_encode(array_column($cO, 'db')));
+ok('old rule: and after it, one event and still no thread', xeric_events_count($dbO) === 1
+    && xeric_conversations_count($dbO) === 0 && (int)$dbO->query('SELECT COUNT(*) FROM messages')->fetchColumn() === 0);
 
 // ---------------------------------------------------------------------------
 

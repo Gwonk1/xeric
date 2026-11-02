@@ -8,7 +8,8 @@
  *   php forge/forge-cli.php --local --answers=scale=city,name=Ada,job=tend bar,motivation=romance
  *   php forge/forge-cli.php --base=https://api.openai.com/v1 --key=sk-… --model=gpt-…
  *
- * --local means the llama.cpp server on this box (127.0.0.1:8080). It is
+ * --local means a llama.cpp-compatible server (OpenAI chat API). Default is
+ * $XERIC_LOCAL_BASE, then 127.0.0.1:8080. It is
  * checked with xeric_llm_up() BEFORE any work happens, because a forge that
  * discovers the model is down four passes in has wasted the user's minutes.
  *
@@ -39,16 +40,7 @@ if (isset($args['help']) || isset($args['h'])) {
 }
 
 // -- endpoint ---------------------------------------------------------------
-$endpoint = [
-    'kind'  => (string)($args['kind'] ?? 'local'),
-    'base'  => (string)($args['base'] ?? ''),
-    'model' => (string)($args['model'] ?? ''),
-    'key'   => (string)($args['key'] ?? getenv('XERIC_API_KEY') ?: ''),
-];
-if (isset($args['local']) || $endpoint['base'] === '') {
-    $endpoint['kind'] = 'local';
-    $endpoint['base'] = $endpoint['base'] !== '' ? $endpoint['base'] : 'http://127.0.0.1:8080';
-}
+$endpoint = xeric_llm_cli_endpoint($args);
 
 fwrite(STDOUT, "xeric forge\n");
 fwrite(STDOUT, '  endpoint : ' . $endpoint['base'] . ' (' . $endpoint['kind'] . ")\n");
@@ -56,7 +48,8 @@ fwrite(STDOUT, "  checking : ");
 if (!xeric_llm_up($endpoint)) {
     fwrite(STDOUT, "no answer\n\n");
     fwrite(STDERR, "The model at {$endpoint['base']} is not answering.\n"
-        . "Start it (llama-server --host 127.0.0.1 --port 8080 …) or pass --base=…\n");
+        . "Start llama-server (llama-server --host 0.0.0.0 --port 8080 …),\n"
+        . "or pass --base=http://your-gpu:8080, or set XERIC_LOCAL_BASE.\n");
     exit(1);
 }
 fwrite(STDOUT, "up\n");
@@ -218,11 +211,12 @@ function xeric_cli_usage(): string
     return <<<TXT
     php forge/forge-cli.php [options]
 
-      --local              use the llama.cpp server at 127.0.0.1:8080 (default)
+      --local              use a llama.cpp-compatible server (default)
       --base=URL           any OpenAI-compatible endpoint
+                           default: $XERIC_LOCAL_BASE, else 127.0.0.1:8080
       --kind=local|openai|anthropic
-      --model=NAME         model id for hosted endpoints
-      --key=SECRET         api key (or set XERIC_API_KEY)
+      --model=NAME         model id (or set XERIC_LOCAL_MODEL)
+      --key=SECRET         api key (or set XERIC_LOCAL_KEY / XERIC_API_KEY)
 
       --answers=k=v,k=v    scale, name, job, hours, motivation, rating, themes (a|b|c)
       --rating=sfw|pg|teen|mature|explicit   TV-G/TV-PG/TV-14/TV-MA/Unrated (default sfw)

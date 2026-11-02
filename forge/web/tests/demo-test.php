@@ -417,8 +417,16 @@ foreach (['http://127.0.0.1:9/x' => 'this machine',
     ok("egress: $what is not somewhere a phone notification goes",
         xeric_web_host_open((string)parse_url($u, PHP_URL_HOST)) === false, $u);
 }
-ok('egress: and a real notification host still is',
-    xeric_web_host_open('ntfy.sh') === true);
+// NEEDS REAL DNS. xeric_web_host_open resolves the name, and offline (or in a
+// sandbox with no resolver) a public name cannot be told from a private one —
+// so the check is skipped, said as a SKIP, when the name does not resolve.
+// gethostbyname returns its input unchanged on failure.
+if (gethostbyname('ntfy.sh') === 'ntfy.sh') {
+    echo "SKIP - egress: and a real notification host still is (ntfy.sh does not resolve here: no DNS)\n";
+} else {
+    ok('egress: and a real notification host still is',
+        xeric_web_host_open('ntfy.sh') === true);
+}
 $nfy = (string)file_get_contents(dirname(__DIR__) . '/notify.php');
 ok('egress: the page that SAVES it applies that fence',
     str_contains($nfy, 'xeric_web_host_open((string)parse_url($url, PHP_URL_HOST))'));
@@ -512,7 +520,7 @@ foreach ([
     'power'  => 'the clock and the learning switch',
     'fate'   => 'ending the world',
     'photo'  => 'photo consent and the spend behind it',
-    'where'  => 'walking the owner\'s character',
+    'where'  => 'walking with no seat in the roster (a joined player walks their own body)',
     'tick'   => 'taking back the last skip',
 ] as $page => $why) {
     ok("guest: $page.php asks before it writes — $why",
@@ -1153,8 +1161,21 @@ $own = xeric_web_endpoint(['kind' => 'local', 'local' => 'http://10.1.2.3:8080',
                            'base' => 'http://169.254.169.254/']);
 ok('a local address the owner set is used, and `base` is still discarded',
     (string)$own['base'] === 'http://10.1.2.3:8080', (string)$own['base']);
+ok('and the label names that host, not 127.0.0.1',
+    xeric_web_endpoint_label($own) === 'the local model (10.1.2.3:8080)',
+    xeric_web_endpoint_label($own));
 ok('and a junk local address falls back rather than being called',
     (string)xeric_web_endpoint(['kind' => 'local', 'local' => 'not a url'])['base'] === $cfgBase);
+
+// THE WORKER RE-PARSES WHAT BUILD.PHP ALREADY RESOLVED. Dropping `local` on the
+// way out made the second pass identical to a visitor omitting it, so every
+// forge against a GPU box quietly ran on 127.0.0.1:8080 and, when nothing
+// answered there, fell back to the surprise table.
+$again = xeric_web_endpoint($own);
+ok('resolving a local endpoint twice still names the box the owner set',
+    (string)$again['base'] === 'http://10.1.2.3:8080', (string)$again['base']);
+ok('because the resolved shape carries `local`, not only `base`',
+    (string)($own['local'] ?? '') === 'http://10.1.2.3:8080', json_encode($own));
 
 // `none` is a state, and it has to fail here rather than at the first request.
 $noneSaid = '';
@@ -1164,6 +1185,81 @@ ok('with nothing attached the endpoint refuses, by name',
 ok('and `connected` tells the two apart',
     !xeric_web_connected(['kind' => 'none']) && !xeric_web_connected([])
     && xeric_web_connected(['kind' => 'local']) && xeric_web_connected(['kind' => 'openai']));
+
+// ---------------------------------------------------------------------------
+// THE FORGE WIZARD MUST NOT DETACH THE GPU BOX.
+//
+// Autosave used to take `{i: N}` — the only thing the page is allowed to post —
+// and write `{kind: local, base: '', model: ''}`. `local` never landed, so the
+// next xeric_web_endpoint() fell through to config 127.0.0.1:8080, even when
+// the visitor had already attached a box on the LAN. The index has to resolve
+// against THIS visitor's list, and a payload that names no machine must leave
+// the engine alone.
+// ---------------------------------------------------------------------------
+
+$gpu = 'http://192.168.50.10:8080';
+$G = sid();
+xeric_session_use($G);
+xeric_web_session_edit(function (array &$s) use ($gpu): void {
+    $s['machines'] = [['base' => $gpu, 'model' => 'qwen2.5-32b']];
+    $s['wired']    = [$gpu];
+    $s['model']    = ['kind' => 'local', 'base' => '', 'local' => $gpu, 'model' => 'qwen2.5-32b'];
+}, $G);
+
+$pickedGpu = xeric_model_choice(['i' => 1], $G);
+ok('forge {i:N} keeps the GPU box, not 127.0.0.1:8080',
+    is_array($pickedGpu)
+    && ($pickedGpu['kind'] ?? '') === 'local'
+    && ($pickedGpu['local'] ?? '') === $gpu
+    && ($pickedGpu['model'] ?? '') === 'qwen2.5-32b',
+    json_encode($pickedGpu));
+ok('and the endpoint is that box',
+    (string)xeric_web_endpoint($pickedGpu)['base'] === $gpu,
+    (string)xeric_web_endpoint($pickedGpu)['base']);
+
+$wiped = ['kind' => 'local', 'base' => '', 'model' => ''];
+ok('the old wizard write would have fallen through to the configured default',
+    (string)xeric_web_endpoint($wiped)['base'] === $cfgBase, (string)xeric_web_endpoint($wiped)['base']);
+
+ok('a wizard save that names no machine does not invent a descriptor',
+    xeric_model_choice([], $G) === null
+    && xeric_model_choice(['kind' => 'local'], $G) === null
+    && xeric_model_choice(['kind' => 'local', 'base' => 'http://169.254.169.254/'], $G) === null
+    && xeric_model_choice(['local' => 'http://169.254.169.254/'], $G) === null);
+
+ok('kind=local `base` still cannot point the endpoint at a visitor URL',
+    (string)xeric_web_endpoint(['kind' => 'local', 'base' => 'http://169.254.169.254/'])['base'] === $cfgBase);
+
+$api = 'https://api.openai.com';
+xeric_web_session_edit(function (array &$s) use ($api): void {
+    $s['machines'][] = ['base' => $api];
+}, $G);
+$pickedApi = xeric_model_choice(['i' => 2], $G);
+ok('a public API chosen by index keeps its own host',
+    is_array($pickedApi) && ($pickedApi['kind'] ?? '') === 'openai' && ($pickedApi['base'] ?? '') === $api,
+    json_encode($pickedApi));
+
+ok('an index that is not on the list is a no-op, not a default machine',
+    xeric_model_choice(['i' => 99], $G) === null);
+
+// Apply the save the way forge.php does, then read the engine back — this is
+// the whole user-facing failure: next status/build hit 127.0.0.1:8080.
+xeric_web_session_edit(function (array &$s) use ($G): void {
+    $got = xeric_model_choice(['i' => 1], $G);
+    if ($got !== null) $s['model'] = $got;
+}, $G);
+$after = xeric_web_model($G);
+ok('after a wizard save the attached engine is still the GPU box',
+    (string)($after['local'] ?? '') === $gpu
+    && (string)xeric_web_endpoint($after)['base'] === $gpu
+    && !str_contains((string)xeric_web_endpoint($after)['base'], '127.0.0.1'),
+    json_encode($after));
+
+$forgeSave = (string)file_get_contents(dirname(__DIR__) . '/forge.php');
+ok('the wizard save resolves {i:N} rather than storing kind/base off the wire',
+    str_contains($forgeSave, 'xeric_model_choice($m)')
+    && !preg_match("/\\\$s\['model'\] = \['kind' => \(string\)\(\\\$m\['kind'\]/", $forgeSave));
+
 
 // ---------------------------------------------------------------------------
 // THE ONE GENUINELY UNPORTABLE THING IN THE APP: starting a detached worker.
@@ -1360,6 +1456,25 @@ ok('while the owner still reads the real thing she is handed',
     && str_contains($whyOwner, 'SOLACE_CANARY'),
     mb_substr($whyOwner, 0, 200));
 
+// WHY THE HOURS STOPPED. The heart writes budget.stopped when a world's
+// ceiling halts its offscreen life; the index is where "why has nothing
+// happened?" is asked, so it says, in xeric_budget_why's one sentence.
+$whySrc = (string)file_get_contents(dirname(__DIR__) . '/why.php');
+ok('source: why.php\'s index reads budget.stopped and says why with xeric_budget_why, once',
+    str_contains($whySrc, "xeric_world_state_get(\$db, 'budget.stopped') !== null ? xeric_budget_why(\$db, \$now) : null")
+    && substr_count($whySrc, 'xeric_budget_why(') === 1);
+$bsDb  = xeric_state_open($lived . '/world.db');
+$bsNow = xeric_clock_now($bsDb, $LT);
+xeric_budget_stopped($bsDb, $bsNow, ['ok' => false, 'reason' => "this world's token budget for today is spent"]);
+$whyStopped = $run('why.php', $A, ['w' => 'lived-in']);
+xeric_world_state_delete($bsDb, 'budget.stopped');
+$whyGoing = $run('why.php', $A, ['w' => 'lived-in']);
+ok('and the owner\'s index says the world stopped, and why — and says nothing when it did not',
+    str_contains($whyStopped, 'class="quiet budgetstop">The world stopped living hours at')
+    && str_contains($whyStopped, 'token budget for today is spent') && !str_contains($whyGoing, 'budgetstop'),
+    mb_substr($whyStopped, 0, 300));
+$bsDb = null;
+
 // ---------------------------------------------------------------------------
 // THE RESULT SCREEN IS THE SEED IN SENTENCES. forge.php?w= printed every baked
 // event to whoever asked, which is the same material world.php?f=seed refuses
@@ -1508,15 +1623,19 @@ $denied = function (string $uri) use ($patterns): bool {
 // patterns are anchored (^|/) and closed (/|$) for exactly those two shapes.
 $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/state.php',
              '/worker.php', '/tick-worker.php', '/reroll-worker.php', '/addchar-worker.php',
-             '/photo-worker.php', '/story-worker.php', '/forge/worker.php',
+             '/photo-worker.php', '/scene-worker.php', '/story-worker.php', '/room-worker.php', '/forge/worker.php',
              '/heart.php', '/router.php',
              '/worker.php/extra', '/boot.php', '/ui.php', '/play-lib.php', '/review-lib.php',
-             '/why-lib.php', '/session.php', '/limits.php', '/queue.php',
+             '/model-lib.php', '/play-shelf.php', '/play-view.php', '/play-book.php', '/play-watch.php', '/play-narrator.php',
+             '/why-lib.php', '/api-lib.php', '/session.php', '/limits.php', '/queue.php',
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
-              '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php',
-              '/forge/forge.php', '/forge/play.php'];
+              '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php', '/speak.php', '/stream.php',
+              '/hear.php', '/room.php', '/api.php', '/link.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php',
+              '/stand.php', '/stand.php?w=x', '/stand.php?manifest&w=x', '/stand-sw.php', '/stand-icon.png', '/forge/stand.php',
+              '/xeric.css', '/xeric-shelf.css', '/xeric-view.js', '/xeric-map.js', '/xeric-splat.js', '/xeric-splat-worker.js',
+              '/forge/xeric.css?v=0123456789abcdef'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
 ok('every include, worker and test path is denied', $served === [], implode(' ', $served));
@@ -1527,8 +1646,8 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 // list is a hand-written enumeration, and a hand-written enumeration goes stale.
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
-          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php',
-          'debrief.php', 'join.php'];
+          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php', 'speak.php',
+          'debrief.php', 'join.php', 'hear.php', 'api.php', 'room.php', 'link.php', 'stand.php', 'stand-sw.php', 'stream.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);
@@ -1551,7 +1670,8 @@ ok('and every file in forge/web that is not a page is on the list',
 // A whole class of bug that a linter will not find and a page test will not
 // reach, because it only appears on the path that spends three minutes.
 $webDir = dirname(__DIR__);
-$libFiles = ['play-lib.php', 'review-lib.php', 'why-lib.php', 'boot.php', 'ui.php',
+$libFiles = ['play-lib.php', 'model-lib.php', 'play-shelf.php', 'play-view.php', 'play-book.php', 'play-watch.php',
+             'review-lib.php', 'why-lib.php', 'api-lib.php', 'boot.php', 'ui.php',
              'session.php', 'limits.php', 'queue.php', 'pdf.php'];
 
 $declaredIn = [];
@@ -3411,7 +3531,7 @@ $seed = '$_GET = ["w" => "argument"];'
     . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
     . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
     . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
-    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' require_once ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
     . ' $w = xeric_play_open("argument"); $d = $w["db"]; $T = $w["template"];'
     . ' xeric_panel_think($d, "ada_reyes", "We should look at the lease before anybody talks about people.",'
     . '   "the building costs more than four of the jobs and nobody has read the break clause");'
@@ -3472,7 +3592,7 @@ $rawBoot = '$_GET = ["w" => "argument"];'
     . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
     . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
     . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
-    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' require_once ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
     . ' $w = xeric_play_open("argument");'
     . ' $_GET["a"] = (string)xeric_panel_made($w["db"], "the script", ' . var_export($xss, true) . ', "html", "");'
     . ' require ' . var_export(dirname(__DIR__) . '/debrief.php', true) . ';';
@@ -3592,7 +3712,7 @@ $heldRegion = static function (string $src): ?array {
 };
 
 foreach (['worker', 'addchar-worker', 'reroll-worker', 'panel-worker', 'tick-worker',
-          'story-worker', 'table-worker'] as $wk) {
+          'story-worker', 'table-worker', 'room-worker'] as $wk) {
     $src  = (string)file_get_contents(dirname(__DIR__) . '/' . $wk . '.php');
     $span = $heldRegion($src);
     if ($span === null) {                        // takes no hold; nothing to leak
@@ -3648,7 +3768,8 @@ ok('register: and one nobody ships is dropped rather than carried',
 // no caller anywhere, and the kinds it stores (chat / event) are the same split
 // the clean room draws. This is the app's own data getting the shape it was
 // written for.
-$libT = (string)file_get_contents(dirname(__DIR__) . '/play-lib.php');
+$libT = (string)file_get_contents(dirname(__DIR__) . '/play-lib.php')
+      . (string)file_get_contents(dirname(__DIR__) . '/xeric.css');     // the rules moved, the sidebar did not
 ok('threads: the sidebar has a list of what you are in the middle of',
     str_contains($libT, "xeric_play_sideblock('threads'"));
 ok('threads: each row opens that person, through the binding the panel already has',
@@ -3746,4 +3867,61 @@ ok('identity: and the repair sticks — the next request adopts it rather than m
 rmtree($tmp);
 
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";
+
+// ---------------------------------------------------------------------------
+// A PROBE CARRIES THE KEY TO ONE BOX. The machine detector sends the operator's
+// XERIC_LOCAL_KEY with its GETs so a llama-server --api-key answers /props; it
+// also probes every address a visitor adds, and the host gate lets public hosts
+// through on purpose. The key goes to the configured engine and to loopback,
+// and nowhere else.
+// ---------------------------------------------------------------------------
+echo "\n# the probe and the key\n";
+$pkBase = getenv('XERIC_LOCAL_BASE'); $pkKey = getenv('XERIC_LOCAL_KEY'); $pkApi = getenv('XERIC_API_KEY');
+putenv('XERIC_LOCAL_BASE=http://192.168.50.10:8080/v1'); putenv('XERIC_LOCAL_KEY=s3cret'); putenv('XERIC_API_KEY=hosted');
+ok('the configured engine is probed with the operator key',
+    xeric_model_probe_key('http://192.168.50.10:8080') === 's3cret');
+ok('and a pasted /v1 on either side still names the same box',
+    xeric_model_probe_key('http://192.168.50.10:8080/v1/') === 's3cret');
+ok('loopback is the operator\'s own box too',
+    xeric_model_probe_key('http://127.0.0.1:11434') === 's3cret' && xeric_model_probe_key('http://localhost:8080') === 's3cret');
+ok('a visitor-added public host is probed anonymously',
+    xeric_model_probe_key('https://attacker.example/') === '');
+ok('and so is a LAN box that is not the configured one',
+    xeric_model_probe_key('http://192.168.50.11:8080') === '');
+putenv('XERIC_LOCAL_KEY');
+ok('with no local key the hosted key does not travel to a stranger either',
+    xeric_model_probe_key('https://attacker.example/') === '' && xeric_model_probe_key('http://192.168.50.10:8080') === 'hosted');
+putenv('XERIC_LOCAL_KEY=s3cret'); putenv('XERIC_LOCAL_MODEL=qwen3-router');
+ok('the resolved endpoint carries the operator key only to the configured box',
+    xeric_web_endpoint(['kind' => 'local', 'local' => 'http://192.168.50.10:8080'])['key'] === 's3cret'
+    && xeric_web_endpoint(['kind' => 'local', 'local' => 'http://10.1.2.3:8080'])['key'] === '');
+// The hosted branch resolves its host first; a box with no DNS throws before
+// the key line, which is also a pass — nothing was sent anywhere.
+try { $hostedKey = xeric_web_endpoint(['kind' => 'openai', 'base' => 'https://api.openai.com/v1'])['key']; }
+catch (Throwable $e) { $hostedKey = ''; }
+ok('a hosted endpoint never takes a key from the environment', $hostedKey === '');
+ok('an empty stored model name falls back to XERIC_LOCAL_MODEL',
+    xeric_web_endpoint(['kind' => 'local', 'local' => 'http://192.168.50.10:8080', 'model' => ''])['model'] === 'qwen3-router'
+    && xeric_web_endpoint(['kind' => 'local', 'local' => 'http://192.168.50.10:8080', 'model' => 'picked'])['model'] === 'picked');
+putenv('XERIC_LOCAL_MODEL');
+foreach (['XERIC_LOCAL_BASE' => $pkBase, 'XERIC_LOCAL_KEY' => $pkKey, 'XERIC_API_KEY' => $pkApi] as $k => $v) {
+    if ($v === false) putenv($k); else putenv("$k=$v");
+}
+
+
+// A GET THAT SPENDS CARRIES THE GUARD. The CSRF guard checks POST; these three
+// GETs reach the model or a metered machine, and an <img> on another site is a
+// GET sent with the owner's cookie. Each must call the spend guard.
+echo "\n# a GET that spends\n";
+$W = dirname(__DIR__);
+ok('speak.php guards a cache miss against a cross-site GET',
+    substr_count((string)file_get_contents($W . '/speak.php'), 'xeric_web_spend_guard()') >= 1);
+$pl = (string)file_get_contents($W . '/play.php');
+ok('hint and suggest guard themselves', substr_count($pl, 'xeric_web_spend_guard()') >= 2);
+$_SERVER['HTTP_SEC_FETCH_SITE'] = 'cross-site';
+ok('and the guard sees a cross-site fetch for what it is', xeric_web_cross_site() === true);
+$_SERVER['HTTP_SEC_FETCH_SITE'] = 'same-origin';
+ok('while a same-origin fetch passes', xeric_web_cross_site() === false);
+unset($_SERVER['HTTP_SEC_FETCH_SITE']);
+
 exit($FAILED === 0 ? 0 : 1);

@@ -18,7 +18,17 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/boot.php';
 
-function xeric_web_head(string $title): void
+/**
+ * @param array $opts `microphone` => true on the one page that may ask for it
+ *                    (play.php's push to talk); every other page says no.
+ *                    `stand` => true on stand.php alone: the microphone and
+ *                    the headset are its, and it may register its service
+ *                    worker and name its manifest (worker-src, manifest-src).
+ *                    `stream_origin` => the scene machine's origin, from the
+ *                    look reader (xeric_play_stream_origin), on a page that
+ *                    can show a live view; '' or absent everywhere else.
+ */
+function xeric_web_head(string $title, array $opts = []): void
 {
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store');
@@ -40,19 +50,68 @@ function xeric_web_head(string $title): void
     // script, and the alternative is nonce-ing several hundred attributes for a
     // much smaller prize.
     //
+    // media-src 'self' is the room's sound (scene.php, `what you hear`).
+    // Without it default-src 'none' refuses every <audio>, silently — the
+    // nonce discipline's failure mode again, an absence rather than an error.
+    // 'self' and nothing wider: a sound is bytes this server sniffed and
+    // serves itself (xeric_play_look_file), never a machine's own link.
+    //
+    // THE ONE PLACE THIS POLICY NAMES A REMOTE ORIGIN: the live view
+    // (engine/stream.php, docs/VIEWPORT.md "Streams"). A world model's session
+    // is video the page plays straight from the machine — an HLS playlist in
+    // a <video>, a WHEP offer POSTed and its track attached, an MJPEG picture
+    // that keeps arriving — so media-src, connect-src (WHEP's POST) and
+    // img-src (MJPEG) gain exactly one source: the scene machine's own
+    // origin, computed from its configured address (xeric_stream_origin) and
+    // checked again here against a strict shape, so a hostile string cannot
+    // become a second directive. Nothing else: the engine refuses a session
+    // whose url is on any other origin, so there is never a reason to widen
+    // further. A page that cannot show a live view passes nothing and gets
+    // the policy every page always had.
+    $remote = trim((string)($opts['stream_origin'] ?? ''));
+    if (!preg_match('#^https?://(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$#', $remote)) {
+        $remote = '';
+    }
+    $plus = $remote !== '' ? ' ' . $remote : '';
+    //
     // frame-ancestors matters more here than it looks: a local server on a known
     // port is trivially framed by any page the owner happens to open.
     header("Content-Security-Policy: default-src 'none'; "
         . "script-src 'nonce-" . xeric_web_nonce() . "'; "
         . "style-src 'self' 'unsafe-inline'; "
-        . "img-src 'self' data:; "
-        . "connect-src 'self'; "
+        . "img-src 'self' data:" . $plus . "; "
+        . "media-src 'self'" . $plus . "; "
+        . "connect-src 'self'" . $plus . "; "
         . "form-action 'self'; "
         . "base-uri 'none'; "
         . "frame-ancestors 'none'; "
-        . "object-src 'none'");
+        . "object-src 'none'"
+        // THE STAND PAGE IS AN INSTALLABLE APP (stand.php): its service worker
+        // and its manifest each fall to default-src 'none' without these two,
+        // and both fail silently — no error, just a page that never works
+        // offline and never offers to install. 'self' and nothing wider: the
+        // worker is stand-sw.php and the manifest is stand.php?manifest. No
+        // blob:, which as a worker source is as good as 'unsafe-eval'.
+        // The play page asks for worker-src too (`worker` => true): the splat
+        // viewer's depth sort is xeric-splat-worker.js, from this origin. One
+        // directive however many reasons a page has, so either option names it.
+        . (!empty($opts['stand']) || !empty($opts['worker']) ? "; worker-src 'self'" : '')
+        . (!empty($opts['stand']) ? "; manifest-src 'self'" : ''));
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: no-referrer');
+    // THE MICROPHONE IS ONE PAGE'S. Push to talk lives on the play view, and
+    // only there may a page of this origin ask for it; everywhere else the
+    // answer is no before anybody is asked, so an injected script on the
+    // forge or the machines screen cannot even raise the prompt. The page
+    // says which it is (the `microphone` option) rather than this guessing
+    // from a script name, which a router or a subdirectory would change.
+    // The stand page is the other one, and it also owns the headset: WebXR
+    // asks xr-spatial-tracking, which is said out loud there and nowhere else.
+    if (!empty($opts['stand'])) {
+        header('Permissions-Policy: microphone=(self), xr-spatial-tracking=(self), camera=()');
+    } else {
+        header('Permissions-Policy: microphone=' . (!empty($opts['microphone']) ? '(self)' : '()') . ', camera=()');
+    }
     ?><!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -113,9 +172,32 @@ function xeric_web_meter_html(?string $sid = null, string $at = ''): string
     return '<span class="meter"' . $extra . ' data-n="' . $n . '" title="'
         . h(number_format($t['in']) . ' in · ' . number_format($t['out']) . ' out · '
             . number_format($t['calls']) . ' calls this session'
-            . ($img > 0 ? ' · ' . number_format($img) . ' photos' : '')) . '">'
+            . ($img > 0 ? ' · ' . number_format($img) . ' photos' : '')
+            . ((int)($t['scenes'] ?? 0) > 0 ? ' · ' . number_format((int)$t['scenes']) . ' rooms' : '')
+            . ((int)($t['clips'] ?? 0) > 0 ? ' · ' . number_format((int)$t['clips']) . ' lines spoken' : '')
+            . ((int)($t['hearings'] ?? 0) > 0 ? ' · ' . number_format((int)$t['hearings']) . ' lines heard' : '')) . '">'
         . 'Tokens wasted: <b>' . h(xeric_web_tokens_short($n)) . '</b>'
-        . ($img > 0 ? ' <i class="mimg">+' . $img . ' 📷</i>' : '') . '</span>';
+        . ($img > 0 ? ' <i class="mimg">+' . $img . ' 📷</i>' : '')
+        . xeric_web_meter_budget($at) . '</span>';
+}
+
+/**
+ * THE WORLD'S CEILING, beside the visitor's receipt — only on the meter that
+ * means "everything", and only when the world this page opened
+ * (xeric_budget_bound) has a `budget` block with a ceiling in it. Without one
+ * the meter is exactly what it was. Not a <b>: the browser's ledger paints
+ * the first <b> in a meter, and this figure is the world's, not the browser's.
+ */
+function xeric_web_meter_budget(string $at = ''): string
+{
+    if ($at !== '' || !function_exists('xeric_budget_bound')) return '';
+    $w = xeric_budget_bound();
+    if ($w === null) return '';
+    $line = xeric_budget_line($w['t'], $w['db']);
+    if ($line === '') return '';
+    $metered = xeric_budget($w['t'])['metered_only'];
+    return ' <small class="mbudget" title="' . h('this world\'s own ceiling, per day of the world\'s calendar'
+        . ($metered ? ', counting only machines that bill' : '')) . '">' . h($line) . '</small>';
 }
 
 /**
@@ -633,6 +715,10 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 .wname{flex:0 0 auto;font-weight:600;color:var(--fg)}
 .wmodel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.72rem}
+.wmodel:has(.wmodels){overflow:visible;white-space:normal}
+.wmodels{pointer-events:auto;position:relative;z-index:3;max-width:100%;
+  font:inherit;color:var(--fg);background:var(--bg-2);border:1px solid var(--line);
+  border-radius:.35rem;padding:.2rem .4rem}
 .forgeat .corner,main > .screen .corner{text-align:left}
 
 /* ------------------------------------------------- how you describe it */

@@ -84,6 +84,11 @@ function xeric_web_config(): array
     // configured on the machine, and found real worlds in it.
     $c['local_base'] = (string)(getenv('XERIC_LOCAL_BASE') ?: '') ?: (string)($c['local_base'] ?? '');
     if ($c['local_base'] === '') $c['local_base'] = xeric_web_probe_local();
+    if (function_exists('xeric_llm_normalize_base')) {
+        $c['local_base'] = xeric_llm_normalize_base((string)$c['local_base']);
+    } else {
+        $c['local_base'] = rtrim((string)$c['local_base'], '/');
+    }
 
     $c['data_dir'] = (string)(getenv('XERIC_DATA_DIR') ?: '') ?: (string)($c['data_dir'] ?? '');
     // NOT THE TEMP DIRECTORY. Sessions, the queue, the worker log AND worlds all
@@ -619,19 +624,55 @@ function xeric_web_endpoint(array $model): array
         // belongs to (xeric_web_local_editable), which is what makes it safe to
         // skip the private-network check the branch below applies — pointing at
         // 127.0.0.1 or a box on your own LAN is the entire purpose of it.
+        //
+        // An EXTERNAL llama.cpp is the same kind of machine: the OpenAI chat
+        // API, no vendor, optionally an --api-key. The key is read here and
+        // never stored — posted with the request, or taken from XERIC_LOCAL_KEY
+        // / XERIC_API_KEY for a llama.cpp that is not on this box.
         $own = trim((string)($model['local'] ?? ''));
         $base = ($own !== '' && preg_match('#^https?://#i', $own))
             ? rtrim($own, '/')
             : (string)xeric_web_config()['local_base'];
+        if (function_exists('xeric_llm_normalize_base')) $base = xeric_llm_normalize_base($base);
 
-        return ['kind' => 'local', 'base' => $base,
-                'model' => (string)($model['model'] ?? ''), 'key' => ''];
+        $key = function_exists('xeric_llm_header_safe')
+            ? xeric_llm_header_safe((string)($model['key'] ?? ''))
+            : (string)($model['key'] ?? '');
+        // THE ENVIRONMENT'S KEY GOES TO ONE BOX. XERIC_LOCAL_KEY is llama-server's
+        // --api-key on the machine named in XERIC_LOCAL_BASE; loopback is the
+        // operator's own as well. Any other local-kind address came off a
+        // visitor's machines list, and the list admits LAN boxes on purpose, so
+        // the operator's key is not sent there (xeric_model_probe_key states the
+        // same rule for the probes).
+        if ($key === '' && function_exists('xeric_llm_default_base')) {
+            $host = strtolower((string)(parse_url($base, PHP_URL_HOST) ?? ''));
+            if ($base === xeric_llm_default_base()
+                    || in_array($host, ['127.0.0.1', 'localhost', '::1', '[::1]'], true)) {
+                $key = xeric_llm_default_key('local');
+            }
+        }
+
+        // `local` RIDES THE OUTPUT. build.php resolves, pipes the result to
+        // worker.php, and the worker calls this function again. A shape that
+        // only had `base` was indistinguishable from a visitor stuffing a URL
+        // into `base` — which this function discards on purpose — so the second
+        // pass fell through to 127.0.0.1:8080 and the forge built from the
+        // surprise table against a box nobody asked for.
+        return ['kind' => 'local', 'base' => $base, 'local' => $base,
+                // xeric_model_descriptor stores model => '' for every row, so
+                // the stored name is empty, never absent: test for '', or the
+                // --llm-model / XERIC_LOCAL_MODEL router name is never applied.
+                'model' => trim((string)($model['model'] ?? '')) !== ''
+                    ? trim((string)$model['model'])
+                    : (function_exists('xeric_llm_default_model') ? xeric_llm_default_model() : ''),
+                'key' => $key];
     }
 
     $base = trim((string)($model['base'] ?? ''));
     if ($base === '' && $kind === 'anthropic') $base = 'https://api.anthropic.com';
     if ($base === '' && $kind === 'openai')    $base = 'https://api.openai.com/v1';
     if (!preg_match('#^https?://#i', $base)) throw new RuntimeException('that endpoint URL does not look like a URL');
+    if (function_exists('xeric_llm_normalize_base')) $base = xeric_llm_normalize_base($base);
 
     $host = (string)(parse_url($base, PHP_URL_HOST) ?? '');
     if ($host === '') throw new RuntimeException('that endpoint URL does not look like a URL');
@@ -640,16 +681,23 @@ function xeric_web_endpoint(array $model): array
             . 'resolve to anywhere the forge is allowed to call. Point it at a public API host.');
     }
 
+    // A hosted endpoint's key is the visitor's, passed through and never stored
+    // — and never defaulted from the environment: the host here is whatever a
+    // visitor typed, and the gate above admits public hosts on purpose.
+    $key = (string)($model['key'] ?? '');
+
     return ['kind' => $kind, 'base' => rtrim($base, '/'),
-            'model' => trim((string)($model['model'] ?? '')), 'key' => (string)($model['key'] ?? '')];
+            'model' => trim((string)($model['model'] ?? '')), 'key' => $key];
 }
 
 /** How to name an endpoint out loud. Never includes the key. */
 function xeric_web_endpoint_label(array $e): string
 {
     if (($e['kind'] ?? '') === 'local') {
+        $host = (string)(parse_url((string)$e['base'], PHP_URL_HOST) ?? '');
         $port = (string)(parse_url((string)$e['base'], PHP_URL_PORT) ?? '');
-        return 'the local model' . ($port !== '' ? " (127.0.0.1:$port)" : '');
+        $where = $host !== '' ? ($port !== '' ? "$host:$port" : $host) : '';
+        return 'the local model' . ($where !== '' ? " ($where)" : '');
     }
     $host = (string)(parse_url((string)$e['base'], PHP_URL_HOST) ?? $e['base']);
     return ($e['model'] !== '' ? $e['model'] . ' at ' : 'your endpoint at ') . $host;
@@ -842,15 +890,48 @@ function xeric_web_session_path(?string $sid = null): string
     return xeric_web_sessions_dir() . '/' . $sid . '.json';
 }
 
-/** Read the session. Missing, unreadable or corrupt all mean "a fresh one". */
+/**
+ * Read the session. Missing, unreadable or corrupt all mean "a fresh one".
+ *
+ * UNDER A SHARED LOCK, because xeric_web_session_edit() truncates the file and
+ * then writes it, holding LOCK_EX across both. An unlocked read that lands
+ * between the two reads an empty file — "a fresh one" — and a fresh one has no
+ * machine attached and claims no world: the owner's very next open paused
+ * their own running clock (play-lib's reconcile) or forked their own world as
+ * a stranger's. It happened whenever a worker charged the session (a cast
+ * beat's reroll, a meter) in the same millisecond as a page load, which is
+ * what made api-test fail one run in a few. LOCK_SH waits out the writer and
+ * never blocks another reader — except THIS process's own edit, whose
+ * callback may read the record it is editing: flock is per open file, so a
+ * second descriptor asking for LOCK_SH under our own LOCK_EX would wait for
+ * ever. A record this process holds is read without asking (the lock it holds
+ * already keeps every writer out).
+ */
 function xeric_web_session_read(?string $sid = null): array
 {
-    $raw = @file_get_contents(xeric_web_session_path($sid));
+    $raw  = false;
+    $path = xeric_web_session_path($sid);
+    $fh   = @fopen($path, 'r');
+    if ($fh) {
+        if (!xeric_web_session_held($path)) @flock($fh, LOCK_SH);
+        $raw = stream_get_contents($fh);
+        @flock($fh, LOCK_UN);
+        fclose($fh);
+    }
     $s = $raw === false ? null : json_decode($raw, true);
     if (!is_array($s)) $s = [];
     $s['answers'] = (array)($s['answers'] ?? []);
     $s['model']   = (array)($s['model'] ?? []);
     return $s;
+}
+
+/** The session records this process holds LOCK_EX on right now ($set: take or let go). */
+function xeric_web_session_held(string $path, ?bool $set = null): bool
+{
+    static $held = [];
+    if ($set === true) $held[$path] = ($held[$path] ?? 0) + 1;
+    if ($set === false && isset($held[$path]) && --$held[$path] <= 0) unset($held[$path]);
+    return isset($held[$path]);
 }
 
 /**
@@ -878,12 +959,20 @@ function xeric_web_session_edit(callable $fn, ?string $sid = null)
     }
 
     @flock($fh, LOCK_EX);
-    $s = json_decode((string)stream_get_contents($fh), true);
-    if (!is_array($s)) $s = [];
-    $s['answers'] = (array)($s['answers'] ?? []);
-    $s['model']   = (array)($s['model'] ?? []);
+    xeric_web_session_held($path, true);
+    try {
+        $s = json_decode((string)stream_get_contents($fh), true);
+        if (!is_array($s)) $s = [];
+        $s['answers'] = (array)($s['answers'] ?? []);
+        $s['model']   = (array)($s['model'] ?? []);
 
-    $ret = $fn($s);
+        $ret = $fn($s);
+    } catch (Throwable $e) {
+        xeric_web_session_held($path, false);
+        @flock($fh, LOCK_UN);
+        fclose($fh);
+        throw $e;
+    }
 
     unset($s['model']['key']);
     $s['at'] = time();
@@ -891,6 +980,7 @@ function xeric_web_session_edit(callable $fn, ?string $sid = null)
     rewind($fh);
     fwrite($fh, json_encode($s, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     fflush($fh);
+    xeric_web_session_held($path, false);
     @flock($fh, LOCK_UN);
     fclose($fh);
 
@@ -970,6 +1060,14 @@ function xeric_web_log_trim(int $keep = 262144): void
 // has no sessions, no rate limits and no queue: one person, one GPU, no line.
 // This is the layer that exists only because strangers are sharing a demo.
 
+// THE LEDGER BESIDE THE METER. Every sink below is wrapped in
+// xeric_budget_sink(): the session meter runs first, exactly as before, and the
+// same call then lands in the world's own ledger (engine/budget.php) — the
+// world this process opened last, on the world's date. The meter is this
+// visitor's receipt; the ledger is the world's, and it is what a world's
+// `budget` ceiling is read against.
+require_once $XERIC_LIB . '/engine/budget.php';
+
 /**
  * THE METER. Every completion this process makes, added to this visitor's
  * running total as it lands.
@@ -985,7 +1083,7 @@ function xeric_web_log_trim(int $keep = 262144): void
  * total that only appeared when the process exited would sit at zero for the
  * whole time anybody was watching it work.
  */
-xeric_llm_meter(function (array $u, string $where = ''): void {
+xeric_llm_meter(xeric_budget_sink('tokens', function (array $u, string $where = ''): void {
     $in  = (int)($u['prompt_tokens'] ?? 0);
     $out = (int)($u['completion_tokens'] ?? 0);
     if ($in === 0 && $out === 0) return;
@@ -1034,7 +1132,7 @@ xeric_llm_meter(function (array $u, string $where = ''): void {
                 ['title' => 'Tokens wasted', 'tags' => 'fuelpump', 'priority' => 2]);
         }
     }
-});
+}));
 
 // THE IMAGE SPEND LANDS ON THE SAME LEDGER. The reaper hands every render to
 // this sink (engine/photo.php's meter discipline, llm.php's shape), and the
@@ -1068,10 +1166,12 @@ xeric_image_source(function () {
         $loras[] = ['name' => (string)$name, 'words' => array_values((array)$words)];
     }
     return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: ''),
-            'kind' => (string)($img['kind'] ?? ''), 'loras' => $loras];
+            'kind' => (string)($img['kind'] ?? ''), 'loras' => $loras,
+            // Probed on connect (model.php): does it answer /v1/images/edits?
+            'edits' => !empty($img['edits'])];
 });
 
-xeric_photo_meter(function (array $u, string $where = ''): void {
+xeric_photo_meter(xeric_budget_sink('renders', function (array $u, string $where = ''): void {
     $key = xeric_web_meter_key($where);
     try {
         xeric_web_session_edit(function (array &$s) use ($u, $key): void {
@@ -1085,7 +1185,144 @@ xeric_photo_meter(function (array $u, string $where = ''): void {
     } catch (Throwable $e) {
         // No session to write to. The picture still exists.
     }
+}));
+
+// AND THE ROOMS, BESIDE THE PICTURES. engine/scene.php is photo.php one size
+// up — a whole room at this minute rather than a face — and it is wired the
+// same way for the same reasons: the machines screen's stored address first
+// (the visitor's own session, which a detached scene-worker is forced into),
+// then the environment, then, inside the engine and without being asked, the
+// image machine above drawing the room as a still. `off` is "explicitly none"
+// and stops even that fallback: an owner who said no rooms meant no rooms.
+// THE KEY IS NEVER STORED. XERIC_SCENE_KEY, environment only — the same
+// discipline as every other machine on that screen, because a session file is
+// a thing that gets copied, swept, and read by whoever has the disk.
+require_once $XERIC_LIB . '/engine/scene.php';
+
+xeric_scene_source(function () {
+    try {
+        $sc = (array)(xeric_web_session_read()['scene'] ?? []);
+    } catch (Throwable $e) {
+        return null;                                   // no session: fall to env
+    }
+    if (($sc['off'] ?? false) === true) return false;  // explicitly none, env and image ignored
+    $base = trim((string)($sc['base'] ?? ''));
+    if ($base === '') return null;
+    $kind = strtolower((string)($sc['kind'] ?? 'generic'));
+    $auth = trim((string)($sc['auth'] ?? 'bearer'));
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_SCENE_KEY') ?: ''),
+            'kind' => in_array($kind, ['generic', 'image'], true) ? $kind : 'generic',
+            // Re-checked here although model.php checked it on the way in: the
+            // engine also refuses a header name that is not one, and a session
+            // file is an input like any other.
+            'auth' => preg_match('/^[A-Za-z0-9-]{1,64}$/', $auth) ? $auth : 'bearer'];
 });
+
+// Rooms on the same ledger, counted as rooms. A scene is not a photograph any
+// more than a photograph is a thousand tokens: the meter says what was made.
+xeric_scene_meter(xeric_budget_sink('renders', function (array $u, string $where = ''): void {
+    $key = xeric_web_meter_key($where);
+    try {
+        xeric_web_session_edit(function (array &$s) use ($u, $key): void {
+            $by  = (array)($s['tokens']['by'] ?? []);
+            $row = (array)($by[$key] ?? []);
+            $row['scenes'] = (int)($row['scenes'] ?? 0) + max(1, (int)($u['scenes'] ?? 1));
+            $row['calls']  = (int)($row['calls'] ?? 0) + 1;
+            $by[$key] = $row;
+            $s['tokens'] = ['by' => $by] + (array)($s['tokens'] ?? []);
+        });
+    } catch (Throwable $e) {
+        // No session to write to. The room was still drawn.
+    }
+}));
+
+// AND THE CAST, OUT LOUD. engine/voice.php wired the way the rooms are: the
+// machines screen's stored address first (the visitor's own session), then
+// the environment; `off` is explicitly none. Unlike scene.php there is no
+// fallback past that, and the engine says why: a picture machine cannot
+// speak. The KEY is never stored — XERIC_VOICE_KEY, environment only. What
+// the session does keep is the machine's own voice inventory, ids only,
+// harvested on connect (model.php), so the deal is made from the voices the
+// machine actually has without asking it on every line.
+require_once $XERIC_LIB . '/engine/voice.php';
+
+xeric_voice_source(function () {
+    try {
+        $v = (array)(xeric_web_session_read()['voice'] ?? []);
+    } catch (Throwable $e) {
+        return null;                                   // no session: fall to env
+    }
+    if (($v['off'] ?? false) === true) return false;   // explicitly none, env ignored
+    $base = trim((string)($v['base'] ?? ''));
+    if ($base === '') return null;
+    // Model and format from the environment, as the engine reads them: they
+    // describe what the install asks for, not which machine it asks.
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_VOICE_KEY') ?: '')]
+         + xeric_voice_settings(['model'  => (string)(getenv('XERIC_VOICE_MODEL') ?: ''),
+                                 'format' => (string)(getenv('XERIC_VOICE_FORMAT') ?: '')]);
+});
+
+// Lines spoken, on the same ledger: counted as clips, and the characters
+// beside them, because characters are what a hosted voice bills by.
+xeric_voice_meter(xeric_budget_sink('clips', function (array $u, string $where = ''): void {
+    $key = xeric_web_meter_key($where);
+    try {
+        xeric_web_session_edit(function (array &$s) use ($u, $key): void {
+            $by  = (array)($s['tokens']['by'] ?? []);
+            $row = (array)($by[$key] ?? []);
+            $row['clips'] = (int)($row['clips'] ?? 0) + max(1, (int)($u['clips'] ?? 1));
+            $row['chars'] = (int)($row['chars'] ?? 0) + max(0, (int)($u['chars'] ?? 0));
+            $row['calls'] = (int)($row['calls'] ?? 0) + 1;
+            $by[$key] = $row;
+            $s['tokens'] = ['by' => $by] + (array)($s['tokens'] ?? []);
+        });
+    } catch (Throwable $e) {
+        // No session to write to. The line was still spoken.
+    }
+}));
+
+// AND THE PLAYER, OUT LOUD. engine/ears.php wired the way the voices are: the
+// machines screen's stored address first (the visitor's own session), then
+// the environment; `off` is explicitly none, and nothing stands in past that.
+// The KEY is never stored — XERIC_EARS_KEY, environment only. Model and
+// language come from the environment too: they describe what the install
+// asks for, not which machine it asks. Nothing else is kept — not the
+// recording, not the transcript; the transcript goes back to the page that
+// asked for it and nowhere else.
+require_once $XERIC_LIB . '/engine/ears.php';
+
+xeric_ears_source(function () {
+    try {
+        $e = (array)(xeric_web_session_read()['ears'] ?? []);
+    } catch (Throwable $ex) {
+        return null;                                   // no session: fall to env
+    }
+    if (($e['off'] ?? false) === true) return false;   // explicitly none, env ignored
+    $base = trim((string)($e['base'] ?? ''));
+    if ($base === '') return null;
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_EARS_KEY') ?: '')]
+         + xeric_ears_settings(['model'    => (string)(getenv('XERIC_EARS_MODEL') ?: ''),
+                                'language' => (string)(getenv('XERIC_EARS_LANGUAGE') ?: '')]);
+});
+
+// Lines heard, on the same ledger: counted as hearings, and the seconds
+// beside them, because seconds are what a hosted transcriber bills by.
+xeric_ears_meter(xeric_budget_sink('hearings', function (array $u, string $where = ''): void {
+    $key = xeric_web_meter_key($where);
+    try {
+        xeric_web_session_edit(function (array &$s) use ($u, $key): void {
+            $by  = (array)($s['tokens']['by'] ?? []);
+            $row = (array)($by[$key] ?? []);
+            $row['hearings'] = (int)($row['hearings'] ?? 0) + max(1, (int)($u['hearings'] ?? 1));
+            $row['seconds']  = (int)($row['seconds'] ?? 0) + max(0, (int)ceil((float)($u['seconds'] ?? 0)));
+            $row['calls']    = (int)($row['calls'] ?? 0) + 1;
+            $by[$key] = $row;
+            $s['tokens'] = ['by' => $by] + (array)($s['tokens'] ?? []);
+        });
+    } catch (Throwable $e) {
+        // No session to write to. The line was still heard.
+    }
+}));
 
 /**
  * Where this visitor's notifications go, and what they are for.
@@ -1134,7 +1371,8 @@ function xeric_web_meter_key(string $base): string
 function xeric_web_tokens(?string $sid = null, string $at = ''): array
 {
     $by  = (array)(xeric_web_session_read($sid)['tokens']['by'] ?? []);
-    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0];
+    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0, 'scenes' => 0, 'clips' => 0, 'chars' => 0,
+            'hearings' => 0, 'seconds' => 0];
 
     $want = $at === '' ? null : xeric_web_meter_key($at);
     foreach ($by as $key => $row) {
@@ -1143,6 +1381,11 @@ function xeric_web_tokens(?string $sid = null, string $at = ''): array
         $out['out']    += (int)($row['out'] ?? 0);
         $out['calls']  += (int)($row['calls'] ?? 0);
         $out['images'] += (int)($row['images'] ?? 0);
+        $out['scenes'] += (int)($row['scenes'] ?? 0);
+        $out['clips']  += (int)($row['clips'] ?? 0);
+        $out['chars']  += (int)($row['chars'] ?? 0);
+        $out['hearings'] += (int)($row['hearings'] ?? 0);
+        $out['seconds']  += (int)($row['seconds'] ?? 0);
     }
     return $out;
 }
@@ -1319,9 +1562,33 @@ function xeric_web_nonce(): string
     return $n ??= base64_encode(random_bytes(16));
 }
 
+/**
+ * The shaper every JSON body passes through on its way out, when one is set.
+ *
+ * ONE SEAM, FOR THE CLIENT API. api.php answers under a versioned envelope
+ * (`api`, a boolean `ok`, `error` and `kind` on a refusal), and the refusals
+ * that matter most are raised deep inside code that has never heard of it —
+ * xeric_limit_guard(), xeric_play_owner_only(), the spend guard. Each of those
+ * ends in xeric_web_json(), so registering a shaper here is how they come out
+ * enveloped without any of them changing. Nothing registers one but api.php,
+ * so every other page answers exactly as it always has.
+ *
+ * Called with a callable: registers it. Called with an explicit null: clears
+ * it. Called with nothing: hands back what is registered. The callable takes
+ * (array $body, int $status) and returns the body to send.
+ */
+function xeric_web_json_shaper(?callable $fn = null): ?callable
+{
+    static $shaper = null;
+    if (func_num_args() > 0) $shaper = $fn;
+    return $shaper;
+}
+
 /** JSON out, and stop. */
 function xeric_web_json(array $body, int $status = 200): void
 {
+    $shape = xeric_web_json_shaper();
+    if ($shape !== null) $body = $shape($body, $status);
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
@@ -1381,9 +1648,44 @@ function xeric_web_cross_site(): bool
 function xeric_web_csrf_guard(): void
 {
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') return;
+    xeric_web_spend_guard();
+}
+
+/**
+ * A GET THAT SPENDS IS A POST THAT FORGOT TO SAY SO. The guard above checks
+ * POST because a body is where a cross-site page can put a payload — but a
+ * handful of GETs reach the model or a metered machine (a hint, a suggestion,
+ * a voice clip not yet rendered), and an <img> on somebody else's page is a
+ * GET the owner's browser sends with the owner's cookie. Any path that spends
+ * calls this on every method.
+ */
+function xeric_web_spend_guard(): void
+{
     if (!xeric_web_cross_site()) return;
     xeric_web_json(['error' => 'That request came from another site, so it was not carried out.',
                     'kind'  => 'cross_site'], 403);
+}
+
+/**
+ * A body handed over by a router, in place of the request's own.
+ *
+ * The client API's write half will `require` the existing verb scripts
+ * unchanged, and a verb reads its arguments through xeric_web_input(). The
+ * router has already read and checked the body by then (php://input can be
+ * read once on some SAPIs), so it sets it here. Null clears it. Nothing sets
+ * one today but a test; with nothing set, input is read exactly as before.
+ */
+function xeric_web_input_set(?array $body): void
+{
+    $slot = &xeric_web_input_slot();
+    $slot = $body;
+}
+
+/** @internal the one place the router's body is kept */
+function &xeric_web_input_slot(): ?array
+{
+    static $slot = null;
+    return $slot;
 }
 
 function xeric_web_input(): array
@@ -1393,6 +1695,11 @@ function xeric_web_input(): array
     // eighteenth page would forget it. The four endpoints that read $_POST
     // directly call xeric_web_csrf_guard() themselves.
     xeric_web_csrf_guard();
+
+    // The guard first, always: a body a router set is still a request that
+    // arrived from somewhere, and where it came from is decided the same way.
+    $set = xeric_web_input_slot();
+    if ($set !== null) return $set;
 
     $raw = (string)file_get_contents('php://input');
     if ($raw !== '') {
@@ -1457,10 +1764,15 @@ function xeric_web_fail(string $detail, string $where = ''): void
         exit;
     }
 
-    if (!xeric_web_wants_html()) {
+    // A registered shaper (the client API) means the caller asked for an
+    // object, whatever its Accept header says.
+    $shape = xeric_web_json_shaper();
+    if ($shape !== null || !xeric_web_wants_html()) {
+        $body = ['error' => $sentence, 'kind' => 'bug'];
+        if ($shape !== null) $body = $shape($body, 500);
         http_response_code(500);
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(['error' => $sentence, 'kind' => 'bug']);
+        echo json_encode($body);
         exit;
     }
 

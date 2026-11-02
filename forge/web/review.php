@@ -62,12 +62,9 @@ const XERIC_REVIEW_PLACE_MAX = 12;
 function xeric_review_pick_endpoint(array $model): array
 {
     $key = trim((string)($model['key'] ?? ''));
-    if (isset($model['i'])) {
-        $rows = xeric_model_list();
-        $i = (int)$model['i'];
-        if (isset($rows[$i])) {
-            return xeric_web_endpoint(xeric_model_descriptor((string)$rows[$i]['base']) + ['key' => $key]);
-        }
+    $picked = xeric_model_choice($model);
+    if ($picked !== null) {
+        return xeric_web_endpoint($picked + ['key' => $key]);
     }
     // Nothing named, or a row that has gone: the engine, which is what these
     // have always defaulted to.

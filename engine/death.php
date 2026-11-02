@@ -92,7 +92,10 @@ function xeric_death_mode(array $t, PDO $db): string
 /** What the TEMPLATE asks for, before any death has frozen it. */
 function xeric_death_mode_of(array $t): string
 {
-    $m = strtolower(trim((string)($t['deaths']['mode'] ?? '')));
+    // A mode that is not a string (a malformed template hands an array) is no
+    // mode at all, and no mode is revivable: fail closed, without a warning.
+    $raw = $t['deaths']['mode'] ?? '';
+    $m = is_string($raw) ? strtolower(trim($raw)) : '';
     return $m === XERIC_DEATH_PERMANENT ? XERIC_DEATH_PERMANENT : XERIC_DEATH_REVIVABLE;
 }
 

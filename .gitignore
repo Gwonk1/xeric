@@ -1,5 +1,8 @@
 # lived worlds are private — never commit a running world's state
 data/
+# the continuity benchmark's runs (scorecard.json, report.md, world.db per run);
+# covered by data/ above, named so nobody narrows that line without seeing it
+data/continuity/
 
 # Forged worlds belong to whoever forged them: a world directory holds a real
 # person's name, location and occupation, and owner.json holds a session token.

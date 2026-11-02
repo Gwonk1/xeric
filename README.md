@@ -36,7 +36,10 @@ session.
 
 **Beta.** The engine runs end to end: the forge builds a world from an
 interview, the review step lets you edit or reroll any of it, and the play view
-is a world you can talk to and skip time inside. Nine test suites, all green.
+is a world you can talk to and skip time inside. Forty-four test suites, about 4,900
+assertions, run on PHP 8.1 and 8.3 on every push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml));
+how to run them yourself is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and what is
+known and not yet fixed is in [`docs/PUNCHLIST.md`](docs/PUNCHLIST.md).
 
 Start with [`QUICKSTART.md`](QUICKSTART.md) — what you need, how to start it,
 and how to read the inspector when something surprises you.
@@ -44,6 +47,40 @@ and how to read the inspector when something surprises you.
 missing. [`docs/WORLD_TEMPLATE.md`](docs/WORLD_TEMPLATE.md) is the template
 schema, worked end to end against `engine/fixtures/milldale.json` — the
 fictional world the engine is tested with.
+[`docs/VIEWPORT.md`](docs/VIEWPORT.md) is the viewport: what the engine tells a
+machine about the room you are standing in, and what it never will.
+[`docs/VOICE.md`](docs/VOICE.md) is how the cast is spoken aloud, and why a
+voice is never chosen by gender.
+[`docs/CONTINUITY.md`](docs/CONTINUITY.md) is the continuity benchmark: the
+fixture world lived through three days and scored, and how to read it.
+[`docs/API.md`](docs/API.md) is the client API's contract, with a `curl` per
+route. [`docs/STAND.md`](docs/STAND.md) is the stand page: linking a headset,
+the secure-context rule, and what each headset can do.
+[`docs/BUDGET.md`](docs/BUDGET.md) is the per-world budget: a ceiling per
+world-day on tokens, renders, clips and hearings.
+[`docs/DIRECTOR.md`](docs/DIRECTOR.md) is the Director: who it may put in a
+room, the rules a template opts into, and what it refuses.
+[`docs/SLEEP.md`](docs/SLEEP.md) is sleep: how old memories become facts with
+their sources kept, and why the prompt gets shorter, not longer, as a world
+ages. [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) is two people in one world.
+[`docs/FUTURE.md`](docs/FUTURE.md) is the plan — the bets, the five milestones,
+all shipped, and what only a device, a person or a real model can still test.
+[`tools/proxies/README.md`](tools/proxies/README.md) is the proxies that put a
+vendor, or the world-model scaffold, behind the scene contract.
+
+## A model that is not on this machine
+
+Runtime talks the OpenAI chat API. llama.cpp on `127.0.0.1:8080` is still the
+default; an external llama.cpp is a URL:
+
+```bash
+./xeric --llm http://192.168.1.50:8080
+./xeric --llm http://gpu.example.com:8080 --llm-key SECRET
+./xeric --llm http://192.168.1.50:8080 --llm-model Qwen3-8B-Q4_K_M   # llama.cpp router
+export XERIC_LOCAL_BASE=http://192.168.1.50:8080   # same, for CLI and the heart
+```
+
+A trailing `/v1` is stripped. See [`QUICKSTART.md`](QUICKSTART.md).
 
 ## Architecture (the short version)
 
@@ -53,8 +90,14 @@ fictional world the engine is tested with.
 | **user.json** | You: name, timezone, work hours, motivation, goals. The world builds around your actual life. |
 | **engine** | PHP + SQLite + cron sweeps. Prompt assembly, event generation, proactive contact, photo pipeline, temperature physics. |
 | **setup forge** | A one-time pass by a capable model (remote or local) that writes your world. Runtime then runs on small local models. |
+| **narrator** | The other god of the world: full canon, no walls, discreet about the story. In the play view you can ask it *why*; its write-ahead beats lean the sweeps without ever entering a prompt; its investigate is in the inspector. Author is not built. See [`docs/NARRATOR.md`](docs/NARRATOR.md). |
+| **director** | Changes the set, never the performance: stages two or three people in one room for up to two hours, so an encounter is there when you walk in. Off until the template opts in, rule by rule, capped per day. See [`docs/DIRECTOR.md`](docs/DIRECTOR.md). |
+| **sleep** | Once a world-night, a character's old memories become a few facts with their sources kept and their walls inherited; nothing is deleted and the bible is never touched. See [`docs/SLEEP.md`](docs/SLEEP.md). |
 | **story overlay** | An optional mystery laid over a finished world as a sidecar file: beats, who is wrong about what, and an ending the world survives. |
-| **media** *(planned)* | Optional image generation (identity-stable characters via seed + appearance anchoring), optional overnight video. The template already carries the fields — `photos.enabled`, `face_seed` — but no pipeline ships in this tree. |
+| **layout** | `engine/layout.php`: the room you stand in as a box — the vantage, every piece of furniture and every person at the bearing the engine deals them — and its depth and segmentation maps, in pure PHP. It rides every look for the machines that are conditioned on geometry rather than words, and never enters the fingerprint. See [`docs/VIEWPORT.md`](docs/VIEWPORT.md). |
+| **live view** | `engine/stream.php`: a machine may answer with a live session instead of a picture. Off by default, started only by the owner pressing *go live*, refused on a machine that bills unless the template says so, metered by the second, and told only the engine's own events — never the player's words. `tools/proxies/worldmodel.py` is the engine-driven loop on one desk: Xeric's state, a blockout drawing it, a local world model at one function. |
+| **client API** | `forge/web/api.php`: the world as data and the verbs, versioned (`v1`), with a pulse to poll and per-device tokens. Its first client is the stand page, `forge/web/stand.php` — nothing but the room, for a headset first and any browser second. See [`docs/API.md`](docs/API.md) and [`docs/STAND.md`](docs/STAND.md). |
+| **media** | Photo composition (identity-stable characters via seed + appearance anchoring); the viewport — the room you stand in, as a panorama or a still, with its sound, or a splat you walk inside in our own WebGL viewer; the drawn map, the town from above beside the room from inside; a voice for every character, dealt from a seed; and ears — hold to talk, transcribed into the composer for you to send. All composed in code and dormant until you choose a machine; no machine, no renders, no errors. |
 
 ## License
 

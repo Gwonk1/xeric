@@ -1,0 +1,84 @@
+{
+    "_notes": [
+        "The continuity benchmark's worked example (docs/FUTURE.md Appendix B, docs/CONTINUITY.md).",
+        "Times are WORLD time: dN is the Nth day from `start`, in the world's timezone.",
+        "Thursday 15 October 2026 to Saturday 17 October: well clear of the 1 November DST change.",
+        "Nothing here is a secret: the facts are things Walt says out loud, and the canaries are",
+        "the Thursday game's own words, looked for in the heads walled away from that table.",
+        "`sleep: true` runs xeric_sleep_pass at each night's first tick in the dreams window, with",
+        "every prompt built just before and after (the sleep probes). At the template's default",
+        "after_days (14) three days leave nothing old enough; engine/tests/sleep-test.php patches it to 1."
+    ],
+    "name": "milldale-continuity",
+    "world": "milldale.json",
+    "start": "2026-10-15",
+    "days": 3,
+    "sleep": true,
+    "patch": {
+        "forge.armed": ["daily_rhythms", "visits", "shared_meals", "expectations", "rumors", "gentle_proactive_contact"],
+        "forge.disarmed": []
+    },
+    "script": [
+        ["d1 07:10", "travel", {"to": "bluebird"}],
+        ["d1 07:20", "say", {"to": "dot", "text": "The doctor in Chillicothe says no more pie for me, Dot. Not even the cherry."}],
+        ["d1 07:35", "say", {"to": "dot", "text": "I'll come by Friday at noon for a coffee and keep you company."}],
+        ["d1 08:30", "travel", {"to": null}],
+        ["d1 10:00", "say", {"to": "ruth", "text": "I've still got your casserole dish from the funeral. I'll bring it back to you Friday morning at the diner."}],
+        ["d1 20:00", "say", {"to": "janelle", "text": "Your mother would have liked the hymn on Sunday."}],
+        ["d2 07:15", "travel", {"to": "bluebird"}],
+        ["d2 07:25", "say", {"to": "ruth", "text": "Here's your casserole dish back, Ruth. I washed it twice.", "keeps": "ruth"}],
+        ["d2 08:00", "travel", {"to": null}],
+        ["d2 10:00", "kill", {"who": "harlan", "how": "his heart, at the register, before the lunch rush"}],
+        ["d2 10:30", "say", {"to": "harlan", "text": "Harlan, are you there?", "expect": "refused"}],
+        ["d3 09:00", "say", {"to": "dot", "text": "Dot, I'm sorry I missed Friday. I was down at the funeral home about Harlan and lost track of the time."}],
+        ["d3 13:00", "skip", {"hours": 6, "reroll": true}],
+        ["d3 20:30", "say", {"to": "ruth", "text": "Long day. Thank you for the soup you left on the porch."}]
+    ],
+    "policy": {
+        "_note": "How the person at the centre treats texts the world invents: these people get an answer, everybody else is left on read.",
+        "answer": {
+            "dot": "Sorry, I was out at the hardware store. What's going on?",
+            "ruth": "Thank you, Ruth. I'll call you after supper."
+        },
+        "after_minutes": 20
+    },
+    "canaries": [
+        {"text": "the Thursday game", "path": "economies.thursday_pot"},
+        {"text": "five-card draw", "path": "economies.thursday_pot"},
+        {"text": "buy-in", "path": "economies.thursday_pot"}
+    ],
+    "facts": [
+        {"id": "pie", "holder": "dot", "said": "d1 07:20", "keywords": ["doctor", "pie"],
+         "parts": ["WHAT YOU KNOW", "WHAT YOU REMEMBER", "transcript"]},
+        {"id": "casserole_dish", "holder": "ruth", "said": "d1 10:00", "keywords": ["casserole dish"],
+         "parts": ["WHAT YOU KNOW", "WHAT YOU REMEMBER", "transcript", "WHAT YOU ARE OWED"]},
+        {"id": "harlan_dead", "holder": "*", "said": "d2 10:00", "keywords": ["Harlan Beck"],
+         "parts": ["RIGHT NOW", "WHAT YOU KNOW", "WHAT YOU REMEMBER"]}
+    ],
+    "promises": [
+        {"id": "dot_noon", "holder": "dot", "said": "d1 07:35", "expect": "missed_then_repaired"},
+        {"id": "ruth_dish", "holder": "ruth", "said": "d1 10:00", "expect": "kept"}
+    ],
+    "truth": {
+        "_note": "Authored facts the engine is held to, independent of how it reads the template.",
+        "closed": [
+            {"place": "bluebird", "days": [6], "from": "14:00", "to": "24:00",
+             "why": "the Bluebird closes at two every day it opens — 'The diner closes at two and does not reopen for anyone.'"},
+            {"place": "the_mill", "days": [0, 1, 2, 3, 4, 5, 6], "from": "00:00", "to": "24:00",
+             "why": "the mill gate stays chained"}
+        ],
+        "protected": [
+            {"viewer": "janelle", "why": "the child role: her father's Thursday table is the thing family_innocence walls off"}
+        ]
+    },
+    "allow": [
+        {"viewer": "*", "text": "Harlan Beck", "why": "a death is the most public fact a town has"}
+    ],
+    "min_activity": {"events": 6, "memories": 10, "replies": 6},
+    "expected_fail": {
+        "relationships.kept": "constructs have no `kept` state, so Ruth is logged as waiting after her dish comes back (FUTURE.md Appendix B)",
+        "presence.hours": "the Bluebird's hours set only close_weekday, so Saturday reads as open all day",
+        "learn.heart": "heart.php never runs the learn pass, so a week lived unattended never turns friendly replies into trust",
+        "walls.table": "Milldale's special role has no must_not_know, so [pastor_dale, janelle] is a legal visit group at First Lutheran on table night"
+    }
+}

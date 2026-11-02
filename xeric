@@ -7,6 +7,8 @@
 #   ./xeric --lan              reachable from your phone on the same wifi
 #   ./xeric --data ~/worlds    keep xerics somewhere else
 #   ./xeric --no-open          do not touch the browser
+#   ./xeric --llm http://gpu:8080     an external llama.cpp (OpenAI chat API)
+#   ./xeric --llm-key SECRET          llama-server --api-key, if it has one
 #
 # THERE IS NO CONFIG FILE. Everything this needs is an environment variable that
 # boot.php already reads, which means a local install has nothing to write, get
@@ -41,6 +43,9 @@ while [ $# -gt 0 ]; do
     --port)    ARGS+=(--port "${2:?--port needs a number}"); shift 2 ;;
     --data)    ARGS+=(--data "${2:?--data needs a directory}"); shift 2 ;;
     --lan)     ARGS+=(--lan); shift ;;
+    --llm)     ARGS+=(--llm "${2:?--llm needs a URL}"); shift 2 ;;
+    --llm-key) ARGS+=(--llm-key "${2:?--llm-key needs a value}"); shift 2 ;;
+    --llm-model) ARGS+=(--llm-model "${2:?--llm-model needs a name}"); shift 2 ;;
     --no-open) OPEN=0; shift ;;
     -h|--help) sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "xeric: unknown option $1" >&2; exit 2 ;;
@@ -76,6 +81,9 @@ eval "$BOOT"
 echo "  xerics   $XERIC_WORLDS_DIR"
 echo "  php      $XERIC_PHP"
 echo "  xeric    $XERIC_URL"
+if [ -n "${XERIC_LOCAL_BASE:-}" ]; then
+  echo "  model    $XERIC_LOCAL_BASE"
+fi
 
 if [ "$OPEN" = "1" ]; then
   # Backgrounded and detached so a browser that blocks does not hold the server

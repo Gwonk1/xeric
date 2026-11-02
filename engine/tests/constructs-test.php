@@ -689,9 +689,448 @@ ok('floor: and the child still gets a block, not silence',
 
 $dbF = null;
 
+// ---------------------------------------------------------------------------
+// 14. KEPT. A promise used to have only bad endings: missed, repaired,
+// hardened, or released by a death. Walk into the Bluebird on Friday morning
+// with Ruth's dish and four hours later the fuse burned anyway. Now the body
+// being there, or the extractor hearing it done, closes it as kept — gated in
+// code, the mirror of the miss: one notch of trust, one memory, no event.
+// ---------------------------------------------------------------------------
+
+echo "\n# a promise kept\n";
+
+require_once __DIR__ . '/../travel.php';
+$dbKPath = sys_get_temp_dir() . '/xeric-constructs-kept-' . getmypid() . '.db';
+foreach ([$dbKPath, $dbKPath . '-wal', $dbKPath . '-shm'] as $f) @unlink($f);
+$dbK = xeric_state_open($dbKPath);
+
+$dish = ['quote' => "I'll bring your dish back Friday morning", 'what' => 'the casserole dish', 'when' => 'Friday morning'];
+$sat  = ['quote' => "I'll be by Saturday morning", 'what' => 'come by Saturday', 'when' => 'Saturday morning'];
+$kDish = xeric_expect_form($T, $dbK, 'ruth', $dish, $wedAm);
+$kSat  = xeric_expect_form($T, $dbK, 'ruth', $sat, $wedAm);
+$friEarly = xeric_world_now($T, ep('2026-07-31 07:30'));    // Ruth at the Bluebird counter
+$stateOf  = fn(PDO $d, string $h, string $k) => (array_values(array_filter(xeric_expects_for($d, $h),
+                fn($e) => $e['key'] === $k))[0]['state'] ?? '');
+
+// Standing there since before the promise was made is not keeping it: the
+// promise and its keeping cannot be the same visit.
+xeric_player_move($dbK, 'bluebird', (int)$wedAm['epoch'] - 60);
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: a body that was already there when the promise was made keeps nothing',
+    $stateOf($dbK, 'ruth', (string)$kDish) === 'open');
+
+$memBefore = (int)$dbK->query("SELECT COUNT(*) FROM memories WHERE handle = 'ruth'")->fetchColumn();
+$evBefore  = (int)$dbK->query('SELECT COUNT(*) FROM events')->fetchColumn();
+xeric_player_move($dbK, 'bluebird', ep('2026-07-31 07:15'));
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: walking in on the morning promised closes it as kept',
+    $stateOf($dbK, 'ruth', (string)$kDish) === 'kept');
+ok('kept: and only the soonest — Saturday\'s promise is not kept by Friday\'s visit',
+    $stateOf($dbK, 'ruth', (string)$kSat) === 'open', json_encode([$kSat, xeric_expects_for($dbK, 'ruth')]));
+ok('kept: trust takes the notch a miss would have taken, the other way', xeric_trust_of($dbK, 'ruth') === 1);
+ok('kept: one ordinary memory, and no event — turning up as you said is not news',
+    (int)$dbK->query("SELECT COUNT(*) FROM memories WHERE handle = 'ruth'")->fetchColumn() === $memBefore + 1
+    && (int)$dbK->query('SELECT COUNT(*) FROM events')->fetchColumn() === $evBefore);
+$kBlock = xeric_expect_block($T, $dbK, 'ruth', $friEarly);
+ok('kept: the block reads kept, not waiting',
+    str_contains($kBlock, 'and did, Friday') && str_contains($kBlock, 'Nothing is owed on it')
+    && !str_contains($kBlock, "dish back Friday morning\" — you are expecting"), $kBlock);
+ok('kept: and still carries no clock', !preg_match('/\d{1,2}:\d{2}/', $kBlock));
+$rLate = xeric_constructs_tick($T, $dbK, xeric_world_now($T, ep('2026-07-31 20:00')));
+ok('kept: the fuse never burns on a kept promise — no miss that evening', $rLate['missed'] === 0
+    && $stateOf($dbK, 'ruth', (string)$kDish) === 'kept' && xeric_trust_of($dbK, 'ruth') === 1);
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: idempotent — a second tick in the same room keeps nothing twice', xeric_trust_of($dbK, 'ruth') === 1);
+
+// The extractor's half, and its gates.
+$kDot = xeric_expect_form($T, $dbK, 'dot', $dish, $wedAm);
+ok('kept: a promise cannot be kept in the same breath it is made',
+    xeric_expect_keep($T, $dbK, 'dot', $wedAm, null, XERIC_PLAYER_FIRST, 'said') === null);
+ok('kept: the extractor hearing it done keeps it, early or not',
+    xeric_expect_keep($T, $dbK, 'dot', xeric_world_now($T, ep('2026-07-30 12:00')), null, XERIC_PLAYER_FIRST, 'said') === $kDot
+    && $stateOf($dbK, 'dot', (string)$kDot) === 'kept');
+ok('kept: nothing open, nothing kept',
+    xeric_expect_keep($T, $dbK, 'dot', xeric_world_now($T, ep('2026-07-30 13:00')), null, XERIC_PLAYER_FIRST, 'said') === null);
+ok('kept: an unknown way of keeping fails closed',
+    xeric_expect_keep($T, $dbK, 'ruth', $friEarly, null, XERIC_PLAYER_FIRST, 'probably') === null);
+
+// A miss is mended by explaining, never by turning up late.
+$kH = xeric_expect_form($T, $dbK, 'harlan', $dish, $wedAm);
+xeric_constructs_tick($T, $dbK, xeric_world_now($T, ep('2026-07-31 20:00')));
+ok('kept: a promise already missed cannot be kept after the fact',
+    $stateOf($dbK, 'harlan', (string)$kH) === 'missed'
+    && xeric_expect_keep($T, $dbK, 'harlan', xeric_world_now($T, ep('2026-07-31 21:00')), null, XERIC_PLAYER_FIRST, 'said') === null);
+
+// The town's own promises, kept by the week: Dot promised Ruth Friday morning,
+// and Friday morning their schedules put them at the same counter.
+$kC = xeric_expect_form($T, $dbK, 'ruth', ['quote' => 'I will have the pie for you Friday morning',
+    'what' => 'the pie', 'when' => 'Friday morning'], xeric_world_now($T, ep('2026-07-30 09:00')), null, 'dot');
+xeric_player_move($dbK, null, ep('2026-07-31 06:00'));
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: a promise between two townspeople is kept when their week seats them together',
+    $kC !== null && $stateOf($dbK, 'ruth', (string)$kC) === 'kept' && xeric_trust_of($dbK, 'ruth', 'dot') === 1,
+    json_encode(xeric_expects_for($dbK, 'ruth')));
+ok('kept: and the player is not credited for it', xeric_trust_of($dbK, 'ruth') === 1);
+ok('kept: the chat extractor is asked to watch for it, and keeps before it forms',
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/chat.php'), 'actually DID something they had')
+    && strpos((string)file_get_contents(dirname(__DIR__) . '/chat.php'), "xeric_expect_keep(\$template")
+       < strpos((string)file_get_contents(dirname(__DIR__) . '/chat.php'), "xeric_expect_form(\$template"));
+
+// ONE READ OF THE TOWN PER TICK: who is where (the whole cast against the
+// deaths) and the body's position are the same for every holder at one
+// instant, so the keep is handed them, never recomputes them per handle.
+foreach (['dot', 'harlan', 'janelle'] as $hh) xeric_expect_form($T, $dbK, $hh, $sat, $wedAm);
+$holders = count(array_filter(array_map(fn($c) => (string)$c['handle'], $T['cast']['characters']),
+    fn($hh) => array_filter(xeric_expects_for($dbK, $hh), fn($e) => $e['state'] === 'open') !== []));
+$reads0 = xeric_constructs_presence_reads();
+xeric_constructs_tick($T, $dbK, $friEarly);
+ok('kept: presence is resolved once a tick, however many holders have something open',
+    $holders >= 3 && xeric_constructs_presence_reads() - $reads0 === 1, $holders . ' holders, '
+    . (xeric_constructs_presence_reads() - $reads0) . ' reads');
+$reads0 = xeric_constructs_presence_reads();
+xeric_expect_keep_present($T, $dbK, 'janelle', $friEarly);
+ok('kept: and a caller with nothing in hand still gets it read for them', xeric_constructs_presence_reads() - $reads0 === 1);
+
+// THE BODY OF WHOEVER PROMISED (M4, a body each). Ann promised Ruth the dish;
+// the tick runs as the first player, whose body is the one the keep used to
+// read. Walt walking in keeps nothing of Ann's; Ann walking in keeps it, and
+// the trust it earns is Ann's.
+$dbK2Path = sys_get_temp_dir() . '/xeric-constructs-kept2-' . getmypid() . '.db';
+foreach ([$dbK2Path, $dbK2Path . '-wal', $dbK2Path . '-shm'] as $f) @unlink($f);
+$dbK2 = xeric_state_open($dbK2Path);
+$annId = xeric_player_add($dbK2, $T, 'Ann');
+$kAnn = xeric_expect_form($T, $dbK2, 'ruth', $dish, $wedAm, null, null, $annId);
+ok('kept, two: Ann\'s promise is filed as hers', $kAnn !== null
+    && (int)(array_values(array_filter(xeric_expects_for($dbK2, 'ruth'), fn($e) => $e['key'] === $kAnn))[0]['p'] ?? 0) === $annId);
+xeric_player_move($dbK2, 'beck_hardware', (int)$wedAm['epoch'] - 60, $annId);
+xeric_player_move($dbK2, 'bluebird', ep('2026-07-31 07:15'), 1);
+xeric_player_current(fn() => 1);
+xeric_constructs_tick($T, $dbK2, $friEarly);
+ok('kept, two: Walt walking into the diner does not keep the promise Ann made',
+    $stateOf($dbK2, 'ruth', (string)$kAnn) === 'open' && xeric_trust_of($dbK2, 'ruth') === 0);
+xeric_player_move($dbK2, 'bluebird', ep('2026-07-31 07:20'), $annId);
+xeric_player_move($dbK2, 'beck_hardware', ep('2026-07-31 07:21'), 1);
+xeric_constructs_tick($T, $dbK2, $friEarly);
+ok('kept, two: Ann\'s own body walking in keeps it — read off her position, not the current player\'s',
+    $stateOf($dbK2, 'ruth', (string)$kAnn) === 'kept'
+    && xeric_trust_of($dbK2, 'ruth', null, $annId) === 1 && xeric_trust_of($dbK2, 'ruth') === 0,
+    json_encode(xeric_expects_for($dbK2, 'ruth')));
+xeric_player_current(fn() => 1);
+$dbK2 = null;
+foreach ([$dbK2Path, $dbK2Path . '-wal', $dbK2Path . '-shm'] as $f) @unlink($f);
+
+$dbK = null;
+foreach ([$dbKPath, $dbKPath . '-wal', $dbKPath . '-shm'] as $f) @unlink($f);
+
 foreach ([$dbPath, $dbPath . '-wal', $dbPath . '-shm',
           $db2Path, $db2Path . '-wal', $db2Path . '-shm',
           $dbFPath, $dbFPath . '-wal', $dbFPath . '-shm'] as $f) @unlink($f);
+
+// ---------------------------------------------------------------------------
+// 14. THE SIBLINGS, by fuse length. Each: a trigger, coarse epochs, a licence
+// (or none), a residue, a name the engine arms, and an inspector line.
+// ---------------------------------------------------------------------------
+
+echo "\n# the siblings\n";
+
+require_once __DIR__ . '/../proactive.php';
+require_once __DIR__ . '/../travel.php';
+
+$sibDbs = [];
+$sibDb = function (string $tag) use (&$sibDbs): PDO {
+    $p = sys_get_temp_dir() . '/xeric-sib-' . $tag . '-' . getmypid() . '.db';
+    foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
+    $sibDbs[] = $p;
+    $d = xeric_state_open($p);
+    xeric_state_migrate($d);
+    return $d;
+};
+$at = fn(string $w) => xeric_world_now($T, ep($w));
+$talk = function (PDO $d, string $h, array $times) {
+    $cid = xeric_conversation_for($d, $h, 'chat');
+    foreach ($times as $w) {
+        xeric_message_append($d, $cid, 'user', null, 'Morning.', ep($w));
+        xeric_message_append($d, $cid, 'character', $h, 'Morning yourself.', ep($w) + 60);
+    }
+    return $cid;
+};
+$noDigits = fn(string $s) => !preg_match('/\d/', (string)preg_replace('/^.*?ON YOUR MIND/s', '', $s));
+$mind = fn(PDO $d, string $h) => xeric_siblings_block($T, $d, $h);
+$stub = ['stub' => fn(string $tag, array $m, array $o = []) => ['text' => 'You still on for it?'], 'model' => 'stub'];
+
+// -- arming, by name and by preset -------------------------------------------
+ok('arm: a world with no systems record gets every sibling',
+    xeric_sibling_armed($T, 'anticipation') && xeric_sibling_armed($T, 'milestone'));
+ok('arm: each arms by its own name in forge.armed',
+    xeric_sibling_armed(['forge' => ['armed' => ['rituals']]], 'ritual')
+    && xeric_sibling_armed(['forge' => ['armed' => ['worry']]], 'worry')
+    && !xeric_sibling_armed(['forge' => ['armed' => ['rituals']]], 'worry'));
+ok('arm: and by the motivation presets\' systems, as debts arm with favors',
+    xeric_sibling_armed(['forge' => ['armed' => ['gentle_proactive_contact']]], 'news')
+    && xeric_sibling_armed(['forge' => ['armed' => ['daily_rhythms']]], 'ritual')
+    && xeric_sibling_armed(['forge' => ['armed' => ['expectations']]], 'grudge'));
+
+// -- anticipation: Dot, "Friday at noon" -------------------------------------
+$dA = $sibDb('ant');
+$mon = $at('2026-08-03 10:00');                                        // a Monday
+$kA = xeric_expect_form($T, $dA, 'dot', ['quote' => "I'll be there Friday at noon", 'what' => 'lunch at the counter',
+                                          'when' => 'Friday at noon'], $mon);
+$antKey = 'anticipate.' . $kA;
+ok('anticipation: a promise made days ahead is also something to look forward to',
+    (xeric_sibling_get($dA, 'dot', $antKey)['state'] ?? '') === 'ahead');
+$bA = $mind($dA, 'dot');
+ok('anticipation: coarse — the day, never a clock or a countdown',
+    str_contains($bA, 'looking forward to lunch at the counter') && str_contains($bA, 'Friday') && $noDigits($bA), $bA);
+xeric_constructs_tick($T, $dA, $at('2026-08-04 10:00'));
+ok('anticipation: byte-stable until the epoch moves', $mind($dA, 'dot') === $bA);
+xeric_constructs_tick($T, $dA, $at('2026-08-06 10:00'));            // Thursday, the eve
+$lic = array_values(array_filter(xeric_constructs_licences($T, $dA), fn($l) => $l['kind'] === 'anticipation'));
+ok('anticipation: the day before it licenses one line', count($lic) === 1 && $lic[0]['handle'] === 'dot');
+ok('anticipation: and the block says tomorrow', str_contains($mind($dA, 'dot'), 'Tomorrow is lunch at the counter'));
+xeric_constructs_tick($T, $dA, $at('2026-08-07 08:00'));
+ok('anticipation: on the day the unused licence lapses',
+    xeric_constructs_licences($T, $dA) === [] && str_contains($mind($dA, 'dot'), 'Today is lunch'));
+xeric_player_move($dA, 'bluebird', ep('2026-08-07 11:50'));
+xeric_constructs_tick($T, $dA, $at('2026-08-07 12:10'));
+ok('anticipation: kept, it resolves — and the residue is a memory',
+    (xeric_sibling_get($dA, 'dot', $antKey)['state'] ?? '') === 'happened'
+    && str_contains((string)(xeric_memories_for($dA, 'dot', 3)[1]['text'] ?? '') . (xeric_memories_for($dA, 'dot', 3)[0]['text'] ?? ''), 'looking forward to lunch'));
+ok('anticipation: and leaves the block', !str_contains($mind($dA, 'dot'), 'looking forward'));
+ok('anticipation: inspector line', str_contains(implode("\n", xeric_constructs_why($T, $dA, 'dot')), 'anticipation (happened)'));
+$dA2 = $sibDb('ant2');
+$kA2 = xeric_expect_form($T, $dA2, 'dot', ['quote' => "I'll be there Friday at noon", 'what' => 'lunch', 'when' => 'Friday at noon'], $mon);
+xeric_constructs_tick($T, $dA2, $at('2026-08-06 10:00'));
+xeric_constructs_tick($T, $dA2, $at('2026-08-08 10:00'));            // nobody came
+ok('anticipation: missed, the residue is a memory too',
+    (xeric_sibling_get($dA2, 'dot', 'anticipate.' . $kA2)['state'] ?? '') === 'let_down');
+
+// -- news: Ruth was in an hour, and has not seen you since ------------------
+$dN = $sibDb('news');
+$talk($dN, 'ruth', ['2026-08-03 09:00']);
+$evN = xeric_event_add($dN, 'The hymn boards came down in the vestry', ep('2026-08-03 14:00'), 'first_lutheran',
+                       ['ruth', 'pastor_dale'], 'Ruth held the ladder.');
+xeric_constructs_tick($T, $dN, $at('2026-08-03 15:00'));
+ok('news: an hour she was in, since the thread last moved, is something to tell',
+    (xeric_sibling_get($dN, 'ruth', 'news')['state'] ?? '') === 'fresh');
+ok('news: inside the first day it rides no prompt — the aftermath rung has it',
+    !str_contains($mind($dN, 'ruth'), 'hymn boards'));
+ok('news: a stranger has nothing to tell you', xeric_sibling_get($dN, 'pastor_dale', 'news') === null);
+xeric_constructs_tick($T, $dN, $at('2026-08-04 15:30'));
+ok('news: after a day it licenses a text-first, and renders',
+    count(array_filter(xeric_constructs_licences($T, $dN), fn($l) => $l['kind'] === 'news')) === 1
+    && str_contains($mind($dN, 'ruth'), 'has not heard from you yet: The hymn boards came down'));
+$pN = xeric_proactive_check($T, $dN, $stub, $at('2026-08-04 15:40'), ['events' => []]);
+ok('news: the proactive rung uses the licence', ($pN['kind'] ?? '') === 'construct:news' && ($pN['handle'] ?? '') === 'ruth',
+    json_encode($pN));
+ok('news: and the residue is told', (xeric_sibling_get($dN, 'ruth', 'news')['state'] ?? '') === 'told'
+    && xeric_constructs_licences($T, $dN) === []);
+ok('news: inspector line', str_contains(implode("\n", xeric_constructs_why($T, $dN, 'ruth')), 'news (told)'));
+
+// -- worry: Dot, after a scripted silence -----------------------------------
+$dW = $sibDb('worry');
+$talk($dW, 'dot', ['2026-08-03 09:00', '2026-08-04 09:00', '2026-08-05 09:00', '2026-08-06 09:00']);
+xeric_constructs_tick($T, $dW, $at('2026-08-07 12:00'));
+ok('worry: a day and a bit of quiet is inside the usual — no worry', xeric_sibling_get($dW, 'dot', 'worry') === null);
+xeric_constructs_tick($T, $dW, $at('2026-08-08 12:00'));
+ok('worry: past twice the usual gap, she worries, and it licenses a text',
+    (xeric_sibling_get($dW, 'dot', 'worry')['state'] ?? '') === 'worried'
+    && count(array_filter(xeric_constructs_licences($T, $dW), fn($l) => $l['kind'] === 'worry')) === 1);
+ok('worry: coarse in the block', str_contains($mind($dW, 'dot'), 'longer than usual') && $noDigits($mind($dW, 'dot')));
+$talk($dW, 'dot', ['2026-08-08 18:00']);
+xeric_constructs_tick($T, $dW, $at('2026-08-08 18:30'));
+ok('worry: you came back — relief, and the relief is a memory',
+    (xeric_sibling_get($dW, 'dot', 'worry')['state'] ?? '') === 'relieved'
+    && str_contains((string)(xeric_memories_for($dW, 'dot', 1)[0]['text'] ?? ''), 'heard from them'));
+$dW2 = $sibDb('worry2');
+$talk($dW2, 'dot', ['2026-08-03 09:00', '2026-08-04 09:00', '2026-08-05 09:00', '2026-08-06 09:00']);
+xeric_constructs_tick($T, $dW2, $at('2026-08-08 12:00'));
+xeric_constructs_tick($T, $dW2, $at('2026-08-12 12:00'));
+ok('worry: a silence long past it goes sore — the grudge seed',
+    (xeric_sibling_get($dW2, 'dot', 'worry')['state'] ?? '') === 'sore' && str_contains($mind($dW2, 'dot'), 'went quiet on you'));
+ok('worry: inspector line', str_contains(implode("\n", xeric_constructs_why($T, $dW2, 'dot')), 'worry (sore)'));
+
+// -- grudge: an unrepaired miss hardens -------------------------------------
+$dG = $sibDb('grudge');
+xeric_expect_form($T, $dG, 'harlan', ['quote' => "I'll be at the store Tuesday morning", 'what' => 'the paint order',
+                                       'when' => 'Tuesday morning'], $mon);
+xeric_constructs_tick($T, $dG, $at('2026-08-04 18:00'));            // missed
+ok('grudge: a fresh miss is not a grudge — the repair window is open', xeric_sibling_rows($dG, 'harlan', 'grudge.') === []);
+xeric_constructs_tick($T, $dG, $at('2026-08-12 18:00'));            // hardened
+$g = array_values(xeric_sibling_rows($dG, 'harlan', 'grudge.'));
+ok('grudge: never explained inside the window, it hardens cold',
+    count($g) === 1 && $g[0]['state'] === 'cold' && str_contains($mind($dG, 'harlan'), 'You have not forgiven Walt for missing the paint order'));
+ok('grudge: it licenses nothing', xeric_constructs_licences($T, $dG) === []);
+ok('grudge: and it explains itself', str_contains(implode("\n", xeric_constructs_why($T, $dG, 'harlan')), 'grudge (cold)'));
+xeric_constructs_tick($T, $dG, $at('2026-08-27 18:00'));
+ok('grudge: cold goes cool', str_contains($mind($dG, 'harlan'), 'though less than it did'));
+ok('grudge: the repair path — an explanation, late, thaws it',
+    xeric_grudge_thaw($T, $dG, 'harlan', '', XERIC_PLAYER_FIRST, $at('2026-08-27 19:00')) === 1
+    && str_contains($mind($dG, 'harlan'), 'are thawing'));
+xeric_constructs_tick($T, $dG, $at('2026-09-05 19:00'));
+ok('grudge: and thawing settles into a memory',
+    (array_values(xeric_sibling_rows($dG, 'harlan', 'grudge.'))[0]['state'] ?? '') === 'settled'
+    && !str_contains($mind($dG, 'harlan'), 'paint order'));
+
+// -- ritual: three mornings at the Bluebird ---------------------------------
+$dR = $sibDb('ritual');
+foreach (['2026-08-03', '2026-08-04', '2026-08-05'] as $d) {
+    xeric_player_move($dR, 'bluebird', ep($d . ' 08:15'));
+    xeric_constructs_tick($T, $dR, $at($d . ' 08:20'));
+    xeric_player_move($dR, null, ep($d . ' 09:00'));
+}
+$rit = xeric_sibling_get($dR, 'dot', 'ritual.bluebird');
+ok('ritual: the third morning at the same place and hour is a ritual, held by whoever was there',
+    ($rit['state'] ?? '') === 'kept' && xeric_sibling_get($dR, 'harlan', 'ritual.bluebird') === null, json_encode($rit));
+ok('ritual: coarse — mornings, not a time', str_contains($mind($dR, 'dot'), 'comes into the Bluebird most mornings')
+    || str_contains($mind($dR, 'dot'), 'most mornings'), $mind($dR, 'dot'));
+xeric_constructs_tick($T, $dR, $at('2026-08-06 09:30'));
+ok('ritual: inside the grace nothing is missed', (xeric_sibling_get($dR, 'dot', 'ritual.bluebird')['state'] ?? '') === 'kept');
+xeric_constructs_tick($T, $dR, $at('2026-08-06 10:30'));
+ok('ritual: a morning without you is noticed, and licenses a line',
+    (xeric_sibling_get($dR, 'dot', 'ritual.bluebird')['state'] ?? '') === 'missed'
+    && count(array_filter(xeric_constructs_licences($T, $dR), fn($l) => $l['kind'] === 'ritual')) === 1);
+xeric_player_move($dR, 'bluebird', ep('2026-08-07 08:10'));
+xeric_constructs_tick($T, $dR, $at('2026-08-07 08:15'));
+ok('ritual: and turning up again keeps it', (xeric_sibling_get($dR, 'dot', 'ritual.bluebird')['state'] ?? '') === 'kept'
+    && xeric_constructs_licences($T, $dR) === []);
+ok('ritual: inspector line', str_contains(implode("\n", xeric_constructs_why($T, $dR, 'dot')), 'ritual (kept)'));
+
+// A BODY EACH, for the ritual too: the owner's three mornings at the Bluebird,
+// two of whose ticks ran on a guest's request while the guest stood at the
+// hardware store. The pass reads every body, so the ritual is still the
+// owner's — and the guest's own two visits to Beck's form nothing of theirs.
+$dR2 = $sibDb('ritual-two');
+$rAnn = xeric_player_add($dR2, $T, 'Ann');
+xeric_player_move($dR2, 'beck_hardware', ep('2026-08-03 06:00'), $rAnn);
+foreach (['2026-08-03', '2026-08-04', '2026-08-05'] as $i => $d) {
+    xeric_player_move($dR2, 'bluebird', ep($d . ' 08:15'), 1);
+    xeric_player_current(fn() => $i === 1 ? 1 : $rAnn);
+    xeric_constructs_tick($T, $dR2, $at($d . ' 08:20'));
+    xeric_player_move($dR2, null, ep($d . ' 09:00'), 1);
+}
+xeric_player_current(fn() => 1);
+$rit2 = xeric_sibling_get($dR2, 'dot', 'ritual.bluebird');
+ok('ritual, two: the owner\'s three mornings form the ritual even when a guest\'s request ran two of the ticks',
+    ($rit2['state'] ?? '') === 'kept' && !isset($rit2['p'])
+    && xeric_sibling_rows($dR2, 'dot', 'ritual.bluebird.p') === [] && xeric_sibling_rows($dR2, 'harlan', 'ritual.') === [],
+    json_encode([$rit2, xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits'), xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits.p' . $rAnn)]));
+ok('ritual, two: each body keeps its own visit log', count(json_decode((string)xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits'), true) ?: []) === 3
+    && count(json_decode((string)xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits.p' . $rAnn), true) ?: []) === 1);
+// And the miss is the owner's, named as the owner, on a morning the guest's tick runs.
+xeric_player_current(fn() => $rAnn);
+xeric_constructs_tick($T, $dR2, $at('2026-08-06 10:30'));
+xeric_player_current(fn() => 1);
+ok('ritual, two: the morning the owner does not come is the owner\'s miss, whoever\'s request noticed it',
+    (xeric_sibling_get($dR2, 'dot', 'ritual.bluebird')['state'] ?? '') === 'missed'
+    && str_contains((string)(xeric_memories_for($dR2, 'dot', 1)[0]['text'] ?? ''), 'Walt did not come into'),
+    (string)(xeric_memories_for($dR2, 'dot', 1)[0]['text'] ?? ''));
+
+// -- milestone: the tenth on a ledger, once ---------------------------------
+$dM = $sibDb('mile');
+xeric_arc_set($dM, 'ruth', 'economy.casserole_ledger', 10);
+xeric_constructs_tick($T, $dM, $mon);
+$ms = xeric_sibling_get($dM, 'ruth', 'milestone.casserole_ledger.10');
+ok('milestone: a count crossing ten is noticed, and licenses one line',
+    ($ms['state'] ?? '') === 'due' && str_contains($mind($dM, 'ruth'), 'your tenth on the casserole ledger')
+    && $noDigits($mind($dM, 'ruth')), $mind($dM, 'ruth'));
+xeric_constructs_licence_spend($T, $dM, 'ruth', 'milestone.casserole_ledger.10', (int)$mon['epoch']);
+xeric_arc_set($dM, 'ruth', 'economy.casserole_ledger', 11);
+xeric_constructs_tick($T, $dM, $at('2026-08-04 10:00'));
+ok('milestone: once — said, it is a memory and never again',
+    (xeric_sibling_get($dM, 'ruth', 'milestone.casserole_ledger.10')['state'] ?? '') === 'marked'
+    && !str_contains($mind($dM, 'ruth'), 'tenth') && xeric_constructs_licences($T, $dM) === []);
+ok('milestone: a ledger her walls hide is never counted for her',
+    (function () use ($T, $sibDb) {
+        $d = $sibDb('mile2');
+        xeric_arc_set($d, 'janelle', 'economy.thursday_pot', 12);
+        xeric_constructs_tick($T, $d, xeric_world_now($T, ep('2026-08-03 10:00')));
+        return xeric_sibling_get($d, 'janelle', 'milestone.thursday_pot.10') === null;
+    })());
+ok('milestone: inspector line', str_contains(implode("\n", xeric_constructs_why($T, $dM, 'ruth')), 'milestone (marked)'));
+
+// ---------------------------------------------------------------------------
+// 15. CAST TO CAST, out of the sweep's own prose, through the walls.
+// ---------------------------------------------------------------------------
+
+echo "\n# the town's promises, out of its hours\n";
+
+$dC = $sibDb('cast');
+xeric_constructs_cast_tick($T, $dC, $mon);   // the reader arrives first: its watermark is set at the world's newest event
+xeric_event_add($dC, 'The vestry after the service', ep('2026-08-03 11:00'), 'first_lutheran', ['ruth', 'pastor_dale'],
+    'They stacked the chairs. "I will have the hymn boards done Wednesday morning," Ruth said. The pastor nodded.');
+xeric_event_add($dC, 'Lunch at the counter', ep('2026-08-03 12:00'), 'bluebird', ['harlan', 'dot'],
+    '"I will bring the ladder round Thursday morning," Harlan said, and finished his pie.');
+$cr = xeric_constructs_cast_tick($T, $dC, $mon);
+ok('cast: promises in a sweep\'s prose form expectations between the two of them',
+    $cr['formed'] === 2 && (xeric_expects_for($dC, 'pastor_dale')[0]['of'] ?? '') === 'ruth'
+    && (xeric_expects_for($dC, 'dot')[0]['of'] ?? '') === 'harlan', json_encode($cr));
+ok('cast: and the read is once — a second tick forms nothing', xeric_constructs_cast_tick($T, $dC, $mon)['formed'] === 0);
+xeric_constructs_tick($T, $dC, $at('2026-08-05 10:00'));          // their week puts them in the vestry
+ok('cast: kept when their schedules put them in a room',
+    (xeric_expects_for($dC, 'pastor_dale')[0]['state'] ?? '') === 'kept');
+xeric_constructs_tick($T, $dC, $at('2026-08-06 14:00'));          // Harlan never comes by the Bluebird
+ok('cast: missed otherwise', (xeric_expects_for($dC, 'dot')[0]['state'] ?? '') === 'missed');
+$res = xeric_constructs_cast_tick($T, $dC, $at('2026-08-06 14:05'));
+ok('cast: the residue is a memory each — the promiser keeps the other half',
+    $res['residue'] === 2
+    && str_contains((string)(xeric_memories_for($dC, 'ruth', 1)[0]['text'] ?? ''), 'and did.')
+    && str_contains((string)(xeric_memories_for($dC, 'harlan', 1)[0]['text'] ?? ''), 'did not make it'));
+ok('cast: and only once', xeric_constructs_cast_tick($T, $dC, $at('2026-08-06 14:10'))['residue'] === 0);
+
+// THE WALL NEGATIVE. A promise between townspeople that quotes the Thursday
+// pot — hidden from Janelle by family_innocence — never reaches her prompt:
+// she is in the room for it and forms nothing, the one it was said to forms
+// it, and the miss, the ripple and the residue all leave her prompt clean.
+$dX = $sibDb('wall');
+xeric_constructs_cast_tick($T, $dX, $mon);
+xeric_event_add($dX, 'Setting up in the basement', ep('2026-08-03 18:00'), 'first_lutheran', ['harlan', 'pastor_dale', 'janelle'],
+    '"Dale, I will put the chips back in the coffee can behind the folding chairs Thursday morning," Harlan said.');
+xeric_event_add($dX, 'Stacking chairs', ep('2026-08-03 19:00'), 'first_lutheran', ['harlan', 'janelle'],
+    '"I will put the chips back in the coffee can behind the folding chairs Thursday morning," Harlan said.');
+xeric_constructs_cast_tick($T, $dX, $mon);
+ok('wall: the entitled listener forms it', count(xeric_expects_for($dX, 'pastor_dale')) === 1);
+ok('wall: the walled listener forms nothing, even said to her face', xeric_expects_for($dX, 'janelle') === []);
+foreach (['2026-08-06 14:00', '2026-08-07 10:00', '2026-08-09 10:00', '2026-08-16 10:00'] as $w) {
+    xeric_constructs_tick($T, $dX, $at($w));
+    xeric_constructs_cast_tick($T, $dX, $at($w));
+}
+$jan = implode("\n", array_map(fn($m) => (string)$m['content'], xeric_prompt_build($T, $dX, 'janelle', $at('2026-08-16 10:00'), ['user_message' => 'hi'])));
+ok('wall: and it never renders into her prompt — not the quote, not the can', !str_contains(mb_strtolower($jan), 'folding chairs')
+    && !str_contains(mb_strtolower($jan), 'coffee can'));
+ok('wall: while the one it was owed to still carries it',
+    str_contains(xeric_expect_block($T, $dX, 'pastor_dale', $at('2026-08-16 10:00')), 'coffee can'));
+
+// HISTORY IS NOT OWED. A world that lived three hundred hours before this
+// reader existed — every one of them a quoted, datable promise between two
+// people — must not replay them on its first cast tick: each would form an
+// expectation due long ago, and the next fuse tick would fire them all as one
+// mass of misses. The first tick sets the watermark and forms nothing; the
+// next hour lived after it is read as usual.
+$dH = $sibDb('history');
+for ($i = 0; $i < 300; $i++) {
+    xeric_event_add($dH, 'Lunch at the counter ' . $i, ep('2026-05-01 12:00') + $i * 3600, 'bluebird', ['harlan', 'dot'],
+        '"I will bring the ladder round Thursday morning," Harlan said, and finished his pie.');
+}
+$hr = xeric_constructs_cast_tick($T, $dH, $mon);
+ok('history: a world with 300 old hours of quoted promises forms nothing on its first cast tick',
+    $hr['formed'] === 0 && xeric_expects_for($dH, 'dot') === []
+    && (int)xeric_arc_get($dH, xeric_arc_world(), 'constructs.cast.seen') === (int)$dH->query('SELECT MAX(id) FROM events')->fetchColumn(),
+    json_encode($hr));
+ok('history: and the fuse has no born-missed promise to fire',
+    (function () use ($T, $dH, $at) { xeric_constructs_tick($T, $dH, $at('2026-08-03 10:05'));
+        return array_filter(xeric_expects_for($dH, 'dot'), fn($e) => $e['state'] === 'missed') === []; })());
+xeric_event_add($dH, 'Lunch again', ep('2026-08-03 12:00'), 'bluebird', ['harlan', 'dot'],
+    '"I will bring the ladder round Thursday morning," Harlan said, and finished his pie.');
+ok('history: an hour lived after the watermark forms as usual',
+    xeric_constructs_cast_tick($T, $dH, $mon)['formed'] === 1 && (xeric_expects_for($dH, 'dot')[0]['of'] ?? '') === 'harlan');
+// And a backlog read late: an hour said on Monday, read on Saturday, whose
+// Thursday is behind the reading, forms nothing.
+xeric_event_add($dH, 'Lunch, Monday', ep('2026-08-10 12:00'), 'bluebird', ['harlan', 'ruth'],
+    '"I will bring the ladder round Thursday morning," Harlan said, and finished his pie.');
+ok('history: a due already past at the tick reading it forms nothing, even said in time',
+    xeric_constructs_cast_tick($T, $dH, $at('2026-08-15 10:00'))['formed'] === 0 && xeric_expects_for($dH, 'ruth') === []);
+
+foreach ($sibDbs as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 echo $FAILED === 0 ? "\nPASS\n" : "\n$FAILED FAILED\n";
 exit($FAILED === 0 ? 0 : 1);

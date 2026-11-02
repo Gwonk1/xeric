@@ -557,7 +557,7 @@ function xeric_duet_material(array $t, PDO $db, string $me, string $other, array
     }
 
     $shared = null;
-    foreach (xeric_events_recent($db, 12) as $e) {
+    foreach (xeric_events_recent($db, 12, xeric_state_rating()) as $e) {     // a prompt for whoever watches
         $who = (array)($e['participants'] ?? []);
         if (!in_array($me, $who, true) || !in_array($other, $who, true)) continue;
         if (!empty($e['on_spine']) && isset($protected[$me])) continue;
