@@ -1124,7 +1124,9 @@ xeric_image_source(function () {
         $loras[] = ['name' => (string)$name, 'words' => array_values((array)$words)];
     }
     return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: ''),
-            'kind' => (string)($img['kind'] ?? ''), 'loras' => $loras];
+            'kind' => (string)($img['kind'] ?? ''), 'loras' => $loras,
+            // Probed on connect (model.php): does it answer /v1/images/edits?
+            'edits' => !empty($img['edits'])];
 });
 
 xeric_photo_meter(xeric_budget_sink('renders', function (array $u, string $where = ''): void {

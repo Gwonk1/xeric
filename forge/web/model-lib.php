@@ -217,6 +217,41 @@ function xeric_model_peek(string $url, int $timeout = 2, string $key = ''): ?arr
 }
 
 /**
+ * Does this image machine answer /v1/images/edits — will it take a likeness?
+ *
+ * THE HEURISTIC, asked once on connect: POST an EMPTY multipart form (no
+ * prompt, no image) to the route. A server that has it fails validation
+ * before it renders anything — sd-server answers 400 for a missing prompt or
+ * image, OpenAI-shaped servers 400 or 422 — while a server without it is a
+ * router's 404 (cpp-httplib, a1111's FastAPI) or a 405. So 2xx/400/415/422
+ * is "has the route", and anything else — 404, 405, 401 (cannot tell, so
+ * no), a closed port — is no. A GET cannot tell the two apart (httplib
+ * answers 404 for a GET to a POST-only route) and an OPTIONS is answered by
+ * routers that serve nothing on the path, which is why the probe is a POST
+ * that is guaranteed to be refused. Never throws, never waits long.
+ */
+function xeric_model_image_edits(string $base, int $timeout = 3, string $key = ''): bool
+{
+    $base = rtrim($base, '/');
+    if ($base === '') return false;
+    $b = '----xericprobe' . bin2hex(random_bytes(6));
+    $headers = "Content-Type: multipart/form-data; boundary=$b\r\nAccept: application/json\r\n";
+    if ($key !== '') {
+        $safe = function_exists('xeric_llm_header_safe') ? xeric_llm_header_safe($key) : $key;
+        if ($safe !== '') $headers .= 'Authorization: Bearer ' . $safe . "\r\n";
+    }
+    $ctx = stream_context_create(['http' => [
+        'method' => 'POST', 'header' => $headers, 'content' => "--$b--\r\n",
+        'timeout' => $timeout, 'ignore_errors' => true, 'follow_location' => 0,
+    ]]);
+    $http_response_header = [];
+    $out = @file_get_contents($base . '/v1/images/edits', false, $ctx);
+    if ($out === false) return false;
+    $code = preg_match('#^HTTP/\S+\s+(\d{3})#', (string)($http_response_header[0] ?? ''), $m) ? (int)$m[1] : 0;
+    return ($code >= 200 && $code < 300) || in_array($code, [400, 415, 422], true);
+}
+
+/**
  * Does this model id belong to something that makes PICTURES rather than words?
  *
  * A NAME TEST, BEHIND THE ENDPOINT TESTS AND NOT INSTEAD OF THEM. Endpoint

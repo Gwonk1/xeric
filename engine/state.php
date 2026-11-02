@@ -387,6 +387,8 @@ function xeric_state_alters(): array
         // the defaults say exactly that, so nothing on disk changes meaning.
         ['scene_jobs', 'channel', "TEXT NOT NULL DEFAULT 'look'"],
         ['scene_jobs', 'light',   "TEXT NOT NULL DEFAULT ''"],
+        // What a render was conditioned on (portrait chaining's reference_of).
+        ['photo_jobs', 'meta', "TEXT NOT NULL DEFAULT '{}'"],
     ];
 }
 

@@ -198,6 +198,22 @@ never rides along. Which picture was sent is recorded in the row's meta as
 `reference_fingerprint`. The image-machine fallback never takes one: an
 `images/generations` call has nowhere to put it.
 
+People are held still the same way. A person's first portrait is their
+likeness (`xeric_photo_reference`: the newest done portrait whose file is on
+this disk, under the same 8 MB cap and five-deep walk-back), and every later
+photo with them in frame (a message photo, a reroll of the portrait itself)
+is sent with it, as multipart `image=` to `{base}/v1/images/edits` beside the
+same prompt and seed. The first portrait takes none, because there is nothing
+yet to take. This happens only on a machine whose descriptor says `edits`.
+The machines screen probes for that once on connect: an empty form is POSTed
+to the route, and 2xx/400/415/422 means the route is there, while 404, 405 or
+no answer means it is not. `XERIC_IMAGE_EDITS=1` sets the same flag for a
+headless install. sd-server and OpenAI-shaped servers answer the route. A1111's
+own API offers img2img instead, so an A1111 without an OpenAI shim renders
+unchained, exactly as before. A likeness widens nothing: the prompt, the
+rating cap and a minor's floor framing are composed before it is attached.
+The row's `meta.reference_of` records which portrait it was drawn from.
+
 ---
 
 ## What you hear

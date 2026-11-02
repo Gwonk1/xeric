@@ -222,8 +222,12 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
                     $found[(string)$l['name']] = array_values((array)$l['words']);
                 }
             } catch (Throwable $e) { /* a machine with no loras is a machine */ }
-            xeric_web_session_edit(function (array &$s) use ($b, $kind, $found): void {
-                $s['image'] = ['base' => $b, 'kind' => $kind, 'loras' => $found];
+            // And whether it takes a likeness: one probe of /v1/images/edits
+            // (xeric_model_image_edits' heuristic), stored, so the reaper
+            // chains portraits only on a machine that answers the route.
+            $edits = xeric_model_image_edits($b, 3, (string)(getenv('XERIC_IMAGE_KEY') ?: ''));
+            xeric_web_session_edit(function (array &$s) use ($b, $kind, $found, $edits): void {
+                $s['image'] = ['base' => $b, 'kind' => $kind, 'loras' => $found, 'edits' => $edits];
             }, $sid);
             header('Location: model.php');
             exit;
@@ -861,6 +865,10 @@ echo xeric_play_css_link(true);
         <span class="thead"><span class="t"><?= h(preg_replace('#^https?://#', '', (string)$imgEp['base'])) ?></span></span>
         <p class="whois"><span class="wname">the image machine</span>
           <span class="wmodel" id="artlamp">checking…</span></p>
+        <?php if (!empty($imgEp['edits'])): ?>
+        <p class="whois"><strong>Takes a reference image</strong> — it answers
+          <code>/v1/images/edits</code>, so every photo of a person is drawn from their first portrait.</p>
+        <?php endif; ?>
         <?php if (xeric_image_costly($imgEp)): ?>
         <p class="whois"><strong>This address is not on this computer: every render bills an API
           key</strong> (XERIC_IMAGE_KEY, environment only — keys are never stored here), including
