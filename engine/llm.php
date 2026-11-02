@@ -80,6 +80,25 @@ function xeric_llm_normalize_base(string $base): string
 }
 
 /**
+ * Is this base URL on this machine? THE ONE HOST PREDICATE: the budget's
+ * ledger (xeric_budget_costly_at) and every render's cost warning
+ * (xeric_image_costly) both ask it, so "costly" cannot mean one thing when the
+ * spend is checked and another when it is written down. Normalised the same
+ * way for both: trimmed, lowercased, brackets off an IPv6 literal — so
+ * http://LOCALHOST:8080 and http://[::1]:8080 are the owner's own electricity
+ * wherever they are asked about. No host at all (a stub://, a meter that
+ * was not told where) is not somebody else's API: local, as the ledger has
+ * always counted it.
+ */
+function xeric_llm_host_local(string $base): bool
+{
+    $host = (string)parse_url(trim($base), PHP_URL_HOST);
+    $host = strtolower(trim(trim($host), '[]'));
+    if ($host === '') return true;
+    return in_array($host, ['127.0.0.1', 'localhost', '::1'], true);
+}
+
+/**
  * Where the model lives when nobody named one.
  *
  * XERIC_LOCAL_BASE is the whole point of an external llama.cpp: a GPU box on

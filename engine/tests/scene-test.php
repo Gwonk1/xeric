@@ -262,6 +262,10 @@ $fb = xeric_scene_endpoint();
 ok('with only an image machine, the scene machine is that machine, kind image',
     $fb !== null && $fb['kind'] === 'image' && $fb['base'] === 'http://127.0.0.1:9', json_encode($fb));
 ok('and loopback is the owner\'s electricity', xeric_scene_costly($fb) === false);
+ok('and so is LOCALHOST, or [::1], however it is written — the budget\'s own answer too',
+    !xeric_scene_costly(['base' => 'http://LOCALHOST:8080', 'kind' => 'image'])
+    && !xeric_scene_costly(['base' => 'http://[::1]:8080', 'kind' => 'image'])
+    && !xeric_budget_costly_at('http://LOCALHOST:8080') && !xeric_budget_costly_at('http://[::1]:8080'));
 putenv('XERIC_SCENE_BASE=https://scenes.example');
 putenv('XERIC_SCENE_AUTH=x-api-key');
 putenv('XERIC_SCENE_KEY=k1');

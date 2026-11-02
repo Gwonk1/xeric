@@ -531,10 +531,17 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     $events = xeric_events_recent($db, 25);
     $lastRaw = xeric_world_state_get($db, 'why:last_tick');
     $last = $lastRaw !== null ? json_decode($lastRaw, true) : null;
+    // WHY THE HOURS STOPPED, when they stopped for money: the heart wrote it
+    // down (xeric_budget_stopped) and this is the one place a person asks
+    // "why has nothing happened since two o'clock?".
+    $stoppedWhy = xeric_world_state_get($db, 'budget.stopped') !== null ? xeric_budget_why($db, $now) : null;
     ?>
   <h1>Why this xeric does what it does</h1>
   <p class="sub"><?= h((string)$T['meta']['name']) ?> at <?= h(xeric_play_when($now)) ?>. Nothing on this page
     calls a model or changes anything, it is a read of what is already there.</p>
+  <?php if ($stoppedWhy !== null): ?>
+  <p class="quiet budgetstop"><?= h($stoppedWhy) ?></p>
+  <?php endif; ?>
 
   <h2>what each of them is told</h2>
   <p class="quiet">The exact messages the model receives, with a size on every section, which is usually

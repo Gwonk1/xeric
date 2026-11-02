@@ -201,6 +201,18 @@ ok('a ledger that will not take the write never fails the call it counts', !$thr
 ok('costliness: a stub model is free, a hosted one is not, loopback is the owner\'s',
     !xeric_budget_llm_costly(['stub' => fn() => []]) && xeric_budget_llm_costly(['base' => 'https://api.openai.com'])
     && !xeric_budget_llm_costly(['base' => 'http://127.0.0.1:8080']) && !xeric_budget_llm_costly(null));
+// ONE HOST TEST. The ledger's costly bit (xeric_budget_costly_at) and the
+// check-time one (xeric_image_costly) used to normalise the host differently,
+// so LOCALHOST and [::1] were free to one and paid to the other.
+$loopbacks = ['http://LOCALHOST:8080', 'http://[::1]:8080', ' http://Localhost:8080/v1 ', 'http://127.0.0.1:8080'];
+ok('costliness: LOCALHOST and [::1] are loopback to the ledger and to the render check alike',
+    array_filter($loopbacks, fn($u) => xeric_budget_costly_at($u) || xeric_image_costly(['base' => $u])
+                                        || !xeric_llm_host_local($u)) === []
+    && xeric_budget_costly_at('https://api.openai.com') && xeric_image_costly(['base' => 'https://api.openai.com']));
+ok('source: the budget and the photo machine ask the one predicate, and neither keeps a host list of its own',
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/budget.php'), 'return !xeric_llm_host_local($where);')
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/photo.php'), "return !xeric_llm_host_local((string)(\$endpoint['base'] ?? ''));")
+    && !str_contains((string)file_get_contents(dirname(__DIR__) . '/budget.php') . file_get_contents(dirname(__DIR__) . '/photo.php'), "'::1']"));
 xeric_budget_bind(null);
 
 // ---------------------------------------------------------------------------

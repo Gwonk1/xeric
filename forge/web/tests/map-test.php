@@ -226,7 +226,7 @@ if ($node === '' && getenv('XERIC_REQUIRE_NODE') === '1') {
     file_put_contents($tmp . '/b.html', $walked);
     $out = (string)shell_exec(escapeshellarg($node) . ' ' . escapeshellarg(__DIR__ . '/map-test.js') . ' '
         . escapeshellarg(dirname(__DIR__) . '/xeric-map.js') . ' ' . escapeshellarg($tmp . '/a.html') . ' '
-        . escapeshellarg($tmp . '/b.html') . ' 2>&1');
+        . escapeshellarg($tmp . '/b.html') . ' ' . escapeshellarg(dirname(__DIR__) . '/play.php') . ' 2>&1');
     $ran = 0;
     foreach (explode("\n", $out) as $line) {
         if (!str_starts_with($line, "R\t")) continue;

@@ -272,26 +272,27 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             // every tick re-derives from scratch, and the heart is permanently
             // blind to hours it has already lived.
             $sweepOpts = ['window' => $size, 'clock' => (int)$now['epoch'], 'stories' => $w['stories']];
+            // UNDER A CEILING, ASKED BEFORE EACH WINDOW, so the world stops at
+            // the hour it ran out rather than six hours past it — and asked
+            // INSIDE the one catchup call, not by walking windows here: the
+            // give-up after a dead model, the event cap and the watermark live
+            // in xeric_sweep_catchup and nowhere else. A walk out here buried
+            // every window it handed in, failed or not, and capped differently
+            // from the one call, so a budgeted world lived more hours than an
+            // unbudgeted one.
             $b = xeric_budget($T);
-            if ($b['tokens_per_day'] <= 0 || ($b['metered_only'] && !$tokCostly)) {
-                $r = xeric_sweep_catchup($T, $db, $endpoint, $from, $to, $sweepOpts);
-            } else {
-                // UNDER A CEILING, ONE WINDOW AT A TIME, asking before each,
-                // so the world stops at the hour it ran out rather than six
-                // hours past it. The same three-event cap as one call.
-                $r = ['events' => [], 'notes' => []];
-                for ($win = intdiv($from, $size); $win * $size <= $to; $win++) {
-                    $afford = $tokens();
-                    if (!$afford['ok']) {
-                        xeric_budget_stopped($db, xeric_clock_now($db, $T), $afford);
-                        $say($slug . ': stopped living hours, ' . $afford['reason']);
-                        break;
-                    }
-                    $one = xeric_sweep_catchup($T, $db, $endpoint, $win * $size, $win * $size, $sweepOpts);
-                    $r['events'] = array_merge($r['events'], (array)($one['events'] ?? []));
-                    $r['notes']  = array_merge($r['notes'], (array)($one['notes'] ?? []));
-                    if (count($r['events']) >= 3) break;
-                }
+            $short = null;
+            if (!($b['tokens_per_day'] <= 0 || ($b['metered_only'] && !$tokCostly))) {
+                $sweepOpts['afford'] = function (int $win) use ($tokens, &$short): bool {
+                    $a = $tokens();
+                    if (!$a['ok']) $short = $a;
+                    return (bool)$a['ok'];
+                };
+            }
+            $r = xeric_sweep_catchup($T, $db, $endpoint, $from, $to, $sweepOpts);
+            if (($r['stopped'] ?? '') === 'budget' && is_array($short)) {
+                xeric_budget_stopped($db, xeric_clock_now($db, $T), $short);
+                $say($slug . ': stopped living hours, ' . (string)($short['reason'] ?? 'budget'));
             }
             $n = count((array)($r['events'] ?? []));
             $lived += $n;

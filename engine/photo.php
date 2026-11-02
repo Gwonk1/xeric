@@ -724,8 +724,8 @@ function xeric_image_costly(?array $endpoint = null): bool
     $endpoint ??= xeric_image_endpoint();
     if ($endpoint === null) return false;
     if (isset($endpoint['stub'])) return false;
-    $host = (string)parse_url((string)($endpoint['base'] ?? ''), PHP_URL_HOST);
-    return !in_array($host, ['127.0.0.1', 'localhost', '::1'], true);
+    // The one host test, the same one the budget's ledger asks.
+    return !xeric_llm_host_local((string)($endpoint['base'] ?? ''));
 }
 
 /**

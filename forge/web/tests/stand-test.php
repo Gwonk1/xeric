@@ -222,9 +222,13 @@ if ($node === '') {
     echo "SKIP - stand-test.js: 0 of its checks ran (no node; set XERIC_NODE)\n";
 } else {
     file_put_contents($tmp . '/viewer.js', (string)file_get_contents($WEB . '/xeric-view.js'));
+    // The page's own script, as served — the harness lifts the pulse out of it.
+    $pageJs = '';
+    foreach ($sm as $x) if (str_contains($x[2], 'function pulse()')) $pageJs = $x[2];
+    file_put_contents($tmp . '/page.js', $pageJs);
     $out = (string)shell_exec('cd ' . escapeshellarg($tmp) . ' && ' . escapeshellarg($node) . ' '
         . escapeshellarg(__DIR__ . '/stand-test.js') . ' ' . escapeshellarg($tmp . '/viewer.js') . ' '
-        . escapeshellarg($tmp . '/sw.js') . ' 2>&1');
+        . escapeshellarg($tmp . '/sw.js') . ' ' . escapeshellarg($tmp . '/page.js') . ' 2>&1');
     $ran = 0;
     foreach (explode("\n", $out) as $line) {
         if (!str_starts_with($line, "R\t")) continue;

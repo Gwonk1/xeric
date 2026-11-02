@@ -1,6 +1,7 @@
 // Xeric — the drawn map's harness. NOT RUN ON ITS OWN: map-test.php renders two
 // where panels from the fixture world (the player at the Bluebird, then at the
-// mill) and hands this xeric-map.js and both files (argv[2..4]). The markup is
+// mill) and hands this xeric-map.js and both files (argv[2..4]), and play.php
+// (argv[5]), whose trip lock and click handler are lifted out and run here. The markup is
 // parsed into the smallest DOM the map touches — the real server output, not a
 // hand-written stand-in — and every result is one line, "R\t<0|1>\t<name>\t<detail>".
 
@@ -38,6 +39,16 @@ class El {
   get id() { return this.attrs.id || ''; } set id(v) { this.attrs.id = v; }
   get className() { return this.attrs.class || ''; } set className(v) { this.attrs.class = v; }
   get firstChild() { return this.childNodes[0] || null; }
+  get dataset() {
+    const o = {};
+    for (const k of Object.keys(this.attrs || {})) if (k.startsWith('data-')) o[k.slice(5).replace(/-([a-z])/g, (m, c) => c.toUpperCase())] = this.attrs[k];
+    return o;
+  }
+  get classList() {
+    const el = this, get = () => String(el.attrs.class || '').split(/\s+/).filter(Boolean);
+    return { contains: (c) => get().includes(c),
+             toggle: (c, on) => { const l = get().filter((x) => x !== c); if (on) l.push(c); el.attrs.class = l.join(' '); return !!on; } };
+  }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   appendChild(c) { c.parentNode = this; this.childNodes.push(c); return c; }
@@ -179,5 +190,42 @@ ok('and walks to the mill on the next frame, by CSS transition',
   you.style.transition === '' && you.style.transform === 'translate(' + parseFloat(you.getAttribute('data-x')) + 'px,'
   + parseFloat(you.getAttribute('data-y')) + 'px)' && you.getAttribute('data-where') === 'the_mill', you.style.transform);
 ok('a repaint that did not move anybody animates nothing', XM.follow(doc, state, win) === false && frames.length === 0);
+
+// -- the trip lock: a mark is not a door while you are walking ---------------------
+// go() used to set .disabled on every .goto, and a mark is an SVG <g>, which has
+// no such thing: mid-trip the map stayed live and said so. play.php's own
+// tripLock and click handler, lifted out of the page and run on a fresh parse.
+{
+  const PLAY = fs.readFileSync(process.argv[5], 'utf8');
+  const lift = (name) => {
+    const at = PLAY.indexOf('  function ' + name + '(');
+    const end = at < 0 ? -1 : PLAY.indexOf('\n  }\n', at);
+    return at < 0 || end < 0 ? '' : PLAY.slice(at, end + 4);
+  };
+  const lockSrc = lift('tripLock'), bindSrc = lift('bindGo');
+  ok('play.php has a trip lock and a click handler to lift', lockSrc !== '' && bindSrc !== '');
+  const d2 = new Doc();
+  const w2 = d2.body.appendChild(new El('div', d2)); w2.id = 'where';
+  parseInto(w2, A, d2);
+  XM.install(d2, win);
+  const trips = [];
+  const T = { going: false };
+  const api = (new Function('$$', 'go', 'T', (lockSrc + '\n' + bindSrc).replace(/\bgoing\b/g, 'T.going') + '\nreturn { tripLock: tripLock, bindGo: bindGo };'))(
+    (sel) => d2.querySelectorAll(sel), (to) => trips.push(to), T);
+  api.bindGo();
+  const m2 = (k) => d2.querySelectorAll('.wmap .wpl').find((e) => e.getAttribute('data-key') === k);
+  const click = (el) => el.dispatchEvent({ type: 'click', target: el });
+  api.tripLock(true);                         // what go() does as the trip starts
+  click(m2('the_mill'));
+  const kev = key('Enter', m2('first_lutheran')); m2('first_lutheran').dispatchEvent(kev);
+  ok('during a trip a mark press is ignored, by click or by Enter', trips.length === 0 && !kev.prevented, JSON.stringify(trips));
+  ok('and the mark reads aria-disabled, with the class the list\'s buttons wear too',
+    m2('the_mill').getAttribute('aria-disabled') === 'true' && m2('the_mill').classList.contains('gooff')
+    && d2.querySelectorAll('.goto').every((b) => b.getAttribute('aria-disabled') === 'true'));
+  api.tripLock(false);                        // and as it ends
+  click(m2('the_mill'));
+  ok('after the trip the same mark travels again', trips.length === 1 && trips[0] === 'the_mill'
+    && m2('the_mill').getAttribute('aria-disabled') === 'false', JSON.stringify(trips));
+}
 
 for (const [n, c, d] of results) process.stdout.write('R\t' + (c ? 1 : 0) + '\t' + n + '\t' + d.replace(/\s+/g, ' ') + '\n');

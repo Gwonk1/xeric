@@ -98,6 +98,8 @@
 
   function press(doc, mark) {
     if (!/\bgoto\b/.test(attr(mark, 'class'))) return false;
+    // Mid-trip (play.php's tripLock): a mark is not a door, so no click is sent.
+    if (attr(mark, 'aria-disabled') === 'true' || /\bgooff\b/.test(attr(mark, 'class'))) return false;
     var ev;
     try { ev = new MouseEvent('click', { bubbles: true, cancelable: true }); }
     catch (x) { ev = doc.createEvent('MouseEvents'); ev.initEvent('click', true, true); }

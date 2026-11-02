@@ -1456,6 +1456,25 @@ ok('while the owner still reads the real thing she is handed',
     && str_contains($whyOwner, 'SOLACE_CANARY'),
     mb_substr($whyOwner, 0, 200));
 
+// WHY THE HOURS STOPPED. The heart writes budget.stopped when a world's
+// ceiling halts its offscreen life; the index is where "why has nothing
+// happened?" is asked, so it says, in xeric_budget_why's one sentence.
+$whySrc = (string)file_get_contents(dirname(__DIR__) . '/why.php');
+ok('source: why.php\'s index reads budget.stopped and says why with xeric_budget_why, once',
+    str_contains($whySrc, "xeric_world_state_get(\$db, 'budget.stopped') !== null ? xeric_budget_why(\$db, \$now) : null")
+    && substr_count($whySrc, 'xeric_budget_why(') === 1);
+$bsDb  = xeric_state_open($lived . '/world.db');
+$bsNow = xeric_clock_now($bsDb, $LT);
+xeric_budget_stopped($bsDb, $bsNow, ['ok' => false, 'reason' => "this world's token budget for today is spent"]);
+$whyStopped = $run('why.php', $A, ['w' => 'lived-in']);
+xeric_world_state_delete($bsDb, 'budget.stopped');
+$whyGoing = $run('why.php', $A, ['w' => 'lived-in']);
+ok('and the owner\'s index says the world stopped, and why — and says nothing when it did not',
+    str_contains($whyStopped, 'class="quiet budgetstop">The world stopped living hours at')
+    && str_contains($whyStopped, 'token budget for today is spent') && !str_contains($whyGoing, 'budgetstop'),
+    mb_substr($whyStopped, 0, 300));
+$bsDb = null;
+
 // ---------------------------------------------------------------------------
 // THE RESULT SCREEN IS THE SEED IN SENTENCES. forge.php?w= printed every baked
 // event to whoever asked, which is the same material world.php?f=seed refuses

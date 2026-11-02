@@ -952,8 +952,11 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
  * happened, and each one carries its own guard — a stretch that is swept twice
  * produces nothing the second time.
  *
- * @param array $opts as xeric_sweep_run, plus max_events, max_windows, and
- *              `clock` — the world epoch the world is standing on, when the
+ * @param array $opts as xeric_sweep_run, plus max_events, max_windows, max_misses,
+ *              `afford` — a callable(int $window): bool asked before each
+ *              window; false stops the stretch BEFORE that window, the mark
+ *              left behind it, and the result carries `stopped: 'budget'` —
+ *              and `clock` — the world epoch the world is standing on, when the
  *              stretch itself does not say. No event is ever stamped past it.
  *              `stories` rides through untouched, so a stretch of skipped hours
  *              paces to the snake window by window and a beat owed to the world
@@ -1002,6 +1005,20 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
         if ($seen++ >= $maxWindows) { $out['notes'][] = "stopped after $maxWindows windows"; break; }
         if ($maxEvents > 0 && count($out['events']) >= $maxEvents) break;
 
+        // A WORLD THAT CANNOT AFFORD THIS HOUR STOPS IN FRONT OF IT. Asked here,
+        // inside the one walk, and not by a caller walking windows one call at a
+        // time: a caller-side walk re-derived this loop with its own caps and
+        // stamped the mark past every window it handed in, failed or not, so a
+        // budgeted world lived MORE hours than an unbudgeted one and a model
+        // outage under a ceiling buried the hours nobody lived. The caps, the
+        // give-up and the mark all stay below, in one place.
+        if (isset($opts['afford']) && is_callable($opts['afford']) && !($opts['afford'])($w)) {
+            $out['notes'][] = 'stopped for the budget';
+            $out['stopped'] = 'budget';
+            $broke = true;
+            break;
+        }
+
         // Mid-window, not the edge: shifts hand over on the hour (half-open
         // [from,to)), and a sweep standing exactly on the boundary would keep
         // finding an empty room at the moment everybody swaps places. The hour
@@ -1043,7 +1060,9 @@ function xeric_sweep_catchup(array $t, PDO $db, array $endpoint, int $fromEpoch,
     // last window BEFORE the failing streak, and it only ever moves forward:
     // going backward would re-open hours an earlier call legitimately buried.
     if (empty($opts['force'])) {
-        $upTo = ($gaveUp ?? false) ? $w - $misses : $last;
+        // Stopped for the budget: the window it could not afford is owed, and
+        // so is any failing streak standing right in front of it.
+        $upTo = ($gaveUp ?? false) ? $w - $misses : (($broke ?? false) ? $w - 1 - $misses : $last);
         $prev = xeric_world_state_get($db, 'sweep_watermark:' . $windowSize);
         if ($prev === null || (int)$prev < $upTo) {
             xeric_world_state_set($db, 'sweep_watermark:' . $windowSize, $upTo);

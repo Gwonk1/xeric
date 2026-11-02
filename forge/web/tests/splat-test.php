@@ -152,6 +152,51 @@ ok('a short PLY is refused, and says why', xeric_splat_to_ply(substr((string)$pl
 ok('SPZ is null with a note', xeric_splat_to_ply("\x1f\x8b\x08\x00abcd", '', 'spz') === null && str_contains(xeric_splat_to_ply_why(), 'SPZ'));
 ok('SOG is null with a note', xeric_splat_to_ply("PK\x03\x04abcd", '', 'sog') === null && str_contains(xeric_splat_to_ply_why(), 'SOG'));
 ok('bytes that are not a whole number of records are null', xeric_splat_to_ply('nope', '', 'splat') === null);
+// A PLY WRITTEN ON WINDOWS. The magic took "ply\r\n" and the end looked for
+// "end_header\n" alone, so every CRLF header was "never ends".
+$crlf = str_replace("\n", "\r\n", substr((string)$ply, 0, strpos((string)$ply, "end_header\n") + 11))
+      . substr((string)$ply, strpos((string)$ply, "end_header\n") + 11);
+ok('a CRLF PLY passes through, byte for byte', xeric_splat_to_ply($crlf, '', 'ply') === $crlf, xeric_splat_to_ply_why());
+ok('and a short CRLF PLY is still short, counted from its own end_header',
+    xeric_splat_to_ply(substr($crlf, 0, -4), '', 'ply') === null && str_contains(xeric_splat_to_ply_why(), 'shorter'));
+
+// THE MEMORY. One string per record and an implode was several times the file
+// inside the reaper — a fatal no catch reaches. A room too big for the memory
+// left is refused up front, with a reason; one that fits converts exactly as
+// it did before (the old one-string-per-record body, kept here as the oracle).
+function old_splat_body(string $bytes): string
+{
+    $body = [];
+    for ($i = 0, $n = intdiv(strlen($bytes), 32); $i < $n; $i++) {
+        $r = unpack('g6f/C4c/C4q', substr($bytes, $i * 32, 32));
+        $q = [($r['q1'] - 128) / 128, ($r['q2'] - 128) / 128, ($r['q3'] - 128) / 128, ($r['q4'] - 128) / 128];
+        $l = sqrt($q[0] ** 2 + $q[1] ** 2 + $q[2] ** 2 + $q[3] ** 2) ?: 1.0;
+        $a = min(max($r['c4'] / 255, 0.5 / 255), 254.5 / 255);
+        $body[] = pack('g14', $r['f1'], $r['f2'], $r['f3'],
+            ($r['c1'] / 255 - 0.5) / XERIC_SPLAT_SH_C0, ($r['c2'] / 255 - 0.5) / XERIC_SPLAT_SH_C0, ($r['c3'] / 255 - 0.5) / XERIC_SPLAT_SH_C0,
+            log($a / (1 - $a)), log(max($r['f4'], 1e-12)), log(max($r['f5'], 1e-12)), log(max($r['f6'], 1e-12)),
+            $q[0] / $l, $q[1] / $l, $q[2] / $l, $q[3] / $l);
+    }
+    return implode('', $body);
+}
+mt_srand(7);
+$many = '';
+for ($i = 0; $i < 200000; $i++) {
+    $many .= pack('g6', mt_rand(-500, 500) / 100, mt_rand(-500, 500) / 100, mt_rand(-900, -10) / 100,
+                  mt_rand(1, 50) / 100, mt_rand(1, 50) / 100, mt_rand(1, 50) / 100)
+           . pack('C8', mt_rand(0, 255), mt_rand(0, 255), mt_rand(0, 255), mt_rand(0, 255),
+                  mt_rand(0, 255), mt_rand(0, 255), mt_rand(0, 255), mt_rand(0, 255));
+}
+ok('200k splats under a cap they do not fit: null, and the reason says so',
+    xeric_splat_to_ply($many, '', 'splat', 4 * 1048576) === null
+    && str_contains(xeric_splat_to_ply_why(), 'too big to convert') && str_contains(xeric_splat_to_ply_why(), '200000'),
+    xeric_splat_to_ply_why());
+$big = xeric_splat_to_ply($many, '', 'splat', 64 * 1048576);
+ok('the same 200k with room to spare: the chunked body is the old body, byte for byte',
+    $big !== null && substr($big, (int)strpos($big, "end_header\n") + 11) === old_splat_body($many)
+    && str_contains($big, "element vertex 200000\n"), xeric_splat_to_ply_why());
+unset($many, $big);
+
 $r = unpack('g14', substr((string)$ply, strpos((string)$ply, "end_header\n") + 11, 56));
 ok('the first splat: position, log scale, logit alpha, red f_dc, identity rotation',
     abs($r[3] + 1) < 1e-6 && abs($r[8] - log(0.1)) < 1e-5 && $r[7] > 5 && $r[4] > 1.7 && $r[5] < -1.7

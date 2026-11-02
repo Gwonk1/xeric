@@ -666,6 +666,7 @@ body{min-height:var(--app-h,100dvh)}
 .wsvg .wground{fill:var(--bg-2);stroke:var(--line)}
 .wsvg .wpl{cursor:pointer;outline:none}
 .wsvg .whr{cursor:default}
+.goto.gooff{opacity:.5;cursor:default;transform:none}
 .wsvg .wdot{fill:var(--accent);stroke:var(--bg-2);stroke-width:2}
 .wsvg .wshut .wdot{fill:var(--fg-far)}
 .wsvg .wdark .wdot{fill:var(--bg);stroke:var(--fg-dim);stroke-dasharray:2 2}

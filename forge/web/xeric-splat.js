@@ -80,13 +80,21 @@
    * stepped over without being named. Colour is f_dc (or red/green/blue).
    */
   function parsePly(buf, cap) {
+    // THE HEADER, READ ONCE: the 64 KB window decoded a slice at a time
+    // (latin1, a byte a character, so an index into the text is an index into
+    // the bytes), then one search for its end. Rescanning the growing text
+    // with a regex at every newline was lines × length — a hostile header
+    // that never ends was seconds of a stalled page before it said so.
     var head = new Uint8Array(buf, 0, Math.min(buf.byteLength, 65536));
     var text = '', end = -1;
-    for (var i = 0; i < head.length; i++) {
-      text += String.fromCharCode(head[i]);
-      if (head[i] === 0x0a && /end_header\r?\n$/.test(text)) { end = i + 1; break; }
+    for (var i = 0; i < head.length; i += 8192) text += String.fromCharCode.apply(null, head.subarray(i, i + 8192));
+    for (var at0 = text.indexOf('end_header'); at0 >= 0; at0 = text.indexOf('end_header', at0 + 1)) {
+      var nl = at0 + 10;
+      if (text.charAt(nl) === '\n') { end = nl + 1; break; }
+      if (text.charAt(nl) === '\r' && text.charAt(nl + 1) === '\n') { end = nl + 2; break; }
     }
     if (end < 0) throw new Error('the PLY header never ends');
+    text = text.slice(0, end);
     var lines = text.split(/\r?\n/), n = -1, props = [], inVertex = false, fmt = '';
     var SIZE = { char: 1, uchar: 1, int8: 1, uint8: 1, short: 2, ushort: 2, int16: 2, uint16: 2,
                  int: 4, uint: 4, int32: 4, uint32: 4, float: 4, float32: 4, double: 8, float64: 8 };
@@ -394,24 +402,46 @@
           C.divisor(a[0], 1);
         });
       view = new Uint32Array(s.buf.slice(0));          // the records in file order, which the sort reorders from
+      data.posLocal = s.pos;
       if (Wk) {
         try {
           worker = new Wk(cv.dataset && cv.dataset.worker ? cv.dataset.worker : 'xeric-splat-worker.js');
           worker.onmessage = function (e) { if (e.data && e.data.type === 'order') sorted(e.data.order); };
           // A worker that dies (a 404, a CSP that says no) hands the sort back
-          // to this thread, which is why the positions are kept here too.
-          worker.onerror = function () { worker = null; inflight = false; lastSort = null; sort(); };
+          // to this thread, which is why the positions are kept here too —
+          // and this thread sorts at most CAP_NO_WORKER, so the room is cut
+          // to that first, or a 1.5M-splat room stalls the page every turn.
+          worker.onerror = function () {
+            if (worker) worker.onmessage = null;          // a late answer indexes the uncut room
+            worker = null; inflight = false; lastSort = null; shrink(); sort();
+          };
           var p = new Float32Array(s.pos);
           worker.postMessage({ type: 'pos', pos: p, n: s.n }, [p.buffer]);
-        } catch (e) { worker = null; }
+        } catch (e) { worker = null; shrink(); }
       }
-      data.posLocal = s.pos;
       S.phase = 'ready';
       say(s.truncated ? 'showing ' + s.n.toLocaleString('en') + ' of ' + s.total.toLocaleString('en')
                         + ' splats, the most this device is given' : '');
       if (opts.onReady) opts.onReady({ n: s.n, total: s.total, truncated: s.truncated, ms: Date.now() - t0 });
       sort();
       ask();
+    }
+
+    // NO WORKER AFTER ALL: the main thread's cap, applied to what is loaded.
+    // The records, the positions and the file-order copy are cut to it, the
+    // GPU is handed the shorter buffer, and the page says how many of how many.
+    function shrink() {
+      var lim = Math.min(cap, CAP_NO_WORKER);
+      if (dead || !data || data.n <= lim) return;
+      data.n = lim; data.truncated = true;
+      data.buf = data.buf.slice(0, lim * 48);
+      data.posLocal = (data.posLocal || data.pos).subarray(0, lim * 3);
+      view = view.subarray(0, lim * 12);
+      S.n = lim; S.truncated = true;
+      gl.bindBuffer(gl.ARRAY_BUFFER, gpu);
+      gl.bufferData(gl.ARRAY_BUFFER, data.buf, gl.DYNAMIC_DRAW);
+      say('showing ' + lim.toLocaleString('en') + ' of ' + data.total.toLocaleString('en')
+          + ' splats, the most this device sorts without its worker');
     }
 
     // THE SORT: one in flight at a time. A camera change while one is out

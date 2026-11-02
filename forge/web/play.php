@@ -2195,9 +2195,24 @@ echo xeric_play_css_link() . '<style>
   var going = false;
   var PERMANENT = <?= js(xeric_death_mode($w['template'], $w['db']) === XERIC_DEATH_PERMANENT) ?>;
   var LASTCAST = <?= js(array_map(fn($c) => ['handle' => $c['handle'], 'name' => $c['name']], $state['cast'])) ?>;
+  // THE TRIP LOCK. Every way to travel is a .goto — the list's <button>s and
+  // the map's SVG <g> marks — and a <g> has no .disabled: setting it was a
+  // property nobody reads, so a mark stayed live, and announced live, through
+  // the whole trip. aria-disabled plus .gooff is what both kinds wear, what the
+  // map's keys honour (xeric-map.js press) and what this click handler checks.
+  function tripLock(on) {
+    $$('.goto').forEach(function (b) {
+      b.setAttribute('aria-disabled', on ? 'true' : 'false');
+      b.classList.toggle('gooff', on);
+      if (b.tagName === 'BUTTON') b.disabled = on;
+    });
+  }
   function bindGo() {
     $$('.goto').forEach(function (b) {
-      b.addEventListener('click', function () { go(b.dataset.to, b); });
+      b.addEventListener('click', function () {
+        if (going || b.getAttribute('aria-disabled') === 'true' || b.classList.contains('gooff')) return;
+        go(b.dataset.to, b);
+      });
     });
   }
   bindGo();
@@ -2393,7 +2408,7 @@ echo xeric_play_css_link() . '<style>
     if (going) return;
     going = true;
     $('#goerr').hidden = true;
-    $$('.goto').forEach(function (b) { b.disabled = true; });
+    tripLock(true);
 
     fetch('where.php', {
       method: 'POST',
@@ -2417,7 +2432,7 @@ echo xeric_play_css_link() . '<style>
       })
       .then(function () {
         going = false;
-        $$('.goto').forEach(function (b) { b.disabled = false; });
+        tripLock(false);
       });
   }
 

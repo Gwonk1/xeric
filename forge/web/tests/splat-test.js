@@ -207,6 +207,26 @@ ok('PLY: ascii is refused with a reason', /little-endian/.test(threw), threw);
 try { threw = ''; XS.parsePly(plyBuf.slice(0, plyBuf.byteLength - 4)); } catch (e) { threw = e.message; }
 ok('PLY: a file shorter than its header is refused', /shorter/.test(threw), threw);
 
+// A HOSTILE HEADER: 64 KB of comments and no end. The header used to be
+// rescanned with a regex at every newline — lines × length — so a file that
+// never ends its header stalled the page for seconds before saying so. Read
+// once, it is refused at once, twenty times over well inside a quarter second.
+const hostile = new Uint8Array(Buffer.from('ply\ncomment end_headerz, not the end\n' + 'c\n'.repeat(40000))).buffer;
+let hostileWhy = '', hostileAll = true;
+const hostileT0 = Date.now();
+for (let i = 0; i < 20; i++) {
+  try { XS.parsePly(hostile); hostileAll = false; } catch (e) { hostileWhy = e.message; if (!/never ends/.test(e.message)) hostileAll = false; }
+}
+const hostileMs = Date.now() - hostileT0;
+ok('PLY: a header that never ends is refused fast (20 parses of 64 KB under 250 ms)',
+  hostileAll && /never ends/.test(hostileWhy) && hostileMs < 250, hostileMs + ' ms, ' + hostileWhy);
+const crlfHead = Buffer.from(Buffer.from(plyBuf).toString('latin1').split('end_header\n')[0].replace(/\n/g, '\r\n') + 'end_header\r\n', 'latin1');
+const crlfBuf = new Uint8Array(crlfHead.length + plyBuf.byteLength - (Buffer.from(plyBuf).indexOf('end_header\n') + 11));
+crlfBuf.set(crlfHead); crlfBuf.set(new Uint8Array(plyBuf, Buffer.from(plyBuf).indexOf('end_header\n') + 11), crlfHead.length);
+const pc = XS.parsePly(crlfBuf.buffer);
+ok('PLY: a CRLF header reads as the LF one, its body found after \\r\\n',
+  pc.n === 3 && rec(pc, 2).p.join() === '1,0,-3' && rec(pc, 1).c.join() === '0,255,0,128');
+
 // -- the cap ---------------------------------------------------------------------------
 const cut = XS.parseSplat(splatBuf, 2), cutp = XS.parsePly(plyBuf, 2);
 ok('the cap truncates (n 2 of 3) and says it did, both formats',
@@ -350,6 +370,34 @@ ok('the 3 m rule: a step to 4 m comes back to 3, inside is untouched',
   await tick(40);
   ok('no Worker: sorted on the main thread, no worker made', ready && workers.length === nw && Array.from(B.state.order).join() === '1,2,0');
   B.destroy();
+
+  // -- a worker that dies after the room loaded: the main thread's cap --------------
+  // The sort comes back to this thread, which sorts at most CAP_NO_WORKER; a
+  // room kept at the worker's cap would stall every turn. Cut, and said.
+  const bigN = XS.CAP_NO_WORKER + 1, bigBuf = new ArrayBuffer(bigN * 32), bigF = new Float32Array(bigBuf), bigU = new Uint8Array(bigBuf);
+  for (let i = 0; i < bigN; i++) {
+    bigF[i * 8] = (i % 100) / 50 - 1; bigF[i * 8 + 2] = -1 - (i % 7); bigF[i * 8 + 3] = bigF[i * 8 + 4] = bigF[i * 8 + 5] = 0.01;
+    bigU[i * 32 + 27] = 255; bigU[i * 32 + 28] = 255; bigU[i * 32 + 29] = bigU[i * 32 + 30] = bigU[i * 32 + 31] = 128;
+  }
+  class DyingWorker {
+    constructor() { this.terminated = false; workers.push(this); }
+    postMessage(m) { if (m.type === 'pos') setTimeout(() => { if (this.onerror) this.onerror({ message: 'gone' }); }, 0); }
+    terminate() { this.terminated = true; }
+  }
+  const respondWas = respond;
+  respond = () => ({ ok: true, status: 200, headers: { get: () => String(bigBuf.byteLength) }, body: null,
+                     arrayBuffer: () => Promise.resolve(bigBuf.slice(0)) });
+  k = canvas('webgl2'); ready = null;
+  const D = XS.mount(k.cv, 'x', { Worker: DyingWorker, onReady: (x) => { ready = x; } });
+  await tick(80);
+  const drawn = k.cv.gl.calls.filter((x) => x[0] === 'drawArraysInstanced').map((x) => x[1][3]);
+  ok('a worker that dies after load: cut to CAP_NO_WORKER, sorted here, and the page says so',
+    ready && ready.n === bigN && D.state.n === XS.CAP_NO_WORKER && D.state.truncated
+    && D.state.order && D.state.order.length === XS.CAP_NO_WORKER
+    && drawn.length > 0 && drawn[drawn.length - 1] === XS.CAP_NO_WORKER
+    && /showing 250,000 of 250,001 splats/.test(k.st.textContent), D.state.n + ' / ' + drawn.slice(-1) + ' / ' + k.st.textContent);
+  D.destroy();
+  respond = respondWas;
 
   // -- loading n%, the memory guard, a bad file, a 404 --------------------------------
   const half = splatBuf.byteLength / 2;

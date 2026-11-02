@@ -200,7 +200,7 @@ body.insecure #talk{display:none}
     room: null, roomLast: 0, roomConv: 0, roomRows: [], roomSaid: {},
     entered: false, listen: false, ctx: null, amb: null, speech: null, ambSrc: '', ambNode: null,
     stream: null, rec: null, recTimer: 0, busy: false, cap: null, faceB: 0, voiceQ: Promise.resolve(),
-    timer: 0, fails: 0, pics: {}
+    timer: 0, pulsing: false, fails: 0, pics: {}
   };
 
   function note(t) { $('#note').textContent = t || ''; }
@@ -535,10 +535,17 @@ body.insecure #talk{display:none}
   // A conditional short poll: the cursor is the ETag, an unchanged world is a
   // 304 in milliseconds, and only a change fetches what is shown. Never while
   // the tab is hidden (a headset taken off is a hidden tab).
+  //
+  // ONE LOOP. pulse() is called again while a fetch is still out — the tab
+  // coming back, a relink's start() — and every completion used to schedule
+  // its own next pulse, so each re-entry was one more poll loop for good. A
+  // pulse already out is the pulse: the call returns, and that fetch's
+  // completion schedules the one next timer.
   function pulse() {
-    clearTimeout(S.timer);
-    if (!W) return;
+    clearTimeout(S.timer); S.timer = 0;
+    if (!W || S.pulsing) return;
     if (document.hidden && !S.inside) { S.timer = setTimeout(pulse, 4000); return; }
+    S.pulsing = true;
     var h = auth();
     if (S.cursor) h['If-None-Match'] = '"' + S.cursor + '"';
     fetch(API + WP + 'pulse', { headers: h, credentials: 'same-origin', cache: 'no-store' }).then(function (r) {
@@ -552,6 +559,8 @@ body.insecure #talk{display:none}
     }).catch(function () {
       if (++S.fails >= 2) goOffline();
     }).then(function () {
+      S.pulsing = false;
+      clearTimeout(S.timer);
       S.timer = setTimeout(pulse, S.offline ? 8000 : (S.room ? 1200 : 2500));
     });
   }
@@ -861,7 +870,7 @@ body.insecure #talk{display:none}
         S.cursor = '';
         pulse();
       });
-    }).catch(function () { goOffline(); S.timer = setTimeout(pulse, 8000); });
+    }).catch(function () { goOffline(); clearTimeout(S.timer); S.timer = setTimeout(pulse, 8000); });
   }
   document.addEventListener('visibilitychange', function () { if (!document.hidden && W) pulse(); });
   document.body.dataset.stand = 'ready';

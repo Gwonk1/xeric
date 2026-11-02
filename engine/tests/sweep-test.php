@@ -2212,6 +2212,66 @@ ok('outage: but a stretch that ENDED cleanly stays lived — skip twice, mine on
     && str_contains(implode(' ', $tail['notes']), 'already been lived'), json_encode($tail['notes']));
 
 // ---------------------------------------------------------------------------
+// THE BUDGET INSIDE THE WALK — `afford`, asked before each window.
+//
+// The heart used to walk a budgeted world one catchup call per window: every
+// call stamped the mark past its window whether the model answered or not, so
+// an outage under a ceiling buried the hours nobody lived, and its own
+// three-event cap differed from the one call's. Now the question is asked
+// inside the one walk, and the caps, the give-up and the mark stay there.
+// ---------------------------------------------------------------------------
+
+echo "\n# afford\n";
+
+$TAF  = world(['gossip', 'meals']);
+$afW0 = xeric_sweep_windex(ep('2026-07-30 08:00'), 3600);
+
+$dbAF = fresh_db('afford-stop');
+xeric_state_seed($dbAF, $TAF);
+$asked = [];
+$afR = xeric_sweep_catchup($TAF, $dbAF, stub_event(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'),
+    ['chance' => 1.0, 'seed' => 31, 'max_events' => 8,
+     'afford' => function (int $w) use ($afW0, &$asked): bool { $asked[] = $w; return $w < $afW0 + 2; }]);
+$afLate = array_filter((array)$afR['events'], fn($e) => (int)$e['world_epoch'] >= ($afW0 + 2) * 3600);
+ok('afford: a world that cannot afford its third hour stops in front of it, and says budget',
+    ($afR['stopped'] ?? '') === 'budget' && end($asked) === $afW0 + 2 && $afLate === []
+    && count($afR['events']) === 2, json_encode([$afR['notes'], $asked]));
+ok('afford: and the watermark stands right behind the hour it could not afford',
+    (int)xeric_world_state_get($dbAF, 'sweep_watermark:3600') === $afW0 + 1,
+    var_export(xeric_world_state_get($dbAF, 'sweep_watermark:3600'), true));
+$afNext = xeric_sweep_catchup($TAF, $dbAF, stub_event(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'),
+    ['chance' => 1.0, 'seed' => 32, 'max_events' => 1, 'afford' => fn(int $w): bool => true]);
+ok('afford: so the next day\'s money lives that very hour, not the one after',
+    count($afNext['events']) === 1
+    && xeric_sweep_windex((int)$afNext['events'][0]['world_epoch'], 3600) === $afW0 + 2, json_encode($afNext['notes']));
+
+$dbAD = fresh_db('afford-dead');
+xeric_state_seed($dbAD, $TAF);
+$adAsked = 0;
+$adR = xeric_sweep_catchup($TAF, $dbAD, stub_dead(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'),
+    ['chance' => 1.0, 'seed' => 33, 'afford' => function (int $w) use (&$adAsked): bool { $adAsked++; return true; }]);
+ok('afford: a dead model under a ceiling still gives up after max_misses',
+    ($adR['events'] ?? []) === [] && $adAsked === 2 && !isset($adR['stopped'])
+    && str_contains(implode(' ', $adR['notes']), 'gave up'), json_encode([$adR['notes'], $adAsked]));
+$adMark = xeric_world_state_get($dbAD, 'sweep_watermark:3600');
+ok('afford: and buries none of the hours it failed to live',
+    $adMark === null || (int)$adMark < $afW0, var_export($adMark, true));
+
+$capRun = function (bool $withAfford) use ($TAF): array {
+    $d = fresh_db('afford-cap-' . ($withAfford ? 'on' : 'off'));
+    xeric_state_seed($d, $TAF);
+    $o = ['chance' => 1.0, 'seed' => 34];
+    if ($withAfford) $o['afford'] = fn(int $w): bool => true;
+    $r = xeric_sweep_catchup($TAF, $d, stub_event(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'), $o);
+    return [array_map(fn($e) => (int)$e['world_epoch'], (array)$r['events']),
+            xeric_world_state_get($d, 'sweep_watermark:3600')];
+};
+$capOff = $capRun(false);
+$capOn  = $capRun(true);
+ok('afford: the event cap and the mark are the same with a budget as without one',
+    $capOff === $capOn && count($capOff[0]) === 3, json_encode([$capOff, $capOn]));
+
+// ---------------------------------------------------------------------------
 // SHAPES — a world's own rhythm, with or without a story on it.
 //
 // The load-bearing claim of the whole feature is arithmetic: intensity 0.5 is

@@ -49,6 +49,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/clock.php';
+require_once __DIR__ . '/llm.php';      // xeric_llm_host_local: one answer to "is this spend free?"
 
 /** The block's knobs, kind => template key. */
 const XERIC_BUDGET_KINDS = [
@@ -218,9 +219,10 @@ function xeric_budget_bound(): ?array
 /** Does spend at this address cost money? Loopback and stubs do not. */
 function xeric_budget_costly_at(string $where): bool
 {
-    $host = (string)parse_url($where, PHP_URL_HOST);
-    if ($host === '') return false;
-    return !in_array(strtolower(trim($host, '[]')), ['127.0.0.1', 'localhost', '::1'], true);
+    // xeric_llm_host_local is the one host test (engine/llm.php); a second
+    // copy here normalised differently from xeric_image_costly's, so the
+    // ledger and the check could disagree about LOCALHOST or [::1].
+    return !xeric_llm_host_local($where);
 }
 
 /** Is this model endpoint a costly one? A stub never is. */

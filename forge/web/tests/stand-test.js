@@ -1,6 +1,7 @@
 // Xeric — the stand page's harness. NOT RUN ON ITS OWN: stand-test.php serves
 // the page, checks it, and hands this file two paths — xeric-view.js and
-// stand-sw.php's output, both exactly as served (argv[2], argv[3]).
+// stand-sw.php's output, both exactly as served (argv[2], argv[3]), and the
+// page's own inline script (argv[4]), from which the pulse is lifted.
 //
 // Two halves. The viewer's stand parts (tag quads at bearings, the ray, the
 // hold's target, the panner, offline, step inside with and without layers)
@@ -479,8 +480,39 @@ async function sw() {
     && !!stores['xeric-stand-panos'] && !!stores[shellName]);
 }
 
+// == the pulse: one loop, however often it is asked ==========================================
+// pulse() was re-entered while its fetch was out (the tab coming back, a
+// relink's start()) and every completion scheduled its own next pulse — one
+// more poll loop per re-entry, for good. Lifted out of the page as served and
+// run against timers and a fetch that answer only when told to.
+async function pulseLoop() {
+  const PAGE = fs.readFileSync(process.argv[4], 'utf8');
+  const at = PAGE.indexOf('  function pulse() {');
+  const end = at < 0 ? -1 : PAGE.indexOf('\n  }\n', at);
+  if (end < 0) { ok('pulse: the page has a pulse to lift', false, at); return; }
+  const timers = new Map(); let nextId = 1;
+  const setT = (f, ms) => { const id = nextId++; timers.set(id, { f, ms }); return id; };
+  const clearT = (id) => { timers.delete(id); };
+  const out = [];
+  const fakeFetch = () => new Promise((res) => out.push(() => res({ status: 304 })));
+  const S = { timer: 0, pulsing: false, cursor: 'c1', inside: false, offline: false, room: null, fails: 0 };
+  const doc = { hidden: false };
+  const pulse = (new Function('S', 'W', 'document', 'fetch', 'setTimeout', 'clearTimeout', 'auth', 'goOnline', 'goOffline',
+    'stopped', 'changed', 'API', 'WP', PAGE.slice(at, end + 4) + '\nreturn pulse;'))(
+    S, 'stand-town', doc, fakeFetch, setT, clearT, () => ({}), () => {}, () => {}, () => {}, () => null, 'api.php/v1/', 'worlds/stand-town/');
+  pulse();
+  pulse();                                   // the tab comes back while the first is out
+  ok('pulse: a second pulse while one is out asks nothing more of the network', out.length === 1, out.length);
+  out.splice(0).forEach((r) => r()); await tick(); await tick();
+  ok('pulse: two overlapping pulses leave one scheduled timer', timers.size === 1 && !S.pulsing, timers.size);
+  const [id, t] = [...timers][0]; timers.delete(id); t.f();
+  pulse();                                   // and a relink's start() mid-flight
+  out.splice(0).forEach((r) => r()); await tick(); await tick();
+  ok('pulse: and after the next one, still one loop', timers.size === 1, timers.size);
+}
+
 function finish() {
   for (const [n, c, d] of results) process.stdout.write('R\t' + (c ? 1 : 0) + '\t' + n + '\t' + d.replace(/\s+/g, ' ').slice(0, 300) + '\n');
   process.exit(0);
 }
-main().then(sw).catch((e) => { ok('the harness ran to the end', false, e && e.stack); }).then(finish);
+main().then(sw).then(pulseLoop).catch((e) => { ok('the harness ran to the end', false, e && e.stack); }).then(finish);
