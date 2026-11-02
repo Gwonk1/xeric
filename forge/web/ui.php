@@ -641,6 +641,10 @@ input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);
 .wname{flex:0 0 auto;font-weight:600;color:var(--fg)}
 .wmodel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.72rem}
+.wmodel:has(.wmodels){overflow:visible;white-space:normal}
+.wmodels{pointer-events:auto;position:relative;z-index:3;max-width:100%;
+  font:inherit;color:var(--fg);background:var(--bg-2);border:1px solid var(--line);
+  border-radius:.35rem;padding:.2rem .4rem}
 .forgeat .corner,main > .screen .corner{text-align:left}
 
 /* ------------------------------------------------- how you describe it */

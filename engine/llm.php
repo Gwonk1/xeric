@@ -61,10 +61,153 @@ function xeric_llm_header_safe(string $v): string
     return trim((string)preg_replace('/[\r\n]+/', '', $v));
 }
 
+/**
+ * The OpenAI-compatible root of a base URL.
+ *
+ * llama.cpp, Ollama, vLLM and the rest serve /v1/chat/completions off the
+ * server root. Tutorials print the base as http://host:8080/v1, and concatenating
+ * /v1/chat/completions onto that produces /v1/v1/… which llama.cpp 404s.
+ * Trailing slashes are the same class of paste error. /v1/foo is a different
+ * story and is left alone.
+ */
+function xeric_llm_normalize_base(string $base): string
+{
+    $base = trim($base);
+    if ($base === '') return '';
+    $base = rtrim($base, '/');
+    if (preg_match('#/v1$#i', $base)) $base = substr($base, 0, -3);
+    return rtrim($base, '/');
+}
+
+/**
+ * Where the model lives when nobody named one.
+ *
+ * XERIC_LOCAL_BASE is the whole point of an external llama.cpp: a GPU box on
+ * the LAN, an ssh tunnel that is not on 8080, a host that is not this one.
+ * 127.0.0.1:8080 remains the fallback because that is still llama.cpp's own
+ * default.
+ */
+function xeric_llm_default_base(): string
+{
+    $env = xeric_llm_normalize_base((string)(getenv('XERIC_LOCAL_BASE') ?: ''));
+    return $env !== '' ? $env : 'http://127.0.0.1:8080';
+}
+
+/** llama.cpp --api-key, or a hosted key. Never logged. */
+function xeric_llm_default_key(): string
+{
+    $k = (string)(getenv('XERIC_LOCAL_KEY') ?: '');
+    if ($k === '') $k = (string)(getenv('XERIC_API_KEY') ?: '');
+    return xeric_llm_header_safe($k);
+}
+
+function xeric_llm_default_model(): string
+{
+    return trim((string)(getenv('XERIC_LOCAL_MODEL') ?: ''));
+}
+
+/**
+ * llama.cpp router GET /models: each row carries a lifecycle `status`.
+ * Anything else (OpenAI /v1/models, a 404 body, a single-model server) returns
+ * []. The fingerprint is the status field, not the path — some proxies alias
+ * /models onto /v1/models and those rows have an id and nothing else.
+ *
+ * @param mixed $json
+ * @return array<int,array{id:string,status:string,path:string}>
+ */
+function xeric_llm_router_catalog($json): array
+{
+    if (!is_array($json)) return [];
+    $rows = [];
+    if (isset($json['data']) && is_array($json['data'])) $rows = $json['data'];
+    elseif (array_is_list($json)) $rows = $json;
+
+    $out = [];
+    $seen = [];
+    $stamped = 0;
+    foreach ($rows as $item) {
+        if (!is_array($item)) continue;
+        $id = trim((string)($item['id'] ?? ''));
+        if ($id === '' || isset($seen[$id])) continue;
+        $raw = $item['status'] ?? null;
+        $status = '';
+        if (is_string($raw)) {
+            $status = strtolower(trim($raw));
+        } elseif (is_array($raw) && isset($raw['value']) && is_string($raw['value'])) {
+            $status = strtolower(trim($raw['value']));
+        }
+        if ($status !== '') $stamped++;
+        $seen[$id] = true;
+        $out[] = [
+            'id'     => $id,
+            'status' => $status,
+            'path'   => (string)($item['path'] ?? ''),
+        ];
+        if (count($out) >= 48) break;
+    }
+    return $stamped > 0 ? $out : [];
+}
+
+/**
+ * The model a router should start on: one already loaded, else the first.
+ *
+ * @param array<int,array{id:string,status:string,path?:string}> $catalog
+ */
+function xeric_llm_router_pick(array $catalog, string $current = ''): string
+{
+    $ids = [];
+    foreach ($catalog as $m) {
+        $id = (string)($m['id'] ?? '');
+        if ($id === '') continue;
+        $ids[] = $id;
+        if ($id === $current) return $current;
+    }
+    if ($current !== '') return $current;
+    foreach ($catalog as $m) {
+        if (($m['status'] ?? '') === 'loaded' && ($m['id'] ?? '') !== '') {
+            return (string)$m['id'];
+        }
+    }
+    return $ids[0] ?? '';
+}
+
+/**
+ * CLI endpoint from flags, with the same env fallback the web app uses.
+ *
+ * --base wins, then XERIC_LOCAL_BASE, then llama.cpp's default. A key is
+ * taken from --key, then XERIC_LOCAL_KEY, then XERIC_API_KEY, so a llama.cpp
+ * started with --api-key works the same way a hosted API does.
+ *
+ * @param array $args  parsed CLI flags (xeric_cli_args / the per-tool parsers)
+ */
+function xeric_llm_cli_endpoint(array $args): array
+{
+    $base = xeric_llm_normalize_base((string)($args['base'] ?? ''));
+    if ($base === '') $base = xeric_llm_default_base();
+    if ($base !== '' && !preg_match('#^https?://#i', $base)) $base = 'http://' . $base;
+
+    $kind = strtolower(trim((string)($args['kind'] ?? '')));
+    if ($kind === '' || isset($args['local'])) $kind = 'local';
+    if (!in_array($kind, ['local', 'openai', 'anthropic'], true)) $kind = 'local';
+
+    $key = xeric_llm_header_safe((string)($args['key'] ?? ''));
+    if ($key === '') $key = xeric_llm_default_key();
+
+    $model = trim((string)($args['model'] ?? ''));
+    if ($model === '') $model = xeric_llm_default_model();
+
+    return [
+        'kind'  => $kind,
+        'base'  => $base,
+        'model' => $model,
+        'key'   => $key,
+    ];
+}
+
 function xeric_llm_chat(array $endpoint, array $messages, array $opts = [], ?array &$usage = null): string
 {
     $kind = strtolower((string)($endpoint['kind'] ?? 'local'));
-    $base = rtrim((string)($endpoint['base'] ?? ''), '/');
+    $base = xeric_llm_normalize_base((string)($endpoint['base'] ?? ''));
     $model = (string)($endpoint['model'] ?? '');
     $key = xeric_llm_header_safe((string)($endpoint['key'] ?? ''));
     $timeout = (int)($opts['timeout'] ?? XERIC_LLM_TIMEOUT);
@@ -324,7 +467,7 @@ function xeric_llm_up(array $endpoint, int $timeout = 5): bool
 {
     if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) return true;
 
-    $base = rtrim((string)($endpoint['base'] ?? ''), '/');
+    $base = xeric_llm_normalize_base((string)($endpoint['base'] ?? ''));
     if ($base === '') return false;
     $kind = strtolower((string)($endpoint['kind'] ?? 'local'));
     $url = $kind === 'anthropic' ? "$base/v1/models" : "$base/v1/models";

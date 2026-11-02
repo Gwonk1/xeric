@@ -1153,8 +1153,21 @@ $own = xeric_web_endpoint(['kind' => 'local', 'local' => 'http://10.1.2.3:8080',
                            'base' => 'http://169.254.169.254/']);
 ok('a local address the owner set is used, and `base` is still discarded',
     (string)$own['base'] === 'http://10.1.2.3:8080', (string)$own['base']);
+ok('and the label names that host, not 127.0.0.1',
+    xeric_web_endpoint_label($own) === 'the local model (10.1.2.3:8080)',
+    xeric_web_endpoint_label($own));
 ok('and a junk local address falls back rather than being called',
     (string)xeric_web_endpoint(['kind' => 'local', 'local' => 'not a url'])['base'] === $cfgBase);
+
+// THE WORKER RE-PARSES WHAT BUILD.PHP ALREADY RESOLVED. Dropping `local` on the
+// way out made the second pass identical to a visitor omitting it, so every
+// forge against a GPU box quietly ran on 127.0.0.1:8080 and, when nothing
+// answered there, fell back to the surprise table.
+$again = xeric_web_endpoint($own);
+ok('resolving a local endpoint twice still names the box the owner set',
+    (string)$again['base'] === 'http://10.1.2.3:8080', (string)$again['base']);
+ok('because the resolved shape carries `local`, not only `base`',
+    (string)($own['local'] ?? '') === 'http://10.1.2.3:8080', json_encode($own));
 
 // `none` is a state, and it has to fail here rather than at the first request.
 $noneSaid = '';
@@ -1164,6 +1177,81 @@ ok('with nothing attached the endpoint refuses, by name',
 ok('and `connected` tells the two apart',
     !xeric_web_connected(['kind' => 'none']) && !xeric_web_connected([])
     && xeric_web_connected(['kind' => 'local']) && xeric_web_connected(['kind' => 'openai']));
+
+// ---------------------------------------------------------------------------
+// THE FORGE WIZARD MUST NOT DETACH THE GPU BOX.
+//
+// Autosave used to take `{i: N}` — the only thing the page is allowed to post —
+// and write `{kind: local, base: '', model: ''}`. `local` never landed, so the
+// next xeric_web_endpoint() fell through to config 127.0.0.1:8080, even when
+// the visitor had already attached a box on the LAN. The index has to resolve
+// against THIS visitor's list, and a payload that names no machine must leave
+// the engine alone.
+// ---------------------------------------------------------------------------
+
+$gpu = 'http://192.168.50.10:8080';
+$G = sid();
+xeric_session_use($G);
+xeric_web_session_edit(function (array &$s) use ($gpu): void {
+    $s['machines'] = [['base' => $gpu, 'model' => 'qwen2.5-32b']];
+    $s['wired']    = [$gpu];
+    $s['model']    = ['kind' => 'local', 'base' => '', 'local' => $gpu, 'model' => 'qwen2.5-32b'];
+}, $G);
+
+$pickedGpu = xeric_model_choice(['i' => 1], $G);
+ok('forge {i:N} keeps the GPU box, not 127.0.0.1:8080',
+    is_array($pickedGpu)
+    && ($pickedGpu['kind'] ?? '') === 'local'
+    && ($pickedGpu['local'] ?? '') === $gpu
+    && ($pickedGpu['model'] ?? '') === 'qwen2.5-32b',
+    json_encode($pickedGpu));
+ok('and the endpoint is that box',
+    (string)xeric_web_endpoint($pickedGpu)['base'] === $gpu,
+    (string)xeric_web_endpoint($pickedGpu)['base']);
+
+$wiped = ['kind' => 'local', 'base' => '', 'model' => ''];
+ok('the old wizard write would have fallen through to the configured default',
+    (string)xeric_web_endpoint($wiped)['base'] === $cfgBase, (string)xeric_web_endpoint($wiped)['base']);
+
+ok('a wizard save that names no machine does not invent a descriptor',
+    xeric_model_choice([], $G) === null
+    && xeric_model_choice(['kind' => 'local'], $G) === null
+    && xeric_model_choice(['kind' => 'local', 'base' => 'http://169.254.169.254/'], $G) === null
+    && xeric_model_choice(['local' => 'http://169.254.169.254/'], $G) === null);
+
+ok('kind=local `base` still cannot point the endpoint at a visitor URL',
+    (string)xeric_web_endpoint(['kind' => 'local', 'base' => 'http://169.254.169.254/'])['base'] === $cfgBase);
+
+$api = 'https://api.openai.com';
+xeric_web_session_edit(function (array &$s) use ($api): void {
+    $s['machines'][] = ['base' => $api];
+}, $G);
+$pickedApi = xeric_model_choice(['i' => 2], $G);
+ok('a public API chosen by index keeps its own host',
+    is_array($pickedApi) && ($pickedApi['kind'] ?? '') === 'openai' && ($pickedApi['base'] ?? '') === $api,
+    json_encode($pickedApi));
+
+ok('an index that is not on the list is a no-op, not a default machine',
+    xeric_model_choice(['i' => 99], $G) === null);
+
+// Apply the save the way forge.php does, then read the engine back — this is
+// the whole user-facing failure: next status/build hit 127.0.0.1:8080.
+xeric_web_session_edit(function (array &$s) use ($G): void {
+    $got = xeric_model_choice(['i' => 1], $G);
+    if ($got !== null) $s['model'] = $got;
+}, $G);
+$after = xeric_web_model($G);
+ok('after a wizard save the attached engine is still the GPU box',
+    (string)($after['local'] ?? '') === $gpu
+    && (string)xeric_web_endpoint($after)['base'] === $gpu
+    && !str_contains((string)xeric_web_endpoint($after)['base'], '127.0.0.1'),
+    json_encode($after));
+
+$forgeSave = (string)file_get_contents(dirname(__DIR__) . '/forge.php');
+ok('the wizard save resolves {i:N} rather than storing kind/base off the wire',
+    str_contains($forgeSave, 'xeric_model_choice($m)')
+    && !preg_match("/\\\$s\['model'\] = \['kind' => \(string\)\(\\\$m\['kind'\]/", $forgeSave));
+
 
 // ---------------------------------------------------------------------------
 // THE ONE GENUINELY UNPORTABLE THING IN THE APP: starting a detached worker.
@@ -3746,4 +3834,32 @@ ok('identity: and the repair sticks — the next request adopts it rather than m
 rmtree($tmp);
 
 echo $FAILED === 0 ? "\nall good\n" : "\n$FAILED failed\n";
+
+// ---------------------------------------------------------------------------
+// A PROBE CARRIES THE KEY TO ONE BOX. The machine detector sends the operator's
+// XERIC_LOCAL_KEY with its GETs so a llama-server --api-key answers /props; it
+// also probes every address a visitor adds, and the host gate lets public hosts
+// through on purpose. The key goes to the configured engine and to loopback,
+// and nowhere else.
+// ---------------------------------------------------------------------------
+echo "\n# the probe and the key\n";
+$pkBase = getenv('XERIC_LOCAL_BASE'); $pkKey = getenv('XERIC_LOCAL_KEY'); $pkApi = getenv('XERIC_API_KEY');
+putenv('XERIC_LOCAL_BASE=http://192.168.50.10:8080/v1'); putenv('XERIC_LOCAL_KEY=s3cret'); putenv('XERIC_API_KEY=hosted');
+ok('the configured engine is probed with the operator key',
+    xeric_model_probe_key('http://192.168.50.10:8080') === 's3cret');
+ok('and a pasted /v1 on either side still names the same box',
+    xeric_model_probe_key('http://192.168.50.10:8080/v1/') === 's3cret');
+ok('loopback is the operator\'s own box too',
+    xeric_model_probe_key('http://127.0.0.1:11434') === 's3cret' && xeric_model_probe_key('http://localhost:8080') === 's3cret');
+ok('a visitor-added public host is probed anonymously',
+    xeric_model_probe_key('https://attacker.example/') === '');
+ok('and so is a LAN box that is not the configured one',
+    xeric_model_probe_key('http://192.168.50.11:8080') === '');
+putenv('XERIC_LOCAL_KEY');
+ok('with no local key the hosted key does not travel to a stranger either',
+    xeric_model_probe_key('https://attacker.example/') === '' && xeric_model_probe_key('http://192.168.50.10:8080') === 'hosted');
+foreach (['XERIC_LOCAL_BASE' => $pkBase, 'XERIC_LOCAL_KEY' => $pkKey, 'XERIC_API_KEY' => $pkApi] as $k => $v) {
+    if ($v === false) putenv($k); else putenv("$k=$v");
+}
+
 exit($FAILED === 0 ? 0 : 1);

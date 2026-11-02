@@ -84,6 +84,11 @@ function xeric_web_config(): array
     // configured on the machine, and found real worlds in it.
     $c['local_base'] = (string)(getenv('XERIC_LOCAL_BASE') ?: '') ?: (string)($c['local_base'] ?? '');
     if ($c['local_base'] === '') $c['local_base'] = xeric_web_probe_local();
+    if (function_exists('xeric_llm_normalize_base')) {
+        $c['local_base'] = xeric_llm_normalize_base((string)$c['local_base']);
+    } else {
+        $c['local_base'] = rtrim((string)$c['local_base'], '/');
+    }
 
     $c['data_dir'] = (string)(getenv('XERIC_DATA_DIR') ?: '') ?: (string)($c['data_dir'] ?? '');
     // NOT THE TEMP DIRECTORY. Sessions, the queue, the worker log AND worlds all
@@ -619,19 +624,38 @@ function xeric_web_endpoint(array $model): array
         // belongs to (xeric_web_local_editable), which is what makes it safe to
         // skip the private-network check the branch below applies — pointing at
         // 127.0.0.1 or a box on your own LAN is the entire purpose of it.
+        //
+        // An EXTERNAL llama.cpp is the same kind of machine: the OpenAI chat
+        // API, no vendor, optionally an --api-key. The key is read here and
+        // never stored — posted with the request, or taken from XERIC_LOCAL_KEY
+        // / XERIC_API_KEY for a llama.cpp that is not on this box.
         $own = trim((string)($model['local'] ?? ''));
         $base = ($own !== '' && preg_match('#^https?://#i', $own))
             ? rtrim($own, '/')
             : (string)xeric_web_config()['local_base'];
+        if (function_exists('xeric_llm_normalize_base')) $base = xeric_llm_normalize_base($base);
 
-        return ['kind' => 'local', 'base' => $base,
-                'model' => (string)($model['model'] ?? ''), 'key' => ''];
+        $key = function_exists('xeric_llm_header_safe')
+            ? xeric_llm_header_safe((string)($model['key'] ?? ''))
+            : (string)($model['key'] ?? '');
+        if ($key === '' && function_exists('xeric_llm_default_key')) $key = xeric_llm_default_key();
+
+        // `local` RIDES THE OUTPUT. build.php resolves, pipes the result to
+        // worker.php, and the worker calls this function again. A shape that
+        // only had `base` was indistinguishable from a visitor stuffing a URL
+        // into `base` — which this function discards on purpose — so the second
+        // pass fell through to 127.0.0.1:8080 and the forge built from the
+        // surprise table against a box nobody asked for.
+        return ['kind' => 'local', 'base' => $base, 'local' => $base,
+                'model' => (string)($model['model'] ?? (function_exists('xeric_llm_default_model') ? xeric_llm_default_model() : '')),
+                'key' => $key];
     }
 
     $base = trim((string)($model['base'] ?? ''));
     if ($base === '' && $kind === 'anthropic') $base = 'https://api.anthropic.com';
     if ($base === '' && $kind === 'openai')    $base = 'https://api.openai.com/v1';
     if (!preg_match('#^https?://#i', $base)) throw new RuntimeException('that endpoint URL does not look like a URL');
+    if (function_exists('xeric_llm_normalize_base')) $base = xeric_llm_normalize_base($base);
 
     $host = (string)(parse_url($base, PHP_URL_HOST) ?? '');
     if ($host === '') throw new RuntimeException('that endpoint URL does not look like a URL');
@@ -640,16 +664,21 @@ function xeric_web_endpoint(array $model): array
             . 'resolve to anywhere the forge is allowed to call. Point it at a public API host.');
     }
 
+    $key = (string)($model['key'] ?? '');
+    if ($key === '' && function_exists('xeric_llm_default_key')) $key = xeric_llm_default_key();
+
     return ['kind' => $kind, 'base' => rtrim($base, '/'),
-            'model' => trim((string)($model['model'] ?? '')), 'key' => (string)($model['key'] ?? '')];
+            'model' => trim((string)($model['model'] ?? '')), 'key' => $key];
 }
 
 /** How to name an endpoint out loud. Never includes the key. */
 function xeric_web_endpoint_label(array $e): string
 {
     if (($e['kind'] ?? '') === 'local') {
+        $host = (string)(parse_url((string)$e['base'], PHP_URL_HOST) ?? '');
         $port = (string)(parse_url((string)$e['base'], PHP_URL_PORT) ?? '');
-        return 'the local model' . ($port !== '' ? " (127.0.0.1:$port)" : '');
+        $where = $host !== '' ? ($port !== '' ? "$host:$port" : $host) : '';
+        return 'the local model' . ($where !== '' ? " ($where)" : '');
     }
     $host = (string)(parse_url((string)$e['base'], PHP_URL_HOST) ?? $e['base']);
     return ($e['model'] !== '' ? $e['model'] . ' at ' : 'your endpoint at ') . $host;

@@ -2620,10 +2620,15 @@ function xeric_model_vendor(string $host): string
 }
 
 /** One short GET, decoded, or null. Never throws, never waits long. */
-function xeric_model_peek(string $url, int $timeout = 2): ?array
+function xeric_model_peek(string $url, int $timeout = 2, string $key = ''): ?array
 {
+    $headers = "Accept: application/json\r\n";
+    if ($key !== '') {
+        $safe = function_exists('xeric_llm_header_safe') ? xeric_llm_header_safe($key) : $key;
+        if ($safe !== '') $headers .= 'Authorization: Bearer ' . $safe . "\r\n";
+    }
     $ctx = stream_context_create(['http' => [
-        'method' => 'GET', 'header' => "Accept: application/json\r\n",
+        'method' => 'GET', 'header' => $headers,
         'timeout' => $timeout, 'ignore_errors' => true, 'follow_location' => 0, 'max_redirects' => 1,
     ]]);
     $out = @file_get_contents($url, false, $ctx);
@@ -2730,8 +2735,30 @@ function xeric_model_trim(string $id): string
 /**
  * What is at this address: a name for it, and the model it says it has loaded.
  *
- * @return array{name:string,model:string,local:bool}
+ * @return array{name:string,model:string,local:bool,art?:bool,router?:bool,models?:array}
  */
+/**
+ * The key a PROBE may carry to this address: the operator's, or nothing.
+ *
+ * XERIC_LOCAL_KEY is llama-server's --api-key on the one machine the operator
+ * named in XERIC_LOCAL_BASE, and a loopback box is the operator's own as well.
+ * Every other address on the machines screen was typed by a visitor, and the
+ * private-network gate lets a public host through on purpose — that is how a
+ * hosted API gets added — so a probe that carried the key there would hand the
+ * operator's secret to whoever owns the hostname. Pure, so the rule is tested.
+ */
+function xeric_model_probe_key(string $base): string
+{
+    if (!function_exists('xeric_llm_default_key') || !function_exists('xeric_llm_default_base')) return '';
+    $here = xeric_llm_normalize_base($base);
+    if ($here === '') return '';
+    $host = strtolower((string)(parse_url($here, PHP_URL_HOST) ?? ''));
+    if ($here === xeric_llm_default_base() || in_array($host, ['127.0.0.1', 'localhost', '::1', '[::1]'], true)) {
+        return xeric_llm_default_key();
+    }
+    return '';
+}
+
 function xeric_model_who(string $base, string $kind = ''): array
 {
     $base = rtrim(trim($base), '/');
@@ -2744,7 +2771,7 @@ function xeric_model_who(string $base, string $kind = ''): array
     // spelled right. The hostname already says whose it is.
     if ($kind !== 'local') {
         return ['name' => xeric_model_vendor($host) ?: 'OpenAI-compatible API',
-                'model' => '', 'local' => false];
+                'model' => '', 'local' => false, 'router' => false, 'models' => []];
     }
 
     // WHAT IT IS AND WHAT IT HAS LOADED ARE TWO QUESTIONS, and the second one
@@ -2756,16 +2783,27 @@ function xeric_model_who(string $base, string $kind = ''): array
     $name = '';
     $model = '';
     $art = false;
+    $router = false;
+    $routerModels = [];
+    // THE KEY GOES TO ONE BOX. XERIC_LOCAL_KEY is llama-server's --api-key on
+    // the machine the operator named in XERIC_LOCAL_BASE, and that is the only
+    // address it may be sent to. This function also probes every address a
+    // visitor adds on the machines screen — the private-network gate lets a
+    // public host through on purpose, because that is how a hosted API gets
+    // added — and a probe that carried the key there would hand the operator's
+    // secret to whoever owns the hostname. A loopback box is the operator's
+    // own too, so it keeps the key; everything else is probed anonymously.
+    $key = xeric_model_probe_key($base);
 
-    $v = xeric_model_peek($base . '/api/version');
+    $v = xeric_model_peek($base . '/api/version', 2, $key);
     if ($v !== null && isset($v['version'])) {
         $name = trim('Ollama ' . xeric_model_trim((string)$v['version']));
-        $tags = xeric_model_peek($base . '/api/tags');
+        $tags = xeric_model_peek($base . '/api/tags', 2, $key);
         $model = xeric_model_trim((string)((array)($tags['models'][0] ?? []))['name'] ?? '');
     }
 
     if ($name === '') {
-        $p = xeric_model_peek($base . '/props');
+        $p = xeric_model_peek($base . '/props', 2, $key);
         if ($p !== null && (isset($p['default_generation_settings']) || isset($p['model_path']))) {
             $name  = 'llama.cpp';
             $model = xeric_model_trim((string)($p['model_path'] ?? ''));
@@ -2773,8 +2811,26 @@ function xeric_model_who(string $base, string $kind = ''): array
         }
     }
 
+    // ROUTER MODE is llama.cpp without a single -m: GET /models lists every
+    // GGUF with a lifecycle status. /props often has no model_path then, so
+    // this check runs even when the block above stayed quiet.
+    if ($name === '' || $name === 'llama.cpp') {
+        $cat = function_exists('xeric_llm_router_catalog')
+            ? xeric_llm_router_catalog(xeric_model_peek($base . '/models', 2, $key))
+            : [];
+        if ($cat !== []) {
+            $name = 'llama.cpp router';
+            $router = true;
+            $routerModels = $cat;
+            $pick = function_exists('xeric_llm_router_pick')
+                ? xeric_llm_router_pick($cat)
+                : (string)$cat[0]['id'];
+            $model = xeric_model_trim($pick);
+        }
+    }
+
     if ($name === '') {
-        $l = xeric_model_peek($base . '/api/v0/models');
+        $l = xeric_model_peek($base . '/api/v0/models', 2, $key);
         if ($l !== null && isset($l['data'][0]['type'])) {
             $name  = 'LM Studio';
             $model = xeric_model_trim((string)($l['data'][0]['id'] ?? ''));
@@ -2782,13 +2838,13 @@ function xeric_model_who(string $base, string $kind = ''): array
     }
 
     if ($name === '') {
-        $k = xeric_model_peek($base . '/api/extra/version');
+        $k = xeric_model_peek($base . '/api/extra/version', 2, $key);
         if ($k !== null && isset($k['result'])) $name = 'KoboldCpp';
     }
 
     if ($name === '') {
-        $vl = xeric_model_peek($base . '/version');
-        $models = xeric_model_peek($base . '/v1/models');
+        $vl = xeric_model_peek($base . '/version', 2, $key);
+        $models = xeric_model_peek($base . '/v1/models', 2, $key);
         $first  = xeric_model_trim((string)($models['data'][0]['id'] ?? ''));
         if ($vl !== null && isset($vl['version'])) { $name = 'vLLM'; $model = $first; }
         elseif ($models !== null)                  { $name = 'OpenAI-compatible'; $model = $first; }
@@ -2814,7 +2870,8 @@ function xeric_model_who(string $base, string $kind = ''): array
         if ($name === '') $name = 'Pictures or video';
     }
 
-    return ['name' => $name, 'model' => $model, 'local' => true, 'art' => $art];
+    return ['name' => $name, 'model' => $model, 'local' => true, 'art' => $art,
+            'router' => $router, 'models' => $routerModels];
 }
 
 // These lived in model.php until the forge needed the same list, to let somebody
@@ -3001,11 +3058,55 @@ function xeric_model_auto_engine(string $base): bool
 }
 
 /** The descriptor a machine gets when it becomes the engine. */
-function xeric_model_descriptor(string $base): array
+function xeric_model_descriptor(string $base, string $model = ''): array
 {
+    $base  = rtrim(trim($base), '/');
+    $model = str_replace(["\r", "\n"], '', trim($model));
     return xeric_model_kind($base) === 'local'
-        ? ['kind' => 'local', 'base' => '', 'local' => $base, 'model' => '']
-        : ['kind' => xeric_model_kind($base), 'base' => $base, 'local' => '', 'model' => ''];
+        ? ['kind' => 'local', 'base' => '', 'local' => $base, 'model' => $model]
+        : ['kind' => xeric_model_kind($base), 'base' => $base, 'local' => '', 'model' => $model];
+}
+
+/**
+ * Resolve a posted machine choice into a stored engine descriptor.
+ *
+ * The forge wizard sends `{i: N}` — an index into this visitor's own list —
+ * and never an address. Returning null means "do not overwrite": a payload
+ * that does not name a machine (empty, leftover `{kind: local}`, or a URL
+ * stuffed into `base`) must leave the attached engine alone. Honouring a
+ * visitor-supplied `local` here would be the SSRF hole xeric_web_endpoint()
+ * exists to close; the address comes off the session list, or nowhere.
+ *
+ * The GGUF id rides along when the same address is already the engine, or
+ * when that row stored one (a llama.cpp router). Wiping it would send the
+ * next forge to whatever the router happens to have loaded.
+ *
+ * @return ?array the descriptor to store, or null to keep what is already there
+ */
+function xeric_model_choice(array $posted, ?string $sid = null): ?array
+{
+    if (!array_key_exists('i', $posted)) return null;
+    $rows = xeric_model_list($sid);
+    $i = (int)$posted['i'];
+    if (!isset($rows[$i])) return null;
+    $base = rtrim(trim((string)$rows[$i]['base']), '/');
+    if ($base === '') return null;
+
+    $keep = '';
+    $cur = xeric_web_model($sid);
+    $at  = rtrim(trim((string)($cur['local'] ?? '')), '/');
+    if ($at === '') $at = rtrim(trim((string)($cur['base'] ?? '')), '/');
+    if ($at === $base) $keep = str_replace(["\r", "\n"], '', trim((string)($cur['model'] ?? '')));
+
+    if ($keep === '' && $i > 0) {
+        $sess  = xeric_web_session_read($sid ?? xeric_session_id());
+        $extra = array_values((array)($sess['machines'] ?? []));
+        if (isset($extra[$i - 1]['model'])) {
+            $keep = str_replace(["\r", "\n"], '', trim((string)$extra[$i - 1]['model']));
+        }
+    }
+
+    return xeric_model_descriptor($base, $keep);
 }
 
 // ---------------------------------------------------------------------------
@@ -3639,6 +3740,10 @@ input.t:focus{outline:none}
 .wname{flex:0 0 auto;font-weight:600;color:var(--fg)}
 .wmodel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.72rem}
+.wmodel:has(.wmodels){overflow:visible;white-space:normal}
+.wmodels{pointer-events:auto;position:relative;z-index:3;max-width:100%;
+  font:inherit;color:var(--fg);background:var(--bg-2);border:1px solid var(--line);
+  border-radius:.35rem;padding:.2rem .4rem}
 /* The status row reserves the button's height on EVERY card, so choosing one
    does not make it taller than the rest. `.btn` carries min-height:3rem for
    finger-sized targets on a form; `.small` set padding and font size and never

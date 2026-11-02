@@ -62,18 +62,31 @@ if ((string)($_GET['a'] ?? '') === 'probe') {
 
     $base = (string)$list[$i]['base'];
     $kind = xeric_model_kind($base);
+    $key  = function_exists('xeric_llm_default_key') ? xeric_llm_default_key() : '';
 
-    // A REMOTE ENDPOINT CANNOT BE PROBED HONESTLY. The key is never stored, so
-    // the only request that can be made is keyless, and a keyless request to a
-    // working OpenAI endpoint is a 401 — which reads as "down" and is a lie
-    // about somebody's perfectly good API. Null, and the lamp stays grey.
+    // A hosted API usually cannot be probed honestly: the key is never stored,
+    // so a keyless request to a working OpenAI endpoint is a 401 — which reads
+    // as "down" and is a lie. llama.cpp on another machine is different: it
+    // speaks the same wire with no key, or with XERIC_LOCAL_KEY / XERIC_API_KEY
+    // when started with --api-key. Try; on failure keep the grey lamp.
     if ($kind !== 'local') {
+        $up = false;
+        try {
+            $up = xeric_llm_up(['kind' => $kind, 'base' => $base, 'model' => '', 'key' => $key], 4);
+        } catch (Throwable $e) {
+            $up = false;
+        }
+        if ($up) {
+            $who = xeric_model_who($base, 'local');
+            if (($who['name'] ?? '') === '') $who = xeric_model_who($base, $kind);
+            xeric_web_json(['up' => true, 'found' => '', 'who' => $who]);
+        }
         xeric_web_json(['up' => null] + ['who' => xeric_model_who($base, $kind)]);
     }
 
     $up = false;
     try {
-        $up = xeric_llm_up(['kind' => 'local', 'base' => $base, 'model' => '', 'key' => ''], 4);
+        $up = xeric_llm_up(['kind' => 'local', 'base' => $base, 'model' => '', 'key' => $key], 4);
     } catch (Throwable $e) {
         $up = false;
     }
@@ -91,6 +104,20 @@ if ((string)($_GET['a'] ?? '') === 'probe') {
     // down is four more timeouts on the one screen somebody is looking at
     // BECAUSE things are timing out.
     $who = $up ? xeric_model_who($base, $kind) : ['name' => '', 'model' => '', 'local' => true];
+    if ($up && !empty($who['router']) && $who['models'] !== []
+        && $i === xeric_model_active($list, $sid)) {
+        $sess = xeric_web_session_read($sid);
+        $have = trim((string)(($sess['model']['model'] ?? '')));
+        $pick = function_exists('xeric_llm_router_pick')
+            ? xeric_llm_router_pick((array)$who['models'], $have)
+            : (string)($who['model'] ?? '');
+        if ($pick !== '' && $have === '') {
+            xeric_web_session_edit(function (array &$s) use ($pick): void {
+                if (isset($s['model']) && is_array($s['model'])) $s['model']['model'] = $pick;
+            }, $sid);
+        }
+        if ($pick !== '') $who['model'] = $pick;
+    }
     xeric_web_json(['up' => $up, 'found' => $found, 'who' => $who]);
 }
 
@@ -432,6 +459,36 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         exit;
     }
 
+    // A llama.cpp router is one address holding several GGUFs. The model id
+    // is what /v1/chat/completions uses to pick which one answers — without
+    // it the router has nowhere to send the request.
+    if ($act === 'pickmodel') {
+        $model = str_replace(["\r", "\n"], '', trim((string)($_POST['model'] ?? '')));
+        if ($model === '' || !isset($list[$i])) {
+            if ($wantsJson) xeric_web_json(['ok' => false]);
+            header('Location: model.php');
+            exit;
+        }
+        $base = (string)$list[$i]['base'];
+        $wasOn = $i === xeric_model_active($list, $sid);
+        xeric_web_session_edit(function (array &$s) use ($model, $wasOn, $i, $base): void {
+            if ($i > 0) {
+                $rows = array_values((array)($s['machines'] ?? []));
+                if (isset($rows[$i - 1])) $rows[$i - 1]['model'] = $model;
+                $s['machines'] = $rows;
+            }
+            if ($wasOn) {
+                if (!isset($s['model']) || !is_array($s['model'])) {
+                    $s['model'] = xeric_model_descriptor($base);
+                }
+                $s['model']['model'] = $model;
+            }
+        }, $sid);
+        if ($wantsJson) xeric_web_json(['ok' => true, 'model' => $model]);
+        header('Location: model.php');
+        exit;
+    }
+
     if (!isset($list[$i])) { header('Location: model.php'); exit; }
 
     // `use` CONNECTS. `engine` PROMOTES. They were one action when there was one
@@ -672,10 +729,11 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
         <input type="hidden" name="act" value="add">
         <div class="opt madd" id="maddcard">
           <span class="t">Add a machine</span>
-          <span class="d">Anything that speaks the OpenAI chat API: llama.cpp, Ollama, vLLM, LM Studio,
-            or an API you have a key for.</span>
+          <span class="d">Anything that speaks the OpenAI chat API: llama.cpp on this machine or
+            another, Ollama, vLLM, LM Studio, or an API you have a key for. Paste
+            <code>http://gpu-box:8080</code> or <code>https://host/v1</code> — a trailing /v1 is stripped.</span>
           <input type="text" name="base" id="maddin" inputmode="url" autocapitalize="off"
-                 autocorrect="off" spellcheck="false" placeholder="host:port" hidden>
+                 autocorrect="off" spellcheck="false" placeholder="http://host:8080" hidden>
         </div>
       </form>
       <span class="mgap" aria-hidden="true"></span>
@@ -867,7 +925,37 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
     if (!el) return;
     if (!who || !who.name) { el.hidden = true; return; }
     el.querySelector('.wname').textContent = who.name;
-    el.querySelector('.wmodel').textContent = who.model || '';
+    var slot = el.querySelector('.wmodel');
+    slot.textContent = who.model || '';
+    if (who.router && who.models && who.models.length) {
+      var sel = document.createElement('select');
+      sel.className = 'wmodels';
+      sel.setAttribute('aria-label', 'model');
+      who.models.forEach(function (m) {
+        var o = document.createElement('option');
+        o.value = m.id;
+        var label = m.id;
+        if (m.status === 'loaded') label += ' — loaded';
+        else if (m.status === 'unloaded') label += ' — unloaded';
+        else if (m.status === 'loading') label += ' — loading';
+        else if (m.status === 'sleeping') label += ' — sleeping';
+        else if (m.status === 'downloading') label += ' — downloading';
+        o.textContent = label;
+        if (m.id === who.model) o.selected = true;
+        sel.appendChild(o);
+      });
+      sel.addEventListener('change', function () {
+        var body = new FormData();
+        body.append('act', 'pickmodel');
+        body.append('i', String(i));
+        body.append('model', sel.value);
+        body.append('json', '1');
+        fetch('model.php', { method: 'POST', body: body, credentials: 'same-origin' })
+          .catch(function () {});
+      });
+      slot.textContent = '';
+      slot.appendChild(sel);
+    }
     el.querySelector('.wsig').className = 'wsig ' + (who.local ? 'here' : 'away');
     el.hidden = false;
   }
