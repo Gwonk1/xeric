@@ -239,8 +239,8 @@ ok('the owner\'s press renders it', $owner !== null && $owner['cached'] === fals
 $heard = xeric_play_voice_clip($T, $db, $clips, $msg, xeric_voice_endpoint(), ['af_bella', 'am_adam'], $guest);
 ok('and then the guest hears it: a hit never reaches the door', $heard !== null && $heard['cached'] === true
     && $refused === 1 && $calls === 1);
-ok('speak.php\'s door is the owner-only one scene.php\'s look keeps, inside the miss hook',
-    preg_match("/function \(\) use \(\\\$w, \\\$sid\): void \{\s*xeric_play_owner_only\(\\\$w, /", $sp) === 1);
+ok('speak.php\'s door is the owner-only one scene.php\'s look keeps, inside the miss hook, behind the spend guard',
+    preg_match("/function \(\) use \(\\\$w, \\\$sid\): void \{\s*xeric_web_spend_guard\(\);[^\n]*\n\s*xeric_play_owner_only\(\\\$w, /", $sp) === 1);
 
 echo "\n# the reply knows its own row\n";
 
