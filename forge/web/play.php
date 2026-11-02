@@ -1083,6 +1083,9 @@ echo xeric_play_css_link() . '<style>
 #room .rhead { font-size:.8rem; color:var(--fg-dim); margin:0 0 .4rem; }
 #room .rmsgs { max-height:22rem; overflow-y:auto; margin:0 0 .4rem; padding:0; }
 #room .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
+/* whose line, in a thread more than one person at the centre has spoken in; and a line this viewer is not shown */
+#msgs .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
+#msgs li.redacted .b, #rmsgs li.redacted .b { font-style:italic; opacity:.65; }
 #room .rctl { display:flex; gap:.5rem; align-items:center; margin:.35rem 0 0; font-size:.75rem; color:var(--fg-dim); }
 #room .rctl .grow { flex:1 1 auto; }
 /* the narrator write-ahead: intended beats, struck when delivered */
@@ -2652,7 +2655,10 @@ echo xeric_play_css_link() . '<style>
           $('#composer').placeholder = d.name + ' is dead' + (d.how ? ', ' + d.how : '') + '.';
           $('#tone').textContent = d.how || (d.name + ' is dead.');
         }
-        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when, m.photo, m.id); });
+        // A player line carries `player` (and its speaker's name in `who`) only
+        // when more than one person at the centre has spoken in this thread;
+        // then the bubble says whose it is. Otherwise it is "you", as ever.
+        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when, m.photo, m.id, m.player ? m.who : '', !!m.redacted); });
         // the dot is out now — repaint the cast behind this screen
         refreshState();
         var t = $('#composer');
@@ -2682,13 +2688,13 @@ echo xeric_play_css_link() . '<style>
 
   // The speaker (speak, unspeak, refuseSpeak) is in xeric-view.js: XV.speak.
 
-  function addMsg(who, text, when, photo, mid) {
+  function addMsg(who, text, when, photo, mid, by, redacted) {
     var li = document.createElement('li');
-    li.className = who;
+    li.className = who + (redacted ? ' redacted' : '');
 
     var face = '';
     if (who !== 'narr') {
-      var f = faceOf(who === 'me' ? (ME || 'you') : ($('#tname').textContent || '?'));
+      var f = faceOf(who === 'me' ? (by || ME || 'you') : ($('#tname').textContent || '?'));
       face = '<span class="av" style="--hue:' + f.hue + '" aria-hidden="true">' + esc(f.text) + '</span>';
     }
 
@@ -2708,11 +2714,11 @@ echo xeric_play_css_link() . '<style>
     // photograph, gets a speaker — when a voice machine is set. The player's
     // own bubbles never do: nobody needs to hear themselves read back.
     var spk = '';
-    if (VOICE && who === 'them' && mid && !photo && !/^📷/.test(String(text || ''))) {
+    if (VOICE && who === 'them' && mid && !photo && !redacted && !/^📷/.test(String(text || ''))) {
       spk = '<button type="button" class="mspk" data-m="' + escA(String(mid)) + '" aria-pressed="false" aria-label="hear '
           + escA($('#tname').textContent || 'this line') + '">🔈</button>';
     }
-    li.innerHTML = face + '<span class="b">' + body
+    li.innerHTML = face + '<span class="b">' + (by ? '<span class="rwho">' + esc(by) + '</span>' : '') + body
                  + (when ? '<span class="st">' + esc(when) + '</span>' : '') + spk + '</span>';
     var sb = li.querySelector('.mspk');
     if (sb) sb.addEventListener('click', function () { XV.speak(sb); });
@@ -4159,7 +4165,7 @@ echo xeric_play_css_link() . '<style>
     if (ROOM.seen[r.id]) return;
     ROOM.seen[r.id] = true;
     var li = document.createElement('li');
-    li.className = r.who;
+    li.className = r.who + (r.redacted ? ' redacted' : '');
     if (r.who === 'narr') {
       li.innerHTML = '<span class="b">' + esc(r.text) + '</span>';
     } else {
@@ -4170,7 +4176,7 @@ echo xeric_play_css_link() . '<style>
             + escA(r.name || 'this line') + '">🔈</button>';
       }
       li.innerHTML = '<span class="av" style="--hue:' + f.hue + '" aria-hidden="true">' + esc(f.text) + '</span>'
-                   + '<span class="b">' + (r.who === 'them' ? '<span class="rwho">' + esc(r.name) + '</span>' : '')
+                   + '<span class="b">' + (r.who === 'them' || (r.who === 'me' && r.player) ? '<span class="rwho">' + esc(r.name) + '</span>' : '')
                    + esc(r.text) + (r.when ? '<span class="st">' + esc(r.when) + '</span>' : '') + spk + '</span>';
       var sb = li.querySelector('.mspk');
       if (sb) sb.addEventListener('click', function () { XV.speak(sb); });

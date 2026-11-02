@@ -205,6 +205,80 @@ $evil = $map;
 $evil['places'][0]['name'] = '<script>x</script>"&';
 ok('a name is text, never markup', !str_contains(xeric_play_map_svg($evil, $slug), '<script>'));
 
+// -- another player ----------------------------------------------------------------
+// A guest joins on a code and walks to the hardware store. The resolver
+// play-map.php installs reads WHICH session is asking off the open file, so
+// the owner sees a friend's ring at Beck's and the guest sees the owner's at
+// the diner — the same object, read from two chairs.
+$B   = bin2hex(random_bytes(16));
+$pid = xeric_player_add($db, $T, 'Ann Price', 'she/her');
+xeric_session_join($slug, $pid, $B);
+xeric_session_use($B);
+ok('the seam: a joined guest is their own player on the owner\'s file',
+    xeric_player_current(null, $db) === $pid && xeric_player_where($T, $db) === null);
+xeric_player_move($db, 'beck_hardware', (int)$now['epoch']);
+$annMap = xeric_travel_map($T, $db, $now);
+$annSvg = xeric_play_map_svg($annMap, $slug);
+ok('as the guest, you are the guest — at Beck\'s, under her own name',
+    $annMap['you']['where'] === 'beck_hardware' && $annMap['you']['name'] === 'Ann Price'
+    && str_contains($annSvg, 'data-where="beck_hardware"'));
+ok('and the owner is the other player at the diner',
+    (bool)preg_match('/<g class="wch wpc" data-handle="p1" data-name="Walt" data-doing="another player" data-player="1">/',
+                     mark_body($annSvg, 'bluebird')));
+xeric_session_use($A);
+ok('the owner is still player one, still at the diner',
+    xeric_player_current(null, $db) === 1 && xeric_player_where($T, $db) === 'bluebird');
+$twoMap  = xeric_travel_map($T, $db, $now);
+$twoSvg  = xeric_play_map_svg($twoMap, $slug);
+$twoBeck = mark_body($twoSvg, 'beck_hardware');
+ok('the other player\'s mark: its own ring, her initials, said to be another player',
+    (bool)preg_match('/<g class="wch wpc" data-handle="p' . $pid . '" data-name="Ann Price" data-doing="another player" data-player="1">'
+                     . '<title>Ann Price, another player<\/title><circle [^>]+\/><text [^>]+>AP<\/text><\/g>/', $twoBeck)
+    && str_contains($twoBeck, 'data-handle="harlan"'), $twoBeck);
+ok('the list says it in words too, for anybody not looking at the picture',
+    str_contains(xeric_play_where_html($twoMap, $slug), 'Ann Price (another player)'));
+ok('and the cast\'s discs are drawn as they always were',
+    (bool)preg_match('/<g class="wch" data-handle="harlan" data-name="Harlan Beck" data-doing="[^"]+">/', $twoBeck));
+// -- and she walks herself ------------------------------------------------------
+// where.php, as a real request from her cookie: walking was the owner's alone
+// while there was one body; with a body each a joined player walks their own.
+$page = function (string $sid, array $post) use ($tmp): array {
+    $boot = '$_GET = []; $_POST = ' . var_export($post, true) . ';'
+        . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($sid, true) . '];'
+        . ' $_SERVER["REQUEST_METHOD"] = "POST"; $_SERVER["HTTP_ACCEPT"] = "application/json";'
+        . ' register_shutdown_function(function () { echo "\n@@STATUS " . http_response_code(); });'
+        . ' require ' . var_export(dirname(__DIR__) . '/where.php', true) . ';';
+    $raw = (string)shell_exec('XERIC_DATA_DIR=' . escapeshellarg($tmp) . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
+        . ' XERIC_LOCAL_BASE=http://127.0.0.1:1 XERIC_SOLO=0 ' . escapeshellarg(PHP_BINARY)
+        . ' -d error_reporting=0 -r ' . escapeshellarg($boot) . ' 2>&1');
+    $st = preg_match('/@@STATUS (\d+)\s*$/', $raw, $m) ? (int)$m[1] : 0;
+    $j  = json_decode(trim((string)preg_replace('/@@STATUS \d+\s*$/', '', $raw)), true);
+    return ['status' => $st, 'json' => is_array($j) ? $j : null, 'raw' => $raw];
+};
+$paused = xeric_clock_is_paused($db);
+if ($paused) xeric_clock_resume($db);
+$off  = xeric_clock_offset($db);
+$walk = $page($B, ['world' => $slug, 'to' => 'the_mill']);
+ok('where.php: a joined player may walk — her own body, not the owner\'s',
+    $walk['status'] === 200 && ($walk['json']['you']['where'] ?? '') === 'the_mill'
+    && ($walk['json']['you']['name'] ?? '') === 'Ann Price'
+    && xeric_player_where($T, $db, $pid) === 'the_mill' && xeric_player_where($T, $db, 1) === 'bluebird',
+    $walk['status'] . ' ' . mb_substr($walk['raw'], 0, 300));
+ok('where.php: and the minutes she spent are everybody\'s',
+    xeric_clock_offset($db) - $off === (int)($walk['json']['went']['minutes'] ?? -1) * 60 && $off !== xeric_clock_offset($db));
+$C = bin2hex(random_bytes(16));
+$fork = $page($C, ['world' => $slug, 'to' => 'beck_hardware']);
+// (A fork made just now is opened stopped when no machine is attached, so its
+// walk may be refused as a stopped world — never as a guest.)
+ok('where.php: a stranger is never refused as a guest, and the owner\'s world never hears of their walk',
+    $fork['status'] !== 403 && ($fork['json']['kind'] ?? '') !== 'guest' && xeric_player_where($T, $db, 1) === 'bluebird'
+    && xeric_player_where($T, $db, $pid) === 'the_mill' && xeric_clock_offset($db) - $off === (int)$walk['json']['went']['minutes'] * 60,
+    $fork['status'] . ' ' . mb_substr($fork['raw'], 0, 300));
+if ($paused) xeric_clock_pause($db);
+
+xeric_player_drop($db, $T, $pid);
+ok('once she has gone, the map is the map it was', xeric_play_where_html(xeric_travel_map($T, $db, $now), $slug) === $html);
+
 // -- the static file, as the page loads it --------------------------------------------
 $page = (string)file_get_contents(dirname(__DIR__) . '/play.php');
 ok('play.php loads xeric-map.js by its hash, with the nonce',

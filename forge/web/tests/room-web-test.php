@@ -126,12 +126,8 @@ xeric_player_move($db, 'bluebird', (int)$now['epoch']);
 $G = bin2hex(random_bytes(16));                      // a guest, in on a code, on the owner's db
 xeric_session_use($G);
 xeric_session_join($slug, 2, $G);
-// The guest's own machine choice, too: a session with nothing attached opening
-// a running world stops its clock (xeric_play_open's reconcile), and this test
-// is about the room's doors, not that one.
-xeric_web_session_edit(function (array &$s): void {
-    $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:1', 'base' => '', 'model' => ''];
-}, $G);
+// No machine of the guest's own: a guest's open never reconciles the owner's
+// clock (xeric_play_open), which "# together" below pins.
 xeric_session_use($A);
 
 // ---------------------------------------------------------------------------
@@ -589,6 +585,153 @@ $sayFn = (string)(preg_match('/function xeric_play_room_say\(.*?\n\}\n/s', (stri
 ok('a line opens with one tick and one edit — no third transaction resealing what the tick sealed',
     $sayFn !== '' && substr_count($sayFn, 'xeric_room_live_edit(') === 1 && substr_count($sayFn, 'xeric_play_room_tick(') === 1);
 ok('every bubble is escaped on the way in', str_contains($pp, "esc(r.text)") && !preg_match('/innerHTML\s*=\s*r\.text/', $pp));
+
+// ---------------------------------------------------------------------------
+echo "\n# together: who said it, who may read it, and whose clock\n";
+
+// A second world, rated above the floor so a clamp shows, owned by an
+// affirmed owner with a machine attached and its clock RUNNING.
+$tslug = 'together-town';
+$tT = $fixT;
+$tT['meta']['rating'] = 'mature';
+$tdir = xeric_web_worlds_dir() . '/' . $tslug;
+@mkdir($tdir, 0775, true);
+file_put_contents($tdir . '/world-template.json', json_encode($tT, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+file_put_contents($tdir . '/seed.json', json_encode(xeric_forge_default_seed($tT), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+$O = bin2hex(random_bytes(16));
+xeric_session_use($O);
+xeric_session_claim($tslug, $O);
+xeric_web_session_edit(function (array &$s): void {
+    $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:1', 'base' => '', 'model' => ''];
+}, $O);
+ok('together: the owner affirms', xeric_session_affirm(true, $O) === true);
+$ow  = xeric_play_open($tslug);
+$odb = $ow['db'];
+if (xeric_clock_is_paused($odb)) xeric_clock_resume($odb);
+ok('together: the owner\'s open runs at the world\'s rating, and that is this process\'s stamp',
+    xeric_state_rating() === 'mature' && !xeric_clock_is_paused($odb));
+
+// THE GUEST PAUSE. A guest in on a code, whose session has NO machine attached.
+$tid = xeric_player_add($odb, $ow['template'], 'Corey');
+$TG = bin2hex(random_bytes(16));
+xeric_session_use($TG);
+xeric_session_join($tslug, $tid, $TG);
+$gw = xeric_play_open($tslug);
+ok('together: the guest is on the owner\'s own database', xeric_play_is_guest($gw));
+ok('together: and opening it with nothing attached does NOT pause the owner\'s running clock',
+    !xeric_clock_is_paused($odb) && !xeric_clock_is_paused($gw['db']));
+ok('together: the guest reads at the floor', xeric_state_rating() === xeric_rating_clamp('mature', false));
+// Nor does the guest's open RESUME a clock the owner stopped.
+xeric_clock_pause($odb);
+xeric_play_open($tslug);
+ok('together: nor does a guest\'s open start a clock the owner stopped', xeric_clock_is_paused($odb));
+xeric_clock_resume($odb);
+// A stranger's fork is their own, and still reconciles.
+$TS = bin2hex(random_bytes(16));
+xeric_session_use($TS);
+$sw = xeric_play_open($tslug);
+ok('together: a stranger with nothing attached still stops their OWN fork\'s clock',
+    !$sw['mine'] && !xeric_play_is_guest($sw) && xeric_clock_is_paused($sw['db']) && !xeric_clock_is_paused($odb));
+$sw = null;
+// WHO SAID IT, in the thread a page draws.
+xeric_session_use($O);
+$ow  = xeric_play_open($tslug);
+$oT  = $ow['template'];
+$tc  = xeric_conversation_for($odb, 'ruth');
+xeric_message_append($odb, $tc, 'user', null, 'Evening, Ruth.', null, null, 1);
+xeric_message_append($odb, $tc, 'character', 'ruth', 'Evening.', null);
+$solo = xeric_play_thread($oT, $odb, 'ruth');
+ok('together: one voice in a thread: the bubble is the owner, unlabelled, as today',
+    $solo['messages'][0]['who'] === (trim((string)($oT['user']['name'] ?? '')) ?: 'you')
+    && !array_key_exists('player', $solo['messages'][0]));
+xeric_message_append($odb, $tc, 'user', null, 'I will bring the dish Saturday.', null, null, $tid);
+$two = xeric_play_thread($oT, $odb, 'ruth');
+$ownName = xeric_player_name($odb, 1, $oT);
+ok('together: two voices: each player line carries its speaker\'s name and number',
+    $two['messages'][0]['who'] === $ownName && $two['messages'][0]['player'] === 1
+    && $two['messages'][2]['who'] === 'Corey' && $two['messages'][2]['player'] === $tid
+    && !array_key_exists('player', $two['messages'][1]), json_encode($two['messages']));
+
+// RATING PER VIEWER, through the thread reader. The owner's request stamps its
+// lines at the world's rating; the guest reads them as gaps; the owner reads them.
+$stamped = $odb->query("SELECT rating FROM messages WHERE content = 'Evening.'")->fetchColumn();
+ok('together: the owner\'s rows are stamped with the rating their request ran at', $stamped === 'mature');
+xeric_session_use($TG);
+$gw = xeric_play_open($tslug);
+$gth = xeric_play_thread($gw['template'], $gw['db'], 'ruth');
+ok('together: the guest reads them redacted: the line, and none of its words',
+    $gth['messages'][1]['text'] === XERIC_STATE_UNSHOWN && ($gth['messages'][1]['redacted'] ?? false) === true
+    && !str_contains(json_encode($gth), 'Evening.'), json_encode($gth['messages']));
+xeric_session_use($O);
+$ow = xeric_play_open($tslug);
+$oth = xeric_play_thread($ow['template'], $odb, 'ruth');
+ok('together: and the adult owner reads them whole', $oth['messages'][1]['text'] === 'Evening.'
+    && !isset($oth['messages'][1]['redacted']));
+$odb->exec("UPDATE messages SET rating = '' WHERE content = 'Evening.'");
+xeric_session_use($TG);
+$gw = xeric_play_open($tslug);
+ok('together: an unstamped row is read as it always was, by anybody',
+    xeric_play_thread($gw['template'], $gw['db'], 'ruth')['messages'][1]['text'] === 'Evening.');
+
+// THE HEART STAMPS: it opens each world by path, as its owner's session.
+xeric_session_use($O);
+$hw = xeric_play_open($tslug, (string)$ow['db_path']);
+$hev = xeric_event_add($hw['db'], 'An hour the heart lived', xeric_clock_epoch($hw['db']), 'bluebird', ['ruth'], 'Prose.');
+ok('together: the heart\'s open stamps what it writes with the world\'s rating',
+    $hw['db']->query('SELECT rating FROM events WHERE id = ' . (int)$hev)->fetchColumn() === 'mature');
+xeric_session_use($TG);
+xeric_play_open($tslug);
+$gev = array_values(array_filter(xeric_events_recent($odb, 50), fn($e) => (int)$e['id'] === (int)$hev))[0] ?? [];
+ok('together: and the guest reads that hour without what happened in it',
+    ($gev['title'] ?? '') === XERIC_STATE_UNSHOWN_HOUR && ($gev['prose'] ?? 'x') === '');
+
+// A PHOTO stamped above the viewer is not served; the caption stands.
+$phDir = dirname((string)$ow['db_path']) . '/photos';
+@mkdir($phDir, 0775, true);
+file_put_contents($phDir . '/portrait-ruth.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='));
+$odb->exec("UPDATE photo_jobs SET status = 'done', file = 'portrait-ruth.png', rating = 'mature'
+            WHERE kind = 'portrait' AND subject = 'ruth'");
+$pg = page('photo.php', $TG, ['w' => $tslug, 'k' => 'portrait', 's' => 'ruth'], [], 'GET');
+$po = page('photo.php', $O,  ['w' => $tslug, 'k' => 'portrait', 's' => 'ruth'], [], 'GET');
+ok('together: a photo stamped above the guest is a 404 to them', $pg['status'] === 404, (string)$pg['status']);
+// (A CLI child never sets a 200 itself, so an untouched status reads as 0.)
+ok('together: and served to the owner', in_array($po['status'], [0, 200], true) && str_contains($po['raw'], "\x89PNG"),
+    (string)$po['status']);
+
+// THE ROOM IS ITS OWN PLAYER'S. The owner sits down at the Bluebird; the guest
+// stands across town and makes a request. Their position is not the room's.
+xeric_session_use($O);
+$ow   = xeric_play_open($tslug);
+$odb  = $ow['db'];
+$oNow = xeric_clock_now($odb, $ow['template']);
+xeric_player_move($odb, 'bluebird', (int)$oNow['epoch'], 1);
+xeric_player_move($odb, 'beck_hardware', (int)$oNow['epoch'], $tid);
+$rs = xeric_play_room_say($ow, 'Evening, all.', $oNow);
+xeric_room_live_edit($odb, function (?array &$l): void { $l['lease'] = null; $l['budget'] = 0; });
+xeric_session_use($TG);
+$gw = xeric_play_open($tslug);
+ok('together: the guest really is elsewhere, by their own position',
+    xeric_player_where($gw['template'], $gw['db']) === 'beck_hardware'
+    && xeric_player_where($gw['template'], $gw['db'], 1) === 'bluebird');
+$gLive = xeric_room_live_get($gw['db']);
+ok('together: a second player\'s request from elsewhere does not read as the room\'s player leaving',
+    $gLive !== null && xeric_room_over($gw['template'], $gw['db'], $gLive, xeric_clock_now($gw['db'], $gw['template'])) === null);
+ok('together: and its tick seals nothing', xeric_play_room_tick($gw) === [] && xeric_room_live_get($gw['db']) !== null);
+xeric_session_use($O);
+xeric_player_move($odb, 'beck_hardware', (int)$oNow['epoch'], 1);
+$ow = xeric_play_open($tslug);
+ok('together: while the room\'s own player walking out still ends it',
+    xeric_room_over($ow['template'], $odb, (array)xeric_room_live_get($odb), xeric_clock_now($odb, $ow['template'])) === 'you left');
+
+$pp2 = (string)file_get_contents(dirname(__DIR__) . '/play.php');
+ok('together: the page labels a player bubble with its speaker only when the row says whose it is',
+    str_contains($pp2, "m.player ? m.who : ''") && str_contains($pp2, "(by ? '<span class=\"rwho\">' + esc(by) + '</span>' : '')"));
+ok('together: and draws a redacted line as a gap with no speaker', str_contains($pp2, "who + (redacted ? ' redacted' : '')")
+    && str_contains($pp2, "!photo && !redacted"));
+
+xeric_state_rating('');
+xeric_session_use($A);
+$odb = null; $ow = null; $gw = null; $hw = null;
 
 // ---------------------------------------------------------------------------
 

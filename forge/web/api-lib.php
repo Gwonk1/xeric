@@ -774,7 +774,27 @@ function xeric_api_shape_thread(PDO $db, array $th, int $since = 0): array
     $msgs = array_values(array_filter((array)($th['messages'] ?? []), fn($m) => (int)($m['id'] ?? 0) > $since));
     $ids  = array_map(fn($m) => (int)$m['id'], $msgs);
     $ep   = xeric_api_epochs($db, $ids);
-    foreach ($msgs as $i => $m) $msgs[$i]['epoch'] = $ep[(int)$m['id']] ?? 0;
+    // WHO SAID A PLAYER LINE, on every row and always the same shape — a
+    // client keys a bubble on it without first asking whether the thread has
+    // two people in it. The player's index on a user row (NULL on disk is the
+    // first), null on everybody else's. `redacted` says a line stamped above
+    // this device's rating arrived emptied (xeric_messages_recent): the kids'
+    // headset reads "(a line you are not shown)" and nothing of what was said.
+    $who = [];
+    if ($ids !== []) {
+        $st = $db->prepare('SELECT id, role, player FROM messages WHERE id IN ('
+            . implode(',', array_fill(0, count($ids), '?')) . ')');
+        $st->execute($ids);
+        foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $who[(int)$r['id']] = (string)$r['role'] === 'user' ? max(1, (int)($r['player'] ?? 0)) : null;
+        }
+        $st->closeCursor();
+    }
+    foreach ($msgs as $i => $m) {
+        $msgs[$i]['epoch']    = $ep[(int)$m['id']] ?? 0;
+        $msgs[$i]['player']   = $who[(int)$m['id']] ?? null;
+        $msgs[$i]['redacted'] = !empty($m['redacted']);
+    }
     $last = $ids === [] ? $since : max($ids);
     return ['conversation_id' => $th['conversation_id'] ?? null, 'since' => $since, 'last' => $last,
             'messages' => $msgs];

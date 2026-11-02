@@ -32,6 +32,56 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/play-lib.php';
+require_once XERIC_WEB_LIB . '/engine/travel.php';   // the bodies, and players.php's seam with them
+
+// ---------------------------------------------------------------------------
+// Whose body: the web half of xeric_player_current()
+// ---------------------------------------------------------------------------
+
+/**
+ * WHICH PLAYER IS LOOKING, for one open world database — the resolver the
+ * engine's seam is handed (engine/players.php), installed below on include so
+ * every page and worker that loads play-lib asks the same question the same
+ * way. Here, rather than in the engine, because the answer is a session's
+ * (xeric_session_player) and the engine never reads one.
+ *
+ * Read off WHICH FILE IS OPEN, the same test xeric_play_is_guest() makes: only
+ * a world's own `world.db` under this server's worlds directory has more than
+ * one person in it — the owner, and anybody who came in through a pairing
+ * code. A fork in a session directory is its visitor's own evening, and they
+ * are its first person; so is a database this cannot place (a test's temp
+ * file, `:memory:`). Remembered per database and session, because the engine
+ * asks on every read of position and the answer cannot change mid-request.
+ */
+function xeric_play_player_of(?PDO $db): int
+{
+    static $memo = null;
+    if ($db === null) return XERIC_PLAYER_FIRST;
+    $memo ??= new WeakMap();
+    $sid  = xeric_session_id();
+    $seen = $memo[$db] ?? [];
+    if (isset($seen[$sid])) return $seen[$sid];
+
+    $id = XERIC_PLAYER_FIRST;
+    try {
+        $file = '';
+        foreach ($db->query('PRAGMA database_list')->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            if ((string)($r['name'] ?? '') === 'main') $file = (string)($r['file'] ?? '');
+        }
+        $root = realpath(xeric_web_worlds_dir());
+        if ($file !== '' && basename($file) === 'world.db' && $root !== false
+            && realpath(dirname($file, 2)) === $root) {
+            $id = xeric_session_player(basename(dirname($file)), $sid) ?? XERIC_PLAYER_FIRST;
+        }
+    } catch (Throwable $e) {
+        $id = XERIC_PLAYER_FIRST;                    // fail toward the owner's body
+    }
+    $seen[$sid] = $id;
+    $memo[$db]  = $seen;
+    return $id;
+}
+
+xeric_player_current('xeric_play_player_of');
 
 /** The drawing's width in user units. Height follows the town's shape. */
 const XERIC_MAP_W = 320;
@@ -199,9 +249,15 @@ function xeric_play_map_svg(array $map, string $slug): string
             $rad   = 19 + 12 * $ring;
             $dx    = $cx + $rad * cos($ang);
             $dy    = $cy + $rad * sin($ang);
-            $doing = !empty($c['at_home']) ? 'at home' : (string)$c['doing'];
-            $out .= '<g class="wch" data-handle="' . h($c['handle']) . '" data-name="' . h($c['name'])
-                 . '" data-doing="' . h($doing) . '">'
+            // ANOTHER PLAYER is a person in the company like anybody, drawn
+            // with its own ring (.wpc) so nobody mistakes a friend for the cast,
+            // and said as what it is: there is no errand to print for a human.
+            $pc    = !empty($c['player']);
+            $doing = $pc ? 'another player'
+                   : (!empty($c['at_home']) ? 'at home' : (string)($c['doing'] ?? ''));
+            $out .= '<g class="wch' . ($pc ? ' wpc' : '') . '" data-handle="' . h($c['handle']) . '" data-name="' . h($c['name'])
+                 . '" data-doing="' . h($doing) . '"' . ($pc ? ' data-player="1"' : '') . '>'
+                 . ($pc ? '<title>' . h($c['name'] . ', another player') . '</title>' : '')
                  . '<circle cx="' . xeric_play_map_n($dx) . '" cy="' . xeric_play_map_n($dy) . '" r="6.5"/>'
                  . '<text x="' . xeric_play_map_n($dx) . '" y="' . xeric_play_map_n($dy + 2.3) . '">'
                  . h(xeric_play_map_initials((string)$c['name'])) . '</text></g>';

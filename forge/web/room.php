@@ -106,7 +106,7 @@ if ($action === '') {
         'ok'    => true,
         'live'  => $pub,
         'conv'  => $conv,
-        'rows'  => $names !== null ? xeric_play_room_rows($T, $names, $rows) : [],
+        'rows'  => $names !== null ? xeric_play_room_rows($T, $names, $rows, $db) : [],
         'last'  => $rows !== [] ? (int)$rows[count($rows) - 1]['id'] : $after,
         'poll'  => $pub !== null && $pub['turn'] ? 700 : 4000,
         'guest' => $guest,

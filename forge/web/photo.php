@@ -93,6 +93,10 @@ $row = xeric_photo_of($w['db'], $kind, $subj);
 if ($row === null || (string)$row['status'] !== 'done' || (string)$row['file'] === '') {
     http_response_code(404); exit;
 }
+// RENDERED ABOVE THIS VIEWER (xeric_state_shown — the rating xeric_play_open
+// clamped this request to): not served, and every page that draws a photo
+// already folds back to its caption when the picture does not come.
+if (!xeric_state_shown((string)($row['rating'] ?? ''))) { http_response_code(404); exit; }
 
 // The file column is the reaper's own write, never a user string — and it is
 // still basename()d, because a database row is an input like any other.

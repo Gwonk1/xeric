@@ -68,6 +68,79 @@ function xeric_state_time(?int $pin = null): int
 }
 
 /**
+ * The effective rating THIS process writes and reads at.
+ *
+ * One value doing two jobs, because in this app they are the same number: the
+ * rating xeric_play_open() clamped the template to for the session that asked
+ * (affirmed adult, and the device's own bit, under the world's ceiling) is
+ * both what anything generated in this request was generated under — so it is
+ * the stamp every new message, event and render row carries — and what the
+ * person on the other end of this request may be shown — so it is the viewer
+ * every reader filters against. The heart opens each world as its owner's
+ * session and so stamps what that session runs at.
+ *
+ * Passing an argument sets it (xeric_play_open does, once per world opened);
+ * nothing set is '' — no stamp written and nothing hidden, which is exactly
+ * how every row and every reader behaved before rows carried one. That is
+ * what keeps a CLI, a test and the continuity harness byte-identical.
+ */
+function xeric_state_rating(?string $set = null): string
+{
+    static $cur = '';
+    if (func_num_args() > 0) $cur = strtolower(trim((string)$set));
+    return $cur;
+}
+
+/**
+ * May a viewer at $viewer (default: this process's) see a row stamped $stamp?
+ *
+ * An empty stamp is a row from before stamps, and an empty viewer is a process
+ * nobody clamped: both are today's behaviour, shown. Otherwise it is rank
+ * against rank, and an unknown word ranks as the floor (walls.php), so a
+ * garbled stamp hides from nobody it would not already have been shown to and
+ * a garbled viewer is shown only the floor.
+ */
+function xeric_state_shown(?string $stamp, ?string $viewer = null): bool
+{
+    $stamp  = strtolower(trim((string)$stamp));
+    $viewer = $viewer === null ? xeric_state_rating() : strtolower(trim($viewer));
+    if ($stamp === '' || $viewer === '') return true;
+    if (!function_exists('xeric_rating_rank')) require_once __DIR__ . '/walls.php';
+    return xeric_rating_rank($viewer) >= xeric_rating_rank($stamp);
+}
+
+/** What a message reads as to somebody it may not be shown to. */
+const XERIC_STATE_UNSHOWN = '(a line you are not shown)';
+
+/** What an hour reads as to somebody it may not be shown to. */
+const XERIC_STATE_UNSHOWN_HOUR = '(an hour you are not shown)';
+
+/**
+ * One message row as THIS viewer may read it: unchanged when shown, and
+ * otherwise the same row with nothing of what was said in it — the content
+ * replaced by the sentence above and `redacted` set, so a caller can draw the
+ * gap and a prompt can carry the turn without its words.
+ */
+function xeric_state_message_shown(array $m, ?string $viewer = null): array
+{
+    if (xeric_state_shown((string)($m['rating'] ?? ''), $viewer)) return $m;
+    $m['content']  = XERIC_STATE_UNSHOWN;
+    $m['redacted'] = true;
+    return $m;
+}
+
+/** The same for an event row: the hour happened; what happened in it is not shown. */
+function xeric_state_event_shown(array $e, ?string $viewer = null): array
+{
+    if (xeric_state_shown((string)($e['rating'] ?? ''), $viewer)) return $e;
+    $e['title'] = XERIC_STATE_UNSHOWN_HOUR;
+    $e['prose'] = '';
+    if (array_key_exists('overheard', $e)) $e['overheard'] = '';
+    $e['redacted'] = true;
+    return $e;
+}
+
+/**
  * Idempotent schema. Add columns at the bottom of xeric_state_alters(); never
  * edit a CREATE TABLE that has shipped, because existing worlds will not re-run it.
  */
@@ -389,6 +462,21 @@ function xeric_state_alters(): array
         ['scene_jobs', 'light',   "TEXT NOT NULL DEFAULT ''"],
         // What a render was conditioned on (portrait chaining's reference_of).
         ['photo_jobs', 'meta', "TEXT NOT NULL DEFAULT '{}'"],
+        // WHICH person at the centre said a user line (M4, "threads that know
+        // who said what"). NULL on every row from before, and NULL reads as the
+        // first player — the signals column's rule, for the signals column's
+        // reason: nothing on disk changes meaning and nothing is backfilled.
+        ['messages', 'player', 'INTEGER'],
+        // THE RATING A ROW WAS MADE UNDER — the effective rating of the session
+        // whose request (or heart beat) wrote it, xeric_state_rating(). '' is
+        // every row from before, and it means what it always meant: the
+        // world's rating at the time, shown to whoever can open the world. A
+        // viewer whose own effective rating ranks below a row's stamp reads
+        // the row redacted (xeric_state_shown), which is the kids' headset.
+        ['messages',   'rating', "TEXT NOT NULL DEFAULT ''"],
+        ['events',     'rating', "TEXT NOT NULL DEFAULT ''"],
+        ['scene_jobs', 'rating', "TEXT NOT NULL DEFAULT ''"],
+        ['photo_jobs', 'rating', "TEXT NOT NULL DEFAULT ''"],
     ];
 }
 
@@ -496,11 +584,15 @@ function xeric_conversation_unread_total(PDO $db): int
  * @param int|null $worldEpoch the WORLD's clock, not the server's — a message
  *                 written during a fast-forward belongs to the fast-forwarded hour.
  */
-function xeric_message_append(PDO $db, int $conversationId, string $role, ?string $handle, string $content, ?int $worldEpoch = null, ?int $at = null): int
+function xeric_message_append(PDO $db, int $conversationId, string $role, ?string $handle, string $content, ?int $worldEpoch = null, ?int $at = null, ?int $player = null): int
 {
     $at = $at ?? xeric_state_time();
-    $st = $db->prepare('INSERT INTO messages (conversation_id, role, handle, content, created_at, world_epoch) VALUES (?, ?, ?, ?, ?, ?)');
-    $st->execute([$conversationId, $role, $handle, $content, $at, $worldEpoch]);
+    // WHO SAID IT, on a user line only — a character's line is its handle's,
+    // and a narrator's is nobody's. Null (every caller that does not say) is
+    // the first player, which is what an unmarked row has always meant.
+    $player = $role === 'user' && $player !== null && $player >= 1 ? $player : null;
+    $st = $db->prepare('INSERT INTO messages (conversation_id, role, handle, content, created_at, world_epoch, player, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    $st->execute([$conversationId, $role, $handle, $content, $at, $worldEpoch, $player, xeric_state_rating()]);
     $id = (int)$db->lastInsertId();
 
     // Unread is a property of the thread the character just spoke into.
@@ -553,12 +645,15 @@ function xeric_messages_recent(PDO $db, int $conversationId, int $limit = 20, in
         $st->execute([$conversationId, $drop]);
         $rows = $st->fetchAll();
         $st->closeCursor();
-        return $rows ?: [];
+        // AS THIS VIEWER MAY READ THEM, prompts included: a line stamped above
+        // the session asking is not shown to it, and is not handed to a model
+        // writing for it either — that is the same leak by a longer road.
+        return array_map('xeric_state_message_shown', $rows ?: []);
     }
 
     $st = $db->prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?');
     $st->execute([$conversationId, $limit]);
-    return array_reverse($st->fetchAll());
+    return array_map('xeric_state_message_shown', array_reverse($st->fetchAll()));
 }
 
 function xeric_messages_count(PDO $db, int $conversationId): int
@@ -716,8 +811,8 @@ function xeric_arcs_count(PDO $db): int
 function xeric_event_add(PDO $db, string $title, int $worldEpoch, ?string $place, array $participants, string $prose = '', ?int $at = null, bool $onSpine = false, string $overheard = ''): int
 {
     $at = $at ?? xeric_state_time();
-    $st = $db->prepare('INSERT INTO events (title, world_epoch, place, participants, prose, created_at, on_spine, overheard) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    $st->execute([$title, $worldEpoch, $place, json_encode(array_values($participants), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $prose, $at, $onSpine ? 1 : 0, $overheard]);
+    $st = $db->prepare('INSERT INTO events (title, world_epoch, place, participants, prose, created_at, on_spine, overheard, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $st->execute([$title, $worldEpoch, $place, json_encode(array_values($participants), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $prose, $at, $onSpine ? 1 : 0, $overheard, xeric_state_rating()]);
     return (int)$db->lastInsertId();
 }
 
@@ -732,6 +827,7 @@ function xeric_events_recent(PDO $db, int $limit = 10): array
         // A bool on the way out, the same shape a sweep hands its caller, so a
         // wall that reads it does not have to know it came from a column.
         $r['on_spine'] = (int)($r['on_spine'] ?? 0) === 1;
+        $r = xeric_state_event_shown($r);
     }
     return $rows;
 }

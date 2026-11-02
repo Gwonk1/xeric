@@ -520,7 +520,7 @@ foreach ([
     'power'  => 'the clock and the learning switch',
     'fate'   => 'ending the world',
     'photo'  => 'photo consent and the spend behind it',
-    'where'  => 'walking the owner\'s character',
+    'where'  => 'walking with no seat in the roster (a joined player walks their own body)',
     'tick'   => 'taking back the last skip',
 ] as $page => $why) {
     ok("guest: $page.php asks before it writes — $why",

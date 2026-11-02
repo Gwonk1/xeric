@@ -5,6 +5,10 @@
  *     GET  where.php?w=<slug>        → the map at this moment
  *     POST where.php {world, to}     → go there; burns the minutes; returns the map
  *
+ * Both for the CURRENT player — whoever this session is in this world (the
+ * owner, or a guest who joined on a code): `you` is them, the other players
+ * stand in `who` with `player: true`, and a trip moves their body alone.
+ *
  * THIS FILE IS THE ARCHITECTURE, not a feature. Everything spatial anybody ever
  * builds on top of Xeric — a clickable map, a first-person view, a headset, the
  * row of buttons play.php draws today — is a CLIENT of this endpoint. The bet
@@ -49,9 +53,22 @@ if (!$post) {
     xeric_web_json(['ok' => true] + xeric_travel_map($w['template'], $w['db']));
 }
 
-// Reading the map is everybody's; WALKING is the owner's, and only when this
-// is their real world — a stranger moves around their own fork freely.
-xeric_play_owner_only($w, 'walking about the place');
+// Reading the map is everybody's, and so, now, is WALKING — each person their
+// own body. Walking was the owner's alone while a world had one body, because
+// a guest walking it was a guest walking the owner's character across town.
+// With a body each (engine/travel.php, FUTURE.md M4), a guest who came in on
+// a pairing code walks THEMSELVES: the trip moves only the current player
+// (xeric_player_current, resolved from this session in play-map.php) and
+// spends the shared clock everybody in the world lives on. A stranger on a
+// shared host still walks only their own fork, which is all they ever had
+// open. What stays the owner's — fate, the power switch, photos — stays
+// refused at those doors.
+//
+// A guest on the canonical file with no seat in its roster is not a joined
+// player, it is a hole, and is refused as the guest it looks like.
+if (xeric_play_is_guest($w) && xeric_session_player((string)$w['slug'], $sid) === null) {
+    xeric_play_owner_only($w, 'walking about the place');
+}
 
 // -- go -----------------------------------------------------------------------
 // `to` absent, null or empty means leaving the map: going off on your own time
@@ -82,7 +99,11 @@ if (!$trip['ok']) {
 if (($trip['to'] ?? null) !== null || ($trip['from'] ?? null) !== null) {
     try {
         $live = xeric_room_live_get($w['db']);
-        if ($live !== null && (string)$live['place'] !== (string)($trip['to'] ?? '')) {
+        // Only the walker's own room: a guest stepping out of the diner does
+        // not end a conversation the owner is still standing in.
+        $ours = $live !== null
+             && (int)($live['player']['id'] ?? XERIC_PLAYER_FIRST) === xeric_player_current(null, $w['db']);
+        if ($live !== null && $ours && (string)$live['place'] !== (string)($trip['to'] ?? '')) {
             if (xeric_room_seal($w['db'], 'you left', xeric_clock_now($w['db'], $w['template'])) !== null) {
                 xeric_web_spawn(xeric_web_job_new(), ['slug' => (string)$w['slug'], 'sid' => xeric_session_id(),
                     'db' => (string)$w['db_path'], 'adult' => xeric_session_adult(), 'lease' => ''], 'room-worker.php');
@@ -111,5 +132,5 @@ xeric_web_json([
         // engine (xeric_travel_scene), never asked of a model. '' when there
         // is nothing to say, and the client falls back to its plain line.
         'scene'   => (string)($trip['scene'] ?? ''),
-    ],
+    ] + (isset($trip['players']) ? ['players' => $trip['players']] : []),   // the other players there, if any
 ] + xeric_travel_map($w['template'], $w['db'], $trip['now']));

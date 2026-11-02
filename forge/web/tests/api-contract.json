@@ -276,6 +276,8 @@
         "messages",
         "messages[].epoch",
         "messages[].id",
+        "messages[].player",
+        "messages[].redacted",
         "messages[].role",
         "messages[].text",
         "messages[].when",

@@ -377,22 +377,22 @@ function xeric_photo_caption(array $composed): string
 function xeric_photo_backfill(array $t, PDO $db, ?int $at = null): array
 {
     $at  = $at ?? xeric_state_time();
-    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, created_at)
-                         VALUES (?, ?, ?, ?)');
+    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, created_at, rating)
+                         VALUES (?, ?, ?, ?, ?)');
     $n   = ['portraits' => 0, 'places' => 0];
 
     foreach ((array)($t['cast']['characters'] ?? []) as $c) {
         $h = (string)($c['handle'] ?? '');
         if ($h === '') continue;
         $cap = xeric_photo_caption(xeric_photo_prompt($t, 'portrait', ['handle' => $h, 'ask' => 'a portrait']));
-        $ins->execute(['portrait', $h, $cap, $at]);
+        $ins->execute(['portrait', $h, $cap, $at, xeric_state_rating()]);
         $n['portraits'] += $ins->rowCount();
     }
     foreach ((array)($t['places'] ?? []) as $p) {
         $k = (string)($p['key'] ?? '');
         if ($k === '') continue;
         $cap = xeric_photo_caption(xeric_photo_prompt($t, 'place', ['place' => $k]));
-        $ins->execute(['place', $k, $cap, $at]);
+        $ins->execute(['place', $k, $cap, $at, xeric_state_rating()]);
         $n['places'] += $ins->rowCount();
     }
     return $n;
@@ -827,10 +827,15 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                 $meta['reference_of']          = (int)$ref['id'];
                 $meta['reference_fingerprint'] = (string)$ref['fingerprint'];
             }
-            $st = $db->prepare('UPDATE photo_jobs SET status = ?, file = ?, tries = tries + 1, done_at = ?, meta = ?
-                                WHERE id = ?');
+            // RE-STAMPED AT THE RENDER: a photo's prompt is composed here, from
+            // the template this reaper was opened with, so this is the rating
+            // it was generated under — not whoever happened to enqueue the row.
+            // An unclamped process ('') leaves the enqueue stamp standing.
+            $st = $db->prepare("UPDATE photo_jobs SET status = ?, file = ?, tries = tries + 1, done_at = ?, meta = ?,
+                                rating = CASE WHEN ? = '' THEN rating ELSE ? END WHERE id = ?");
             $st->execute(['done', $file, xeric_state_time(),
-                          json_encode((object)$meta, JSON_UNESCAPED_SLASHES), (int)$job['id']]);
+                          json_encode((object)$meta, JSON_UNESCAPED_SLASHES),
+                          xeric_state_rating(), xeric_state_rating(), (int)$job['id']]);
             $out['done']++;
             if (($fn = xeric_photo_meter()) !== null) {
                 $fn(['images' => 1] + $img['usage'], (string)($endpoint['base'] ?? 'stub'));
@@ -858,9 +863,10 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
 function xeric_photo_enqueue_message(PDO $db, string $handle, int $messageId, int $convId,
                                      string $ask, string $caption, ?int $at = null): int
 {
-    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, ask, conv, created_at)
-                         VALUES (?, ?, ?, ?, ?, ?)');
-    $ins->execute(['message', $handle . '#' . $messageId, $caption, $ask, $convId, $at ?? xeric_state_time()]);
+    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, ask, conv, created_at, rating)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $ins->execute(['message', $handle . '#' . $messageId, $caption, $ask, $convId, $at ?? xeric_state_time(),
+                   xeric_state_rating()]);
     return (int)$db->lastInsertId();
 }
 

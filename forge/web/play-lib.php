@@ -218,6 +218,12 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
     // told, the same way and by the same request that tells it which database
     // to write. Null still means ask, so every ordinary page is unchanged.
     $t = xeric_world_clamp_rating($t, $adult ?? xeric_session_adult());
+    // AND THAT RATING IS THIS PROCESS'S, both ways (xeric_state_rating): every
+    // row written from here on is stamped with what it was generated under,
+    // and every row read from here on is shown only if its stamp is within it.
+    // A kids' headset is a device whose bit makes xeric_session_adult() false,
+    // so it lands here as the floor and never reads an adult-stamped line.
+    xeric_state_rating((string)($t['meta']['rating'] ?? xeric_ratings()[0]));
 
     if ($dbPath === null) {
         $pick = xeric_session_db($slug);
@@ -268,8 +274,24 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
     // not set — a per-world stop, a worker's, a repair — and starting a world
     // again is a decision somebody makes on the model page, not a side effect of
     // looking at it.
+    //
+    // AND ONLY FOR THE OWNER'S CLOCK. A guest who came in on a pairing code is
+    // standing in the owner's canonical world, and whether THEIR session has a
+    // machine attached says nothing about the owner's — a guest on a phone with
+    // nothing wired was pausing the owner's running evening just by opening
+    // it. The canonical clock is the owner's to stop; a guest's open never
+    // moves it, either way — nor does a worker a guest's request started, which
+    // is handed the canonical path and so reads as `mine`. Asked by WHO this
+    // process acts for, not by which file it holds. A stranger's fork is their
+    // own and still reconciles.
     try {
-        if (!xeric_web_connected(xeric_web_model()) && !xeric_clock_is_paused($db)) {
+        $guest = (string)$pick['path'] === $dir . '/world.db'
+              && (int)(xeric_session_player($slug) ?? XERIC_PLAYER_FIRST) > XERIC_PLAYER_FIRST;
+    } catch (Throwable $e) {
+        $guest = !$pick['mine'] && (string)$pick['path'] === $dir . '/world.db';
+    }
+    try {
+        if (!$guest && !xeric_web_connected(xeric_web_model()) && !xeric_clock_is_paused($db)) {
             xeric_clock_pause($db);
         }
     } catch (Throwable $e) {
@@ -1383,11 +1405,18 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
         $st = $db->prepare(
             'SELECT c.id, c.handle, c.kind, c.title, c.unread, c.updated_at,'
             . ' (SELECT m.content FROM messages m WHERE m.conversation_id = c.id'
-            . '  ORDER BY m.id DESC LIMIT 1) AS last'
+            . '  ORDER BY m.id DESC LIMIT 1) AS last,'
+            . ' (SELECT m.rating FROM messages m WHERE m.conversation_id = c.id'
+            . '  ORDER BY m.id DESC LIMIT 1) AS last_rating'
             . ' FROM conversations c ORDER BY c.updated_at DESC, c.id DESC LIMIT 14');
         $st->execute();
         $threads = $st->fetchAll();
         $st->closeCursor();
+        // The snippet is the newest line, and it is read as this viewer may read it.
+        foreach ($threads as &$th) {
+            if (!xeric_state_shown((string)($th['last_rating'] ?? ''))) $th['last'] = XERIC_STATE_UNSHOWN;
+        }
+        unset($th);
     } catch (Throwable $e) { $threads = []; }
 
     // Every room's hours, read once off the template: the sidebar answers
@@ -1864,21 +1893,38 @@ function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60): 
     // the picture in when it lands.
     $shots = xeric_photo_thread($db, $id);
 
+    // WHO SAID IT, once it matters: with more than one person at the centre
+    // having spoken in this thread, a player's line carries that player's
+    // roster name and number, and the page labels the bubble with them. One
+    // voice, and the row is exactly what it was — "you", unlabelled.
+    $voices = [];
+    foreach ($rows as $m) {
+        if ((string)$m['role'] === 'user') $voices[max(XERIC_PLAYER_FIRST, (int)($m['player'] ?? 0))] = true;
+    }
+    $many = count($voices) > 1;
+
     $out = [];
     foreach ($rows as $m) {
+        $p = max(XERIC_PLAYER_FIRST, (int)($m['player'] ?? 0));
         $row = [
             // The id rides along for the speaker beside a bubble (speak.php),
             // which asks after a line by id and by nothing else.
             'id'   => (int)$m['id'],
             'role' => (string)$m['role'],
             'who'  => (string)$m['role'] === 'user'
-                        ? (trim((string)($t['user']['name'] ?? '')) ?: 'you')
+                        ? ($many ? xeric_player_name($db, $p, $t)
+                                 : (trim((string)($t['user']['name'] ?? '')) ?: 'you'))
                         : xeric_world_name($t, (string)($m['handle'] ?? $handle)),
             'text' => (string)$m['content'],
             'when' => xeric_play_stamp($t, (int)($m['world_epoch'] ?? $m['created_at'])),
         ];
+        if ($many && (string)$m['role'] === 'user') $row['player'] = $p;
+        // A line stamped above this viewer arrives already emptied
+        // (xeric_messages_recent); the flag lets the page draw it as a gap.
+        if (!empty($m['redacted'])) $row['redacted'] = true;
         $shot = $shots[(int)$m['id']] ?? null;
-        if ($shot !== null && (string)$shot['status'] === 'done') {
+        if ($shot !== null && (string)$shot['status'] === 'done' && empty($m['redacted'])
+            && xeric_state_shown((string)($shot['rating'] ?? ''))) {
             $row['photo'] = ['k' => 'message', 's' => (string)$shot['subject'],
                              'caption' => (string)$shot['caption']];
         }

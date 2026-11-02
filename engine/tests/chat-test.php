@@ -914,6 +914,117 @@ xeric_remind_done($dbR2, $rid3, $rNow);
 ok('remind: one already claimed elsewhere is not reported as sent',
     xeric_remind_fire($dbR1, [], 'Milldale', $rNow) === []);
 
+// ---------------------------------------------------------------------------
+// WHO SAID IT. A player id on every user line; a transcript that labels them
+// once two people have spoken; a promise put on the person who made it.
+// ---------------------------------------------------------------------------
+
+echo "\n# who said it\n";
+
+require_once __DIR__ . '/../constructs.php';
+require_once __DIR__ . '/../trust.php';
+
+// SOLO IS BYTE-IDENTICAL. The same thread written the old way (no player) and
+// the new way (player 1 on every user line) builds the same prompt, and the
+// same prompt as one that never mentions a player at all.
+$soloOld = fresh_db('who-solo-old');
+$soloNew = fresh_db('who-solo-new');
+foreach ([[$soloOld, null], [$soloNew, 1]] as [$dS, $pS]) {
+    $cS = xeric_conversation_create($dS, 'ruth', 'chat', null, 1000);
+    xeric_message_append($dS, $cS, 'user', null, 'Is the urn on?', $NOW['epoch'] - 600, 1000, $pS);
+    xeric_message_append($dS, $cS, 'character', 'ruth', 'It is always on.', $NOW['epoch'] - 590, 1001);
+}
+$pOld = xeric_prompt_build($T, $soloOld, 'ruth', $NOW, ['user_message' => 'Good.']);
+$pNew = xeric_prompt_build($T, $soloNew, 'ruth', $NOW, ['user_message' => 'Good.', 'player' => 1]);
+ok('who: a solo thread\'s prompt is byte-identical whether its rows carry a player or not',
+    json_encode($pOld) === json_encode($pNew));
+ok('who: and no line in it is labelled with anybody\'s name',
+    !str_contains(json_encode($pNew), 'Walt: '));
+ok('who: the player lands on the user row, and on nobody else\'s',
+    $soloNew->query("SELECT GROUP_CONCAT(COALESCE(player, 'null')) FROM messages ORDER BY id")->fetchColumn() === '1,null');
+
+// TWO PEOPLE IN ONE THREAD. Walt (the owner) says hello; Corey promises the dish.
+$TW  = array_merge($T, ['forge' => array_merge((array)($T['forge'] ?? []), ['armed' => ['expectations']])]);
+$dW  = fresh_db('who-two');
+$cid = xeric_player_add($dW, $TW, 'Corey');
+$seenW = null;
+xeric_chat_turn($TW, $dW, 'ruth', 'Evening, Ruth.', $NOW, stub_says('Evening, Walt.', $seenW),
+                ['learn' => false, 'remind' => false, 'player' => 1]);
+ok('who: one voice in the thread, and the incoming line is unlabelled',
+    !str_contains(json_encode($seenW), 'Walt: Evening'));
+xeric_chat_turn($TW, $dW, 'ruth', 'I will bring the dish round Saturday.', $NOW,
+                stub_says('I will hold you to that.', $seenW), ['learn' => false, 'remind' => false, 'player' => $cid]);
+$flat = implode("\n", array_column((array)$seenW, 'content'));
+ok('who: once a second person speaks, every player line is labelled with its speaker',
+    str_contains($flat, 'Walt: Evening, Ruth.') && str_contains($flat, 'Corey: I will bring the dish round Saturday.'),
+    mb_substr($flat, -400));
+ok('who: and Ruth is told she is texting the one who typed',
+    str_contains((string)($seenW[0]['content'] ?? ''), 'texting Corey'));
+ok('who: the rows say who said what',
+    $dW->query("SELECT GROUP_CONCAT(COALESCE(player, 'null')) FROM messages ORDER BY id")->fetchColumn() === '1,null,' . $cid . ',null');
+
+// The harvest is paid for by WALT's turn (player 1), and the promise is Corey's.
+$convW = (int)xeric_conversation_find($dW, 'ruth', 'chat')['id'];
+$askedW = null;
+xeric_chat_extract($TW, $dW, 'ruth', $convW, stub_says(function (string $tag, array $msgs) use (&$askedW): array {
+    $askedW = $msgs;
+    return ['memories' => [], 'promise' => ['quote' => 'I will bring the dish round Saturday',
+            'what' => 'the dish', 'when' => 'Saturday'], 'explained' => false, 'kept' => false];
+}), $NOW, 1);
+$asked = implode("\n", array_column((array)$askedW, 'content'));
+ok('who: the harvest reads the transcript with each player named',
+    str_contains($asked, 'Corey: I will bring the dish') && str_contains($asked, 'Walt: Evening, Ruth.'));
+$ex = xeric_expects_for($dW, 'ruth');
+ok('who: the expectation is the promiser\'s, not the harvest-payer\'s',
+    count($ex) === 1 && (int)($ex[0]['p'] ?? 1) === $cid, json_encode($ex));
+xeric_constructs_tick($TW, $dW, ['epoch' => (int)$ex[0]['due'] + 8 * 86400]);
+ok('who: and the miss costs Corey, and only Corey',
+    xeric_trust_of($dW, 'ruth', null, $cid) < 0 && xeric_trust_of($dW, 'ruth', null, 1) === 0,
+    xeric_trust_of($dW, 'ruth', null, $cid) . ' / ' . xeric_trust_of($dW, 'ruth', null, 1));
+ok('who: a quote that matches no line falls back to whoever ran the harvest',
+    xeric_chat_promiser([['role' => 'user', 'content' => 'hello', 'player' => 3]], ['quote' => 'see you Monday'], 2) === 2
+    && xeric_chat_promiser([['role' => 'user', 'content' => 'OK — see you, Monday!', 'player' => 3]],
+                           ['quote' => 'see you Monday'], 2) === 3);
+
+// ---------------------------------------------------------------------------
+// RATING PER VIEWER. A row carries the rating its request ran at; a viewer
+// below it reads the row emptied; an unstamped row is read as it always was.
+// ---------------------------------------------------------------------------
+
+echo "\n# rating per viewer\n";
+
+$dR = fresh_db('rating');
+$cR = xeric_conversation_create($dR, 'ruth', 'chat', null, 1000);
+xeric_state_rating('mature');
+$mR = xeric_message_append($dR, $cR, 'character', 'ruth', 'A line written for adults.', 100, 1000);
+$eR = xeric_event_add($dR, 'An adult hour', 200, 'bluebird', ['ruth'], 'What happened, in full.');
+xeric_state_rating('');
+xeric_message_append($dR, $cR, 'character', 'ruth', 'A line from before stamps.', 101, 1001);
+ok('rating: a row is stamped with the rating it was written under, and nothing set stamps nothing',
+    $dR->query('SELECT GROUP_CONCAT(rating, \'|\') FROM messages ORDER BY id')->fetchColumn() === 'mature|'
+    && $dR->query('SELECT rating FROM events')->fetchColumn() === 'mature');
+xeric_state_rating('sfw');
+$readKid = xeric_messages_recent($dR, $cR);
+$evKid   = xeric_events_recent($dR)[0];
+ok('rating: a viewer below the stamp reads the line as a gap, with no text',
+    $readKid[0]['content'] === XERIC_STATE_UNSHOWN && !empty($readKid[0]['redacted']));
+ok('rating: an unstamped row is shown to the same viewer, as today',
+    $readKid[1]['content'] === 'A line from before stamps.' && empty($readKid[1]['redacted']));
+ok('rating: and the hour is an hour, with nothing of what happened in it',
+    $evKid['title'] === XERIC_STATE_UNSHOWN_HOUR && $evKid['prose'] === '' && !empty($evKid['redacted']));
+xeric_state_rating('mature');
+ok('rating: the same rows read whole at the rating they were made under',
+    xeric_messages_recent($dR, $cR)[0]['content'] === 'A line written for adults.'
+    && xeric_events_recent($dR)[0]['prose'] === 'What happened, in full.');
+xeric_state_rating('explicit');
+ok('rating: and above it', xeric_messages_recent($dR, $cR)[0]['content'] === 'A line written for adults.');
+xeric_state_rating('');
+ok('rating: a process nobody clamped reads everything, which is every CLI and test',
+    xeric_messages_recent($dR, $cR)[0]['content'] === 'A line written for adults.'
+    && xeric_state_shown('explicit') && xeric_state_shown('', 'sfw') && !xeric_state_shown('teen', 'pg'));
+$dR = null;
+$soloOld = $soloNew = $dW = null;
+
 $dbR1 = $dbR2 = null;
 
 $dbS = null;

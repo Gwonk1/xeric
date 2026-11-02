@@ -475,6 +475,24 @@ ok('which is xeric_play_open\'s own clamp', xeric_world_rating(xeric_play_open($
 [, , , $d] = req($port, '/api.php/v1/', ['Authorization: Bearer ' . $tokKid]);
 ok('and the index says how this request was identified', ($d['auth']['via'] ?? '') === 'bearer');
 
+echo "\n# a render above the viewer\n";
+
+$db->prepare("UPDATE scene_jobs SET rating = 'mature' WHERE key = 'bluebird' AND fingerprint = ?")->execute([$fp]);
+[$st, , , $d] = req($port, $W . '/look/bluebird/' . $fp, ['Authorization: Bearer ' . $tokKid]);
+ok('a render stamped above a kids\' headset is a 404 on the bytes route', $st === 404 && ($d['kind'] ?? '') === 'no_look');
+[$st, $h, $raw] = req($port, $W . '/look/bluebird/' . $fp, ['Authorization: Bearer ' . $tokAdult]);
+ok('and served to the adult one', $st === 200 && $raw === $png);
+$lookRow = $db->query("SELECT * FROM scene_jobs WHERE key = 'bluebird' AND fingerprint = " . $db->quote($fp))->fetch(PDO::FETCH_ASSOC);
+$prev = xeric_state_rating();
+xeric_state_rating(xeric_rating_clamp('mature', false));
+ok('the look reads past it for the floor (the brief\'s prose is what is left)',
+    xeric_play_look_back($db, 'bluebird', $scenes) === null && xeric_play_look_file($db, 'bluebird', $fp) === null);
+xeric_state_rating('mature');
+ok('and finds it at the rating it was made under', (int)(xeric_play_look_back($db, 'bluebird', $scenes)['id'] ?? 0)
+    === (int)$lookRow['id']);
+xeric_state_rating($prev);
+$db->prepare("UPDATE scene_jobs SET rating = '' WHERE key = 'bluebird' AND fingerprint = ?")->execute([$fp]);
+
 echo "\n# the edges\n";
 
 [$st, $h, , $d] = req($port, '/api.php?r=' . rawurlencode('/v1/worlds/' . $slug . '/look'), $C);
@@ -745,10 +763,9 @@ ok('join is join.php\'s ceremony: a guest token for a new session, a new player'
 [$st, , , $d] = req($port, '/api.php/v1/join', [$JS], 'POST', json_encode(['world' => $vslug, 'code' => $inv, 'name' => 'Sam']));
 ok('the invite is spent', $st === 410 && ($d['kind'] ?? '') === 'code');
 $G = ['Authorization: Bearer ' . $GT];
-// The guest's own machine choice, as room-web-test gives its guest one: a
-// session with nothing attached that opens a running world stops its clock
-// (xeric_play_open's reconcile) — true of a guest who came in through
-// join.php in a browser too, and nothing the API should paper over.
+// The guest's own machine choice: their turn is answered on the machine their
+// session names (xeric_play_speaker_endpoint). Not the clock's reason any more —
+// a guest's open never reconciles the owner's clock (xeric_play_open).
 if ($gres !== null) {
     xeric_web_session_edit(function (array &$s) use ($MACHINE): void {
         $s['model'] = ['kind' => 'local', 'local' => $MACHINE, 'base' => '', 'model' => ''];
@@ -759,13 +776,44 @@ $gb = (int)$vdb->query('SELECT COUNT(*) FROM messages')->fetchColumn();
 ok('the guest can say, into the owner\'s own evening', $st === 200 && ($d['ok'] ?? null) === true
     && (int)$vdb->query('SELECT COUNT(*) FROM messages')->fetchColumn() === $gb + 2, "$st " . json_encode($d));
 [$st, , , $d] = req($port, $V . '/go', array_merge($G, [$JS]), 'POST', json_encode(['to' => 'beck_hardware']));
-ok('and is 403 guest on go: the owner door is go\'s own', $st === 403 && ($d['kind'] ?? '') === 'guest'
-    && xeric_player_where($vT, $vdb) === 'bluebird');
+// A BODY EACH (docs/MULTIPLAYER.md): go was the owner's door while there was
+// one body; now a joined guest walks their own, and the owner's stays put.
+ok('and go walks the guest\'s own body, never the owner\'s', $st === 200
+    && ($d['you']['where'] ?? '') === 'beck_hardware' && ($d['you']['name'] ?? '') === 'Sam'
+    && xeric_player_where($vT, $vdb, 1) === 'bluebird'
+    && xeric_player_where($vT, $vdb, (int)xeric_session_player($vslug, (string)($gres['sid'] ?? ''))) === 'beck_hardware',
+    "$st " . mb_substr(json_encode($d), 0, 300));
 [$st, , , $d] = req($port, $V . '/hear', array_merge($G, ['Content-Type: multipart/form-data; boundary=' . $bnd]), 'POST', $mp);
 ok('and on hear: the ears are the owner\'s', $st === 403 && ($d['kind'] ?? '') === 'guest');
 [$st, , , $d] = req($port, $V, $G);
 ok('a guest token carries adult=false, and it clamps', $st === 200 && ($d['guest'] ?? null) === true
     && ($d['rating'] ?? '') === xeric_rating_clamp('mature', false), (string)($d['rating'] ?? ''));
+
+echo "\n# who said it, and who may read it\n";
+
+$who = fn(string $text): array => (array)($vdb->query('SELECT player, rating FROM messages WHERE content = '
+    . $vdb->quote($text) . ' ORDER BY id DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC) ?: []);
+$gid = (int)xeric_session_player($vslug, (string)($gres['sid'] ?? ''));
+ok('the owner\'s line through the API is player 1\'s', (int)($who('Is there coffee?')['player'] ?? 0) === 1);
+ok('and the guest\'s is the guest\'s own number', $gid >= 2 && (int)($who('Hello, I am Sam.')['player'] ?? 0) === $gid);
+ok('each stamped with the rating its own request ran at: the adult headset\'s, the guest\'s floor',
+    ($who('Is there coffee?')['rating'] ?? '') === 'mature'
+    && ($who('Hello, I am Sam.')['rating'] ?? '') === xeric_rating_clamp('mature', false));
+[$st, , , $d] = req($port, $V . '/threads/dot', $G);
+$gm = (array)($d['messages'] ?? []);
+$asked = array_values(array_filter($gm, fn($m) => (int)($m['player'] ?? 0) === 1));
+ok('the guest reads the owner\'s adult-stamped lines as gaps: no words, `redacted`',
+    $st === 200 && $asked !== [] && $asked[0]['redacted'] === true && $asked[0]['text'] === XERIC_STATE_UNSHOWN
+    && !str_contains(json_encode($d), 'Is there coffee?'), "$st " . substr(json_encode($gm), 0, 300));
+[$st, , , $d] = req($port, $V . '/threads/dot', $B);
+$om = array_values(array_filter((array)($d['messages'] ?? []), fn($m) => (int)($m['player'] ?? 0) === 1));
+ok('while the adult headset reads them whole, `player` and `redacted` on every row',
+    $st === 200 && $om !== [] && $om[0]['text'] === 'Is there coffee?' && $om[0]['redacted'] === false
+    && array_filter((array)$d['messages'], fn($m) => !array_key_exists('player', $m) || !array_key_exists('redacted', $m)) === [],
+    substr(json_encode($d['messages'] ?? null), 0, 300));
+[$st, , , $d] = req($port, $V . '/threads/janelle', $B);
+$jm = (array)($d['messages'] ?? []);
+ok('a line stamped at the floor is shown to everybody', $st === 200 && in_array('Hello, I am Sam.', array_column($jm, 'text'), true));
 
 echo "\n# the devices, on link.php\n";
 

@@ -117,8 +117,27 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
                                 XERIC_PROMPT_HISTORY_CHUNK)
         : [];
 
+    // WHO SAID WHAT, once more than one person at the centre has spoken in
+    // this thread — the incoming line counts, it is about to be in it. Each
+    // player line is then labelled with its speaker's roster name, so the
+    // character can tell which of them promised the dish. One voice and the
+    // labels stay off: a solo thread renders byte for byte as it always has.
+    $askingPlayer = max(XERIC_PLAYER_FIRST, (int)($opts['player'] ?? XERIC_PLAYER_FIRST));
+    $voices = [];
     foreach ($history as $m) {
-        $messages[] = xeric_prompt_turn($m);
+        if ((string)($m['role'] ?? '') === 'user') $voices[max(XERIC_PLAYER_FIRST, (int)($m['player'] ?? 0))] = true;
+    }
+    if (trim((string)($opts['user_message'] ?? '')) !== '') $voices[$askingPlayer] = true;
+    $label = null;
+    if (count($voices) > 1) {
+        $label = static function (int $p) use ($db, $t): string {
+            return xeric_player_name($db, max(XERIC_PLAYER_FIRST, $p), $t);
+        };
+    }
+
+    foreach ($history as $m) {
+        $messages[] = xeric_prompt_turn($m, $label !== null && (string)($m['role'] ?? '') === 'user'
+            ? $label((int)($m['player'] ?? 0)) : null);
     }
 
     // ---- the volatile tail ----------------------------------------------
@@ -158,6 +177,7 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
             . 'picture shows]. Rarely, and only when you would actually reach for your camera.';
     }
     $incoming = trim((string)($opts['user_message'] ?? ''));
+    if ($incoming !== '' && $label !== null) $incoming = $label($askingPlayer) . ': ' . $incoming;
 
     $last = $messages[count($messages) - 1];
     if ($incoming !== '') {
@@ -642,11 +662,16 @@ function xeric_prompt_recall(array $t, PDO $db, string $speakerHandle, int $limi
     return $render();
 }
 
-/** One stored message → one chat turn. */
-function xeric_prompt_turn(array $m): array
+/**
+ * One stored message → one chat turn. $who labels a player's line with their
+ * name, which xeric_prompt_build asks for only when a thread has more than
+ * one person at the centre in it; null is the unlabelled line it always was.
+ */
+function xeric_prompt_turn(array $m, ?string $who = null): array
 {
     $role    = (string)($m['role'] ?? 'user');
     $content = (string)($m['content'] ?? '');
+    if ($role === 'user' && $who !== null && $who !== '') $content = $who . ': ' . $content;
 
     if ($role === 'character') return ['role' => 'assistant', 'content' => $content];
     // Narrator lines are things the world did, not things she said. They arrive

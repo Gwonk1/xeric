@@ -249,6 +249,39 @@ ok('a bearing of 350 is ten degrees left, not most of the way round',
     xeric_play_signed_bearing(350) === -10 && xeric_play_signed_bearing(10) === 10 && xeric_play_signed_bearing(180) === 180);
 $db->exec('DELETE FROM scene_jobs');
 
+echo "\n# another player in the room\n";
+
+// A guest joins on a code and stands at the diner counter with the owner.
+$pid = xeric_player_add($db, $Tr, 'Ann Price', 'she/her');
+xeric_player_move($db, 'bluebird', (int)xeric_clock_now($db, $Tr)['epoch'], $pid);
+$bp  = xeric_scene_brief($Tr, $db);
+$ann = array_values(array_filter($bp['who'], fn($p) => !empty($p['player'])));
+ok('the brief has her, a name and a bearing and nothing invented',
+    count($ann) === 1 && $ann[0]['name'] === 'Ann Price' && array_keys($ann[0]) === ['handle', 'name', 'player', 'bearing']);
+ok('and a second human in the room is a different room', (string)$bp['fingerprint'] !== $fpr);
+done_row($db, 'bluebird', (string)$bp['fingerprint'], 'image', 'scene-bluebird-pano.png', null, 'image/png');
+$h = xeric_play_look_html($Tr, $db, null, $slug, true);
+ok('her tag is a person, not a thread: its own class, focusable, no handle the view would open',
+    str_contains($h, '<span class="looktag lookplayer" tabindex="0" data-p="p' . $pid . '" data-b="' . (int)$ann[0]['bearing']
+        . '" title="another player" aria-description="another player">Ann Price</span>')
+    && !str_contains($h, 'data-h="p' . $pid . '"'), $h);
+ok('the cast keep their buttons beside her', substr_count($h, '<button type="button" class="looktag" data-h=') === 3);
+ok('and the room is still the cast\'s to talk to', str_contains($h, 'talk to the room'));
+$pp = (string)file_get_contents(dirname(__DIR__) . '/play.php');
+ok('pressing her does nothing but focus: the view\'s one listener answers buttons, and hers is a span',
+    str_contains($pp, "var t = e.target.closest ? e.target.closest('button') : null;"));
+$db->exec('DELETE FROM scene_jobs');
+done_row($db, 'bluebird', (string)$bp['fingerprint'], 'pano', 'scene-bluebird-pano.png', null, 'image/png');
+$h = xeric_play_look_html($Tr, $db, null, $slug, true);
+ok('over a pano she is placed at her bearing like anybody, hidden until the viewer places her',
+    (bool)preg_match('/<div class="looktags">.*<span class="looktag lookplayer"[^>]*hidden>Ann Price<\/span>/s', $h));
+$db->exec('DELETE FROM scene_jobs');
+ok('with no view yet, the prose names her and says nothing else about her',
+    str_contains(xeric_play_look_html($Tr, $db, null, $slug, true), 'Ann Price;')
+    || str_contains(xeric_play_look_html($Tr, $db, null, $slug, true), 'Ann Price.'));
+xeric_player_drop($db, $Tr, $pid);
+ok('once she has gone the room is the room it was', (string)xeric_scene_brief($Tr, $db)['fingerprint'] === $fpr);
+
 echo "\n# the room through its day\n";
 
 $lights = [['dusk', str_repeat('1', 40)], ['morning light', str_repeat('2', 40)], ['noon', str_repeat('3', 40)]];

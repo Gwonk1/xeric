@@ -140,6 +140,9 @@ function xeric_book_events_between(PDO $db, int $a, int $b): array
     foreach ($rows as &$r) {
         $r['participants'] = $r['participants'] !== null ? (json_decode((string)$r['participants'], true) ?: []) : [];
         $r['on_spine'] = (int)($r['on_spine'] ?? 0) === 1;
+        // An hour written above this viewer's rating is in the book as an hour
+        // and nothing of what happened in it (xeric_state_event_shown).
+        $r = xeric_state_event_shown($r);
     }
     return $rows;
 }

@@ -1244,12 +1244,15 @@ function xeric_room_live_people(PDO $db): array
 /** The room's message rows, oldest first, after a cursor. */
 function xeric_room_rows(PDO $db, int $conv, int $after = 0): array
 {
-    $st = $db->prepare('SELECT id, role, handle, content, world_epoch, created_at FROM messages
+    $st = $db->prepare('SELECT id, role, handle, content, world_epoch, created_at, player, rating FROM messages
                          WHERE conversation_id = ? AND id > ? ORDER BY id');
     $st->execute([$conv, $after]);
     $rows = $st->fetchAll();
     $st->closeCursor();
-    return $rows ?: [];
+    // `player` is who at the centre said a user row (NULL: the first); a row
+    // stamped above whoever this process reads for comes back emptied
+    // (xeric_state_message_shown), to the page and to the room's prompt alike.
+    return array_map('xeric_state_message_shown', $rows ?: []);
 }
 
 /**
@@ -1265,8 +1268,10 @@ function xeric_room_lines(array $live, array $rows): array
         $role = (string)$r['role'];
         $h    = (string)($r['handle'] ?? '');
         if ($role === 'user') {
+            // WHICH person at the centre — NULL is the first, as everywhere.
             $out[] = ['mid' => (int)$r['id'], 'handle' => XERIC_ROOM_YOU,
-                      'name' => (string)($names[XERIC_ROOM_YOU] ?? 'you'), 'text' => (string)$r['content'], 'kind' => 'line'];
+                      'name' => (string)($names[XERIC_ROOM_YOU] ?? 'you'), 'text' => (string)$r['content'], 'kind' => 'line',
+                      'player' => max(1, (int)($r['player'] ?? 0))];
         } elseif ($role === 'character' && $h !== '') {
             $out[] = ['mid' => (int)$r['id'], 'handle' => $h, 'name' => (string)($names[$h] ?? $h),
                       'text' => (string)$r['content'], 'kind' => 'line'];
@@ -1608,7 +1613,9 @@ function xeric_room_step(array $t, PDO $db, array $live, array $lines, array $no
     }
     // A ROOM DOES NOT TALK TO SOMEBODY WHO HAS GONE. Read off the world, not
     // off the session: a walk the session has not heard about yet still ends it.
-    if (xeric_player_where($t, $db) !== (string)$live['place']) {
+    // THE ROOM'S OWN PLAYER, never whoever made this request: a second person
+    // standing elsewhere must not read as the room's player having left.
+    if (xeric_player_where($t, $db, (int)($live['player']['id'] ?? 1)) !== (string)$live['place']) {
         throw new RuntimeException('room: refused, ' . $you . ' is not in the room, and nobody answers somebody who has left');
     }
     if (xeric_is_dead($db, $speaker)) throw new RuntimeException(xeric_death_refusal('room', (string)$names[$speaker]));
@@ -1841,7 +1848,8 @@ function xeric_room_spoke(array &$live, array $beat, int $mid, array $draw, arra
 function xeric_room_over(array $t, PDO $db, array $live, array $now): ?string
 {
     if (xeric_clock_is_paused($db))                                return 'paused';
-    if (xeric_player_where($t, $db) !== (string)$live['place'])    return 'you left';
+    // The room's own player (see xeric_room_step): a guest elsewhere seals nothing.
+    if (xeric_player_where($t, $db, (int)($live['player']['id'] ?? 1)) !== (string)$live['place']) return 'you left';
     if (count((array)$live['present']) < XERIC_ROOM_LIVE_MIN)       return 'thinned';
     if ((int)$now['epoch'] - (int)$live['last_epoch'] >= XERIC_ROOM_QUIET_SECONDS) return 'quiet';
     if ((int)$live['beats'] >= XERIC_ROOM_BEATS_CAP && (int)$live['budget'] <= 0) return 'long';

@@ -241,7 +241,9 @@ function xeric_scene_bearing_taken(int $b, array $placed): bool
  * The composed description of a place at a moment. THE thing a viewport
  * client is built against, the way xeric_travel_map is the thing a map is.
  *
- * $key null is the player's own room; a player who is nowhere has no room,
+ * $key null is the player's own room — the CURRENT player's (travel.php, a
+ * body each), with every other player standing in it in `who` as
+ * `{handle, name, player: true, bearing}`; a player who is nowhere has no room,
  * and null is the honest answer (nowhere is a real state). An unknown key,
  * or a home not yet in the story, is null too — fail closed, the same way the
  * map simply does not list an unstaged house.
@@ -301,6 +303,26 @@ function xeric_scene_brief(array $t, PDO $db, ?string $key = null, ?array $now =
     // Where everything sits, the furniture placed before the company.
     $bear = xeric_scene_bearings($t, $key, $items, array_column($who, 'handle'));
     foreach ($who as $i => $w) $who[$i]['bearing'] = $bear['who'][$w['handle']];
+
+    // THE OTHER PLAYERS IN THE ROOM, after the cast and placed after it, so
+    // nobody the cast already stood beside is moved for them. Observables only
+    // and that means a name: a player has no appearance in the template, and
+    // the engine does not invent one for a real person. The bearing is where
+    // they stand, which is the room's to say, not theirs.
+    $players = xeric_travel_others_at($t, $db, $key);
+    if ($players !== []) {
+        $placed = array_merge(array_values($bear['items']), array_values($bear['who']));
+        $world  = (string)($t['meta']['name'] ?? 'xeric');
+        usort($players, fn($a, $b) => strcmp($a['handle'], $b['handle']));
+        foreach ($players as $o) {
+            $b = crc32($world . '|' . $key . '|' . $o['handle']) % 360;
+            for ($i = 0; $i < 9 && xeric_scene_bearing_taken($b, $placed); $i++) {
+                $b = ($b + XERIC_SCENE_BEARING_NUDGE) % 360;
+            }
+            $placed[] = $b;
+            $who[] = $o + ['bearing' => $b];
+        }
+    }
     $interior = [];
     foreach ((array)($seeds['items'] ?? []) as $it) $interior[] = $it + ['bearing' => $bear['items'][$it['text']]];
 
@@ -322,7 +344,7 @@ function xeric_scene_brief(array $t, PDO $db, ?string $key = null, ?array $now =
         'exterior' => ['description' => $desc, 'seed' => (int)($seeds['exterior'] ?? 0)],
         'interior' => $interior,
         'who'      => $who,
-        'you'      => ['name' => xeric_text($t['user']['name'] ?? '') ?: 'you',
+        'you'      => ['name' => xeric_travel_you_name($t, $db),
                        'since' => xeric_player_since($db)],
         'setting'  => ['era'    => trim(xeric_text($t['setting']['era'] ?? '')),
                        'locale' => trim(xeric_text($t['setting']['locale'] ?? ''))],
@@ -374,6 +396,8 @@ function xeric_scene_prompt(array $b, string $name, string $desc, array $items, 
         $people = [];
         foreach ($b['who'] as $w) {
             $line = $w['name'];
+            // Another player: a name and nothing the template never said.
+            if (!empty($w['player'])) { $people[] = $line; continue; }
             if ($w['build'] !== '')      $line .= ', ' . rtrim($w['build'], '.');
             if ($w['appearance'] !== '') $line .= ', ' . rtrim($w['appearance'], '.');
             if ($w['wears'] !== [])      $line .= ', wearing ' . implode(', ', $w['wears']);
@@ -420,18 +444,24 @@ function xeric_scene_prompt(array $b, string $name, string $desc, array $items, 
  */
 function xeric_scene_fingerprint(array $b, string $desc, array $items, array $cfg, string $ask = ''): string
 {
-    $people = [];
+    $people  = [];
+    $players = [];
     foreach ($b['who'] as $w) {
+        if (!empty($w['player'])) { $players[$w['handle']] = $w['name']; continue; }
         $people[$w['handle']] = [$w['appearance'], $w['build'], $w['wears']];
     }
     ksort($people, SORT_STRING);
+    ksort($players, SORT_STRING);
+    // A SECOND HUMAN IN THE ROOM IS A DIFFERENT ROOM — but the key is there
+    // only when somebody is, so a world of one hashes exactly what it always
+    // hashed and no view on anybody's disk goes stale for this.
     return sha1(json_encode([
         'key' => $b['key'], 'description' => $desc, 'interior' => $items,
         'light' => $b['light'], 'weather' => $b['weather'],
         'who' => $people, 'open' => $b['open'], 'dark' => $b['dark'],
         'vantage' => $cfg['vantage'], 'style' => $cfg['style'],
         'ask' => $ask, 'rating' => $b['rating'],
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    ] + ($players !== [] ? ['players' => $players] : []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,9 +1382,12 @@ function xeric_scene_insert(PDO $db, array $brief): array
 
     $light = $channel === 'look' ? (string)($brief['light'] ?? '') : '';
     if (!in_array($light, xeric_scene_lights(), true)) $light = '';
-    $ins = $db->prepare('INSERT OR IGNORE INTO scene_jobs (key, fingerprint, channel, light, prompt, created_at)
-                         VALUES (?, ?, ?, ?, ?, ?)');
-    $ins->execute([$key, $fp, $channel, $light, (string)($brief['prompt'] ?? ''), xeric_state_time()]);
+    // Stamped with the rating it was ASKED under (xeric_state_rating): the
+    // prompt is composed now and rendered as stored, so this is the rating the
+    // picture is generated under, and a viewer below it is not shown it.
+    $ins = $db->prepare('INSERT OR IGNORE INTO scene_jobs (key, fingerprint, channel, light, prompt, created_at, rating)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $ins->execute([$key, $fp, $channel, $light, (string)($brief['prompt'] ?? ''), xeric_state_time(), xeric_state_rating()]);
     if ($ins->rowCount() === 1) return ['id' => (int)$db->lastInsertId(), 'added' => true];
     $row = xeric_scene_of($db, $key, $fp, $channel);
     return ['id' => $row !== null ? (int)$row['id'] : 0, 'added' => false];
@@ -1830,11 +1863,17 @@ function xeric_scene_ahead_key(array $t, PDO $db, ?array $now = null): string
     ksort($where, SORT_STRING);
     $dark = xeric_dark_places($db);
     sort($dark, SORT_STRING);
+    // The other bodies too, when there are any: somebody walking into the
+    // room you stand in moves its fingerprint. Absent in a world of one.
+    $bodies = [];
+    if (xeric_players_many($db)) {
+        foreach (xeric_travel_players($t, $db) as $p) $bodies[$p['handle']] = $p['where'];
+    }
     return sha1(json_encode([
         'here' => xeric_player_where($t, $db), 'light' => xeric_scene_light($now), 'where' => $where,
         'weather' => trim(xeric_weather_line($t, $now, $db)), 'dark' => $dark,
         'scene' => $t['media']['scene'] ?? null,
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    ] + ($bodies !== [] ? ['players' => $bodies] : []), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
 /**

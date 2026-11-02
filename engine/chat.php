@@ -145,6 +145,9 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
         'tail'             => (string)($opts['tail'] ?? ''),
         'history_limit'    => (int)($opts['history_limit'] ?? 20),
         'memory_limit'     => (int)($opts['memory_limit'] ?? 12),
+        // WHO IS TYPING, for the name the character is texting and — once a
+        // second person has spoken in this thread — the label on each line.
+        'player'           => $player,
     ] + array_intersect_key($opts, ['effective_rating' => 1, 'model_rating' => 1, 'photos' => 1]));
 
     $usage = [];
@@ -206,7 +209,7 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     $db->beginTransaction();
     try {
         if ($convId === null) $convId = xeric_conversation_create($db, $speaker, 'chat', null, $at);
-        xeric_message_append($db, $convId, 'user', null, $userText, $epoch, $at);
+        xeric_message_append($db, $convId, 'user', null, $userText, $epoch, $at, $player);
         $replyId = xeric_message_append($db, $convId, 'character', $speaker, $text, $epoch, $at);
         $db->commit();
     } catch (Throwable $e) {
@@ -943,10 +946,27 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     $existing = xeric_memories_for($db, $speaker, 40);
     $known    = array_map(fn($m) => (string)$m['text'], $existing);
 
+    // WHO SAID WHAT. One person at the centre in this window and every user
+    // line is the template's name, as it always was — the prompt below stays
+    // byte for byte the same. More than one, and each line is its own speaker's
+    // roster name, the watch asks about any of them, and the promise is put on
+    // whoever's line carries its words (xeric_chat_promiser).
+    $voices = [];
+    foreach ($turns as $t) {
+        if ((string)($t['role'] ?? '') === 'user') $voices[max(XERIC_PLAYER_FIRST, (int)($t['player'] ?? 0))] = true;
+    }
+    $many = count($voices) > 1;
+    $nameOf = static fn(int $p): string => xeric_player_name($db, max(XERIC_PLAYER_FIRST, $p), $template);
+    if ($many) {
+        $names = array_map($nameOf, array_keys($voices));
+        $userName = implode(' or ', $names);
+    }
+
     $lines = [];
     foreach ($turns as $t) {
         $role = (string)($t['role'] ?? 'user');
-        $who  = $role === 'character' ? $name : ($role === 'narrator' ? '(what happened)' : $userName);
+        $who  = $role === 'character' ? $name : ($role === 'narrator' ? '(what happened)'
+              : ($many ? $nameOf((int)($t['player'] ?? 0)) : $userName));
         $lines[] = $who . ': ' . trim((string)$t['content']);
     }
 
@@ -959,7 +979,7 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             . 'and write down what THEY would still know about it in a week. '
             . 'Reply with ONE JSON object and nothing else.'],
         ['role' => 'user', 'content' =>
-            $who . "\nThey were texting {$userName}.\n\n"
+            $who . "\nThey were texting " . ($many ? implode(' and ', $names) : $userName) . ".\n\n"
             . ($known ? "Already in their memory, do not write any of these again:\n- " . implode("\n- ", $known) . "\n\n" : '')
             . "The conversation:\n" . implode("\n", $lines) . "\n\n"
             . "Write 0-3 things {$name} would still know in a week.\n"
@@ -1050,8 +1070,11 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // new one must not let the new row be the one it closes (and keep refuses a
     // row formed this very moment anyway).
     if (!empty($raw['kept'])) xeric_expect_keep($template, $db, $speaker, $now, null, $player, 'said');
-    xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null,
-                      $now, null, null, $player);
+    // THE PROMISE IS WHOEVER SAID IT'S, not whoever's turn happened to pay for
+    // the harvest: the words are matched back to the line that carries them.
+    $promise = is_array($raw['promise'] ?? null) ? $raw['promise'] : null;
+    xeric_expect_form($template, $db, $speaker, $promise,
+                      $now, null, null, xeric_chat_promiser($turns, $promise, $player));
     // An explanation repairs the freshest miss; with none to repair it owns up
     // to a confidence let out; with neither, it thaws a grudge that hardened
     // past both windows. One explanation, one thing mended.
@@ -1079,6 +1102,28 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     } catch (Throwable $e) { /* a confidence lost is re-proposed next harvest */ }
 
     return count($keep);
+}
+
+/**
+ * Which person at the centre made a reported promise: the player on the user
+ * line its quoted words came from, newest line first. A quote that matches no
+ * line (a model paraphrasing) falls back to $fallback — the person whose turn
+ * ran the harvest, which is who every promise was put on before rows carried
+ * a player. Matching is on letters and digits only, so punctuation and case a
+ * model tidied do not lose the speaker.
+ */
+function xeric_chat_promiser(array $turns, ?array $promise, int $fallback = XERIC_PLAYER_FIRST): int
+{
+    $norm = static fn(string $s): string => (string)preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s));
+    $quote = trim($norm((string)($promise['quote'] ?? '')));
+    if ($quote === '') return $fallback;
+    foreach (array_reverse($turns) as $t) {
+        if ((string)($t['role'] ?? '') !== 'user') continue;
+        if (str_contains(' ' . $norm((string)($t['content'] ?? '')) . ' ', ' ' . $quote . ' ')) {
+            return max(XERIC_PLAYER_FIRST, (int)($t['player'] ?? 0));
+        }
+    }
+    return $fallback;
 }
 
 /**

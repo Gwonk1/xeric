@@ -5,7 +5,8 @@
  * the marks reach by being `.goto[data-to]` like the list's buttons.
  *
  *   1. A TOOLTIP on hover and on focus: the place, its state and price, and
- *      who is there doing what. Read off data attributes the server wrote —
+ *      who is there doing what — another player (a `.wpc` mark) said as just
+ *      that, "another player", because a human has no errand on the map. Read off data attributes the server wrote —
  *      observables only, the same ones the list prints — and set as text,
  *      never as markup.
  *   2. KEYS: Enter or Space presses a mark (an SVG <g> has no click of its own
@@ -36,7 +37,9 @@
     var who = mark.querySelectorAll('.wch');
     if (!who.length) out.push('nobody there');
     for (var i = 0; i < who.length; i++) {
-      var d = attr(who[i], 'data-doing');
+      // Another player (.wpc, data-player): a person, not a part — said so,
+      // whatever the doing attribute holds.
+      var d = attr(who[i], 'data-player') ? 'another player' : attr(who[i], 'data-doing');
       out.push(attr(who[i], 'data-name') + (d ? ' — ' + d : ''));
     }
     return out;

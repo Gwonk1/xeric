@@ -111,9 +111,13 @@ function xeric_play_where_html(array $map, string $slug = ''): string
     $spots = $map['places'];
     usort($spots, fn(array $a, array $b): int => ($a['minutes'] <=> $b['minutes']) ?: strcmp($a['name'], $b['name']));
 
+    // Another player is named like anybody and said to be one, so the text
+    // form tells a friend from the cast the way the drawn ring does.
     $who = function (array $p): string {
         if ($p['who'] === []) return '<span class="wq">nobody there</span>';
-        return '<span class="ww">' . h(xeric_join_list(array_column($p['who'], 'name'))) . '</span>';
+        $names = array_map(fn(array $w): string => (string)$w['name'] . (!empty($w['player']) ? ' (another player)' : ''),
+                           $p['who']);
+        return '<span class="ww">' . h(xeric_join_list($names)) . '</span>';
     };
 
     // Standing somewhere is a statement; being on your own time is the same
@@ -230,11 +234,13 @@ function xeric_play_voice_on(): bool
 function xeric_play_spoken(PDO $db, int $id): ?array
 {
     if ($id <= 0) return null;
-    $st = $db->prepare("SELECT id, handle, content FROM messages WHERE id = ? AND role = 'character'
+    $st = $db->prepare("SELECT id, handle, content, rating FROM messages WHERE id = ? AND role = 'character'
                         AND handle IS NOT NULL AND handle != '' LIMIT 1");
     $st->execute([$id]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
     $st->closeCursor();
+    // A line this viewer is not shown is not read aloud to them either.
+    if ($row && !xeric_state_shown((string)($row['rating'] ?? ''))) return null;
     return $row ? ['id' => (int)$row['id'], 'handle' => (string)$row['handle'], 'content' => (string)$row['content']] : null;
 }
 
@@ -401,7 +407,10 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
     // perfectly good still from the hour before. Five, like
     // xeric_scene_reference's walk, because a room whose last five views are
     // all unshowable is a room to describe in words.
-    $row = ($cur !== null && xeric_play_look_has($cur, $out['scenes_dir'])) ? $cur
+    // A render stamped above this viewer is not theirs to see (xeric_state_shown):
+    // it is passed over exactly like one whose file has gone.
+    $row = ($cur !== null && xeric_state_shown((string)($cur['rating'] ?? ''))
+            && xeric_play_look_has($cur, $out['scenes_dir'])) ? $cur
          : xeric_play_look_back($db, (string)$brief['key'], $out['scenes_dir']);
     if ($row !== null && xeric_play_look_has($row, $out['scenes_dir'])) {
         $out['row']   = $row;
@@ -412,7 +421,8 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
     // shown as a picture — a thumbnail is bytes, so a viewer link or a glb
     // sits the strip out. Two or more, or it is not a strip, it is the view.
     foreach (xeric_scene_day($db, (string)$brief['key']) as $light => $d) {
-        if (in_array((string)$d['kind'], ['image', 'pano'], true) && xeric_play_look_has($d, $out['scenes_dir'])) {
+        if (in_array((string)$d['kind'], ['image', 'pano'], true) && xeric_state_shown((string)($d['rating'] ?? ''))
+            && xeric_play_look_has($d, $out['scenes_dir'])) {
             $out['day'][$light] = $d;
         }
     }
@@ -426,7 +436,8 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
     if ($sb !== null && !empty($sb['enabled'])) {
         $out['sound'] = $sb;
         $srow = xeric_scene_of($db, (string)$sb['key'], (string)$sb['fingerprint'], 'sound');
-        if ($srow !== null && (string)$srow['kind'] === 'audio' && xeric_play_look_has($srow, $out['scenes_dir'])) {
+        if ($srow !== null && (string)$srow['kind'] === 'audio' && xeric_state_shown((string)($srow['rating'] ?? ''))
+            && xeric_play_look_has($srow, $out['scenes_dir'])) {
             $out['sound_row'] = $srow;
         }
     }
@@ -449,7 +460,7 @@ function xeric_play_look_back(PDO $db, string $key, string $scenesDir, int $trie
     $st->closeCursor();
     $download = null;
     foreach ($rows as $r) {
-        if (!xeric_play_look_has($r, $scenesDir)) continue;
+        if (!xeric_state_shown((string)($r['rating'] ?? '')) || !xeric_play_look_has($r, $scenesDir)) continue;
         if (in_array((string)$r['kind'], ['image', 'pano', 'viewer'], true)) return $r;
         $download ??= $r;
     }
@@ -540,6 +551,7 @@ function xeric_play_look_file(PDO $db, string $key, string $fp): ?array
     if ($key === '' || strlen($key) > 64 || !preg_match('/^(sound:)?[a-f0-9]{40}$/', $fp)) return null;
     $row = xeric_scene_of($db, $key, $fp, str_starts_with($fp, 'sound:') ? 'sound' : 'look');
     if ($row === null || (string)$row['status'] !== 'done' || (string)$row['file'] === '') return null;
+    if (!xeric_state_shown((string)($row['rating'] ?? ''))) return null;      // rendered above this viewer
     $dir = xeric_play_scenes_dir($db);
     if ($dir === '') return null;
     $path = $dir . '/' . basename((string)$row['file']);
@@ -591,7 +603,7 @@ function xeric_play_look_prose(array $b): string
     } else {
         $bits = [];
         foreach ($b['who'] as $p) {
-            $d = rtrim(trim((string)$p['doing']), '.');
+            $d = rtrim(trim((string)($p['doing'] ?? '')), '.');
             $bits[] = h((string)$p['name']) . ($d !== '' ? ', ' . h($d) : (!empty($p['at_home']) ? ', at home' : ''));
         }
         $out .= ' Here: ' . implode('; ', $bits) . '.';
@@ -679,6 +691,19 @@ function xeric_play_look_tags(array $who, string $class): string
     usort($who, fn($a, $b) => xeric_play_signed_bearing((int)$a['bearing']) <=> xeric_play_signed_bearing((int)$b['bearing']));
     $out = '';
     foreach ($who as $p) {
+        // ANOTHER PLAYER IS NOT A THREAD. Their tag is a person in the room you
+        // can point at — focusable, placed at their bearing like anybody — and
+        // pressing it opens nothing, because talking to a human who is standing
+        // beside you is the room's business (engine/room.php), not a phone's.
+        // A span rather than a button for exactly that reason: the view's one
+        // click listener (play.php) answers buttons, and this one asks nothing.
+        if (!empty($p['player'])) {
+            $out .= '<span class="looktag lookplayer" tabindex="0" data-p="' . h((string)$p['handle'])
+                  . '" data-b="' . (int)$p['bearing'] . '" title="another player"'
+                  . ' aria-description="another player"'
+                  . ($class === 'looktags' ? ' hidden' : '') . '>' . h((string)$p['name']) . '</span>';
+            continue;
+        }
         $d = trim((string)$p['doing']);
         $out .= '<button type="button" class="looktag" data-h="' . h((string)$p['handle'])
               . '" data-b="' . (int)$p['bearing'] . '"'
@@ -969,23 +994,36 @@ function xeric_play_room_public(array $t, ?array $live, bool $mine): ?array
 }
 
 /** Rows as the page draws them: me, them, narr — the thread's own three lanes. */
-function xeric_play_room_rows(array $t, array $live, array $rows): array
+function xeric_play_room_rows(array $t, array $live, array $rows, ?PDO $db = null): array
 {
     $names = (array)$live['names'];
     $me    = xeric_room_you_named($live) ? xeric_room_you_name($live) : 'you';   // the page's own lane says you
+    // WHO SAID IT, once two people at the centre have spoken in this room: a
+    // player row then carries its own player's roster name and number. With
+    // one, it is the lane's name exactly as before. The roster is read only
+    // when it is needed, and the db is the caller's (rows arrive without one).
+    $voices = [];
+    foreach ($rows as $r) {
+        if ((string)$r['role'] === 'user') $voices[max(XERIC_PLAYER_FIRST, (int)($r['player'] ?? 0))] = true;
+    }
+    $many = count($voices) > 1 && $db !== null;
     $out = [];
     foreach ($rows as $r) {
         $role = (string)$r['role'];
         $h    = (string)($r['handle'] ?? '');
-        $out[] = [
+        $p    = max(XERIC_PLAYER_FIRST, (int)($r['player'] ?? 0));
+        $row = [
             'id'   => (int)$r['id'],
             'who'  => $role === 'user' ? 'me' : ($role === 'character' && $h !== '' ? 'them' : 'narr'),
             'h'    => $role === 'character' ? $h : ($role === 'user' ? XERIC_ROOM_YOU : ''),
-            'name' => $role === 'user' ? $me
+            'name' => $role === 'user' ? ($many ? xeric_player_name($db, $p, $t) : $me)
                     : ($role === 'character' ? (string)($names[$h] ?? xeric_world_name($t, $h)) : ''),
             'text' => (string)$r['content'],
             'when' => $r['world_epoch'] !== null ? xeric_play_stamp($t, (int)$r['world_epoch']) : '',
         ];
+        if ($many && $role === 'user') $row['player'] = $p;
+        if (!empty($r['redacted'])) $row['redacted'] = true;
+        $out[] = $row;
     }
     return $out;
 }
@@ -1075,7 +1113,8 @@ function xeric_play_room_say(array $w, string $text, ?array $now = null): array
         }
         $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
         $heard = xeric_room_hear($t, $live, $lines, $text);
-        $mid   = xeric_message_append($db, (int)$live['conv'], 'user', null, $heard, (int)$now['epoch']);
+        $mid   = xeric_message_append($db, (int)$live['conv'], 'user', null, $heard, (int)$now['epoch'],
+                                      null, (int)$player['id']);
         xeric_room_said($live, $mid, $heard, $now);
         unset($live['error']);
         $lease = null;

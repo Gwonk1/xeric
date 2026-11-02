@@ -679,6 +679,11 @@ body{min-height:var(--app-h,100dvh)}
 .wsvg .whr .wmin{fill:var(--fg-dim);text-transform:uppercase;letter-spacing:.08em}
 .wsvg .wch circle{fill:var(--bg-3);stroke:var(--fg-dim);stroke-width:1}
 .wsvg .wch text{font-size:6.5px;font-weight:600;text-anchor:middle;fill:var(--fg)}
+/* another player in the company: a ring of your own colour, broken, so a friend never reads as the cast */
+.wsvg .wch.wpc circle{fill:var(--bg-2);stroke:var(--accent);stroke-width:1.5;stroke-dasharray:2.5 1.5}
+.wsvg .wch.wpc text{fill:var(--accent)}
+/* and in the room: a tag that is a person, not a thread (play-view.php, xeric_play_look_tags) */
+.looktag.lookplayer{border-style:dashed;border-color:var(--accent);color:var(--accent);cursor:default;display:inline-block}
 .wsvg .wyou{pointer-events:none;transition:transform .9s ease-in-out}
 .wsvg .wyou circle{fill:none;stroke:var(--accent);stroke-width:2.5}
 .wsvg .wyou.wnone circle{stroke-dasharray:3 3}
