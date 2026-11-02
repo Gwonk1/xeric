@@ -155,6 +155,30 @@ whether it does or not.
 
 ---
 
+## The drawn map
+
+The god view beside the first-person one, and like it a client of
+`xeric_travel_map()` and of nothing else (`forge/web/play-map.php`). When the
+world is `mapped` the where panel draws the town as inline SVG **above** the
+list; the list stays, nearest first, as the text form of the same object, and a
+flat world gets the list alone. Places are marks at their `at`, scaled from the
+town's own extent; each carries its name, its minutes from here, and its state
+(open, shut, or dark — the room the world lost, dashed). Everybody present is a
+disc with initials around their place, in handle order, eight to a ring; the
+player is a ring on theirs, or off the edge of town on their own time. Unstaged
+homes are not drawn because the read model does not list them. A bar of round
+minutes and the world's own sentence (`across`, `how`) give the scale.
+
+Every place you could walk to is a `.goto[data-to]` mark — the wire play.php's
+`bindGo()` already listens on — so a press on the map is the list's `go()`, its
+refusals and its repaint. `xeric-map.js` adds only behaviour: a tooltip of who is
+there doing what (from data attributes, set as text), Enter/Space to press, the
+arrows to the nearest mark that way, and **follow** — when a repaint moves the
+player, their ring is walked from the old spot to the new by a CSS transition.
+The output is deterministic to the byte; `forge/web/tests/map-test.php` diffs it.
+
+---
+
 ## Drift, answered with conditioning
 
 World models drift: ask one for the same diner twice and the booths move. A seed
@@ -587,7 +611,9 @@ the play view's **what you see** block is built from what it can serve itself:
   tagged; its bearings ride in a data attribute for the next client.
 - **a still** as a plain `<img>`, the same name-tag buttons in a row beneath it,
   left to right by bearing.
-- splats and `.glb` files **offered as downloads**; a `viewer` scene opens in a
+- **a splat you stand inside** when it is a PLY or a `.splat`
+  ([below](#walking-inside)), the download kept under it; an SPZ or SOG
+  splat and `.glb` files **offered as downloads**; a `viewer` scene opens in a
   new tab, because a hosted room cannot be framed under that policy and should
   not be.
 - **the day strip**, when the room has been drawn in two or more lights: press
@@ -611,6 +637,38 @@ has better tools: **Pannellum** is the standard drop-in equirect viewer,
 **`<model-viewer>`** displays a `.glb` with orbit controls in one element, and
 **Spark** renders gaussian splats in three.js. None of them ship here, and
 nothing in the engine assumes any of them.
+
+#### Walking inside
+
+A done splat row is a `<canvas class="looksplat">` with the people as the
+still's row of tags under it and the download beside it. The viewer is our
+own: `xeric-splat.js`, loaded statically next to `xeric-view.js` with the
+same nonce and content hash (a nonce-only CSP lets no script add another),
+idle until `XericView.mount({kind: 'splat'})` starts it. WebGL 2, else
+WebGL 1 with `ANGLE_instanced_arrays`, else a sentence and the download.
+
+- **Formats.** Binary PLY in the standard 3DGS layout (`f_rest_*` and
+  anything else skipped by offset) and the compact `.splat`, 32 bytes a
+  splat; the first bytes decide. On arrival `xeric_scene_finish` keeps
+  every splat it can as PLY (`engine/splat.php`: `application/ply`, `.ply`,
+  the row's meta says so); SPZ/SOG are kept as they came, under `.splat`.
+  `tools/splat-to-ply.php` does the same for a file already on disk.
+- **The 3 m rule.** You start where you came in, looking down −z: drag to
+  look, WASD / arrows or two fingers to walk, never more than three metres
+  from the door. Leaving the room is a trip, which is the engine's to cost.
+- **The worker.** The back-to-front sort is `xeric-splat-worker.js`, from
+  this origin under `worker-src 'self'` (play.php's head asks for it): a
+  counting sort on 16-bit depth, O(n), one in flight, buffers transferred.
+  No Worker, and the sort runs on the page, capped at 250,000 splats.
+- **The cap.** 1.5 million splats (750,000 on a device that says it has
+  4 GB or less), 400 MB of file, three minutes to arrive; past the cap the
+  rest are cut and the page says how many it shows. Frames only on input
+  and when a sort comes back. Anything that fails leaves the download.
+- **Not yet: SPZ and SOG.** SPZ is gzip around a packed layout, SOG a zip of
+  WebP tiles; each needs a decoder, and the libraries that carry one carry
+  WebAssembly, which the CSP does not grant (`'wasm-unsafe-eval'`). They are
+  refused by name and stay downloads; converting them on arrival is a
+  follow-up.
 
 #### The room
 

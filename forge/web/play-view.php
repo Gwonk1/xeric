@@ -141,6 +141,7 @@ function xeric_play_where_html(array $map, string $slug = ''): string
               . ($slug !== '' ? ' Rerolling its places in the review gives it one.' : '') . '</p>';
     }
 
+    $out .= xeric_play_map_svg($map, $slug);
     $out .= '<ul class="wgo">';
     foreach ($spots as $p) {
         if ($p['here']) continue;
@@ -523,7 +524,7 @@ function xeric_play_look_src(string $slug, string $key, string $fp): string
  * bytes sniff as an image — photo.php's own rule, because a docroot that
  * echoes unverified bytes under an image type is a stored-XSS delivery
  * service. A splat or a glb is not something a browser renders, so it is
- * served only under a type on a two-entry allowlist, as an ATTACHMENT, with
+ * served only under a type on a four-entry allowlist, as an ATTACHMENT, with
  * nosniff: whatever is in it is saved, never executed. A sound is served
  * inline to an <audio> only when its row's type is on the audio allowlist AND
  * its magic bytes agree (xeric_play_audio_sniff). A viewer row has no bytes
@@ -553,7 +554,9 @@ function xeric_play_look_file(PDO $db, string $key, string $fp): ?array
     }
     if (in_array($kind, ['splat', 'glb'], true)) {
         $mime = (string)$row['mime'];
-        if (!in_array($mime, ['model/gltf-binary', 'application/octet-stream'], true)) return null;
+        // application/ply is what the engine stores a splat as (xeric_scene_finish);
+        // model/ply is the other spelling a machine may send.
+        if (!in_array($mime, ['model/gltf-binary', 'application/octet-stream', 'application/ply', 'model/ply'], true)) return null;
         return ['path' => $path, 'mime' => $mime, 'inline' => false, 'name' => basename($path), 'bytes' => $bytes];
     }
     // A sound: the row's type off the allowlist, AND the bytes' own magic
@@ -707,8 +710,10 @@ function xeric_play_signed_bearing(int $b): int
  *                     frame-ancestors 'none' and frames nothing either,
  *                     because a third party's page inside ours is a page
  *                     that can read where you are standing.
- *   splat / glb       a download, said plainly, because a browser tab is not
- *                     where those are looked at yet.
+ *   splat             PLY or .splat: a canvas you stand inside (xeric-splat.js),
+ *                     the people as the still's row under it, the download
+ *                     kept beside it. SPZ / SOG: a download.
+ *   glb               a download, said plainly.
  *
  * Over any of them: "from an earlier hour" when the view is of a room that
  * has since changed, and "developing…" while the current look is being made.
@@ -767,9 +772,36 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
                    . '" target="_blank" rel="noopener noreferrer">open the room in its viewer</a></p>';
         } else {
             $ext = ltrim(strrchr(basename((string)$row['file']), '.') ?: '.' . $kind, '.');
-            $view .= '<p class="lookmain"><a class="lookdl" href="' . h($src) . '" download>download the room (.' . h($ext) . ')</a></p>'
-                   . '<p class="note">This app shows panoramas and stills inline; a ' . h($kind)
-                   . ' opens in a viewer of your own.</p>';
+            $dl  = '<a class="lookdl" href="' . h($src) . '" download>download the room (.' . h($ext) . ')</a>';
+            // A SPLAT YOU CAN WALK INSIDE: PLY or the compact .splat, read by
+            // xeric-splat.js (loaded statically beside xeric-view.js, started by
+            // XericView's mount({kind:'splat'})). The engine names every splat
+            // `.splat` whatever arrived, so the file's first bytes decide: PLY's
+            // magic, or no gzip/zip magic and a whole number of 32-byte
+            // records. An SPZ or SOG stays a download. The download is kept
+            // under the canvas either way, and is what is left if the viewer
+            // cannot run. A glb is a download, as before.
+            $walk = false;
+            if ($kind === 'splat' && in_array(strtolower($ext), ['ply', 'splat'], true)) {
+                $fpath = (string)$l['scenes_dir'] . '/' . basename((string)$row['file']);
+                $head  = (string)@file_get_contents($fpath, false, null, 0, 4);
+                $walk  = str_starts_with($head, "ply\n") || str_starts_with($head, "ply\r")
+                      || ($head !== '' && !str_starts_with($head, "\x1f\x8b") && !str_starts_with($head, 'PK')
+                          && (int)@filesize($fpath) % 32 === 0);
+            }
+            if ($walk) {
+                $view .= '<div class="lookmain looksplatbox" data-src="' . h($src) . '" data-alt="' . h($alt) . '">'
+                       . '<canvas class="looksplat" tabindex="0" role="img" data-src="' . h($src) . '"'
+                       . ' data-worker="' . h(xeric_play_asset('xeric-splat-worker.js')) . '" aria-label="'
+                       . h('Standing in ' . (string)$b['name'] . '. Drag to look; W A S D or the arrow keys, or two fingers, to walk about.')
+                       . '"></canvas><p class="looksplatstate" role="status">loading…</p>'
+                       . xeric_play_look_tags($b['who'], 'looktagrow')
+                       . '<p class="looksplatdl">' . $dl . '</p></div>';
+            } else {
+                $view .= '<p class="lookmain">' . $dl . '</p>'
+                       . '<p class="note">This app shows panoramas, stills and splats inline; a ' . h($kind)
+                       . ' like this one opens in a viewer of your own.</p>';
+            }
         }
         $view .= '<p class="lookearlier" hidden></p>'
                . $meta . ($l['stale'] ? ' <span class="lookstale">from an earlier hour</span>' : '') . '</p>';

@@ -23,7 +23,7 @@
  *
  * THE SERVING HALF is photo.php's hole punched a third time, with the same
  * refusal discipline and one widening, argued in xeric_play_look_file: a
- * splat or a glb is served as an attachment off a two-type allowlist and
+ * splat or a glb is served as an attachment off a four-type allowlist and
  * never inline. A viewer row has no bytes here at all — it is a link, and the
  * page opens it in a new tab, never in a frame.
  *
@@ -102,6 +102,10 @@ if ($post) {
     // photo.php's reasoning verbatim: a render is closer to redrawing
     // something than to saying a sentence, and it must not eat the allowance
     // somebody needs to talk to the cast.
+    // AND THE WORLD'S OWN CEILING (engine/budget.php): a world out of renders
+    // for today says so, naming the ceiling, before a row is queued.
+    $bv = xeric_budget_allows($t, $db, xeric_clock_now($db, $t), 'renders', 1, xeric_scene_costly($ep));
+    if (!$bv['ok']) xeric_web_json(xeric_budget_body($bv), 429);
     xeric_limit_guard(xeric_limit_check('reroll', ['sid' => $sid]));
 
     // ASKING AGAIN IS A REAL ASK. The queue is one row per look, so a look

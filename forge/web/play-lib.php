@@ -79,6 +79,7 @@ require_once XERIC_WEB_LIB . '/engine/room.php';        // three to five of them
 require_once __DIR__ . '/model-lib.php';
 require_once __DIR__ . '/play-shelf.php';
 require_once __DIR__ . '/play-view.php';
+require_once __DIR__ . '/play-map.php';
 require_once __DIR__ . '/play-book.php';
 require_once __DIR__ . '/play-watch.php';
 
@@ -275,6 +276,11 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
     // its 1973 offset after being seeded would have six weeks of history dated
     // 2026 behind a present that is fifty years earlier.
     xeric_clock_begin($db, $t);
+
+    // THE WORLD THIS PROCESS NOW SPENDS FOR. Every metered call from here on
+    // lands in this world's ledger and is read against its `budget` block
+    // (engine/budget.php); the heart rebinds as it walks the worlds.
+    xeric_budget_bind($db, $t);
 
     $fresh = !xeric_seed_applied($db);
     $now   = xeric_clock_now($db, $t);

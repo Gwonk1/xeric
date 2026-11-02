@@ -89,9 +89,11 @@ $https   = !in_array(strtolower(trim((string)($_SERVER['HTTPS'] ?? ''))), ['', '
 $lanOpen = !in_array((string)(getenv('XERIC_BIND') ?: '127.0.0.1'), ['127.0.0.1', 'localhost', '::1'], true);
 $qr      = null;
 if ($made !== null) {
-    $lan = xeric_play_lan_url('api.php/v1/');
-    // The code rides in the fragment, which is never sent to any server and
-    // so never lands in a request log; the device reads it and POSTs it.
+    // THE QR OPENS THE STAND PAGE, the one client that reads a link code out
+    // of its own URL. The code rides in the fragment, which is never sent to
+    // any server and so never lands in a request log; the page reads it and
+    // POSTs it to api.php/v1/link itself.
+    $lan = xeric_play_lan_url('stand.php');
     if ($lan !== null) $qr = xeric_qr_svg($lan . '#link=' . $made['code'], 4);
 }
 

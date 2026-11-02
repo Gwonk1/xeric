@@ -78,6 +78,11 @@ function xeric_hear(array $w, string $sid, string $bytes, string $mime, string $
     // still warm: a minute is generous, and longer is a button that spins.
     $ep['timeout'] = 60;
 
+    // The world's own ceiling first (engine/budget.php), so a refusal takes no seat.
+    $bv = xeric_budget_allows($w['template'], $w['db'], xeric_clock_now($w['db'], $w['template']), 'hearings', 1,
+                              xeric_ears_costly($ep));
+    if (!$bv['ok']) return [429, xeric_budget_body($bv)];
+
     $lim = xeric_limit_check('hear', ['sid' => $sid]);
     if (!($lim['ok'] ?? false)) {
         return [(int)($lim['status'] ?? 429), ['error' => (string)($lim['message'] ?? 'that is enough listening for now'),
@@ -88,6 +93,8 @@ function xeric_hear(array $w, string $sid, string $bytes, string $mime, string $
     $names = xeric_hear_names($w['template'], $w['db'], $handle);
     try {
         $r = xeric_ears_hear($bytes, $mime, ['names' => $names], $ep);
+    } catch (XericBudgetOut $e) {
+        return [429, xeric_budget_body($e->verdict)];
     } catch (Throwable $e) {
         $code = (int)$e->getCode();
         $why  = xeric_web_note_safe((string)preg_replace('/^ears: /', '', $e->getMessage()));

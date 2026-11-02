@@ -21,6 +21,9 @@ require_once __DIR__ . '/boot.php';
 /**
  * @param array $opts `microphone` => true on the one page that may ask for it
  *                    (play.php's push to talk); every other page says no.
+ *                    `stand` => true on stand.php alone: the microphone and
+ *                    the headset are its, and it may register its service
+ *                    worker and name its manifest (worker-src, manifest-src).
  */
 function xeric_web_head(string $title, array $opts = []): void
 {
@@ -61,7 +64,18 @@ function xeric_web_head(string $title, array $opts = []): void
         . "form-action 'self'; "
         . "base-uri 'none'; "
         . "frame-ancestors 'none'; "
-        . "object-src 'none'");
+        . "object-src 'none'"
+        // THE STAND PAGE IS AN INSTALLABLE APP (stand.php): its service worker
+        // and its manifest each fall to default-src 'none' without these two,
+        // and both fail silently — no error, just a page that never works
+        // offline and never offers to install. 'self' and nothing wider: the
+        // worker is stand-sw.php and the manifest is stand.php?manifest. No
+        // blob:, which as a worker source is as good as 'unsafe-eval'.
+        // The play page asks for worker-src too (`worker` => true): the splat
+        // viewer's depth sort is xeric-splat-worker.js, from this origin. One
+        // directive however many reasons a page has, so either option names it.
+        . (!empty($opts['stand']) || !empty($opts['worker']) ? "; worker-src 'self'" : '')
+        . (!empty($opts['stand']) ? "; manifest-src 'self'" : ''));
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: no-referrer');
     // THE MICROPHONE IS ONE PAGE'S. Push to talk lives on the play view, and
@@ -70,7 +84,13 @@ function xeric_web_head(string $title, array $opts = []): void
     // forge or the machines screen cannot even raise the prompt. The page
     // says which it is (the `microphone` option) rather than this guessing
     // from a script name, which a router or a subdirectory would change.
-    header('Permissions-Policy: microphone=' . (!empty($opts['microphone']) ? '(self)' : '()') . ', camera=()');
+    // The stand page is the other one, and it also owns the headset: WebXR
+    // asks xr-spatial-tracking, which is said out loud there and nowhere else.
+    if (!empty($opts['stand'])) {
+        header('Permissions-Policy: microphone=(self), xr-spatial-tracking=(self), camera=()');
+    } else {
+        header('Permissions-Policy: microphone=' . (!empty($opts['microphone']) ? '(self)' : '()') . ', camera=()');
+    }
     ?><!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -136,7 +156,27 @@ function xeric_web_meter_html(?string $sid = null, string $at = ''): string
             . ((int)($t['clips'] ?? 0) > 0 ? ' · ' . number_format((int)$t['clips']) . ' lines spoken' : '')
             . ((int)($t['hearings'] ?? 0) > 0 ? ' · ' . number_format((int)$t['hearings']) . ' lines heard' : '')) . '">'
         . 'Tokens wasted: <b>' . h(xeric_web_tokens_short($n)) . '</b>'
-        . ($img > 0 ? ' <i class="mimg">+' . $img . ' 📷</i>' : '') . '</span>';
+        . ($img > 0 ? ' <i class="mimg">+' . $img . ' 📷</i>' : '')
+        . xeric_web_meter_budget($at) . '</span>';
+}
+
+/**
+ * THE WORLD'S CEILING, beside the visitor's receipt — only on the meter that
+ * means "everything", and only when the world this page opened
+ * (xeric_budget_bound) has a `budget` block with a ceiling in it. Without one
+ * the meter is exactly what it was. Not a <b>: the browser's ledger paints
+ * the first <b> in a meter, and this figure is the world's, not the browser's.
+ */
+function xeric_web_meter_budget(string $at = ''): string
+{
+    if ($at !== '' || !function_exists('xeric_budget_bound')) return '';
+    $w = xeric_budget_bound();
+    if ($w === null) return '';
+    $line = xeric_budget_line($w['t'], $w['db']);
+    if ($line === '') return '';
+    $metered = xeric_budget($w['t'])['metered_only'];
+    return ' <small class="mbudget" title="' . h('this world\'s own ceiling, per day of the world\'s calendar'
+        . ($metered ? ', counting only machines that bill' : '')) . '">' . h($line) . '</small>';
 }
 
 /**

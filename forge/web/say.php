@@ -169,6 +169,11 @@ if (!xeric_llm_up($endpoint, 6)) {
 $now = xeric_clock_now($db, $T);
 $t0  = microtime(true);
 
+// The world's own ceiling (engine/budget.php), on the machine this reply would
+// spend: a world out of tokens for today says so, and names the ceiling.
+$budget = xeric_budget_allows($T, $db, $now, 'tokens', 1, xeric_budget_llm_costly($endpoint));
+if (!$budget['ok']) $done(xeric_budget_body($budget), 429);
+
 // The slot is held and the model is up, so this turn is genuinely happening:
 // charged here rather than at the door, where a 404 or a dead endpoint would
 // have taken one of the visitor's thirty for nothing.

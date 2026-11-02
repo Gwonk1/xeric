@@ -699,6 +699,23 @@ Design principles, learned the hard way:
     }
   },
 
+  // ── budget: what this world may spend in a day (docs/BUDGET.md) ────────
+  "budget": {                               // a missing block is these defaults,
+                                            // and every 0 means NO ceiling
+    "tokens_per_day": 0,                    // prompt + completion, as the meter counts
+    "renders_per_day": 0,                   // rooms and photographs drawn
+    "clips_per_day": 0,                     // lines read aloud
+    "hearings_per_day": 0,                  // lines heard through push to talk
+    "metered_only": true                    // count only machines that bill (a
+                                            // remote model, scene, voice or ears
+                                            // machine); false rations the owner's
+                                            // own electricity too
+    // A "day" is the WORLD's date (its own clock), not the wall's: the heart
+    // lives world-days overnight. Out of tokens, the heart stops living hours
+    // where it ran out; out of renders, rooms wait pending; out of clips or
+    // hearings, the press is refused in a sentence naming the ceiling.
+  },
+
   // ── engine.json lives NEXT TO this, not in it ──────────────────────────
   // { "chat_model": {...local}, "forge_model": {...remote allowed — the
   //   "remote model for setup" pattern: big model builds the world once,

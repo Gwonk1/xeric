@@ -23,7 +23,7 @@
  * produced an event or was skipped, so a tick that finds no new window does no
  * work and costs no tokens. Nothing here needs to know when it last ran.
  *
- * FOUR THINGS IT WILL NOT DO.
+ * FIVE THINGS IT WILL NOT DO.
  *
  *  1. Run a world that is stopped. Detaching the model pauses every world, and a
  *     paused world is paused for this too — otherwise "stop the clock" would
@@ -43,6 +43,13 @@
  *     machine like that it draws nothing until the template says
  *     `media.scene.prerender` out loud (xeric_scene_prerender). A glance at a
  *     room is consent to draw it; a heartbeat is consent to nothing.
+ *  5. Spend past the world's budget (engine/budget.php, the template's
+ *     `budget` block). A world whose token ceiling for today is spent stops
+ *     living hours at the window where it ran out — the guards say which was
+ *     the last one lived, the clock keeps moving, and world_state
+ *     'budget.stopped' says why, so the inspector can. A world out of renders
+ *     draws nothing ahead. A ceiling of 0 is no ceiling, and under the
+ *     default `metered_only` the owner's own machine is never rationed.
  *
  * AND IT LEARNS, THE WAY A SKIP DOES. tick-worker.php has always wrapped the
  * hours it lives in the learn pass — settle what the last stretch left hanging,
@@ -129,6 +136,7 @@ function xeric_heart_rooms(string $slug, array $w, callable $say, array &$up): i
         return 0;
     }
     if ($r['mode'] === 'off') return 0;
+    // Out of renders: one quiet line, the engine's own sentence, below.
     if ($r['enqueued'] > 0) $say($slug . ': ' . $r['enqueued'] . ' to draw ahead (' . implode(', ', $r['keys']) . ')');
     if ($r['done'] > 0)     $say($slug . ': drew ' . $r['done'] . ' ' . ($r['done'] === 1 ? 'view' : 'views'));
     foreach ($r['notes'] as $n) $say($slug . ': ' . $n);
@@ -189,9 +197,15 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         // watching says nothing — but it may spend the diary calls a sealed
         // room's close owes, under the usual courtesy: only on an idle line,
         // and only if the slot comes quickly.
+        // What this world can still afford today, in tokens, on this model.
+        $tokCostly = xeric_budget_llm_costly($endpoint);
+        $tokens = function () use ($T, $db, $tokCostly): array {
+            return xeric_budget_allows($T, $db, xeric_clock_now($db, $T), 'tokens', 1, $tokCostly);
+        };
+
         try {
             if (xeric_play_room_tick($w) !== []) $say($slug . ': a conversation went quiet');
-            if (xeric_room_seals($db) !== [] && !xeric_queue_busy()) {
+            if (xeric_room_seals($db) !== [] && !xeric_queue_busy() && $tokens()['ok']) {
                 $rh = xeric_queue_take('say', XERIC_HEART_MODEL_WAIT, 'heart:' . $slug);
                 if (($rh['ok'] ?? false) === true) {
                     try {
@@ -226,6 +240,19 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             continue;
         }
 
+        // A WORLD THAT CANNOT AFFORD ITS TUESDAY PAUSES WHERE IT RAN OUT. Not
+        // the clock — the clock is the world's date, and the date turning over
+        // is what gives the budget back — only the living: the windows stay
+        // unswept, and the next world date picks them up.
+        $afford = $tokens();
+        if (!$afford['ok']) {
+            xeric_budget_stopped($db, $now, $afford);
+            $say($slug . ': not living hours, ' . $afford['reason']);
+            $drawn += xeric_heart_rooms($slug, $w, $say, $sceneUp);
+            continue;
+        }
+        xeric_world_state_delete($db, 'budget.stopped');
+
         // A person waiting on a reply outranks a town having a Tuesday.
         if (xeric_queue_busy()) { $say($slug . ': model busy, next time'); continue; }
 
@@ -244,9 +271,28 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             // xeric_heart_last_window() never looks in: $last stays 0 forever,
             // every tick re-derives from scratch, and the heart is permanently
             // blind to hours it has already lived.
-            $r = xeric_sweep_catchup($T, $db, $endpoint, $from, $to,
-                                     ['window' => $size, 'clock' => (int)$now['epoch'],
-                                      'stories' => $w['stories']]);
+            $sweepOpts = ['window' => $size, 'clock' => (int)$now['epoch'], 'stories' => $w['stories']];
+            $b = xeric_budget($T);
+            if ($b['tokens_per_day'] <= 0 || ($b['metered_only'] && !$tokCostly)) {
+                $r = xeric_sweep_catchup($T, $db, $endpoint, $from, $to, $sweepOpts);
+            } else {
+                // UNDER A CEILING, ONE WINDOW AT A TIME, asking before each,
+                // so the world stops at the hour it ran out rather than six
+                // hours past it. The same three-event cap as one call.
+                $r = ['events' => [], 'notes' => []];
+                for ($win = intdiv($from, $size); $win * $size <= $to; $win++) {
+                    $afford = $tokens();
+                    if (!$afford['ok']) {
+                        xeric_budget_stopped($db, xeric_clock_now($db, $T), $afford);
+                        $say($slug . ': stopped living hours, ' . $afford['reason']);
+                        break;
+                    }
+                    $one = xeric_sweep_catchup($T, $db, $endpoint, $win * $size, $win * $size, $sweepOpts);
+                    $r['events'] = array_merge($r['events'], (array)($one['events'] ?? []));
+                    $r['notes']  = array_merge($r['notes'], (array)($one['notes'] ?? []));
+                    if (count($r['events']) >= 3) break;
+                }
+            }
             $n = count((array)($r['events'] ?? []));
             $lived += $n;
             $ticked++;
@@ -266,7 +312,8 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             // The phone. Same call the skip button makes, on the moment the
             // world actually landed on.
             $after = xeric_clock_now($db, $T);
-            $ping  = xeric_proactive_check($T, $db, $endpoint, $after, ['stories' => $w['stories']]);
+            $broke = !$tokens()['ok'];          // spent mid-pass: no texts, no model half of the learn pass
+            $ping  = $broke ? null : xeric_proactive_check($T, $db, $endpoint, $after, ['stories' => $w['stories']]);
             $livedEvents = (array)($r['events'] ?? []);
             if ($ping !== null) {
                 $say($slug . ': ' . (string)($ping['name'] ?? 'somebody') . ' texted you');
@@ -283,7 +330,7 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             // including the text just sent — and distil when due.
             $lp = xeric_learn_pass($db, $T, $endpoint, (int)$now['epoch'], $livedEvents,
                                    is_array($ping) ? $ping : null, (int)$after['epoch'],
-                                   ['no_model' => xeric_queue_expired($hold['hold'] ?? $hold), 'timeout' => 60]);
+                                   ['no_model' => xeric_queue_expired($hold['hold'] ?? $hold) || $broke, 'timeout' => 60]);
             if ($lp['learned'] > 0) $say($slug . ': learned ' . $lp['learned'] . ' thing' . ($lp['learned'] === 1 ? '' : 's'));
         } catch (Throwable $e) {
             $say($slug . ': ' . $e->getMessage());

@@ -1018,6 +1018,14 @@ function xeric_web_log_trim(int $keep = 262144): void
 // has no sessions, no rate limits and no queue: one person, one GPU, no line.
 // This is the layer that exists only because strangers are sharing a demo.
 
+// THE LEDGER BESIDE THE METER. Every sink below is wrapped in
+// xeric_budget_sink(): the session meter runs first, exactly as before, and the
+// same call then lands in the world's own ledger (engine/budget.php) — the
+// world this process opened last, on the world's date. The meter is this
+// visitor's receipt; the ledger is the world's, and it is what a world's
+// `budget` ceiling is read against.
+require_once $XERIC_LIB . '/engine/budget.php';
+
 /**
  * THE METER. Every completion this process makes, added to this visitor's
  * running total as it lands.
@@ -1033,7 +1041,7 @@ function xeric_web_log_trim(int $keep = 262144): void
  * total that only appeared when the process exited would sit at zero for the
  * whole time anybody was watching it work.
  */
-xeric_llm_meter(function (array $u, string $where = ''): void {
+xeric_llm_meter(xeric_budget_sink('tokens', function (array $u, string $where = ''): void {
     $in  = (int)($u['prompt_tokens'] ?? 0);
     $out = (int)($u['completion_tokens'] ?? 0);
     if ($in === 0 && $out === 0) return;
@@ -1082,7 +1090,7 @@ xeric_llm_meter(function (array $u, string $where = ''): void {
                 ['title' => 'Tokens wasted', 'tags' => 'fuelpump', 'priority' => 2]);
         }
     }
-});
+}));
 
 // THE IMAGE SPEND LANDS ON THE SAME LEDGER. The reaper hands every render to
 // this sink (engine/photo.php's meter discipline, llm.php's shape), and the
@@ -1119,7 +1127,7 @@ xeric_image_source(function () {
             'kind' => (string)($img['kind'] ?? ''), 'loras' => $loras];
 });
 
-xeric_photo_meter(function (array $u, string $where = ''): void {
+xeric_photo_meter(xeric_budget_sink('renders', function (array $u, string $where = ''): void {
     $key = xeric_web_meter_key($where);
     try {
         xeric_web_session_edit(function (array &$s) use ($u, $key): void {
@@ -1133,7 +1141,7 @@ xeric_photo_meter(function (array $u, string $where = ''): void {
     } catch (Throwable $e) {
         // No session to write to. The picture still exists.
     }
-});
+}));
 
 // AND THE ROOMS, BESIDE THE PICTURES. engine/scene.php is photo.php one size
 // up — a whole room at this minute rather than a face — and it is wired the
@@ -1168,7 +1176,7 @@ xeric_scene_source(function () {
 
 // Rooms on the same ledger, counted as rooms. A scene is not a photograph any
 // more than a photograph is a thousand tokens: the meter says what was made.
-xeric_scene_meter(function (array $u, string $where = ''): void {
+xeric_scene_meter(xeric_budget_sink('renders', function (array $u, string $where = ''): void {
     $key = xeric_web_meter_key($where);
     try {
         xeric_web_session_edit(function (array &$s) use ($u, $key): void {
@@ -1182,7 +1190,7 @@ xeric_scene_meter(function (array $u, string $where = ''): void {
     } catch (Throwable $e) {
         // No session to write to. The room was still drawn.
     }
-});
+}));
 
 // AND THE CAST, OUT LOUD. engine/voice.php wired the way the rooms are: the
 // machines screen's stored address first (the visitor's own session), then
@@ -1212,7 +1220,7 @@ xeric_voice_source(function () {
 
 // Lines spoken, on the same ledger: counted as clips, and the characters
 // beside them, because characters are what a hosted voice bills by.
-xeric_voice_meter(function (array $u, string $where = ''): void {
+xeric_voice_meter(xeric_budget_sink('clips', function (array $u, string $where = ''): void {
     $key = xeric_web_meter_key($where);
     try {
         xeric_web_session_edit(function (array &$s) use ($u, $key): void {
@@ -1227,7 +1235,7 @@ xeric_voice_meter(function (array $u, string $where = ''): void {
     } catch (Throwable $e) {
         // No session to write to. The line was still spoken.
     }
-});
+}));
 
 // AND THE PLAYER, OUT LOUD. engine/ears.php wired the way the voices are: the
 // machines screen's stored address first (the visitor's own session), then
@@ -1255,7 +1263,7 @@ xeric_ears_source(function () {
 
 // Lines heard, on the same ledger: counted as hearings, and the seconds
 // beside them, because seconds are what a hosted transcriber bills by.
-xeric_ears_meter(function (array $u, string $where = ''): void {
+xeric_ears_meter(xeric_budget_sink('hearings', function (array $u, string $where = ''): void {
     $key = xeric_web_meter_key($where);
     try {
         xeric_web_session_edit(function (array &$s) use ($u, $key): void {
@@ -1270,7 +1278,7 @@ xeric_ears_meter(function (array $u, string $where = ''): void {
     } catch (Throwable $e) {
         // No session to write to. The line was still heard.
     }
-});
+}));
 
 /**
  * Where this visitor's notifications go, and what they are for.

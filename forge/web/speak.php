@@ -82,6 +82,11 @@ try {
             xeric_play_owner_only($w, 'having a new line read aloud');
             xeric_limit_guard(xeric_limit_check('reroll', ['sid' => $sid]));
         });
+} catch (XericBudgetOut $e) {
+    // THE WORLD'S OWN CEILING (engine/budget.php), asked by the engine after
+    // the cache and before the machine: "not right now, and not about you" —
+    // the owner chose how many lines a day this world says aloud.
+    xeric_web_json(xeric_budget_body($e->verdict), 503);
 } catch (Throwable $e) {
     xeric_web_json(['error' => xeric_web_note_safe(preg_replace('/^voice: /', '', $e->getMessage()) ?? '')], 503);
 }

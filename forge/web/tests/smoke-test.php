@@ -215,6 +215,9 @@ $pages = [
     ['/watch.php?w=smoke-town',         'the watch',        'XERIC'],
     ['/world.php?w=smoke-town',         'the file itself',  'meta'],
     ['/forge.php',                      'the forge',        'XERIC'],
+    // data-stand is set by the page's own script, so this one proves it ran
+    // (and the service worker it registers is served and parses).
+    ['/stand.php?w=smoke-town',         'the stand page',   'data-stand="ready"'],
 ];
 
 // AND ONE PAGE PROVED TO HAVE ACTUALLY RUN ITS SCRIPTS.

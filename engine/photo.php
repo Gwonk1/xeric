@@ -46,6 +46,7 @@ require_once __DIR__ . '/weather.php';
 require_once __DIR__ . '/state.php';    // the queue is rows; clock.php rides in with it
 require_once __DIR__ . '/clock.php';    // render-time prompts read the world's own now
 require_once __DIR__ . '/llm.php';      // xeric_llm_header_safe: a key is a header value, never a header
+require_once __DIR__ . '/budget.php';   // the world's daily ceiling, read before every render
 
 /**
  * The floor's framing, in words. One constant because two composers say it —
@@ -610,6 +611,12 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
     if ($pending === []) return $out;
 
     $endpoint ??= xeric_image_endpoint();
+    // THE WORLD'S CEILING, before the machine is even asked: out of renders
+    // for today is a row that waits for tomorrow, never one that fails.
+    $now     = xeric_clock_now($db, $t);
+    $costly  = $endpoint !== null && xeric_image_costly($endpoint);
+    $verdict = xeric_budget_allows($t, $db, $now, 'renders', 1, $costly);
+    if (!$verdict['ok']) { $out['notes'][] = $verdict['reason']; return $out; }
     if (!xeric_image_up($endpoint)) { $out['notes'][] = 'no image machine is answering'; return $out; }
 
     if (!is_dir($photosDir) && !@mkdir($photosDir, 0775, true) && !is_dir($photosDir)) {
@@ -617,10 +624,12 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
         return $out;
     }
 
-    $now   = xeric_clock_now($db, $t);
     $claim = $db->prepare("UPDATE photo_jobs SET status = 'working', done_at = ?
                            WHERE id = ? AND status = 'pending'");
     foreach (array_slice($pending, 0, max(1, $limit)) as $job) {
+        // Asked again per job: the render before this one may have been the last.
+        $verdict = xeric_budget_allows($t, $db, $now, 'renders', 1, $costly);
+        if (!$verdict['ok']) { $out['notes'][] = $verdict['reason']; break; }
         $kind = (string)$job['kind'];
         $subj = (string)$job['subject'];
         // THE CLAIM IS THE UPDATE: two reapers behind one conversation both

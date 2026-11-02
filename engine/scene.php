@@ -87,6 +87,7 @@ require_once __DIR__ . '/travel.php';   // position, open hours; death.php rides
 require_once __DIR__ . '/weather.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/clock.php';
+require_once __DIR__ . '/splat.php';    // a splat, kept as PLY on arrival
 
 // ---------------------------------------------------------------------------
 // The template's own knobs
@@ -1255,6 +1256,7 @@ function xeric_scene_ext(string $mime, string $kind = ''): string
         'image/png' => '.png', 'image/jpeg' => '.jpg', 'image/webp' => '.webp',
         'video/mp4' => '.mp4', 'video/webm' => '.webm',
         'model/gltf-binary' => '.glb', 'model/gltf+json' => '.gltf',
+        'application/ply', 'model/ply' => '.ply',
         'audio/mpeg' => '.mp3', 'audio/ogg' => '.ogg', 'audio/wav' => '.wav',
         'audio/webm' => '.weba', 'audio/mp4' => '.m4a',
         default => match ($kind) { 'splat' => '.splat', 'glb' => '.glb', default => '.bin' },
@@ -1491,6 +1493,17 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
     if ($pending === [] && $waiting === []) return $out;
 
     $endpoint ??= xeric_scene_endpoint();
+    // THE WORLD'S CEILING (engine/budget.php). Out of renders for today, a
+    // pending row WAITS — it is not claimed, so it burns no try and is still
+    // pending tomorrow. A row the machine is already making is let finish:
+    // that render was asked for while there was budget.
+    $now     = xeric_clock_now($db, $t);
+    $costly  = $endpoint !== null && xeric_scene_costly($endpoint);
+    $verdict = xeric_budget_allows($t, $db, $now, 'renders', 1, $costly);
+    if (!$verdict['ok'] && $waiting === []) {
+        $out['notes'][] = $verdict['reason'];
+        return $out;
+    }
     if ($endpoint === null || !($answering ?? xeric_scene_up($endpoint))) {
         $out['notes'][] = 'no scene machine is answering';
         return $out;
@@ -1547,10 +1560,13 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
         }
     }
 
-    $now   = xeric_clock_now($db, $t);
     $claim = $db->prepare("UPDATE scene_jobs SET status = 'working', done_at = ?
                            WHERE id = ? AND status = 'pending'");
     foreach (array_slice($pending, 0, max(1, $limit)) as $job) {
+        // Asked per row, before the claim: the render before this one may
+        // have been the last the world could afford today.
+        $verdict = xeric_budget_allows($t, $db, $now, 'renders', 1, $costly);
+        if (!$verdict['ok']) { $out['notes'][] = $verdict['reason']; break; }
         $key     = (string)$job['key'];
         $fp      = (string)$job['fingerprint'];
         $channel = xeric_scene_channel_of($job);
@@ -1664,6 +1680,21 @@ function xeric_scene_file(array $job, array $r): string
 function xeric_scene_finish(PDO $db, array $job, array $r, string $scenesDir, ?array $endpoint, array $ours = []): bool
 {
     $file = '';
+    // A SPLAT IS KEPT AS PLY (engine/splat.php): a .splat is converted, a PLY
+    // checked and kept as it came, both stored as application/ply under .ply.
+    // What cannot be converted (SPZ, SOG, bytes that are not a splat) is kept
+    // exactly as it arrived — a download is still a room — and the row's meta
+    // says why. Nothing here touches the fingerprint.
+    if ($r['kind'] === 'splat' && isset($r['bytes'])) {
+        $ply = xeric_splat_to_ply((string)$r['bytes'], (string)$r['mime'], xeric_scene_ext((string)$r['mime'], 'splat'));
+        if ($ply !== null) {
+            $ours += ['ply' => $ply === $r['bytes'] ? 'kept' : 'converted from .splat'];
+            $r['bytes'] = $ply;
+            $r['mime']  = 'application/ply';
+        } else {
+            $ours += ['ply' => 'not converted: ' . xeric_splat_to_ply_why()];
+        }
+    }
     if ($r['kind'] !== 'viewer') {
         $file = xeric_scene_file($job, $r);
         if (@file_put_contents($scenesDir . '/' . $file, $r['bytes']) === false) {
@@ -1821,16 +1852,30 @@ function xeric_scene_ahead_key(array $t, PDO $db, ?array $now = null): string
  * written only once a backfill has run, so a machine that was down is asked
  * again next minute.
  *
- * @return array{mode:string,unchanged:bool,enqueued:int,keys:string[],done:int,failed:int,notes:string[]}
+ * A world whose render budget for today is spent (engine/budget.php) skips
+ * the whole pass — no probe, no backfill, no reap — and says so: `spent` is
+ * true and the note is the sentence.
+ *
+ * @return array{mode:string,unchanged:bool,enqueued:int,keys:string[],done:int,failed:int,notes:string[],spent:bool}
  */
 function xeric_scene_ahead(array $t, PDO $db, string $scenesDir, ?array $endpoint = null, int $limit = 2,
                            ?array &$up = null): array
 {
     $out = ['mode' => 'off', 'unchanged' => false, 'enqueued' => 0, 'keys' => [], 'done' => 0, 'failed' => 0,
-            'notes' => []];
+            'notes' => [], 'spent' => false];
     $endpoint ??= xeric_scene_endpoint();
     $out['mode'] = xeric_scene_prerender($t, $endpoint);
     if ($out['mode'] === 'off' || $endpoint === null) return $out;
+
+    // A WORLD OUT OF RENDERS DRAWS NOTHING AHEAD. Drawing before anybody looks
+    // is the first thing a ceiling takes away; the tick line says why, and
+    // nothing is probed, queued or reaped until the world's date turns over.
+    $verdict = xeric_budget_allows($t, $db, xeric_clock_now($db, $t), 'renders', 1, xeric_scene_costly($endpoint));
+    if (!$verdict['ok']) {
+        $out['spent']   = true;
+        $out['notes'][] = 'not drawing ahead, ' . $verdict['reason'];
+        return $out;
+    }
 
     $key  = sha1(xeric_scene_ahead_key($t, $db) . '|' . $out['mode'] . '|' . xeric_scene_machine_id($endpoint));
     $open = 0;
@@ -1858,5 +1903,6 @@ function xeric_scene_ahead(array $t, PDO $db, string $scenesDir, ?array $endpoin
     $b = xeric_scene_backfill($t, $db, null, $endpoint);
     xeric_world_state_set($db, 'scene.ahead', $key);
     $r = xeric_scene_reap($t, $db, $scenesDir, $endpoint, $limit, true);
-    return ['mode' => $out['mode'], 'unchanged' => false, 'enqueued' => $b['enqueued'], 'keys' => $b['keys']] + $r;
+    return ['mode' => $out['mode'], 'unchanged' => false, 'enqueued' => $b['enqueued'], 'keys' => $b['keys'],
+            'spent' => false] + $r;
 }

@@ -445,6 +445,11 @@ function xeric_ears_hear(string $bytes, string $mime, array $opts = [], ?array $
     $ep ??= xeric_ears_endpoint();
     if ($ep === null) return null;
 
+    // THE WORLD'S CEILING, for the world this process is speaking for
+    // (engine/budget.php's binding: the ears are handed bytes, not a world).
+    // Nothing bound is nothing to ration. Thrown, with a 429 on it.
+    xeric_budget_enforce(xeric_budget_bound_allows('hearings', 1, xeric_ears_costly($ep)), 429);
+
     $r = xeric_ears_transcribe($ep, $bytes, $type, $opts);
     $seconds = is_numeric($r['usage']['seconds'] ?? null) ? (float)$r['usage']['seconds'] : (float)($secs ?? 0);
 

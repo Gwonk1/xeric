@@ -55,7 +55,7 @@ Options -Indexes
 # model-lib and the play-* parts are play-lib.php split by surface (the map is at
 # the top of play-lib.php): the same library in more files, and as much an
 # include as it ever was.
-<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|model-lib|play-shelf|play-view|play-book|play-watch|review-lib|why-lib|api-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
+<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|model-lib|play-shelf|play-view|play-map|play-book|play-watch|review-lib|why-lib|api-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
   Require all denied
 </If>
 
@@ -82,7 +82,8 @@ Options -Indexes
 </IfModule>
 
 
-# THE STATIC FILES: xeric.css, xeric-shelf.css and xeric-view.js. Served as
+# THE STATIC FILES: xeric.css, xeric-shelf.css, xeric-view.js, xeric-map.js, and
+# the splat viewer xeric-splat.js with its sort worker xeric-splat-worker.js. Served as
 # files by whatever serves this directory (Apache here, `php -S` through
 # router.php, which hands back everything but `/`). Every page that loads one
 # asks for it by content (`xeric.css?v=<16 hex of sha256>`, xeric_play_asset in
@@ -90,7 +91,7 @@ Options -Indexes
 # changes the address, never the bytes behind an old one. An unversioned request
 # gets the server's ordinary revalidation and nothing stronger.
 <IfModule mod_headers.c>
-  <Files ~ "^xeric(-shelf)?\.css$|^xeric-view\.js$">
+  <Files ~ "^xeric(-shelf)?\.css$|^xeric-(view|map|splat|splat-worker)\.js$">
     Header always set Cache-Control "public, max-age=31536000, immutable" "expr=%{QUERY_STRING} =~ /^v=[0-9a-f]{16}$/"
   </Files>
 </IfModule>

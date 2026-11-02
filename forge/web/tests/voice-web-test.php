@@ -255,6 +255,28 @@ ok('say.php hands the turn\'s own id to the page, rather than finding the row ag
     str_contains((string)file_get_contents(dirname(__DIR__) . '/say.php'), "'mid'       => (int)(\$out['message_id'] ?? 0),")
     && !str_contains((string)file_get_contents(dirname(__DIR__) . '/say.php'), 'AND content = ?'));
 
+echo "\n# the world's budget\n";
+
+xeric_voice_source(fn() => $stub);
+$Tb    = ['budget' => ['clips_per_day' => 1, 'metered_only' => false]] + $T;
+$fresh = xeric_play_spoken($db, xeric_message_append($db, $conv, 'character', 'dot', 'Pie is gone till Thursday.'));
+xeric_budget_note($db, xeric_clock_now($db, $T), 'clips', 1, false);
+$before = $calls;
+$out = null;
+try { xeric_play_voice_clip($Tb, $db, $clips, $fresh, xeric_voice_endpoint(), ['af_bella', 'am_adam'], $spend); }
+catch (XericBudgetOut $e) { $out = $e; }
+ok('a world out of clips for today refuses a new line, in the world\'s words, and the machine is not asked',
+    $out !== null && $out->getCode() === 503 && $calls === $before
+    && str_contains($out->getMessage(), "this world's clip budget for today is spent"), $out ? $out->getMessage() : 'none');
+ok('but a line already voiced is still served from the cache',
+    (xeric_play_voice_clip($Tb, $db, $clips, $msg, xeric_voice_endpoint(), ['af_bella', 'am_adam'], $spend)['cached'] ?? false)
+    === true);
+$sp = (string)file_get_contents(dirname(__DIR__) . '/speak.php');
+ok('speak.php answers the engine\'s budget refusal with a 503 naming the ceiling, before any other refusal',
+    ($bp = strpos($sp, 'catch (XericBudgetOut $e)')) !== false
+    && str_contains($sp, 'xeric_web_json(xeric_budget_body($e->verdict), 503);')
+    && strpos($sp, 'catch (Throwable $e)', $bp) !== false);
+
 echo "\n# the meter\n";
 
 ok('lines spoken are on the meter\'s tooltip', str_contains((string)file_get_contents(dirname(__DIR__) . '/ui.php'), "' lines spoken'"));

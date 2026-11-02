@@ -60,6 +60,13 @@ $spawn = function (string $lease) use ($w, $sid): void {
         'db' => (string)$w['db_path'], 'adult' => xeric_session_adult($sid), 'lease' => $lease], 'room-worker.php');
 };
 
+/** The world's token ceiling (engine/budget.php), asked before a beat is started. */
+$affords = function () use ($T, $db, $sid): void {
+    try { $ep = xeric_play_endpoint($sid); } catch (Throwable $e) { return; }   // no model, no spend
+    $bv = xeric_budget_allows($T, $db, xeric_clock_now($db, $T), 'tokens', 1, xeric_budget_llm_costly($ep));
+    if (!$bv['ok']) xeric_web_json(xeric_budget_body($bv), 429);
+};
+
 /** The engine's sentences are for a log; its refusals are for people, minus the address. */
 $bare = fn(string $m): string => preg_replace('/^room:\s*(refused,\s*)?/', '', $m) ?? $m;
 
@@ -115,6 +122,7 @@ if ($action === 'say') {
     if ($text === '') xeric_web_json(['error' => 'there is nothing to say'], 400);
     if (mb_strlen($text) > 2000) $text = mb_substr($text, 0, 2000);
 
+    $affords();
     // One of the hour's thirty, like any line said — taken at the door and
     // given back by itself if the line is refused below.
     xeric_limit_guard(xeric_limit_check('message', ['sid' => $sid]));
@@ -151,6 +159,7 @@ if ($action === 'say') {
 
 if ($action === 'carry') {
     xeric_play_owner_only($w, 'letting the room talk');
+    $affords();
     $r = xeric_play_room_carry($w, $sid);
     if (!$r['ok']) xeric_web_json(['ok' => false, 'why' => $r['why'], 'kind' => 'quiet'], 409);
     try {

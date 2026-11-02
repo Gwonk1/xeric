@@ -274,6 +274,24 @@ function xeric_state_migrate(PDO $db): void
     SQL);
     $db->exec('CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(fired_at, due)');
 
+    // spend: the world's ledger (engine/budget.php). One row per WORLD date,
+    // kind and costliness — not per call — so a year of a chatty world is a
+    // few thousand rows. `day` is the world's own local date, never the wall
+    // clock's: the heart lives world-days overnight, and a ceiling is per day
+    // of the world's life. `costly` splits a remote machine's spend from the
+    // owner's own electricity, which metered_only leaves unrationed.
+    $db->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS spend (
+            day     TEXT    NOT NULL,                  -- the world's date, YYYY-MM-DD
+            kind    TEXT    NOT NULL,                  -- tokens | renders | clips | hearings
+            costly  INTEGER NOT NULL DEFAULT 1,        -- 1: a machine that bills
+            count   INTEGER NOT NULL DEFAULT 0,
+            created INTEGER NOT NULL,                  -- real time, first spend of the row
+            updated INTEGER NOT NULL,                  -- real time, last spend of the row
+            PRIMARY KEY (day, kind, costly)
+        )
+    SQL);
+
     foreach (xeric_state_alters() as [$table, $column, $decl]) {
         xeric_state_add_column($db, $table, $column, $decl);
     }

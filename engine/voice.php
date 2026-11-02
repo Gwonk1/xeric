@@ -894,6 +894,11 @@ function xeric_voice_clip(array $t, PDO $db, string $clipsDir, string $handle, i
         return ['file' => $hit['file'], 'mime' => $hit['mime'], 'cached' => true];
     }
 
+    // THE WORLD'S CEILING, after the cache (a clip already made is free, and
+    // stays free) and before anything is asked: out of clips is a refusal in
+    // the world's own words, thrown, so the caller can say it to a person.
+    xeric_budget_enforce(xeric_budget_allows($t, $db, xeric_clock_now($db, $t), 'clips', 1,
+                                             xeric_voice_costly($ep)), 503);
     if (!xeric_voice_up($ep)) return null;
     if (!is_dir($clipsDir) && !@mkdir($clipsDir, 0775, true) && !is_dir($clipsDir)) {
         throw new RuntimeException('voice: the clips directory cannot be created');

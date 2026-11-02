@@ -925,7 +925,7 @@ $earsOn = (function (): bool {
     }
 })();
 
-xeric_web_head('Xeric: ' . (string)$T['meta']['name'], ['microphone' => true]);
+xeric_web_head('Xeric: ' . (string)$T['meta']['name'], ['microphone' => true, 'worker' => true]);
 echo xeric_play_css_link() . '<style>
 /* ── the ⚙ cog and its modal rows (xeric controls) ── */
 /* color set EXPLICITLY: a button never inherits text colour, it takes the
@@ -990,6 +990,14 @@ echo xeric_play_css_link() . '<style>
   cursor:grab; touch-action:none; }
 .lookpano.grabbing { cursor:grabbing; }
 .lookpano:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+/* standing inside a splat: the frame of the panorama, and the download kept small under it */
+.looksplat { display:block; width:100%; aspect-ratio:4/3; border-radius:.6rem; background:#000;
+  cursor:grab; touch-action:none; }
+.looksplat.grabbing { cursor:grabbing; }
+.looksplat:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
+.looksplatstate { font-size:.75rem; color:var(--fg-dim); margin:.25rem 0 0; }
+.looksplatstate[hidden] { display:none; }
+.looksplatdl { font-size:.75rem; margin:.2rem 0 .3rem; }
 .lookmeta { font-size:.75rem; color:var(--fg-dim); margin:0 0 .4rem; }
 .lookstale { display:inline-block; font-size:.68rem; padding:.05rem .45rem; border-radius:999px;
   border:1px solid var(--line); color:var(--fg-dim); margin-left:.3rem; }
@@ -1475,6 +1483,9 @@ echo xeric_play_css_link() . '<style>
 <div id="ptoast" role="status"></div>
 
 <script nonce="<?= h(xeric_web_nonce()) ?>" src="<?= h(xeric_play_asset('xeric-view.js')) ?>"></script>
+<!-- the splat viewer: static, because a nonce-only CSP lets no script add another; idle until a splat is mounted -->
+<script nonce="<?= h(xeric_web_nonce()) ?>" src="<?= h(xeric_play_asset('xeric-splat.js')) ?>"></script>
+<script nonce="<?= h(xeric_web_nonce()) ?>" src="<?= h(xeric_play_asset('xeric-map.js')) ?>"></script>
 <script nonce="<?= h(xeric_web_nonce()) ?>">
 (function () {
   'use strict';
@@ -2210,6 +2221,8 @@ echo xeric_play_css_link() . '<style>
     XV.unmount();
     var box = document.querySelector('#look .lookpanobox');
     if (box) XV.mount(box);
+    var sc = document.querySelector('#look canvas.looksplat');      // a room to stand inside (xeric-splat.js)
+    if (sc && !box) XV.mount({ kind: 'splat', canvas: sc, url: sc.dataset.src });
     var img = document.querySelector('#look .lookimg');
     // Bound, not an onerror= attribute: the CSP grants no inline handlers.
     if (img) img.addEventListener('error', function () { this.remove(); });

@@ -246,6 +246,24 @@ ok('and the next hearing is a 429 with a sentence and a time, before the machine
 ok('a hearing is not a message: the message bucket is untouched',
     xeric_limit_hits('msg-' . $A, XERIC_LIMIT_HOUR, time())['count'] === 0);
 
+echo "\n# the world's budget\n";
+
+$wb = ['template' => ['budget' => ['hearings_per_day' => 1, 'metered_only' => false]] + $T] + $w;
+xeric_budget_note($db, xeric_clock_now($db, $T), 'hearings', 1, false);
+$before = count($CALLS);
+[$st, $body] = xeric_hear($wb, $A, $WEBM, 'audio/webm', 'dot');
+ok('a world out of hearings for today is a 429 naming the ceiling, and the machine is not asked',
+    $st === 429 && ($body['kind'] ?? '') === 'budget' && ($body['ceiling'] ?? 0) === 1
+    && str_contains((string)($body['error'] ?? ''), "hearing budget for today is spent") && count($CALLS) === $before,
+    json_encode([$st, $body]));
+$wm = ['template' => ['budget' => ['hearings_per_day' => 1]] + $T] + $w;
+[$st, $body] = xeric_hear($wm, $A, $WEBM, 'audio/webm', 'dot');
+ok('under metered_only the same ceiling does not ration a stub (the owner\'s own): the next door is the rate bucket',
+    ($body['kind'] ?? '') !== 'budget', json_encode([$st, $body]));
+ok('play-lib binds the world it opens, so the meters\' calls land in its ledger',
+    xeric_budget_bound() !== null && str_contains((string)file_get_contents(dirname(__DIR__) . '/play-lib.php'),
+        'xeric_budget_bind($db, $t);'));
+
 echo "\n# the chrome\n";
 
 $ui = (string)file_get_contents(dirname(__DIR__) . '/ui.php');
@@ -254,7 +272,7 @@ ok('only a page that says so may ask for the microphone; every other page says n
     str_contains($ui, "header('Permissions-Policy: microphone=' . (!empty(\$opts['microphone']) ? '(self)' : '()')"));
 $pp = (string)file_get_contents(dirname(__DIR__) . '/play.php');
 ok('and the room is the page that says so',
-    str_contains($pp, "xeric_web_head('Xeric: ' . (string)\$T['meta']['name'], ['microphone' => true]);")
+    str_contains($pp, "xeric_web_head('Xeric: ' . (string)\$T['meta']['name'], ['microphone' => true")
     && substr_count($pp, "'microphone' => true") === 1);
 $mp = (string)file_get_contents(dirname(__DIR__) . '/model.php');
 ok('the machines screen has an ears card, its lamp, and names the key it bills',

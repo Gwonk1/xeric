@@ -17,6 +17,13 @@
 // XV.dayView), which button speaks (XV.speak), and who the hold-to-talk line
 // is for (XV.hold). forge/web/tests/viewer-test.php runs this file, as served,
 // against a fake DOM, WebGL, WebXR and DeviceOrientationEvent.
+//
+// THE STAND PAGE (stand.php) loads the same file and passes pano() two more
+// things — a loader for a panorama behind a token, and its hooks — which turn
+// step inside into standXR: the people as quads, a ray that picks them, hold
+// to talk, and an XREquirectLayer where the browser has layers. Its pure parts
+// (tagPos, tagQuad, raySelect, holdTarget, panAt, offline) are handed out so
+// forge/web/tests/stand-test.php can run them.
 (function (root) {
   'use strict';
 
@@ -93,12 +100,25 @@ root.XericView = function (o) {
   // engine's own number) just under the horizon, fades it toward the edge of
   // the view and hides it past the edge, where a hidden button is also not a
   // tab stop.
-  function pano(box) {
+  //
+  // TWO THINGS A PAGE MAY HAND OVER (opt), both the stand page's:
+  //   opt.load(src) → a promise of something WebGL can upload (an ImageBitmap
+  //     from createImageBitmap, or a canvas), for a page whose panorama is
+  //     behind an Authorization header an <img> cannot send. Never a blob:
+  //     URL, which the CSP does not allow and does not need to.
+  //   opt.stand — the stand page's hooks; step inside is then standXR (tags
+  //     drawn in the headset, a ray that picks them, hold to talk) instead of
+  //     xr(). Without either, the view is exactly what play.php has always had.
+  function pano(box, opt) {
+    opt = opt || {};
     var cv = box.querySelector('canvas'), src = box.dataset.src;
     var v = lookYaw[src] || { yaw: 0, pitch: 0, fov: 1.4 };
     lookYaw[src] = v;
     var tags = [].slice.call(box.querySelectorAll('.looktag'));
     var img = new Image(), gl = null, g2 = null, prog = null, tex = null, raf = 0, dead = false, xrh = null, gz = null;
+    var bm = null, buf = null;                        // opt.load's bitmap, when the page loads it; the quad
+    function pw() { return bm ? bm.width : img.naturalWidth; }
+    function ph() { return bm ? bm.height : img.naturalHeight; }
     function plain() {
       if (dead) return;
       // The still, and the people as the row a still has under it.
@@ -136,7 +156,7 @@ root.XericView = function (o) {
     // to aim the view (a name tag at a bearing, a day strip, a headset) calls
     // this with its own numbers.
     function drawAt(yaw, pitch, fov) {
-      if (dead || !img.complete || !img.naturalWidth) return;
+      if (dead || !(bm || (img.complete && img.naturalWidth))) return;
       size();
       if (gl) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -152,11 +172,11 @@ root.XericView = function (o) {
       // The strip, twice its height so a band about the horizon fills the
       // frame, drawn three times side by side so turning never runs off the
       // end. Positive yaw slides it right, the same way the shader turns.
-      var h = cv.height * 2, w = h * img.naturalWidth / img.naturalHeight;
+      var h = cv.height * 2, w = h * pw() / ph();
       var x = (((yaw / (2 * Math.PI)) % 1 + 1) % 1) * w - w / 2 + cv.width / 2;
       var y0 = -cv.height / 2 + pitch / Math.PI * h;
       g2.clearRect(0, 0, cv.width, cv.height);
-      for (var i = -1; i <= 1; i++) g2.drawImage(img, x + i * w, y0, w, h);
+      for (var i = -1; i <= 1; i++) g2.drawImage(bm || img, x + i * w, y0, w, h);
     }
     // The tags for the same three numbers, in CSS pixels over the canvas. The
     // WebGL view is a perspective, so a bearing lands at tan(angle); the 2D
@@ -195,17 +215,17 @@ root.XericView = function (o) {
       v.yaw += dx; v.pitch = Math.max(-1.45, Math.min(1.45, v.pitch + dy)); ask();
     }
 
-    img.addEventListener('load', function () {
+    function loaded() {
       if (dead) return;
       if (gl) {
-        var source = img, max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
-        if (img.naturalWidth > max) {               // a phone's ceiling: shrink once, on a 2D canvas
+        var source = bm || img, max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
+        if (pw() > max) {                             // a phone's ceiling: shrink once, on a 2D canvas
           var c2 = document.createElement('canvas');
-          c2.width = max; c2.height = Math.round(max * img.naturalHeight / img.naturalWidth);
-          c2.getContext('2d').drawImage(img, 0, 0, c2.width, c2.height);
+          c2.width = max; c2.height = Math.round(max * ph() / pw());
+          c2.getContext('2d').drawImage(bm || img, 0, 0, c2.width, c2.height);
           source = c2;
         }
-        var buf = gl.createBuffer();
+        buf = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
         // Location 0 by construction (panoProgram binds it), so the headset's
@@ -225,9 +245,30 @@ root.XericView = function (o) {
         catch (e) { plain(); return; }
       }
       ask();
-    });
-    img.addEventListener('error', function () { dead = true; box.remove(); });
-    img.src = src;                                    // same origin: img-src 'self', and no tainted texture
+    }
+    function broken() { dead = true; box.remove(); }
+    // The quad and the panorama put back where the look-around expects them,
+    // after a headset frame has drawn its tags with buffers of its own.
+    function quad() {
+      if (!gl || !buf) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+    }
+    img.addEventListener('load', loaded);
+    img.addEventListener('error', broken);
+    if (typeof opt.load === 'function') {
+      // The page fetches the bytes itself (with its token) and hands back a
+      // bitmap: createImageBitmap(blob) needs no blob: URL and no img-src.
+      Promise.resolve().then(function () { return opt.load(src); }).then(function (b) {
+        if (dead) return;
+        if (!b || !b.width || !b.height) { broken(); return; }
+        bm = b; loaded();
+      }, function () { if (!dead) broken(); });
+    } else {
+      img.src = src;                                  // same origin: img-src 'self', and no tainted texture
+    }
 
     var drag = null;
     cv.addEventListener('pointerdown', function (e) {
@@ -261,11 +302,21 @@ root.XericView = function (o) {
       e.preventDefault();
     });
     window.addEventListener('resize', ask);
-    if (gl) xrh = xr({ gl: gl, box: box, redraw: ask,
-                       ready: function () { return !dead && !!tex; }, dead: function () { return dead; } });
+    if (gl && opt.stand) {
+      xrh = standXR({ gl: gl, box: box, redraw: ask, stand: opt.stand, quad: quad,
+                      dims: function () { return { w: pw(), h: ph() }; },
+                      ready: function () { return !dead && !!tex; }, dead: function () { return dead; } });
+    } else if (gl) {
+      xrh = xr({ gl: gl, box: box, redraw: ask,
+                 ready: function () { return !dead && !!tex; }, dead: function () { return dead; } });
+    }
     gz = gaze({ box: box, view: v, redraw: ask, dead: function () { return dead; } });
     return {
       view: v, draw: drawAt, tags: placeTags, redraw: ask,
+      // The people changed and the room did not: read the buttons again
+      // rather than build the view again (which would end a headset session).
+      retag: function () { tags = [].slice.call(box.querySelectorAll('.looktag')); ask(); },
+      get inside() { return !!(xrh && xrh.inside && xrh.inside()); },
       destroy: function () {
         dead = true;
         if (xrh) xrh.end();
@@ -514,6 +565,419 @@ root.XericView = function (o) {
     return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
   }
 
+  // ===========================================================================
+  // THE STAND PAGE'S HEADSET (stand.php). Everything below is additive: play.php
+  // never passes opt.stand, so its step inside is still xr() above, unchanged.
+  //
+  // In a headset there are no buttons, so the people are drawn: each tag is a
+  // canvas with a name on it, uploaded as a texture and drawn as a quad at
+  // (sin b, −0.12, −cos b) for bearing b — one metre away, a little under the
+  // horizon, the same place the 2D view puts its buttons (placeTags). Drawn
+  // with the view's ROTATION ONLY, like the panorama: the room is at infinity,
+  // and a name that slid about when you leaned would not be on the person.
+  //
+  // A controller or a hand points a ray; on `select` the nearest tag within 7°
+  // of it wins (raySelect). A tap focuses that person; a hold talks to them;
+  // a hold on empty space talks to the room, if a room can open (two people
+  // or more where you stand: holdTarget). What a tap or a hold then DOES is
+  // the page's (opt.stand: tap, holdStart, holdEnd); this file only aims.
+  //
+  // THE PANORAMA, two ways. Where the browser has WebXR Layers (Quest), it is
+  // handed to the compositor once as an XREquirectLayer and the tags go on a
+  // transparent projection layer above it — the headset reprojects the room
+  // itself, at its own resolution, and no per-pixel shader runs at all.
+  // Elsewhere (Android XR without layers, Vision Pro, the emulator) it is the
+  // same per-pixel shader xr() uses, and the tags are drawn over it.
+  // ===========================================================================
+
+  // Where a tag stands, as a direction from the eye: bearing in degrees,
+  // clockwise from where the room faces you; y a little under the horizon.
+  function tagPos(b, y) {
+    var r = (+b || 0) * Math.PI / 180;
+    return [Math.sin(r), y === undefined ? -0.12 : y, -Math.cos(r)];
+  }
+
+  // One tag's quad, as a triangle strip of four (x, y, z, u, v): centred on
+  // tagPos, square to the line from the eye, upright. The canvas is uploaded
+  // unflipped, so v = 0 is the top of the name.
+  function tagQuad(b, hw, hh, y) {
+    var c = tagPos(b, y), r = (+b || 0) * Math.PI / 180;
+    var rx = Math.cos(r) * hw, rz = Math.sin(r) * hw;  // to the right, as you face it
+    return new Float32Array([
+      c[0] - rx, c[1] - hh, c[2] - rz, 0, 1,
+      c[0] + rx, c[1] - hh, c[2] + rz, 1, 1,
+      c[0] - rx, c[1] + hh, c[2] - rz, 0, 0,
+      c[0] + rx, c[1] + hh, c[2] + rz, 1, 0
+    ]);
+  }
+
+  function norm3(v) {
+    var l = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) || 1;
+    return [v[0] / l, v[1] / l, v[2] / l];
+  }
+
+  // Where a pose points: its −z axis, from a column-major rigid transform.
+  function rayDir(m) { return norm3([-m[8], -m[9], -m[10]]); }
+
+  // That direction as a bearing, in degrees, the tags' own sense.
+  function bearingOf(d) { return Math.atan2(d[0], -d[2]) * 180 / Math.PI; }
+
+  // THE NEAREST TAG WITHIN maxDeg (7°) OF THE RAY, or null. By direction only:
+  // the tags are drawn at infinity, so where the hand is does not matter,
+  // only where it points.
+  function raySelect(tags, dir, maxDeg) {
+    var lim = (maxDeg === undefined ? 7 : maxDeg) * Math.PI / 180, d = norm3(dir), best = null, bestA = Infinity;
+    (tags || []).forEach(function (t) {
+      var p = norm3(tagPos(t.b));
+      var a = Math.acos(Math.max(-1, Math.min(1, p[0] * d[0] + p[1] * d[1] + p[2] * d[2])));
+      if (a <= lim && a < bestA) { best = t; bestA = a; }
+    });
+    return best;
+  }
+
+  // WHAT A HOLD TALKS TO: the person the ray hit; else the room, when one can
+  // open — two people or more where you stand; else nothing (a hold at the
+  // wall of an empty diner is not a line said to anybody).
+  function holdTarget(hit, present) {
+    if (hit) return { kind: 'person', h: hit.h, b: +hit.b || 0, name: hit.name || '' };
+    if ((present || []).length >= 2) return { kind: 'room' };
+    return null;
+  }
+
+  // inverse(xrRay(view)): projection × the view's rotation, for drawing quads
+  // where the panorama's shader looks them up.
+  function viewProj(view) {
+    var r = Array.prototype.slice.call(view.transform.inverse.matrix);
+    r[12] = r[13] = r[14] = 0;
+    var p = view.projectionMatrix, m = new Float32Array(16);
+    for (var c = 0; c < 4; c++) for (var row = 0; row < 4; row++) {
+      var sum = 0;
+      for (var k = 0; k < 4; k++) sum += p[k * 4 + row] * r[c * 4 + k];
+      m[c * 4 + row] = sum;
+    }
+    return m;
+  }
+
+  // A name on a canvas, for a texture. Null where there is no 2D canvas to
+  // write on (the tag is then simply not drawn; the ray still finds it).
+  function tagCanvas(text, lit, wide) {
+    var c = document.createElement('canvas');
+    c.width = wide ? 1024 : 256; c.height = 64;
+    var g = null;
+    try { g = c.getContext('2d'); } catch (e) { g = null; }
+    if (!g || typeof g.fillText !== 'function') return null;
+    var size = 30, t = String(text || '');
+    g.font = size + 'px system-ui, sans-serif';
+    while (size > 14 && g.measureText && g.measureText(t).width > c.width - 32) { size -= 2; g.font = size + 'px system-ui, sans-serif'; }
+    g.clearRect(0, 0, c.width, c.height);
+    g.fillStyle = lit ? 'rgba(247,246,242,0.95)' : 'rgba(29,27,24,0.78)';
+    g.fillRect(0, 8, c.width, 48);
+    g.fillStyle = lit ? '#1d1b18' : '#f7f6f2';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(t, c.width / 2, 33);
+    return c;
+  }
+
+  // THE VOICE AT ITS BEARING. An HRTF panner one metre out at the speaker's
+  // bearing (the listener stands at the origin, facing −z, as the room does);
+  // no fall-off with distance, because the distance is not real. Connected
+  // to `dest` (the page's speech bus) or straight out.
+  function panAt(ctx, b, dest) {
+    var p = ctx.createPanner(), r = (+b || 0) * Math.PI / 180, x = Math.sin(r), z = -Math.cos(r);
+    p.panningModel = 'HRTF';
+    p.distanceModel = 'inverse';
+    p.refDistance = 1;
+    p.rolloffFactor = 0;
+    if (p.positionX) { p.positionX.value = x; p.positionY.value = 0; p.positionZ.value = z; }
+    else if (p.setPosition) p.setPosition(x, 0, z);
+    p.connect(dest || ctx.destination);
+    return p;
+  }
+
+  // Which way the listener faces: f forward and u up, unit vectors in the
+  // room's frame. The 2D view passes (−sin yaw, 0, −cos yaw); a headset its
+  // pose's −z and +y.
+  function listenerFace(ctx, f, u) {
+    var L = ctx && ctx.listener;
+    if (!L) return;
+    u = u || [0, 1, 0];
+    if (L.forwardX) {
+      L.forwardX.value = f[0]; L.forwardY.value = f[1]; L.forwardZ.value = f[2];
+      L.upX.value = u[0]; L.upY.value = u[1]; L.upZ.value = u[2];
+    } else if (L.setOrientation) L.setOrientation(f[0], f[1], f[2], u[0], u[1], u[2]);
+  }
+
+  // OFFLINE: the last room, labelled "earlier", and every verb off. Nothing
+  // is queued for later — a line said now and sent in an hour would be
+  // stamped into a different world hour than the one it answered. Every
+  // control that changes the world carries data-verb; this is the one switch.
+  function offline(box, on) {
+    var n = 0;
+    $$('[data-verb]', box).forEach(function (b) {
+      b.disabled = !!on;
+      b.setAttribute('aria-disabled', on ? 'true' : 'false');
+      n++;
+    });
+    var lab = $('.lookearlier', box);
+    if (lab) { lab.hidden = !on; lab.textContent = on ? 'earlier' : ''; }
+    if (box.classList) box.classList.toggle('offline', !!on);
+    return n;
+  }
+
+  // STEP INSIDE, the stand page's way. Offered and failed exactly as xr() is
+  // (absent unless supported; anything that throws takes the button away and
+  // ends the session; the 2D view is the floor), plus: the tags, the ray, the
+  // hold, the equirect layer. S is the page's hooks:
+  //   tags() [{h, name, b, focus}], present() [handles], caption() {text, b} or null,
+  //   can() may a session start now, offline() are verbs off,
+  //   tap(hit), holdStart(target, {b}), holdEnd(target), face(matrix),
+  //   start(mode), end(), layers (false to never use them), holdMs.
+  function standXR(api) {
+    var gl = api.gl, box = api.box, S = api.stand || {}, btn = null, session = null;
+    var xprog = null, bprog = null, tprog = null, tbuf = null, texs = {}, ntex = 0, held = null;
+    var HOLD = S.holdMs || 350;
+    function call(name) {
+      if (typeof S[name] !== 'function') return undefined;
+      return S[name].apply(null, Array.prototype.slice.call(arguments, 1));
+    }
+    function dropTextures() {
+      Object.keys(texs).forEach(function (k) { try { gl.deleteTexture(texs[k]); } catch (e) {} });
+      texs = {}; ntex = 0;
+    }
+    function off() { session = null; held = null; if (btn) { btn.remove(); btn = null; } }
+    function fail() { var s = session; off(); try { if (s) s.end(); } catch (e) {} }
+    try {
+      var nx = navigator.xr;
+      if (!nx || typeof nx.isSessionSupported !== 'function') return { end: function () {}, inside: function () { return false; } };
+      nx.isSessionSupported('immersive-vr').then(function (yes) {
+        if (!yes || api.dead()) return;
+        btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'nbtn lookxr standxr'; btn.textContent = 'step inside';
+        btn.addEventListener('click', function () {
+          if (session) { try { session.end(); } catch (e) { fail(); } return; }
+          if (call('can') === false) return;
+          enter();
+        });
+        box.appendChild(btn);
+      }, off).catch(off);
+    } catch (e) { off(); }
+
+    function tagProgram() {
+      var vs = 'attribute vec3 a;attribute vec2 u;uniform mat4 m;varying vec2 v;'
+        + 'void main(){v=u;gl_Position=m*vec4(a,1.0);}';
+      var fs = 'precision mediump float;uniform sampler2D t;uniform float k;varying vec2 v;'
+        + 'void main(){vec4 c=texture2D(t,v);gl_FragColor=vec4(c.rgb,c.a*k);}';
+      var sh = function (type, text) {
+        var s = gl.createShader(type); gl.shaderSource(s, text); gl.compileShader(s);
+        return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
+      };
+      var a = sh(gl.VERTEX_SHADER, vs), b = sh(gl.FRAGMENT_SHADER, fs);
+      if (!a || !b) return null;
+      var p = gl.createProgram();
+      gl.attachShader(p, a); gl.attachShader(p, b);
+      gl.bindAttribLocation(p, 0, 'a'); gl.bindAttribLocation(p, 1, 'u');
+      gl.linkProgram(p);
+      return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
+    }
+    function texFor(key, text, lit, wide) {
+      if (texs[key]) return texs[key];
+      var c = tagCanvas(text, lit, wide);
+      if (!c) return null;
+      if (ntex > 64) dropTextures();
+      var t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+      texs[key] = t; ntex++;
+      return t;
+    }
+    // The tags (and the caption, while there is one) into whatever is bound.
+    function drawTags(view) {
+      var tags = call('tags') || [], cap = call('caption') || null;
+      if (!tprog || (!tags.length && !cap)) return;
+      gl.useProgram(tprog);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.uniformMatrix4fv(gl.getUniformLocation(tprog, 'm'), false, viewProj(view));
+      gl.activeTexture(gl.TEXTURE0);
+      tbuf = tbuf || gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, tbuf);
+      gl.enableVertexAttribArray(1);
+      var one = function (key, text, b, y, lit, hw, hh, wide) {
+        var t = texFor(key, text, lit, wide);
+        if (!t) return;
+        gl.bufferData(gl.ARRAY_BUFFER, tagQuad(b, hw, hh, y), gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
+        gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 12);
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.uniform1f(gl.getUniformLocation(tprog, 'k'), 1);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      };
+      tags.forEach(function (t) {
+        one('t|' + t.h + '|' + t.name + '|' + (t.focus ? 1 : 0), t.name || t.h, t.b, -0.12, !!t.focus, 0.1, 0.025, false);
+      });
+      if (cap && cap.text) one('c|' + cap.text, cap.text, cap.b || 0, -0.3, true, 0.4, 0.025, true);
+      gl.disableVertexAttribArray(1);
+      gl.disable(gl.BLEND);
+    }
+
+    // XREquirectLayer, where there is XRWebGLBinding and the session granted
+    // layers. Null otherwise, and the shader does the panorama.
+    function layers(s, space) {
+      if (S.layers === false || typeof root.XRWebGLBinding !== 'function') return null;
+      if (s.enabledFeatures && Array.prototype.indexOf.call(s.enabledFeatures, 'layers') < 0) return null;
+      var bind = new root.XRWebGLBinding(s, gl);
+      if (typeof bind.createEquirectLayer !== 'function' || typeof bind.createProjectionLayer !== 'function') return null;
+      var d = api.dims(), max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 4096;
+      var w = Math.max(1, Math.min(d.w || 1, max)), h = Math.max(1, Math.round(w * (d.h || 1) / (d.w || 1)));
+      var eq = bind.createEquirectLayer({ space: space, viewPixelWidth: w, viewPixelHeight: h, layout: 'mono',
+        radius: 0, centralHorizontalAngle: 2 * Math.PI, upperVerticalAngle: Math.PI / 2, lowerVerticalAngle: -Math.PI / 2 });
+      var proj = bind.createProjectionLayer({ textureType: 'texture' });
+      s.updateRenderState({ layers: [eq, proj] });
+      return { bind: bind, eq: eq, proj: proj, fb: gl.createFramebuffer(), dirty: true };
+    }
+
+    function enter() {
+      try {
+        var ready = gl.makeXRCompatible ? gl.makeXRCompatible() : Promise.resolve();
+        ready.then(function () {
+          return navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['layers'] });
+        }).then(function (s) {
+          session = s;
+          s.addEventListener('end', function () {
+            if (held && held.timer) clearTimeout(held.timer);
+            session = null; held = null;
+            dropTextures();
+            if (btn) btn.textContent = 'step inside';
+            try { gl.bindFramebuffer(gl.FRAMEBUFFER, null); api.quad(); } catch (e) {}
+            try { call('end'); } catch (e) {}
+            api.redraw();                             // the 2D view, back where it was
+          });
+          if (btn) btn.textContent = 'step out';
+          return s.requestReferenceSpace('local').then(function (space) { run(s, space); });
+        }).catch(fail);
+      } catch (e) { fail(); }
+    }
+
+    function run(s, space) {
+      if (session !== s) return;
+      tprog = tprog || tagProgram();
+      var L = layers(s, space);
+      if (L) {
+        bprog = bprog || panoProgram(gl, 'uniform vec4 vp;'
+          + 'void main(){vec2 q=(gl_FragCoord.xy-vp.xy)/vp.zw;gl_FragColor=texture2D(t,vec2(q.x,1.0-q.y));}');
+        if (!bprog) throw new Error('no copy shader');
+      } else {
+        xprog = xprog || panoProgram(gl, 'uniform mat4 m;uniform vec4 vp;'
+          + 'void main(){vec2 q=((gl_FragCoord.xy-vp.xy)/vp.zw)*2.0-1.0;'
+          + 'vec4 w=m*vec4(q,1.0,1.0);gl_FragColor=look(normalize(w.xyz/w.w));}');
+        if (!xprog) throw new Error('no headset shader');
+        s.updateRenderState({ baseLayer: new XRWebGLLayer(s, gl) });
+      }
+
+      // THE RAY. selectstart remembers what the ray was on; a release before
+      // HOLD ms is a tap (select), a press past it is a hold, and the hold's
+      // target is fixed at the press — turning your head while you talk does
+      // not hand the line to somebody else.
+      var rayOf = function (e) {
+        var p = e && e.frame && e.inputSource ? e.frame.getPose(e.inputSource.targetRaySpace, space) : null;
+        return p ? rayDir(p.transform.matrix) : null;
+      };
+      s.addEventListener('selectstart', function (e) {
+        try {
+          if (session !== s) return;
+          if (held && held.timer) clearTimeout(held.timer);
+          held = null;
+          if (call('offline')) return;
+          var d = rayOf(e), hit = d ? raySelect(call('tags') || [], d, 7) : null;
+          var h = held = { t0: Date.now(), hit: hit, target: null, b: d ? bearingOf(d) : 0, timer: 0 };
+          h.timer = setTimeout(function () {
+            if (held !== h || session !== s) return;
+            h.timer = 0;
+            h.target = holdTarget(hit, call('present') || []);
+            if (h.target) call('holdStart', h.target, { b: h.b });
+          }, HOLD);
+        } catch (x) { fail(); }
+      });
+      s.addEventListener('select', function () {
+        try {
+          var h = held;
+          if (!h || h.target) return;
+          if (h.timer) clearTimeout(h.timer);
+          held = null;
+          if (Date.now() - h.t0 < HOLD) call('tap', h.hit);
+        } catch (x) { fail(); }
+      });
+      s.addEventListener('selectend', function () {
+        try {
+          var h = held;
+          held = null;
+          if (!h) return;
+          if (h.timer) clearTimeout(h.timer);
+          if (h.target) call('holdEnd', h.target);
+        } catch (x) { fail(); }
+      });
+
+      call('start', L ? 'layers' : 'shader');
+      var frame = function (t, f) {
+        if (session !== s) return;
+        try {
+          s.requestAnimationFrame(frame);
+          var pose = f.getViewerPose(space);
+          if (!pose || !api.ready()) return;
+          call('face', pose.transform.matrix);
+          var i, view, vp;
+          if (L) {
+            if (L.dirty || L.eq.needsRedraw) {      // the room, once, into the compositor's own sphere
+              var sub = L.bind.getSubImage(L.eq, f);
+              gl.bindFramebuffer(gl.FRAMEBUFFER, L.fb);
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, sub.colorTexture, 0);
+              vp = sub.viewport;
+              gl.viewport(vp.x, vp.y, vp.width, vp.height);
+              gl.useProgram(bprog);
+              api.quad();
+              gl.uniform4f(gl.getUniformLocation(bprog, 'vp'), vp.x, vp.y, vp.width, vp.height);
+              gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+              L.dirty = false;
+            }
+            gl.bindFramebuffer(gl.FRAMEBUFFER, L.fb);
+            for (i = 0; i < pose.views.length; i++) {
+              view = pose.views[i];
+              var vs = L.bind.getViewSubImage(L.proj, view);
+              gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, vs.colorTexture, 0);
+              vp = vs.viewport;
+              gl.viewport(vp.x, vp.y, vp.width, vp.height);
+              gl.clearColor(0, 0, 0, 0);
+              gl.clear(gl.COLOR_BUFFER_BIT);
+              drawTags(view);
+            }
+            return;
+          }
+          var layer = s.renderState.baseLayer;
+          gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+          for (i = 0; i < pose.views.length; i++) {
+            view = pose.views[i]; vp = layer.getViewport(view);
+            gl.viewport(vp.x, vp.y, vp.width, vp.height);
+            gl.useProgram(xprog);
+            api.quad();
+            gl.uniform4f(gl.getUniformLocation(xprog, 'vp'), vp.x, vp.y, vp.width, vp.height);
+            gl.uniformMatrix4fv(gl.getUniformLocation(xprog, 'm'), false, xrRay(view));
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            drawTags(view);
+          }
+        } catch (e) { fail(); }
+      };
+      s.requestAnimationFrame(frame);
+    }
+    return {
+      end: function () { if (session) fail(); },
+      inside: function () { return !!session; }
+    };
+  }
+
   // THE SPEAKER, one per character line. ONE <audio> for the whole thread, so
   // two lines can never talk over each other, and a press on a second line
   // is a change of mind, not a duet. The line is asked for with a fetch first
@@ -731,9 +1195,25 @@ root.XericView = function (o) {
     pano: pano, xr: xr, xrRay: xrRay, mat4inv: mat4inv, panoProgram: panoProgram,
     gaze: gaze, phoneGaze: phoneGaze, dayView: dayView,
     speak: speak, unspeak: unspeak, refuseSpeak: refuseSpeak, hold: hold,
+    // The stand page's: the headset's tags, ray and hold, the voice's panner.
+    standXR: standXR, tagPos: tagPos, tagQuad: tagQuad, rayDir: rayDir, bearingOf: bearingOf,
+    raySelect: raySelect, holdTarget: holdTarget, viewProj: viewProj, tagCanvas: tagCanvas,
+    panAt: panAt, listenerFace: listenerFace, offline: offline,
     // The view on screen: built over a .lookpanobox, thrown away before the
-    // next one (its WebGL context goes back to the browser with it).
-    mount: function (box) { if (lookView) lookView.destroy(); lookView = box ? pano(box) : null; return lookView; },
+    // next one (its WebGL context goes back to the browser with it). opt is
+    // pano()'s: the stand page's loader and hooks; play.php passes none.
+    mount: function (box, opt) {
+      if (lookView) lookView.destroy();
+      // A SPLAT is xeric-splat.js's, loaded beside this file and started only
+      // here: mount({ kind: 'splat', canvas, url, onReady, onError }).
+      if (box && box.kind === 'splat') {
+        var XS = root.XericSplat;
+        lookView = XS && box.canvas ? XS.mount(box.canvas, box.url || box.canvas.dataset.src,
+                                               { onReady: box.onReady, onError: box.onError }) : null;
+        return lookView;
+      }
+      lookView = box ? pano(box, opt) : null; return lookView;
+    },
     unmount: function () { if (lookView) { lookView.destroy(); lookView = null; } },
     get lookView() { return lookView; },
     lookYaw: lookYaw,

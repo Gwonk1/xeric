@@ -873,6 +873,35 @@ ok('a machine that answers with the metadata address gets a failed try and a not
     (int)$ssr['tries'] === 1 && $ssr['status'] === 'pending' && $ssr['file'] === ''
     && preg_grep('/refused to fetch from 169\.254\.169\.254/', $r['notes']) !== [], json_encode($r));
 
+// A SPLAT IS KEPT AS PLY: a stub answers three splats in the compact format,
+// and what lands on disk is the PLY engine/splat.php makes of them.
+ok('a PLY type is stored as .ply, whichever spelling',
+    xeric_scene_ext('application/ply', 'splat') === '.ply' && xeric_scene_ext('model/ply') === '.ply'
+    && xeric_scene_ext('application/octet-stream', 'splat') === '.splat');
+$db->exec('DELETE FROM scene_jobs');
+$three = '';
+foreach ([[0, 0, -1], [0, 0, -5], [1, 0, -3]] as $p) $three .= pack('g6', ...$p, ...[0.1, 0.1, 0.1]) . pack('C8', 200, 100, 50, 255, 255, 128, 128, 128);
+$splB = xeric_scene_brief($T, $db, 'beck_hardware');
+xeric_scene_enqueue($db, $splB);
+xeric_scene_reap($T, $db, $dir, ['stub' => fn() => ['kind' => 'splat', 'bytes' => $three, 'mime' => 'application/octet-stream']], 1);
+$spl = xeric_scene_of($db, 'beck_hardware', $splB['fingerprint']);
+$onDisk = (string)@file_get_contents($dir . '/' . (string)$spl['file']);
+ok('a .splat that arrives is stored as PLY: .ply, application/ply, the converted bytes, and the meta says so',
+    $spl['status'] === 'done' && str_ends_with((string)$spl['file'], '.ply') && $spl['mime'] === 'application/ply'
+    && $onDisk === xeric_splat_to_ply($three, 'application/octet-stream', '.splat')
+    && str_starts_with($onDisk, "ply\nformat binary_little_endian 1.0\nelement vertex 3\n")
+    && (json_decode((string)$spl['meta'], true)['ply'] ?? '') === 'converted from .splat', json_encode($spl));
+$db->exec('DELETE FROM scene_jobs');
+xeric_scene_enqueue($db, $splB);
+$spz = "\x1f\x8b\x08\x00" . str_repeat("\0", 28);
+xeric_scene_reap($T, $db, $dir, ['stub' => fn() => ['kind' => 'splat', 'bytes' => $spz, 'mime' => 'application/octet-stream']], 1);
+$spl = xeric_scene_of($db, 'beck_hardware', $splB['fingerprint']);
+ok('an SPZ is kept exactly as it came, under .splat, and the meta says why it was not converted',
+    $spl['status'] === 'done' && str_ends_with((string)$spl['file'], '.splat')
+    && (string)@file_get_contents($dir . '/' . (string)$spl['file']) === $spz
+    && str_contains((string)(json_decode((string)$spl['meta'], true)['ply'] ?? ''), 'SPZ'), json_encode($spl));
+$db->exec('DELETE FROM scene_jobs');
+
 // ---------------------------------------------------------------------------
 echo "\n# ahead of being looked at\n";
 // ---------------------------------------------------------------------------

@@ -395,6 +395,40 @@ for ($i = 0; $i < 5; $i++) {
 ok('the walk is five deep and no deeper', !str_contains(xeric_play_look_html($T, $db, null, $slug, true), '<img class="lookimg"'));
 $db->exec('DELETE FROM scene_jobs');
 
+echo "\n# the world's budget\n";
+
+$scp = (string)file_get_contents(dirname(__DIR__) . '/scene.php');
+ok('the look asks the render budget before it queues, and answers a 429 naming the ceiling',
+    ($bp = strpos($scp, "'renders', 1, xeric_scene_costly(\$ep)")) !== false
+    && str_contains($scp, 'xeric_web_json(xeric_budget_body($bv), 429);')
+    && $bp < (int)strpos($scp, 'xeric_scene_enqueue($db'));
+$Tb = ['budget' => ['renders_per_day' => 2, 'metered_only' => false]] + $T;
+xeric_budget_note($db, xeric_clock_now($db, $T), 'renders', 2, false);
+$bv = xeric_budget_allows($Tb, $db, xeric_clock_now($db, $T), 'renders', 1, false);
+$bb = xeric_budget_body($bv);
+ok('and the refusal it sends is the sentence, the kind and the ceiling',
+    !$bv['ok'] && $bb['kind'] === 'budget' && $bb['ceiling'] === 2
+    && str_starts_with($bb['error'], "This world's render budget for today is spent"), json_encode($bb));
+foreach (['say.php' => "'tokens', 1, xeric_budget_llm_costly(\$endpoint)", 'room.php' => "'tokens', 1, xeric_budget_llm_costly(\$ep)"]
+         as $file => $needle) {
+    $src = (string)file_get_contents(dirname(__DIR__) . '/' . $file);
+    ok($file . ' asks the token budget and refuses with a 429 naming it',
+        str_contains($src, $needle) && str_contains($src, 'xeric_budget_body($b') && str_contains($src, '429'));
+}
+$rsrc = (string)file_get_contents(dirname(__DIR__) . '/room.php');
+ok('room.php asks before a cast beat is started, and before a line is said',
+    strpos($rsrc, '$affords();') < strpos($rsrc, 'xeric_play_room_carry(')
+    && substr_count($rsrc, '$affords();') === 2);
+$uis = (string)file_get_contents(dirname(__DIR__) . '/ui.php');
+ok('the meter shows the world\'s ceiling only when one exists, and only on the meter that means everything',
+    str_contains($uis, 'xeric_web_meter_budget($at)') && str_contains($uis, "if (\$at !== '' || !function_exists('xeric_budget_bound')) return '';"));
+xeric_budget_bind($db, $T);
+ok('a world with no budget block leaves the meter exactly as it was', xeric_web_meter_budget() === '');
+xeric_budget_bind($db, $Tb);
+ok('a world with one says today\'s figure beside it',
+    str_contains(xeric_web_meter_budget(), 'today: 2 of 2 renders') && xeric_web_meter_budget('127.0.0.1:1') === '');
+xeric_budget_bind($db, $T);
+
 echo "\n# the fork\n";
 
 done_row($db, 'mill', str_repeat('c', 40), 'viewer', '', 'https://rooms.example/r/2', 'text/html');
