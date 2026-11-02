@@ -101,4 +101,18 @@ if ($FAILED > 0) {
     exit(1);
 }
 echo "\nall ok\n";
+
+// THE LOCAL KEY STAYS LOCAL. --api-key on a llama-server is a secret for that
+// box; a hosted endpoint may take XERIC_API_KEY and never the local one.
+putenv('XERIC_LOCAL_KEY=llama-secret'); putenv('XERIC_API_KEY=sk-hosted');
+ok('a local endpoint takes the llama.cpp key', xeric_llm_default_key('local') === 'llama-secret');
+ok('a hosted endpoint takes the hosted key, never the local one',
+    xeric_llm_default_key('openai') === 'sk-hosted' && xeric_llm_default_key('anthropic') === 'sk-hosted');
+ok('and the CLI follows the kind it was given',
+    xeric_llm_cli_endpoint(['kind' => 'openai'])['key'] === 'sk-hosted'
+    && xeric_llm_cli_endpoint([])['key'] === 'llama-secret');
+putenv('XERIC_LOCAL_KEY');
+ok('with no local key the local box may use the hosted one', xeric_llm_default_key('local') === 'sk-hosted');
+putenv('XERIC_API_KEY');
+
 exit(0);

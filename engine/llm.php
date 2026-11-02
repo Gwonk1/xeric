@@ -93,10 +93,21 @@ function xeric_llm_default_base(): string
     return $env !== '' ? $env : 'http://127.0.0.1:8080';
 }
 
-/** llama.cpp --api-key, or a hosted key. Never logged. */
-function xeric_llm_default_key(): string
+/**
+ * The key nobody typed, by the KIND of machine it is for. Never logged.
+ *
+ * XERIC_LOCAL_KEY is llama-server's --api-key: it belongs to the local box and
+ * to nothing else. XERIC_API_KEY is a hosted key. A local endpoint may fall
+ * back from the first to the second (one key for one GPU box, however it is
+ * reached), but a hosted endpoint never takes the local key — sending the
+ * llama.cpp secret to api.openai.com is a 401 at best, and sending it to a
+ * host a visitor typed into the machines screen is a leak.
+ */
+function xeric_llm_default_key(string $kind = 'local'): string
 {
-    $k = (string)(getenv('XERIC_LOCAL_KEY') ?: '');
+    $kind = strtolower(trim($kind));
+    $k = '';
+    if ($kind === 'local' || $kind === '') $k = (string)(getenv('XERIC_LOCAL_KEY') ?: '');
     if ($k === '') $k = (string)(getenv('XERIC_API_KEY') ?: '');
     return xeric_llm_header_safe($k);
 }
@@ -155,20 +166,18 @@ function xeric_llm_router_catalog($json): array
  */
 function xeric_llm_router_pick(array $catalog, string $current = ''): string
 {
-    $ids = [];
+    // A name already chosen is kept whether or not the catalog lists it: the
+    // router may simply not have scanned that file yet, and second-guessing
+    // the owner's pick would move the forge onto a model nobody asked for.
+    if ($current !== '') return $current;
+    $first = '';
     foreach ($catalog as $m) {
         $id = (string)($m['id'] ?? '');
         if ($id === '') continue;
-        $ids[] = $id;
-        if ($id === $current) return $current;
+        if (($m['status'] ?? '') === 'loaded') return $id;
+        if ($first === '') $first = $id;
     }
-    if ($current !== '') return $current;
-    foreach ($catalog as $m) {
-        if (($m['status'] ?? '') === 'loaded' && ($m['id'] ?? '') !== '') {
-            return (string)$m['id'];
-        }
-    }
-    return $ids[0] ?? '';
+    return $first;
 }
 
 /**
@@ -191,7 +200,7 @@ function xeric_llm_cli_endpoint(array $args): array
     if (!in_array($kind, ['local', 'openai', 'anthropic'], true)) $kind = 'local';
 
     $key = xeric_llm_header_safe((string)($args['key'] ?? ''));
-    if ($key === '') $key = xeric_llm_default_key();
+    if ($key === '') $key = xeric_llm_default_key($kind);
 
     $model = trim((string)($args['model'] ?? ''));
     if ($model === '') $model = xeric_llm_default_model();
