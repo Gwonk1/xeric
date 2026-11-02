@@ -48,6 +48,7 @@ require_once XERIC_WEB_LIB . '/engine/qr.php';          // this xeric, on the ph
 require_once XERIC_WEB_LIB . '/engine/mood.php';        // the town's own needle, which its hours move
 require_once XERIC_WEB_LIB . '/engine/work.php';        // the shift, and how much money is allowed to matter
 require_once XERIC_WEB_LIB . '/engine/table.php';       // and the games a place holds
+require_once XERIC_WEB_LIB . '/engine/room.php';        // three to five of them, and you
 
 /**
  * How many events one press of the time control may produce.
@@ -1982,6 +1983,10 @@ function xeric_play_state(array $w, ?string $sid = null): array
         // the view for free. Owner-or-own-copy may press look (the same door
         // scene.php's POST keeps); a guest in the owner's real world may not.
         'look_html'  => xeric_play_look_html($t, $db, $now, (string)$w['slug'], !xeric_play_is_guest($w)),
+        // The room you are in, when you are in one (engine/room.php): a small
+        // summary so the page knows to open the strip and start polling. The
+        // lines themselves come from room.php's own cursor, never from here.
+        'room'       => xeric_play_room_public($t, xeric_room_live_get($db), !xeric_play_is_guest($w)),
         'fate_html'  => xeric_play_fate_html($t, $db, $cast),
         // The meter is server-rendered chrome, so without this it holds whatever
         // it said when the page loaded — which for a counter somebody is reading
@@ -4648,8 +4653,13 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
         foreach ($l['day'] as $light => $d) {
             $cur  = $row !== null && (int)$d['id'] === (int)$row['id'];
             $dsrc = xeric_play_look_src($slug, (string)$d['key'], (string)$d['fingerprint']);
+            // data-now marks the hour the room looks like NOW, written here
+            // rather than inferred by the page: dayView reads it to decide
+            // whether "earlier: …" applies, and a strip whose "now" thumb never
+            // said so could never clear it (PUNCHLIST, the day strip).
             $strip .= '<button type="button" class="lookthumb' . ($cur ? ' cur' : '') . '" data-src="' . h($dsrc)
                     . '" data-kind="' . h((string)$d['kind']) . '" data-light="' . h((string)$light) . '"'
+                    . ' data-now="' . ($cur ? '1' : '0') . '"'
                     . ' aria-pressed="' . ($cur ? 'true' : 'false') . '">'
                     . '<img src="' . h($dsrc) . '" alt="" loading="lazy"><span>' . h((string)$light) . '</span></button>';
         }
@@ -4670,13 +4680,38 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
         }
     }
 
-    // -- the room -------------------------------------------------------------
-    // Three to five people talking is engine/room.php, and only the CLI can
-    // start one today. Said where the offer would go, so the next person to
-    // wire it knows where it belongs.
-    $room = count($b['who']) >= 2
-        ? '<!-- the room (engine/room.php) has no web surface yet, so there is no "join the conversation" here -->'
-        : '';
+    // -- who came and went, and the room ------------------------------------------
+    // The beat is the doorway's sibling (xeric_travel_comings): somebody
+    // walking in or getting up to go in the last few world-minutes, said from
+    // observables. Inside a live room the same sentence is the room's own
+    // narrator row instead, so it is said in one place and never in both.
+    //
+    // The room itself — three to five of them and you, engine/room.php — has
+    // its strip beside #look in play.php, because a repaint replaces #look
+    // wholesale and a conversation must not be wiped by a clock tick. What
+    // lives here is the door: "talk to the room" for whoever may speak, and
+    // for a guest, who may only read, the way in to the thread.
+    $live = null;
+    try { $live = xeric_room_live_get($db); } catch (Throwable $e) { $live = null; }
+    $liveHere = $live !== null && (string)$live['place'] === (string)$b['key'];
+    $beat = '';
+    if (!$liveHere) {
+        try {
+            $cm = xeric_travel_comings($t, $db, $now ?? xeric_clock_now($db, $t), (string)$b['key']);
+            if ($cm['line'] !== '') $beat = '<p class="lookbeat">' . h($cm['line']) . '</p>';
+        } catch (Throwable $e) { $beat = ''; }
+    }
+    $castHere = array_values(array_filter((array)$b['who'],
+        fn($p) => xeric_world_character($t, (string)($p['handle'] ?? '')) !== null));
+    $room = '';
+    if ($liveHere) {
+        $with = xeric_join_list(array_map(fn($h) => (string)($live['names'][$h] ?? $h), (array)$live['present']));
+        $room = '<p class="lookroom"><button type="button" class="nbtn" data-room>'
+              . ($mine ? 'back to the room' : 'read the room') . '</button>'
+              . ($with !== '' ? ' <span class="note">talking with ' . h($with) . '</span>' : '') . '</p>';
+    } elseif ($mine && count($castHere) >= 2) {
+        $room = '<p class="lookroom"><button type="button" class="nbtn" data-room>talk to the room</button></p>';
+    }
 
     // -- what can be pressed ----------------------------------------------------
     $act = '';
@@ -4698,7 +4733,7 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
         }
     }
 
-    return $view . $act . $strip . $sound . $room;
+    return $view . $beat . $act . $strip . $sound . $room;
 }
 
 /**
@@ -6104,8 +6139,19 @@ function xeric_book_days(array $t, PDO $db, array $now, string $from = '', int $
     foreach ($range['days'] as $day) {
         $items = [];
         foreach (xeric_book_events_between($db, $day['start'], $day['end']) as $e) {
-            $dream = xeric_book_event_kind($db, (int)$e['id']) === 'dream';
-            $items[] = ['kind' => $dream ? 'dream' : 'event',
+            $kind = xeric_book_event_kind($db, (int)$e['id']);
+            // A ROOM YOU WERE IN is a scene of yours, not the town's hour: the
+            // book says it the way it says a thread — who, where, when, how
+            // much — and keeps not one line of what was said.
+            if ($kind === 'room') {
+                $why = json_decode((string)(xeric_world_state_get($db, 'why:event:' . (int)$e['id']) ?? ''), true);
+                if (is_array($why) && !empty($why['live'])) {
+                    $items[] = ['kind' => 'room', 'epoch' => (int)$e['world_epoch'], 'event' => $e,
+                                'lines' => (int)($why['turns'] ?? 0) + (int)($why['said'] ?? 0)];
+                    continue;
+                }
+            }
+            $items[] = ['kind' => $kind === 'dream' ? 'dream' : 'event',
                         'epoch' => (int)$e['world_epoch'], 'event' => $e];
         }
         foreach (xeric_book_scenes($t, $db, $day['start'], $day['end']) as $s) {
@@ -6645,6 +6691,467 @@ function xeric_watch_close(array $w, array $s, ?array $endpoint): array
         'turns'       => (int)$s['spoken'],
         'notes'       => $notes,
     ];
+}
+
+// ---------------------------------------------------------------------------
+// The room — three to five of them and you (room.php and room-worker.php)
+// ---------------------------------------------------------------------------
+//
+// engine/room.php owns every rule: who may sit, who answers, when the room
+// keeps talking, how a line is spaced, what the close writes. This is the
+// web's half of the session — where a line comes from (a POST), who carries
+// the turn (a detached worker under a lease), where the transcript goes (the
+// thread rows the page polls), and the doors around it: a guest reads, never
+// speaks; a cast beat spends from the owner's hour like a `reroll`, a player
+// line like a message; a person waiting on the model outranks a room talking
+// to itself.
+
+/** Whoever is at the table on this side of the screen, as the room will name them. */
+function xeric_play_room_player(array $w): array
+{
+    $id = xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST;
+    $t  = $w['template'];
+    $name = $id > XERIC_PLAYER_FIRST
+        ? xeric_player_name($w['db'], $id, $t)
+        : (trim((string)($t['user']['name'] ?? '')) ?: 'you');
+    return ['id' => $id, 'name' => $name];
+}
+
+/**
+ * The session as the page may hold it — names and state, never a prompt.
+ * Null when there is no live room. Guests get the same shape (they may read
+ * the thread); `mine` says whether the composer is theirs.
+ */
+function xeric_play_room_public(array $t, ?array $live, bool $mine): ?array
+{
+    if ($live === null) return null;
+    $names = (array)$live['names'];
+    $present = [];
+    foreach ((array)$live['present'] as $h) $present[] = ['h' => (string)$h, 'name' => (string)($names[$h] ?? $h)];
+    $last = '';
+    foreach (array_reverse((array)$live['trail']) as $b) {
+        if (($b['speaker'] ?? '') !== XERIC_ROOM_YOU && isset($b['speaker'])) { $last = (string)$b['speaker']; break; }
+    }
+    $typing = null;
+    if (is_array($live['typing'] ?? null) && xeric_room_lease_fresh($live)) {
+        $th = (string)($live['typing']['h'] ?? '');
+        $typing = ['h' => $th, 'name' => (string)($names[$th] ?? $th),
+                   'queue' => (string)($live['typing']['queue'] ?? '')];
+    }
+    return [
+        'conv'       => (int)$live['conv'],
+        'place'      => (string)$live['place'],
+        'place_name' => (string)($live['room']['place_name'] ?? ''),
+        'you'        => (string)($names[XERIC_ROOM_YOU] ?? 'you'),
+        'present'    => $present,
+        'far'        => array_values(array_map(fn($h) => (string)($names[$h] ?? xeric_world_name($t, (string)$h)), (array)$live['far'])),
+        'typing'     => $typing,
+        'speaking'   => $last,
+        'turn'       => (int)$live['budget'] > 0 || xeric_room_lease_fresh($live),
+        'said'       => (int)$live['said'],
+        'beats'      => (int)$live['beats'],
+        'carry_left' => max(0, XERIC_ROOM_CARRY_SESSION - (int)$live['carried']),
+        'error'      => (string)($live['error'] ?? ''),
+        'mine'       => $mine,
+    ];
+}
+
+/** Rows as the page draws them: me, them, narr — the thread's own three lanes. */
+function xeric_play_room_rows(array $t, array $live, array $rows): array
+{
+    $names = (array)$live['names'];
+    $out = [];
+    foreach ($rows as $r) {
+        $role = (string)$r['role'];
+        $h    = (string)($r['handle'] ?? '');
+        $out[] = [
+            'id'   => (int)$r['id'],
+            'who'  => $role === 'user' ? 'me' : ($role === 'character' && $h !== '' ? 'them' : 'narr'),
+            'h'    => $role === 'character' ? $h : ($role === 'user' ? XERIC_ROOM_YOU : ''),
+            'name' => $role === 'user' ? (string)($names[XERIC_ROOM_YOU] ?? 'you')
+                    : ($role === 'character' ? (string)($names[$h] ?? xeric_world_name($t, $h)) : ''),
+            'text' => (string)$r['content'],
+            'when' => $r['world_epoch'] !== null ? xeric_play_stamp($t, (int)$r['world_epoch']) : '',
+        ];
+    }
+    return $out;
+}
+
+/**
+ * Who came and went, applied: one narrator row in the room's own words
+ * (xeric_travel_comings_line — the look block's beat, so the two never say it
+ * twice), the leavers unseated at that row, the adults seated from it. A
+ * child walking in is reported back, because the answer to that is the seal.
+ * MUST run inside xeric_room_live_edit().
+ */
+function xeric_play_room_presence(array $t, PDO $db, array &$live, array $now): ?string
+{
+    $p = xeric_room_presence($t, $db, $live, $now);
+    if ($p['far_left'] !== []) $live['far'] = array_values(array_diff((array)$live['far'], $p['far_left']));
+    $leaving = array_keys($p['left']);
+    $coming  = array_merge($p['arrived'], $p['minors']);
+    if ($leaving === [] && $coming === []) return null;
+    $line = xeric_travel_comings_line($t, $now, (string)$live['place'], $coming, $leaving, $db);
+    $mid  = xeric_message_append($db, (int)$live['conv'], 'narrator', null, $line, (int)$now['epoch']);
+    foreach ($leaving as $h) xeric_room_unseat($live, (string)$h, $mid, $p['left'][$h], (int)$now['epoch']);
+    foreach ($p['arrived'] as $h) xeric_room_seat($t, $live, (string)$h, $mid, $now);
+    $live['trail'][] = array_filter(['mid' => $mid, 'stage' => $line,
+        'left' => $leaving !== [] ? $p['left'] : null, 'arrived' => $p['arrived'] !== [] ? $p['arrived'] : null,
+        'minor' => $p['minors'] !== [] ? $p['minors'] : null], fn($v) => $v !== null);
+    return $p['minors'] !== [] ? 'minor' : null;
+}
+
+/**
+ * The session's housekeeping, no model involved: who came and went, and
+ * whether it is over (you walked out, too few left, twenty quiet minutes, a
+ * stopped world, a child at the door). Left to the worker while one holds the
+ * floor. Returns the conversations sealed — which the caller lands.
+ */
+function xeric_play_room_tick(array $w, ?array $now = null): array
+{
+    $t  = $w['template'];
+    $db = $w['db'];
+    $now ??= xeric_clock_now($db, $t);
+    return xeric_room_live_edit($db, function (?array &$live) use ($t, $db, $now): array {
+        if ($live === null || xeric_room_lease_fresh($live)) return [];
+        if (xeric_play_room_presence($t, $db, $live, $now) === 'minor') {
+            return [xeric_room_seal_here($db, $live, 'minor', $now)];
+        }
+        $over = xeric_room_over($t, $db, $live, $now);
+        return $over !== null ? [xeric_room_seal_here($db, $live, $over, $now)] : [];
+    });
+}
+
+/**
+ * The player says something to the room. No model call: the line is heard
+ * (floor, wall), lands as its row at once, and the turn it buys is booked —
+ * the caller spawns the worker when this hands back a fresh lease.
+ *
+ * @return array{mid:int,text:string,opened:bool,lease:?string,conv:int}
+ * @throws RuntimeException 'room: refused, …' — nothing written
+ */
+function xeric_play_room_say(array $w, string $text, ?array $now = null): array
+{
+    $t  = $w['template'];
+    $db = $w['db'];
+    $now ??= xeric_clock_now($db, $t);
+    $where = xeric_player_where($t, $db);
+    if ($where === null) {
+        throw new RuntimeException('room: refused, you are not standing anywhere — walk somewhere with people in it first');
+    }
+    $player = xeric_play_room_player($w);
+
+    // First, whatever the last session owes: a room in another place, or one
+    // that has gone quiet, closes before this line opens the next.
+    xeric_play_room_tick($w, $now);
+    xeric_room_live_edit($db, function (?array &$live) use ($db, $where, $now): void {
+        if ($live !== null && (string)$live['place'] !== $where && !xeric_room_lease_fresh($live)) {
+            xeric_room_seal_here($db, $live, 'you left', $now);
+        }
+    });
+
+    return xeric_room_live_edit($db, function (?array &$live) use ($t, $db, $where, $now, $player, $text): array {
+        if ($live !== null && (string)$live['place'] !== $where) {
+            throw new RuntimeException('room: refused, the last conversation is still finishing its line — try again in a moment');
+        }
+        $opened = false;
+        if ($live === null) {
+            $live = xeric_room_open($t, $db, $now, $where, $player);
+            $live['conv'] = xeric_conversation_create($db, '', 'room', $where);
+            $opened = true;
+        } elseif (!xeric_room_lease_fresh($live)) {
+            xeric_play_room_presence($t, $db, $live, $now);
+        }
+        $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
+        $heard = xeric_room_hear($t, $live, $lines, $text);
+        $mid   = xeric_message_append($db, (int)$live['conv'], 'user', null, $heard, (int)$now['epoch']);
+        xeric_room_said($live, $mid, $heard, $now);
+        unset($live['error']);
+        $lease = null;
+        if (!xeric_room_lease_fresh($live)) {
+            $lease = bin2hex(random_bytes(8));
+            $live['lease'] = ['id' => $lease, 'until' => microtime(true) + XERIC_ROOM_LEASE];
+        }
+        return ['mid' => $mid, 'text' => $heard, 'opened' => $opened, 'lease' => $lease, 'conv' => (int)$live['conv']];
+    });
+}
+
+/**
+ * May the engine be asked to speak for these people on this machine without
+ * a person asking? Local means the world's engine and every pinned voice of
+ * the people at the table are `local`-kind machines (this box, or one on the
+ * owner's own network) — never a hosted key.
+ */
+function xeric_play_room_local(PDO $db, array $present, ?string $sid = null): bool
+{
+    try {
+        if ((string)(xeric_play_endpoint($sid)['kind'] ?? '') !== 'local') return false;
+    } catch (Throwable $e) {
+        return false;
+    }
+    foreach ($present as $h) {
+        $base = xeric_play_speaker_machine($db, (string)$h);
+        if ($base !== '' && xeric_model_kind($base) !== 'local') return false;
+    }
+    return true;
+}
+
+/**
+ * TALKING WITHOUT YOU: one beat, asked for by a page that has sat idle with
+ * the tab visible. The engine's gate decides (xeric_room_carry_idle); this
+ * reads the queue and the machine for it and, on yes, books the beat and
+ * takes the lease. The heart never calls this — a room nobody is watching
+ * says nothing.
+ *
+ * @return array{ok:bool,why:string,lease:?string}
+ */
+function xeric_play_room_carry(array $w, ?string $sid = null): array
+{
+    $t  = $w['template'];
+    $db = $w['db'];
+    $q  = xeric_queue_state();
+    $idle = (array)($q['line'] ?? []) === [] && !xeric_queue_busy();
+    $live0 = xeric_room_live_get($db);
+    $local = $live0 !== null ? xeric_play_room_local($db, (array)$live0['present'], $sid) : false;
+    $here  = $live0 !== null && xeric_player_where($t, $db) === (string)$live0['place'];
+    return xeric_room_live_edit($db, function (?array &$live) use ($t, $idle, $local, $here): array {
+        if ($live === null) return ['ok' => false, 'why' => 'There is no conversation to carry.', 'lease' => null];
+        $g = xeric_room_carry_idle($t, $live, ['queue_idle' => $idle, 'local' => $local, 'player_here' => $here]);
+        if (!$g['ok']) return ['ok' => false, 'why' => $g['why'], 'lease' => null];
+        $lease = bin2hex(random_bytes(8));
+        $live['mode']     = 'idle';
+        $live['budget']   = 1;
+        $live['owed']     = [];
+        $live['answered'] = 0;
+        $live['run']      = (int)$live['run'] + 1;
+        $live['carried']  = (int)$live['carried'] + 1;
+        $live['lease']    = ['id' => $lease, 'until' => microtime(true) + XERIC_ROOM_LEASE];
+        return ['ok' => true, 'why' => '', 'lease' => $lease];
+    });
+}
+
+/** Is a turn being carried right now? A skip must not move the clock under it. */
+function xeric_play_room_midturn(PDO $db): bool
+{
+    $live = xeric_room_live_get($db);
+    return $live !== null && xeric_room_lease_fresh($live) && (int)$live['budget'] > 0;
+}
+
+/**
+ * Carry the turn: the worker's loop, here so a test can drive it in-process.
+ *
+ * Per beat — re-check presence, position and pause under the edit; draw and
+ * set typing; take the ONE model slot with the queue phrase showing where the
+ * typing dots are; pick the speaker's machine and step (one call); RELEASE
+ * the slot; then, if the player spoke meanwhile, drop the line and say so in
+ * the trail ("you spoke first"); else sleep until the line is due — the row
+ * does not exist before then, so no client can show it early — append it,
+ * meter it, and let the engine say whether the room keeps talking.
+ *
+ * $o: endpoint (fn(handle): array), sleep (fn(float)), queue (bool, default
+ * true), wait (seconds in line), seed, up (bool: probe the model, default true).
+ *
+ * @return array{beats:int,dropped:int,stopped:string,sealed:bool,notes:array}
+ */
+function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []): array
+{
+    $t  = $w['template'];
+    $db = $w['db'];
+    $endpointOf = $o['endpoint'] ?? fn(string $h): array => xeric_play_speaker_endpoint($t, $db, $h, $sid);
+    $sleep      = $o['sleep'] ?? function (float $s): void { if ($s > 0) usleep((int)round($s * 1e6)); };
+    $useQueue   = (bool)($o['queue'] ?? true);
+    $probe      = (bool)($o['up'] ?? true);
+    $out = ['beats' => 0, 'dropped' => 0, 'stopped' => '', 'sealed' => false, 'notes' => []];
+
+    $ours = fn(?array $live): bool => $live !== null && is_array($live['lease'] ?? null)
+                                      && (string)($live['lease']['id'] ?? '') === $lease;
+    $fail = function (string $sentence, string $kind) use ($db, $ours): void {
+        xeric_room_live_edit($db, function (?array &$live) use ($ours, $sentence, $kind): void {
+            if (!$ours($live)) return;
+            $live['budget'] = 0;
+            $live['typing'] = null;
+            $live['lease']  = null;
+            $live['error']  = $sentence;
+            $live['trail'][] = ['refused' => $kind, 'why' => $sentence];
+        });
+    };
+
+    for ($guard = 0; $guard < XERIC_ROOM_BEATS_CAP + 8; $guard++) {
+        $now = xeric_clock_now($db, $t);
+
+        // -- 1. the world first, then the draw, under the edit -----------------
+        $plan = xeric_room_live_edit($db, function (?array &$live) use ($t, $db, $now, $ours): array {
+            if (!$ours($live)) return ['stop' => 'not ours'];
+            if (xeric_play_room_presence($t, $db, $live, $now) === 'minor') {
+                xeric_room_seal_here($db, $live, 'minor', $now);
+                return ['stop' => 'minor', 'sealed' => true];
+            }
+            $over = xeric_room_over($t, $db, $live, $now);
+            if ($over !== null) {
+                xeric_room_seal_here($db, $live, $over, $now);
+                return ['stop' => $over, 'sealed' => true];
+            }
+            if ((int)$live['budget'] <= 0) {
+                $live['lease'] = null; $live['typing'] = null;
+                return ['stop' => 'done'];
+            }
+            $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
+            $draw  = xeric_room_next($t, $db, $live, $lines);
+            $sp    = (string)$draw['speaker'];
+            $live['typing'] = ['h' => $sp, 'at' => microtime(true), 'queue' => ''];
+            $live['lease']['until'] = microtime(true) + XERIC_ROOM_LEASE;
+            return ['draw' => $draw, 'seq' => (int)$live['seq'], 'live' => $live, 'lines' => $lines];
+        });
+        if (isset($plan['stop'])) {
+            $out['stopped'] = (string)$plan['stop'];
+            $out['sealed']  = !empty($plan['sealed']);
+            break;
+        }
+        $draw = $plan['draw'];
+        $sp   = (string)$draw['speaker'];
+
+        // -- 2. one call, under the one slot -----------------------------------
+        $hold = null;
+        if ($useQueue) {
+            $got = xeric_queue_take('say', (float)($o['wait'] ?? XERIC_QUEUE_SAY_WAIT), $sid,
+                function (int $ahead, int $eta, string $phrase) use ($db, $ours): void {
+                    xeric_room_live_edit($db, function (?array &$live) use ($ours, $phrase): void {
+                        if ($ours($live) && is_array($live['typing'] ?? null)) $live['typing']['queue'] = ucfirst($phrase);
+                    });
+                });
+            if (!($got['ok'] ?? false)) {
+                $fail((string)($got['message'] ?? 'The model is busy.'), 'queue');
+                $out['stopped'] = 'queue';
+                break;
+            }
+            $hold = $got['hold'];
+        }
+        $beat = null; $err = null; $limitOk = true;
+        try {
+            $ep = $endpointOf($sp);
+            if ($probe && !xeric_llm_up($ep, 6)) {
+                throw new RuntimeException('model_down: the model this xeric runs on is not answering, so the room has gone quiet. Nothing is lost.');
+            }
+            // A CAST BEAT SPENDS LIKE A REROLL, on the person whose room it is:
+            // closer to the machine redrawing something than to somebody
+            // saying a sentence, and never free.
+            $lim = xeric_limit_take('reroll', ['sid' => $sid]);
+            if (!($lim['ok'] ?? false)) {
+                $limitOk = false;
+                throw new RuntimeException('limit: ' . (string)($lim['message'] ?? 'that is the hour spent'));
+            }
+            $beat = xeric_room_step($t, $db, $plan['live'], $plan['lines'], $now, $ep, $draw,
+                                    ['timeout' => XERIC_PLAY_CHAT_TIMEOUT]);
+        } catch (Throwable $e) {
+            $err = $e;
+        } finally {
+            if ($hold !== null) xeric_queue_release($hold);
+        }
+        if ($err !== null) {
+            $m = $err->getMessage();
+            $kind = str_starts_with($m, 'limit: ') ? 'limit'
+                  : (str_starts_with($m, 'model_down: ') ? 'model_down'
+                  : (xeric_play_say_refused($m) || str_contains($m, 'refused,') ? 'refused' : 'model'));
+            $sentence = $kind === 'limit' ? substr($m, 7)
+                      : ($kind === 'model_down' ? ucfirst(substr($m, 12))
+                      : ($kind === 'refused' ? (string)preg_replace('/^room:\s*/', '', $m)
+                      : xeric_play_say_error($m, (string)($plan['live']['names'][$sp] ?? ''))));
+            $fail($sentence, $kind);
+            $out['stopped'] = $kind;
+            $out['notes'][] = $sentence;
+            break;
+        }
+
+        // -- 3. did the player speak first? when is it due? --------------------
+        $ready   = microtime(true);
+        $q       = xeric_queue_state();
+        $waiting = (array)($q['line'] ?? []) !== [];
+        $res = xeric_room_live_edit($db, function (?array &$live) use ($ours, $plan, $beat, $draw, $ready, $sp): array {
+            if (!$ours($live)) return ['stop' => true];
+            if ((int)$live['seq'] !== (int)$plan['seq']) {
+                $live['dropped'][] = ['speaker' => $sp, 'why' => 'you spoke first'];
+                $live['typing'] = null;
+                return ['dropped' => true];
+            }
+            $prev = '';
+            foreach (array_reverse($plan['lines']) as $l) { if ($l['kind'] === 'line') { $prev = (string)$l['text']; break; } }
+            $named = in_array((string)($draw['how'] ?? ''), ['addressed', 'owed'], true);
+            $due = xeric_room_pace((float)$live['due'], $prev, $ready, $named, (string)$live['mode'] === 'idle',
+                                   $live['conv'] . '|' . $live['beats']);
+            $live['typing']['due'] = $due;
+            return ['due' => $due];
+        });
+        if (!empty($res['stop'])) { $out['stopped'] = 'not ours'; break; }
+        if (!empty($res['dropped'])) { $out['dropped']++; continue; }
+
+        // -- 4. not a moment before it is due ----------------------------------
+        $sleep(max(0.0, (float)$res['due'] - microtime(true)));
+
+        // -- 5. land it, and let the engine say whether the room goes on -------
+        $after = xeric_clock_now($db, $t);
+        $here  = xeric_player_where($t, $db);
+        $paused = xeric_clock_is_paused($db);
+        $landed = xeric_room_live_edit($db, function (?array &$live) use ($t, $db, $ours, $plan, $beat, $draw, $res, $after, $here, $paused, $waiting, $limitOk, $sp, $o): string {
+            if (!$ours($live)) return 'not ours';
+            if ((int)$live['seq'] !== (int)$plan['seq']) {
+                $live['dropped'][] = ['speaker' => $sp, 'why' => 'you spoke first'];
+                $live['typing'] = null;
+                return 'dropped';
+            }
+            $mid = xeric_message_append($db, (int)$live['conv'], 'character', $sp, (string)$beat['text'], (int)$after['epoch']);
+            $carry = xeric_room_carry($live, $beat, [
+                'limit_ok'      => $limitOk,
+                'player_here'   => $here === (string)$live['place'],
+                'queue_waiting' => $waiting,
+                'paused'        => $paused,
+            ] + (isset($o['seed']) ? ['seed' => $o['seed']] : []));
+            xeric_room_spoke($live, $beat, $mid, $draw, $carry, $after, (float)$res['due']);
+            return 'landed';
+        });
+        if ($landed === 'dropped') { $out['dropped']++; continue; }
+        if ($landed !== 'landed') { $out['stopped'] = $landed; break; }
+        $out['beats']++;
+    }
+    return $out;
+}
+
+/**
+ * Land every sealed session of this world: the close through the engine
+ * (xeric_room_land_live). $endpoint null forfeits the diaries into notes and
+ * still lands the event. Each close is its own transaction; one that fails
+ * stays sealed for the next try.
+ */
+function xeric_play_room_land(array $w, ?array $endpoint): array
+{
+    $out = [];
+    $db  = $w['db'];
+    foreach (xeric_room_seals($db) as $conv => $s) {
+        // CLAIMED BEFORE THE DIARIES. Two workers (the turn's and a step
+        // back's) can both find the same seal; the first to mark it lands it,
+        // and a mark older than five minutes is a worker that died.
+        $key = XERIC_ROOM_SEAL . $conv;
+        $db->exec('BEGIN IMMEDIATE');
+        try {
+            $cur = json_decode((string)(xeric_world_state_get($db, $key) ?? ''), true);
+            $mine = is_array($cur) && (int)($cur['landing'] ?? 0) < time() - 300;
+            if ($mine) {
+                $cur['landing'] = time();
+                xeric_world_state_set($db, $key, json_encode($cur, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            }
+            $db->exec('COMMIT');
+        } catch (Throwable $e) {
+            try { $db->exec('ROLLBACK'); } catch (Throwable $e2) { /* nothing begun */ }
+            $mine = false;
+        }
+        if (!$mine) continue;
+        try {
+            $out[$conv] = xeric_room_land_live($w['template'], $w['db'], $s, $endpoint,
+                                               ['timeout' => XERIC_PLAY_CHAT_TIMEOUT]);
+        } catch (Throwable $e) {
+            $out[$conv] = ['error' => $e->getMessage()];
+        }
+    }
+    return $out;
 }
 
 // ---------------------------------------------------------------------------

@@ -438,6 +438,10 @@ if ($action !== '') {
             // of the machine, so it costs what the cast row costs.
             'look_html' => xeric_play_look_html($w['template'], $w['db'], $nowW,
                 (string)$w['slug'], !xeric_play_is_guest($w)),
+            // A room somebody is talking in, so the strip opens on a second
+            // device too — the summary only; the lines ride room.php's cursor.
+            'room'      => xeric_play_room_public($w['template'], xeric_room_live_get($w['db']),
+                !xeric_play_is_guest($w)),
         ]);
     }
 
@@ -1013,6 +1017,19 @@ echo '<style>' . xeric_play_css() . '
 .lookaudio audio { height:2rem; flex:1 1 auto; min-width:0; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
+/* who came and went, in a line, and the door to the room */
+.lookbeat { font-size:.82rem; font-style:italic; color:var(--fg-dim); margin:.1rem 0 .45rem; }
+.lookroom { margin:.3rem 0 .5rem; }
+/* the people in the room as they talk: whoever is about to speak, whoever just did */
+.looktag.typing { border-color:var(--fg); animation:mspkpulse 1.2s ease-in-out infinite; }
+.looktag.speaking { border-color:var(--fg); background:var(--fg); color:var(--bg); }
+/* the room strip: the latest lines and the composer, beside the view */
+#room { border:1px solid var(--line); border-radius:.6rem; padding:.6rem .7rem; margin:0 0 1rem; background:var(--bg-2); }
+#room .rhead { font-size:.8rem; color:var(--fg-dim); margin:0 0 .4rem; }
+#room .rmsgs { max-height:22rem; overflow-y:auto; margin:0 0 .4rem; padding:0; }
+#room .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
+#room .rctl { display:flex; gap:.5rem; align-items:center; margin:.35rem 0 0; font-size:.75rem; color:var(--fg-dim); }
+#room .rctl .grow { flex:1 1 auto; }
 </style>';
 ?>
 <!-- THE CHIP BAR, ACROSS THE WHOLE WINDOW. Everybody, always, so a thread is a
@@ -1367,6 +1384,22 @@ echo '<style>' . xeric_play_css() . '
     <h2>what you see</h2>
     <p class="note warn" id="lookerr" hidden></p>
     <div id="look"><?= $state['look_html'] ?></div>
+    <!-- THE ROOM: three to five of them and you (engine/room.php, room.php).
+         Beside #look and never inside it: a repaint replaces #look wholesale,
+         and a conversation must not be wiped by a clock tick. The lines come
+         from room.php's own cursor; a guest reads them and has no composer. -->
+    <section id="room" hidden aria-label="the room">
+      <p class="rhead" id="rhead"></p>
+      <ul class="msgs rmsgs" id="rmsgs" aria-live="polite"></ul>
+      <div class="thinking" id="rthinking" hidden><i></i><i></i><i></i><span id="rthinkwho"></span></div>
+      <p class="note warn" id="rerr" hidden></p>
+      <div class="composer" id="rcompose">
+        <textarea id="rcomposer" rows="1" placeholder="say something to the room…" autocomplete="off"></textarea>
+        <button class="btn" type="button" id="rsay">Say</button>
+      </div>
+      <p class="rctl"><span class="grow" id="rnote"></span>
+        <button type="button" class="nbtn ghost" id="rleave">step back</button></p>
+    </section>
 
     <h2>where you are</h2>
     <p class="note warn" id="goerr" hidden></p>
@@ -2200,6 +2233,7 @@ echo '<style>' . xeric_play_css() . '
       if (au.paused) { var p = au.play(); if (p && p.catch) p.catch(function () {}); } else au.pause();
       return;
     }
+    if (t.hasAttribute('data-room')) { roomOpen(true); return; }
     if (t.hasAttribute('data-look') && !t.disabled) look(t);
   });
 
@@ -2812,6 +2846,8 @@ echo '<style>' . xeric_play_css() . '
       lookHtml = state.look_html; $('#look').innerHTML = lookHtml; bindLook();
     }
     armLookPoll();
+    roomMark();
+    if (state.room && !ROOM.on) roomOpen(false);
     if (state.fate_html) { $('#fate').innerHTML = state.fate_html; bindFate(); }
     if (state.panel_html) $('#panel').innerHTML = state.panel_html;
     if (state.past_html) $('#past').innerHTML = state.past_html;  // the history, with its reasoning one tap away
@@ -4027,6 +4063,8 @@ echo '<style>' . xeric_play_css() . '
         if (typeof d.look_html === 'string' && d.look_html !== lookHtml && $('#look')) {
           lookHtml = d.look_html; $('#look').innerHTML = lookHtml; bindLook();
         }
+        roomMark();
+        if (d.room && !ROOM.on) roomOpen(false);
         if (typeof d.compass === 'string' && $('#scompass')
             && $('#scompass').innerHTML !== d.compass) {
           $('#scompass').innerHTML = d.compass;
@@ -4526,6 +4564,186 @@ echo '<style>' . xeric_play_css() . '
     var el = $('#staleerr');
     el.textContent = msg;
     el.hidden = false;
+  }
+
+
+  // -- the room ----------------------------------------------------------------
+  // Three to five of them and you. The strip polls room.php by message id —
+  // 700 ms while a turn is live, four seconds otherwise, never while the tab
+  // is hidden — and draws each row once, in the thread's own three lanes. A
+  // line exists on the server only from its due time, so the pacing is the
+  // server's and nothing here can show a line early.
+  //
+  // TALKING WITHOUT YOU is asked for from here and decided there: after 30–45
+  // idle seconds with the tab visible and nothing typed, the page asks once;
+  // a 409 is the room keeping quiet, and the page simply waits for you.
+  var ROOM = { on: false, after: 0, conv: 0, timer: null, idle: null, seen: {}, live: null,
+               guest: <?= js(xeric_play_is_guest($w)) ?>, busy: false, lastSpeaker: '', speakT: null };
+
+  function roomOpen(focus) {
+    if (!$('#room')) return;
+    $('#room').hidden = false;
+    if (ROOM.guest) { $('#rcompose').hidden = true; $('#rleave').hidden = true; }
+    if (!ROOM.on) { ROOM.on = true; roomPoll(); }
+    if (focus && !ROOM.guest && window.innerWidth > 720) $('#rcomposer').focus();
+  }
+
+  function roomFace(h, name) {
+    if (h === '__you' && MEFACE) return { text: MEFACE.txt, hue: MEFACE.hue };
+    var row = h && document.querySelector('#cast .person[data-h="' + h + '"]');
+    if (row && row.dataset.av) return { text: row.dataset.av, hue: parseInt(row.dataset.hue || '0', 10) };
+    var n = String(name || '?').trim(), hh = 0;
+    for (var i = 0; i < n.length; i++) hh = (hh * 31 + n.charCodeAt(i)) % 360;
+    return { text: (n.split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0); }).join('') || '?').toUpperCase(), hue: hh };
+  }
+
+  function roomRow(r) {
+    if (ROOM.seen[r.id]) return;
+    ROOM.seen[r.id] = true;
+    var li = document.createElement('li');
+    li.className = r.who;
+    if (r.who === 'narr') {
+      li.innerHTML = '<span class="b">' + esc(r.text) + '</span>';
+    } else {
+      var f = roomFace(r.h, r.name);
+      var spk = '';
+      if (VOICE && r.who === 'them' && r.id) {
+        spk = '<button type="button" class="mspk" data-m="' + escA(String(r.id)) + '" aria-pressed="false" aria-label="hear '
+            + escA(r.name || 'this line') + '">🔈</button>';
+      }
+      li.innerHTML = '<span class="av" style="--hue:' + f.hue + '" aria-hidden="true">' + esc(f.text) + '</span>'
+                   + '<span class="b">' + (r.who === 'them' ? '<span class="rwho">' + esc(r.name) + '</span>' : '')
+                   + esc(r.text) + (r.when ? '<span class="st">' + esc(r.when) + '</span>' : '') + spk + '</span>';
+      var sb = li.querySelector('.mspk');
+      if (sb) sb.addEventListener('click', function () { speak(sb); });
+    }
+    var box = $('#rmsgs');
+    var near = (box.scrollHeight - box.scrollTop - box.clientHeight) < 80;
+    box.appendChild(li);
+    if (near) box.scrollTop = box.scrollHeight;
+    if (r.who === 'them') {
+      ROOM.lastSpeaker = r.h;
+      clearTimeout(ROOM.speakT);
+      ROOM.speakT = setTimeout(function () { ROOM.lastSpeaker = ''; roomMark(); }, 6000);
+    }
+  }
+
+  // The people in the view light up as they talk: .typing for whoever is
+  // about to speak, .speaking for whoever just did. Re-applied after every
+  // repaint, because #look's buttons are new each time it is drawn.
+  function roomMark() {
+    var live = ROOM.live, typing = live && live.typing ? live.typing.h : '';
+    $$('#look .looktag[data-h]').forEach(function (b) {
+      b.classList.toggle('typing', !!typing && b.dataset.h === typing);
+      b.classList.toggle('speaking', !!ROOM.lastSpeaker && b.dataset.h === ROOM.lastSpeaker && b.dataset.h !== typing);
+    });
+  }
+
+  function roomPaint(d) {
+    ROOM.live = d.live || null;
+    if (d.conv && d.conv !== ROOM.conv) ROOM.conv = d.conv;
+    (d.rows || []).forEach(roomRow);
+    if (typeof d.last === 'number' && d.last > ROOM.after) ROOM.after = d.last;
+    var live = ROOM.live;
+    if (live) {
+      var who = live.present.map(function (p) { return p.name; });
+      $('#rhead').textContent = (live.place_name ? 'At ' + live.place_name + ': ' : '') + 'you, ' + who.join(', ')
+        + (live.far && live.far.length ? ' · at the far table: ' + live.far.join(', ') : '');
+      if (live.typing) {
+        $('#rthinkwho').textContent = live.typing.queue || (live.typing.name + ' is about to say something');
+        $('#rthinking').hidden = false;
+      } else $('#rthinking').hidden = true;
+      if (live.error) { $('#rerr').textContent = live.error; $('#rerr').hidden = false; }
+      $('#rnote').textContent = live.turn ? '' : (live.said ? 'the floor is yours' : '');
+      $('#rleave').disabled = false;
+    } else {
+      $('#rthinking').hidden = true;
+      if (ROOM.conv) $('#rnote').textContent = 'the conversation is over — what each of them took from it lands in their memory';
+      $('#rleave').disabled = true;
+    }
+    roomMark();
+    roomIdleArm();
+  }
+
+  function roomPoll() {
+    clearTimeout(ROOM.timer);
+    if (!ROOM.on) return;
+    if (document.hidden) return;                  // picked back up on visibilitychange
+    fetch('room.php?w=' + encodeURIComponent(W) + '&after=' + ROOM.after + (ROOM.conv ? '&c=' + ROOM.conv : ''))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) return;
+        var was = ROOM.live;
+        roomPaint(d);
+        // A live room that ends, or a fresh one opening, moves the cursor
+        // over to the conversation now running.
+        if (was && !d.live) ROOM.conv = 0;
+        ROOM.timer = setTimeout(roomPoll, d.poll || 4000);
+      })
+      .catch(function () { ROOM.timer = setTimeout(roomPoll, 6000); });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && ROOM.on) roomPoll(); });
+
+  function roomPost(action, body) {
+    return fetch('room.php?w=' + encodeURIComponent(W) + '&a=' + action, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); });
+  }
+
+  function roomSay() {
+    var box = $('#rcomposer'), text = box.value.trim();
+    if (!text || ROOM.busy || ROOM.guest) return;
+    ROOM.busy = true;
+    $('#rerr').hidden = true;
+    $('#rsay').disabled = true;
+    roomPost('say', { text: text }).then(function (res) {
+      ROOM.busy = false;
+      $('#rsay').disabled = false;
+      if (!res.ok || !res.d.ok) {
+        // Refused or not, the line was never said: it stays in the box.
+        $('#rerr').textContent = (res.d && res.d.error) || 'that did not land';
+        $('#rerr').hidden = false;
+        return;
+      }
+      box.value = '';
+      box.style.height = 'auto';
+      if (res.d.conv && res.d.conv !== ROOM.conv) ROOM.conv = res.d.conv;
+      if (res.d.warn) { $('#rerr').textContent = res.d.warn; $('#rerr').hidden = false; }
+      roomPoll();
+    }).catch(function (e) {
+      ROOM.busy = false;
+      $('#rsay').disabled = false;
+      $('#rerr').textContent = 'the xeric could not be reached, ' + e.message;
+      $('#rerr').hidden = false;
+    });
+  }
+
+  function roomIdleArm() {
+    clearTimeout(ROOM.idle);
+    var live = ROOM.live;
+    if (ROOM.guest || !live || live.turn || !live.said || live.carry_left <= 0) return;
+    ROOM.idle = setTimeout(function () {
+      if (document.hidden || !ROOM.live || ROOM.live.turn) return;
+      if ($('#rcomposer').value.trim() !== '' || document.activeElement === $('#rcomposer') && $('#rcomposer').value) return;
+      roomPost('carry', {}).then(function (res) { if (res.ok && res.d.ok) roomPoll(); }).catch(function () {});
+    }, 30000 + Math.floor(Math.random() * 15000));
+  }
+
+  if ($('#room')) {
+    $('#rsay').addEventListener('click', roomSay);
+    $('#rcomposer').addEventListener('keydown', function (e) {
+      clearTimeout(ROOM.idle);
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); roomSay(); }
+    });
+    $('#rcomposer').addEventListener('input', function () {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 128) + 'px';
+    });
+    $('#rleave').addEventListener('click', function () {
+      $('#rleave').disabled = true;
+      roomPost('leave', {}).then(function () { roomPoll(); }).catch(function () { $('#rleave').disabled = false; });
+    });
+    if (<?= js($state['room'] !== null) ?>) roomOpen(false);
   }
 
   // A skip already running for this browser (a reload, a locked phone) is

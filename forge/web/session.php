@@ -622,7 +622,14 @@ function xeric_session_fork_clear(string $path): bool
             // name. And the pairing codes are live credentials to the OWNER'S
             // world — short-lived, but no part of a stranger's copy.
             . " OR key = 'players' OR key = 'players.issued'"
-            . " OR key LIKE 'guest.%' OR key LIKE 'pair.%'",
+            . " OR key LIKE 'guest.%' OR key LIKE 'pair.%'"
+            // THE OWNER'S TABLE. room:live is a conversation the owner is
+            // having right now and room:seal:* the ones still waiting for
+            // their close — both about message rows this fork has just
+            // deleted, and a live one would seat a stranger in the owner's
+            // conversation mid-sentence. The diaries those rooms already
+            // wrote (source room / room.*) go with the lived memories above.
+            . " OR key LIKE 'room:%'",
         'DELETE FROM signals',
         // The owner's outstanding message-photos are jobs about their own private
         // thread — whose text this fork has just deleted. Left behind they are

@@ -69,11 +69,15 @@ Built, or offered, and not connected to anything that runs.
   reads them, and confide has no surface.
 - **Guests' `stranger` and `written_in` are unreachable** — `engine/guest.php:54`; the
   join UI always posts `{}`.
-- **The day strip's "now" thumb never clears "earlier: …"** — play.php's `dayView` reads
-  `data-now`, and `xeric_play_look` (`forge/web/play-lib.php`, the day-strip loop) never
-  writes it. `forge/web/tests/viewer-test.php` proves the JavaScript side.
 - **Thin coverage**: heart.php is checked only for HTTP denial; workers only by source
   grep; no test names any of `forge/web/pdf.php`'s functions.
+
+## Deferred from the room on the web
+
+- **No `id_slot` per speaker** — `engine/room.php` `xeric_room_step()`; several speakers
+  on one llama.cpp slot re-read each system prompt per beat (each speaker's system is
+  byte-stable across the session, so the cost is the slot swap, not the prompt).
+  Measure first; then either `--parallel` ≥ roster, or pin a slot per speaker. Not sent.
 
 ## Stale text
 

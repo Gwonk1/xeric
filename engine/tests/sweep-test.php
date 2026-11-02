@@ -2657,6 +2657,40 @@ $favAsk = static function (string $key) use ($TF, $favNow): string {
 ok('favor: and the prompt only asks for it on the kind whose shape says it is owed',
     str_contains($favAsk('favor'), '"favor"') && !str_contains($favAsk('ordinary'), '"favor"'));
 
+// ---------------------------------------------------------------------------
+// Talking with you: a live room's table is out of every hour while it lasts
+// ---------------------------------------------------------------------------
+//
+// engine/room.php keeps the player's live session in world_state `room:live`;
+// the people seated at it are in a conversation the player is reading line by
+// line, and an hour that cast them elsewhere would contradict the screen.
+
+echo "\n# talking with you\n";
+
+$dbLR = fresh_db('live-room');
+xeric_state_seed($dbLR, $T2);
+ok('live room: no session, nobody busy', xeric_sweep_live_room($dbLR) === []);
+xeric_world_state_set($dbLR, 'room:live', json_encode(['conv' => 1, 'present' => ['ruth', 'dot'], 'ended' => null]));
+ok('live room: the sweep reads who is at the table', xeric_sweep_live_room($dbLR) === ['ruth', 'dot']);
+$kindsLR = xeric_sweep_kinds_for($T2, $dbLR);
+$hitLR = ''; $whyLR = [];
+foreach (range(1, 30) as $i) {
+    mt_srand(500 + $i);
+    $ch = xeric_sweep_choose($T2, $NOW, $kindsLR, ['busy' => ['ruth', 'dot'], 'spine' => false]);
+    if ($ch === null) continue;
+    if (array_intersect(['ruth', 'dot'], (array)$ch['handles']) !== []) $hitLR = implode(',', (array)$ch['handles']);
+    foreach ((array)$ch['trail']['excluded'] as $x) $whyLR[(string)$x['handle']] = (string)$x['why'];
+}
+ok('live room: thirty draws, and not one casts somebody who is talking with you', $hitLR === '', $hitLR);
+ok('live room: the trail says why, in its own words — not a wall, not death',
+    ($whyLR['ruth'] ?? '') === 'talking with you' && ($whyLR['dot'] ?? '') === 'talking with you', json_encode($whyLR));
+$rLR = xeric_sweep_run($T2, $dbLR, stub_event(), $NOW, ['chance' => 1.0, 'seed' => 11]);
+ok('live room: and a real sweep with the session in the db leaves them out',
+    count($rLR['events']) === 1 && array_intersect(['ruth', 'dot'], (array)$rLR['events'][0]['participants']) === [],
+    json_encode($rLR['events'][0]['participants'] ?? $rLR['notes']));
+xeric_world_state_set($dbLR, 'room:live', json_encode(['conv' => 1, 'present' => ['ruth'], 'ended' => 'quiet']));
+ok('live room: a session that has ended holds nobody', xeric_sweep_live_room($dbLR) === []);
+
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);
 

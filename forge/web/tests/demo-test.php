@@ -1604,7 +1604,7 @@ $denied = function (string $uri) use ($patterns): bool {
 // patterns are anchored (^|/) and closed (/|$) for exactly those two shapes.
 $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/state.php',
              '/worker.php', '/tick-worker.php', '/reroll-worker.php', '/addchar-worker.php',
-             '/photo-worker.php', '/scene-worker.php', '/story-worker.php', '/forge/worker.php',
+             '/photo-worker.php', '/scene-worker.php', '/story-worker.php', '/room-worker.php', '/forge/worker.php',
              '/heart.php', '/router.php',
              '/worker.php/extra', '/boot.php', '/ui.php', '/play-lib.php', '/review-lib.php',
              '/why-lib.php', '/api-lib.php', '/session.php', '/limits.php', '/queue.php',
@@ -1612,7 +1612,7 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
               '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php', '/speak.php',
-              '/hear.php', '/api.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php'];
+              '/hear.php', '/room.php', '/api.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
 ok('every include, worker and test path is denied', $served === [], implode(' ', $served));
@@ -1624,7 +1624,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
           'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php', 'speak.php',
-          'debrief.php', 'join.php', 'hear.php', 'api.php'];
+          'debrief.php', 'join.php', 'hear.php', 'api.php', 'room.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);
@@ -3507,7 +3507,7 @@ $seed = '$_GET = ["w" => "argument"];'
     . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
     . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
     . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
-    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' require_once ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
     . ' $w = xeric_play_open("argument"); $d = $w["db"]; $T = $w["template"];'
     . ' xeric_panel_think($d, "ada_reyes", "We should look at the lease before anybody talks about people.",'
     . '   "the building costs more than four of the jobs and nobody has read the break clause");'
@@ -3568,7 +3568,7 @@ $rawBoot = '$_GET = ["w" => "argument"];'
     . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($A, true) . '];'
     . ' $_SERVER["REQUEST_METHOD"] = "GET"; $_SERVER["HTTP_ACCEPT"] = "text/html";'
     . ' require ' . var_export(dirname(__DIR__) . '/play-lib.php', true) . ';'
-    . ' require ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
+    . ' require_once ' . var_export(dirname(__DIR__, 3) . '/engine/panel.php', true) . ';'
     . ' $w = xeric_play_open("argument");'
     . ' $_GET["a"] = (string)xeric_panel_made($w["db"], "the script", ' . var_export($xss, true) . ', "html", "");'
     . ' require ' . var_export(dirname(__DIR__) . '/debrief.php', true) . ';';
@@ -3688,7 +3688,7 @@ $heldRegion = static function (string $src): ?array {
 };
 
 foreach (['worker', 'addchar-worker', 'reroll-worker', 'panel-worker', 'tick-worker',
-          'story-worker', 'table-worker'] as $wk) {
+          'story-worker', 'table-worker', 'room-worker'] as $wk) {
     $src  = (string)file_get_contents(dirname(__DIR__) . '/' . $wk . '.php');
     $span = $heldRegion($src);
     if ($span === null) {                        // takes no hold; nothing to leak

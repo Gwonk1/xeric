@@ -36,9 +36,10 @@ Options -Indexes
 # panel-worker.php puts a proposal to a discussion room, table-worker.php plays a night at a table. photo-worker.php is the reaper that develops a world's
 # photographs, scene-worker.php develops the room the player is standing in
 # (and waits on a scene machine that said "later"), and story-worker.php
-# writes a mystery over a running town. All of them are CLI programs that
+# writes a mystery over a running town, and room-worker.php carries the
+# room's answers to the player one beat at a time. All of them are CLI programs that
 # happen to live here.
-<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|photo-worker|scene-worker|story-worker|panel-worker|table-worker|heart|router)\.php(/|$)#">
+<If "%{REQUEST_URI} =~ m#(^|/)(worker|tick-worker|reroll-worker|addchar-worker|photo-worker|scene-worker|story-worker|panel-worker|table-worker|room-worker|heart|router)\.php(/|$)#">
   Require all denied
 </If>
 

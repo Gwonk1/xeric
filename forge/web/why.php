@@ -272,6 +272,15 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     </div>
 
     <?php
+    // A ROOM IS NOT AN HOUR. Its trail is who answered whom, beat by beat —
+    // xeric_why_room_html() — and none of the sweep's sections below (the
+    // kinds, who was kept out, where everybody stood) were ever decided for it.
+    $isRoom = (string)($why['kind'] ?? '') === 'room';
+    if ($isRoom) echo xeric_why_room_html($T, $why);
+    if (!$isRoom):
+    ?>
+
+    <?php
     // THE FALSE CALM IS WHY THIS BLOCK EXISTS. A story deliberately drops the
     // world back to about its own pace between the build and the crescendo, and
     // an hour in that stretch looks exactly like a world that has gone slack.
@@ -350,6 +359,8 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
       <?php endforeach; ?>
     </ul>
     <?php endif; ?>
+
+    <?php endif; /* !$isRoom */ ?>
 
     <?php $notes = (array)($why['notes'] ?? []); if ($notes !== []): ?>
     <h2>what the model needed telling</h2>

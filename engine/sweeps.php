@@ -732,6 +732,12 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
     // Read once, here, where the database is: an hour and the choice that made it
     // have to agree about who was alive for it.
     $opts['dead'] = xeric_dead_handles($db);
+    // AND WHO IS TALKING WITH YOU. Somebody standing at the player's table in
+    // a live room (engine/room.php) is in a conversation the player is
+    // watching line by line; an hour that cast them somewhere else would be
+    // the world contradicting the screen. Read here for the same reason the
+    // dead are — the chooser takes no database.
+    $opts['busy'] = xeric_sweep_live_room($db);
 
     $chosen = xeric_sweep_choose($t, $now, $order, $opts);
     if ($chosen === null && $order !== $kinds) $chosen = xeric_sweep_choose($t, $now, $kinds, $opts);
@@ -1081,6 +1087,8 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
     // a moment and no database, which is what makes the chooser testable against
     // a world that does not exist. xeric_sweep_run() fills it in.
     $dead = array_values(array_map('strval', (array)($opts['dead'] ?? [])));
+    // Talking with you (engine/room.php): out of every hour while it lasts.
+    $busy = array_values(array_diff(array_map('strval', (array)($opts['busy'] ?? [])), $dead));
 
     // THE NARRATOR'S LEAN (write-ahead, docs/NARRATOR.md §3), handed in the way
     // the dead are. `$opts['intents']` is xeric_narrator_leans()'s hint list —
@@ -1146,7 +1154,7 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
         // The dead are excluded from every hour, spine or not. A wall keeps
         // somebody out of ONE kind of evening; being dead keeps them out of all
         // of them, which is why this is unioned in rather than branched on.
-        $exclude = array_values(array_unique(array_merge($onSpine ? array_keys($protected) : [], $dead)));
+        $exclude = array_values(array_unique(array_merge($onSpine ? array_keys($protected) : [], $dead, $busy)));
 
         // The trail is KEPT — the demo writes it to world_state and the inspector
         // prints it — so the reason names the wall and never its payload. An
@@ -1161,7 +1169,9 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
                        // to "why was she not there?", and only one of them is a wall.
                        'why' => in_array($h, $dead, true)
                            ? 'dead'
-                           : 'this one touches what they must not know'];
+                           : (in_array($h, $busy, true) && !($onSpine && isset($protected[$h]))
+                               ? 'talking with you'
+                               : 'this one touches what they must not know')];
         }
 
         $groups = xeric_sweep_groups($t, $now, $exclude, $maxPeople);
@@ -1249,6 +1259,19 @@ function xeric_sweep_choose(array $t, array $now, array $kinds, array $opts = []
         ];
     }
     return null;
+}
+
+/**
+ * Who is seated at the player's table in a live room right now — read off the
+ * one world_state row engine/room.php keeps (`room:live`), directly, so the
+ * sweep does not have to load the room to know who is busy in it. A row that
+ * will not decode is nobody: an unreadable session must not freeze a town.
+ */
+function xeric_sweep_live_room(PDO $db): array
+{
+    $live = json_decode((string)(xeric_world_state_get($db, 'room:live') ?? ''), true);
+    if (!is_array($live) || !empty($live['ended'])) return [];
+    return array_values(array_map('strval', (array)($live['present'] ?? [])));
 }
 
 /**

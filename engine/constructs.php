@@ -342,7 +342,12 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
 
         // Who it was said TO. Named in the sentence outranks; with two people
         // in the room the other one is the answer and no test is needed.
-        $others = array_values(array_diff(array_keys($present), [$speaker]));
+        //
+        // THE PLAYER IS NEVER THE LISTENER. Expectations are rows a CHARACTER
+        // holds; '__you' (the room's and the watch's handle for the person at
+        // the table) holds nothing. A promise the player made, on the other
+        // hand, is exactly the v1 row — of nobody, which means the user.
+        $others = array_values(array_diff(array_keys($present), [$speaker, '__you']));
         if ($others === []) continue;
         $listener = '';
         if (count($others) === 1) {
@@ -371,7 +376,7 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
             'quote' => $text,
             'what'  => mb_substr($text, 0, 60),
             'when'  => xeric_promise_when_phrase($text),
-        ], $now, $onNote, $speaker);
+        ], $now, $onNote, $speaker === '__you' ? null : $speaker);
         if ($key !== null) $formed[] = $key;
     }
     return $formed;

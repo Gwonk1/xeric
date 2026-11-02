@@ -76,6 +76,21 @@ if (!$trip['ok']) {
     xeric_web_json(['error' => (string)$trip['error'], 'kind' => 'travel'], 400);
 }
 
+// WALKING OUT ENDS THE CONVERSATION (engine/room.php). Sealed the moment the
+// body moves, so the room cannot answer somebody who has left; its close (the
+// diaries, one event) lands in a worker, never in this request.
+if (($trip['to'] ?? null) !== null || ($trip['from'] ?? null) !== null) {
+    try {
+        $live = xeric_room_live_get($w['db']);
+        if ($live !== null && (string)$live['place'] !== (string)($trip['to'] ?? '')) {
+            if (xeric_room_seal($w['db'], 'you left', xeric_clock_now($w['db'], $w['template'])) !== null) {
+                xeric_web_spawn(xeric_web_job_new(), ['slug' => (string)$w['slug'], 'sid' => xeric_session_id(),
+                    'db' => (string)$w['db_path'], 'adult' => xeric_session_adult(), 'lease' => ''], 'room-worker.php');
+            }
+        }
+    } catch (Throwable $e) { /* the heart lands what this could not */ }
+}
+
 // The arrival is reported from the moment AFTER the clock moved, which is the
 // whole point of the feature: the twenty minutes it took to get out there are
 // twenty minutes in which she left. The map is recomputed rather than patched

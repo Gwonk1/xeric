@@ -434,7 +434,18 @@ Design principles, learned the hard way:
                                             // declared wall has to remember
         "suspicion_dial": { "enabled": true, "max": 6 }   // optional subsystem
       }
-    ]
+    ],
+
+    // the room: talking to two to five of them at once (engine/room.php,
+    // the play view's "talk to the room"). Optional; these are the defaults.
+    // A watched room may take a beat on its own when you have gone quiet —
+    // at most 2 in a row and 6 a session, only on an idle queue, and only on
+    // a LOCAL machine unless carry_remote says a hosted key may be spent on
+    // it. A room nobody is watching never talks.
+    "room": {
+      "carry": true,                        // false: the room only ever answers you
+      "carry_remote": false                 // true: talking without you may run on a hosted endpoint
+    }
   },
 
   // ── knowledge walls: who may know what ─────────────────────────────────

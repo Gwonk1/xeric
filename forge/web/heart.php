@@ -182,6 +182,30 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             $say($slug . ': reminded, ' . (string)$r['text']);
         }
 
+        // THE ROOMS NOBODY IS IN ANY MORE, before the hours: a live room that
+        // has gone quiet, lost its player or been stopped is sealed (no model,
+        // free), so the sweep below is not holding anybody at a table that
+        // is not there. The heart NEVER starts a beat — a room nobody is
+        // watching says nothing — but it may spend the diary calls a sealed
+        // room's close owes, under the usual courtesy: only on an idle line,
+        // and only if the slot comes quickly.
+        try {
+            if (xeric_play_room_tick($w) !== []) $say($slug . ': a conversation went quiet');
+            if (xeric_room_seals($db) !== [] && !xeric_queue_busy()) {
+                $rh = xeric_queue_take('say', XERIC_HEART_MODEL_WAIT, 'heart:' . $slug);
+                if (($rh['ok'] ?? false) === true) {
+                    try {
+                        $n = count(xeric_play_room_land($w, xeric_llm_up($endpoint, 6) ? $endpoint : null));
+                        if ($n > 0) $say($slug . ': closed ' . $n . ' conversation' . ($n === 1 ? '' : 's'));
+                    } finally {
+                        xeric_queue_release($rh['hold'] ?? $rh);
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            $say($slug . ': the room, ' . $e->getMessage());
+        }
+
         if (xeric_clock_is_paused($db)) continue;         // stopped means stopped
 
         $size = (int)($T['events']['window_seconds'] ?? XERIC_SWEEP_WINDOW);

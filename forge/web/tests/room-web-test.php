@@ -1,0 +1,388 @@
+<?php
+/**
+ * Xeric — the room on the web. `php forge/web/tests/room-web-test.php`, exit 0 on pass.
+ *
+ * engine/tests/room-test.php proves the session's rules; this proves the web
+ * half that carries them (play-lib's room functions, room.php, room-worker.php
+ * and the doors around them). NO NETWORK, NO MODEL: every call goes through
+ * the engine's stub seam, the worker's loop is driven in-process with a sleep
+ * that records instead of sleeping, and the pages that must refuse are run as
+ * real PHP requests in a child process.
+ *
+ * What is being defended, in the order it would hurt:
+ *
+ *   1. A GUEST READS THE ROOM AND NEVER SPEAKS INTO IT — 403, before anything
+ *      is opened, written or spent.
+ *   2. THE ROWS ARE THE THREAD'S OWN: user, character, narrator; a cast row is
+ *      one speak.php can voice, the player's is not.
+ *   3. THE MODEL SLOT IS HELD FOR ONE CALL AND NEVER ACROSS A PAUSE, and no
+ *      line exists before its due time — so no client can show one early.
+ *   4. A CAST BEAT SPENDS, on the owner, as a reroll; a player line as a message.
+ *   5. WALKING OUT SEALS; A SKIP REFUSES MID-TURN; A FORK INHERITS NO TABLE.
+ */
+
+declare(strict_types=1);
+
+$tmp = sys_get_temp_dir() . '/xeric-room-web-test-' . getmypid();
+@mkdir($tmp . '/worlds', 0775, true);
+putenv('XERIC_DATA_DIR=' . $tmp);
+putenv('XERIC_WORLDS_DIR=' . $tmp . '/worlds');
+putenv('XERIC_LOCAL_BASE=http://127.0.0.1:1');      // never probed, never called
+putenv('XERIC_CAPS=1');                              // the meter is on: spend is asserted
+putenv('XERIC_SOLO=0');                              // visitors, so an owner and a guest are two people
+foreach (['XERIC_SCENE_BASE', 'XERIC_SCENE_KEY', 'XERIC_VOICE_BASE', 'XERIC_IMAGE_BASE'] as $k) putenv($k);
+
+require_once __DIR__ . '/../play-lib.php';
+
+$FAILED = 0;
+$COUNT  = 0;
+
+function ok(string $name, bool $cond, string $detail = ''): void
+{
+    global $FAILED, $COUNT;
+    $COUNT++;
+    if ($cond) {
+        echo "ok   - $name\n";
+    } else {
+        $FAILED++;
+        echo "FAIL - $name" . ($detail !== '' ? " ($detail)" : '') . "\n";
+    }
+}
+
+function rmtree(string $d): void
+{
+    foreach (glob($d . '/*') ?: [] as $p) { is_dir($p) ? rmtree($p) : @unlink($p); }
+    @rmdir($d);
+}
+
+/** A page, run as a real request in a child process, as the session named. */
+function page(string $script, string $sid, array $get, array $post = [], string $method = 'POST'): array
+{
+    global $tmp;
+    $boot = '$_GET = ' . var_export($get, true) . ';'
+        . ' $_POST = ' . var_export($post, true) . ';'
+        . ' $_COOKIE = [' . var_export(XERIC_WEB_COOKIE, true) . ' => ' . var_export($sid, true) . '];'
+        . ' $_SERVER["REQUEST_METHOD"] = ' . var_export($method, true) . ';'
+        . ' $_SERVER["HTTP_ACCEPT"] = "application/json";'
+        . ' register_shutdown_function(function () { echo "\n@@STATUS " . http_response_code(); });'
+        . ' require ' . var_export(dirname(__DIR__) . '/' . $script, true) . ';';
+    $cmd = 'XERIC_DATA_DIR=' . escapeshellarg($tmp) . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
+         . ' XERIC_LOCAL_BASE=http://127.0.0.1:1 XERIC_CAPS=1 XERIC_SOLO=0'
+         . ' ' . escapeshellarg(PHP_BINARY) . ' -d error_reporting=0 -r ' . escapeshellarg($boot) . ' 2>&1';
+    $raw = (string)shell_exec($cmd);
+    $status = preg_match('/@@STATUS (\d+)\s*$/', $raw, $m) ? (int)$m[1] : 0;
+    $body = trim((string)preg_replace('/@@STATUS \d+\s*$/', '', $raw));
+    $json = json_decode($body, true);
+    return ['status' => $status, 'json' => is_array($json) ? $json : null, 'raw' => $body];
+}
+
+/** The stub machine: one numbered line per call, every call captured. */
+function stub(array &$calls, ?callable $line = null): array
+{
+    $n = 0;
+    return ['base' => 'stub://', 'stub' => function (string $tag, array $msgs) use (&$calls, &$n, $line) {
+        $calls[] = ['tag' => $tag, 'msgs' => $msgs];
+        if ($tag === 'extract') return ['memories' => []];
+        $n++;
+        return $line !== null ? $line($n) : 'A plain line, number ' . $n . '.';
+    }];
+}
+
+// A world where three adults are always at the Bluebird, the other three
+// elsewhere — so whatever the wall clock says, the room has company.
+$fixT = xeric_world_load(dirname(__DIR__, 3) . '/engine/fixtures/milldale.json');
+$all  = [0, 1, 2, 3, 4, 5, 6];
+foreach ($fixT['cast']['characters'] as &$c) {
+    $c['week'] = match ((string)$c['handle']) {
+        'ruth', 'pastor_dale', 'dot' => [['days' => $all, 'where' => 'bluebird', 'doing' => 'at the counter']],
+        'janelle'                    => [['days' => $all, 'where' => 'first_lutheran', 'doing' => 'setting up']],
+        default                      => [['days' => $all, 'where' => 'beck_hardware', 'doing' => 'at the till']],
+    };
+}
+unset($c);
+$slug = 'room-town';
+$wdir = xeric_web_worlds_dir() . '/' . $slug;
+@mkdir($wdir, 0775, true);
+file_put_contents($wdir . '/world-template.json',
+    json_encode($fixT, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+file_put_contents($wdir . '/seed.json',
+    json_encode(xeric_forge_default_seed($fixT), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+
+$A = bin2hex(random_bytes(16));                      // the owner
+xeric_session_use($A);
+xeric_session_claim($slug, $A);
+// A machine is attached (never called — every call below is the stub), so
+// opening the world does not stop its clock out from under the room.
+xeric_web_session_edit(function (array &$s): void {
+    $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:1', 'base' => '', 'model' => ''];
+}, $A);
+$w  = xeric_play_open($slug);
+$T  = $w['template'];
+$db = $w['db'];
+if (xeric_clock_is_paused($db)) xeric_clock_resume($db);
+$now = xeric_clock_now($db, $T);
+xeric_player_move($db, 'bluebird', (int)$now['epoch']);
+
+$G = bin2hex(random_bytes(16));                      // a guest, in on a code, on the owner's db
+xeric_session_use($G);
+xeric_session_join($slug, 2, $G);
+// The guest's own machine choice, too: a session with nothing attached opening
+// a running world stops its clock (xeric_play_open's reconcile), and this test
+// is about the room's doors, not that one.
+xeric_web_session_edit(function (array &$s): void {
+    $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:1', 'base' => '', 'model' => ''];
+}, $G);
+xeric_session_use($A);
+
+// ---------------------------------------------------------------------------
+echo "\n# the door\n";
+
+$before = (int)$db->query('SELECT COUNT(*) FROM messages')->fetchColumn();
+$gs = page('room.php', $G, ['w' => $slug, 'a' => 'say'], ['text' => 'Hello, everybody.']);
+ok('a guest saying something to the room is refused, 403, kind guest',
+    $gs['status'] === 403 && ($gs['json']['kind'] ?? '') === 'guest', $gs['status'] . ' ' . mb_substr($gs['raw'], 0, 200));
+ok('and the refusal wrote nothing', (int)$db->query('SELECT COUNT(*) FROM messages')->fetchColumn() === $before
+    && xeric_room_live_get($db) === null);
+$gc = page('room.php', $G, ['w' => $slug, 'a' => 'carry']);
+ok('nor may a guest ask the room to talk on its own', $gc['status'] === 403, (string)$gc['status']);
+$gl = page('room.php', $G, ['w' => $slug, 'a' => 'leave']);
+ok('nor end somebody else\'s conversation', $gl['status'] === 403, (string)$gl['status']);
+$rp = (string)file_get_contents(dirname(__DIR__) . '/room.php');
+ok('room.php asks before every write — three doors, three owner checks', substr_count($rp, 'xeric_play_owner_only(') === 3);
+
+// ---------------------------------------------------------------------------
+echo "\n# a line, and the turn it buys\n";
+
+$say = xeric_play_room_say($w, 'Morning. Dot, is the pie any good today?');
+$live = xeric_room_live_get($db);
+ok('the first line opens the session and lands as its row at once',
+    $say['opened'] && $live !== null && (int)$live['said'] === 1 && $say['lease'] !== null
+    && count(xeric_room_rows($db, (int)$live['conv'])) === 1);
+ok('the session is seated from the schedule: the three at the Bluebird, and you',
+    $live['present'] === ['ruth', 'pastor_dale', 'dot'] && $live['names']['__you'] === 'Walt', json_encode($live['present']));
+$conv = xeric_conversation_get($db, (int)$live['conv']);
+ok('one conversation of kind room, handle empty, the place as its title',
+    (string)$conv['kind'] === 'room' && (string)$conv['handle'] === '' && (string)$conv['title'] === 'bluebird');
+$pub = xeric_play_room_public($T, $live, true);
+ok('the page\'s summary is names and state, never a prompt',
+    $pub['turn'] === true && count($pub['present']) === 3 && !str_contains(json_encode($pub), 'YOU ARE'));
+ok('the play state carries the summary so the strip opens', (xeric_play_state($w, $A)['room']['conv'] ?? 0) === (int)$live['conv']);
+$look = xeric_play_look_html($T, $db, null, $slug, true);
+ok('the look block becomes the way back to the room, and says no beat of its own',
+    str_contains($look, 'back to the room') && !str_contains($look, 'lookbeat'));
+
+$second = xeric_play_room_say($w, 'And the coffee, Dot?');
+ok('a second line while the turn is live books itself and starts nobody new', $second['lease'] === null
+    && (int)xeric_room_live_get($db)['said'] === 2);
+
+// -- the worker, in-process ----------------------------------------------------
+$calls = []; $sleeps = []; $busyInGap = false; $earlyRows = [];
+$hitsBefore = (int)xeric_limit_hits('reroll-' . $A, XERIC_LIMIT_HOUR, time())['count'];
+$msgsBefore = (int)xeric_limit_hits('msg-' . $A, XERIC_LIMIT_HOUR, time())['count'];
+$r = xeric_play_room_run($w, $A, (string)$say['lease'], [
+    'endpoint' => function (string $h) use (&$calls): array {
+        return stub($calls, fn(int $n) => 'Best in the county, Walt.');
+    },
+    'up'       => false,
+    'wait'     => 2.0,
+    'seed'     => 'web',
+    'sleep'    => function (float $s) use (&$sleeps, &$busyInGap, &$earlyRows, $db, &$calls): void {
+        $sleeps[] = $s;
+        // BETWEEN generating a line and showing it: the slot is free, and the
+        // line is not a row yet — there is nothing for any client to show.
+        if (xeric_queue_busy()) $busyInGap = true;
+        $live = xeric_room_live_get($db);
+        $earlyRows[] = count(xeric_room_rows($db, (int)$live['conv']));
+    },
+]);
+$live  = xeric_room_live_get($db);
+$rows  = xeric_room_rows($db, (int)$live['conv']);
+$chat  = array_values(array_filter($calls, fn($c) => $c['tag'] === 'chat'));
+ok('the worker answered, one call a beat', $r['beats'] >= 1 && count($chat) === $r['beats'],
+    json_encode($r) . ' / ' . count($chat));
+ok('the model slot is never held across the pause between a line and its showing', $sleeps !== [] && !$busyInGap);
+ok('no line is a row before its due time — each sleep happened with the line not yet written',
+    $earlyRows === array_map(fn($i) => 2 + $i, range(0, count($earlyRows) - 1)), json_encode($earlyRows));
+ok('the slot is free when the turn is done', !xeric_queue_busy());
+ok('the lease is handed back, and nobody is typing', $live['lease'] === null && $live['typing'] === null);
+ok('a line naming Walt hands the floor back', count($chat) === 1 && (string)$rows[2]['content'] === 'Best in the county, Walt.'
+    && (string)$rows[2]['handle'] === 'dot', json_encode(array_column($rows, 'content')));
+$hitsAfter = (int)xeric_limit_hits('reroll-' . $A, XERIC_LIMIT_HOUR, time())['count'];
+ok('each cast beat spent one reroll of the owner\'s hour', $hitsAfter - $hitsBefore === $r['beats'],
+    ($hitsAfter - $hitsBefore) . ' vs ' . $r['beats']);
+ok('and none of the player\'s messages', (int)xeric_limit_hits('msg-' . $A, XERIC_LIMIT_HOUR, time())['count'] === $msgsBefore);
+
+// -- roles and the speaker ------------------------------------------------------
+$byRole = array_count_values(array_map(fn($x) => (string)$x['role'], $rows));
+ok('the rows are the thread\'s three roles', ($byRole['user'] ?? 0) === 2 && ($byRole['character'] ?? 0) === $r['beats']);
+ok('a cast row is one speak.php can voice, with the speaker\'s handle', xeric_play_spoken($db, (int)$rows[2]['id'])['handle'] === 'dot');
+ok('the player\'s own row is not', xeric_play_spoken($db, (int)$rows[0]['id']) === null);
+$drawn = xeric_play_room_rows($T, $live, $rows);
+ok('the page draws them in its lanes, named', $drawn[0]['who'] === 'me' && $drawn[0]['name'] === 'Walt'
+    && $drawn[2]['who'] === 'them' && $drawn[2]['name'] === 'Dot Vance');
+
+// -- a guest reads -----------------------------------------------------------
+$gr = page('room.php', $G, ['w' => $slug, 'after' => '0'], [], 'GET');
+ok('a guest may read the room: the lines, and a summary that is not theirs to speak into',
+    $gr['status'] === 200 && count((array)($gr['json']['rows'] ?? [])) === count($rows)
+    && ($gr['json']['live']['mine'] ?? true) === false && ($gr['json']['guest'] ?? false) === true,
+    $gr['status'] . ' ' . mb_substr($gr['raw'], 0, 200));
+$after = page('room.php', $A, ['w' => $slug, 'after' => (string)$rows[1]['id']], [], 'GET');
+ok('the cursor is a message id: only what came after it', count((array)($after['json']['rows'] ?? [])) === count($rows) - 2,
+    mb_substr($after['raw'], 0, 200));
+
+// -- the player speaks first ---------------------------------------------------
+$s3 = xeric_play_room_say($w, 'Ruth, and you?');
+$dropCalls = []; $saidDuring = false;
+$r3 = xeric_play_room_run($w, $A, (string)$s3['lease'], [
+    'endpoint' => function (string $h) use (&$dropCalls, &$saidDuring, $w): array {
+        // The model is thinking — and the player says something else.
+        if (!$saidDuring) { $saidDuring = true; xeric_play_room_say($w, 'Actually, never mind that.'); }
+        return stub($dropCalls, fn(int $n) => 'Plain again, ' . $n . '.');
+    },
+    'up' => false, 'wait' => 2.0, 'seed' => 'drop', 'sleep' => fn(float $s) => null,
+]);
+$live3 = xeric_room_live_get($db);
+ok('a line written while the player spoke again is dropped, and the trail says so',
+    $r3['dropped'] >= 1 && ($live3['dropped'][0]['why'] ?? '') === 'you spoke first', json_encode($r3));
+ok('and the room answers the newer line instead', $r3['beats'] >= 1);
+
+// ---------------------------------------------------------------------------
+echo "\n# the skip and the walk\n";
+
+xeric_room_live_edit($db, function (?array &$l): void {
+    $l['lease'] = ['id' => 'held', 'until' => microtime(true) + 60]; $l['budget'] = 1;
+});
+ok('mid-turn is visible to the time control', xeric_play_room_midturn($db));
+$tk = page('tick.php', $A, ['w' => $slug], ['w' => $slug, 'span' => 'hour']);
+ok('a skip while somebody is answering is refused, plainly', $tk['status'] === 409 && ($tk['json']['kind'] ?? '') === 'room',
+    $tk['status'] . ' ' . mb_substr($tk['raw'], 0, 200));
+ok('and the room is untouched by the refusal', xeric_room_live_get($db) !== null);
+xeric_room_live_edit($db, function (?array &$l): void { $l['lease'] = null; $l['budget'] = 0; });
+ok('between turns there is no mid-turn', !xeric_play_room_midturn($db));
+
+$convW = (int)xeric_room_live_get($db)['conv'];
+$wk = page('where.php', $A, ['w' => $slug], ['w' => $slug, 'to' => 'beck_hardware']);
+ok('the walk itself goes', $wk['status'] === 200 && !empty($wk['json']['ok']), $wk['status'] . ' ' . mb_substr($wk['raw'], 0, 200));
+ok('walking out seals the conversation at once', xeric_room_live_get($db) === null);
+$landed = false;
+for ($i = 0; $i < 40 && !$landed; $i++) {
+    if (isset(xeric_room_seals($db)[$convW])) { $landed = true; break; }
+    foreach (xeric_events_recent($db, 5) as $e) {
+        $tr = json_decode((string)(xeric_world_state_get($db, 'why:event:' . (int)$e['id']) ?? ''), true);
+        if (is_array($tr) && (int)($tr['conversation'] ?? 0) === $convW) { $landed = true; break 2; }
+    }
+    usleep(150000);
+}
+ok('and it is either waiting for its close or already closed, for the reason that it was walked out of',
+    $landed && (!isset(xeric_room_seals($db)[$convW]) || xeric_room_seals($db)[$convW]['ended'] === 'you left'));
+$look2 = xeric_play_look_html($T, $db, null, $slug, true);
+ok('in the next room, with two people at the till, the door is offered again', str_contains($look2, 'talk to the room'));
+
+// -- the close lands through the engine ---------------------------------------
+for ($i = 0; $i < 40 && isset(xeric_room_seals($db)[$convW]); $i++) usleep(150000);   // let the worker finish, if it is landing
+$land = xeric_play_room_land($w, null);
+$ev = null;
+foreach (xeric_events_recent($db, 10) as $e) {
+    $tr = json_decode((string)(xeric_world_state_get($db, 'why:event:' . (int)$e['id']) ?? ''), true);
+    if (is_array($tr) && (int)($tr['conversation'] ?? 0) === $convW) { $ev = $e + ['trail' => $tr]; break; }
+}
+ok('the close landed one event for the conversation, with the trail the inspector reads',
+    $ev !== null && ($ev['trail']['kind'] ?? '') === 'room' && ($ev['trail']['ended'] ?? '') === 'you left',
+    json_encode($land));
+ok('the book has a line for the room', (static function () use ($T, $db, $ev): bool {
+    if ($ev === null) return false;
+    foreach (xeric_book_days($T, $db, xeric_clock_now($db, $T))['days'] as $d) {
+        foreach ($d['items'] as $it) if ($it['kind'] === 'room' && (int)$it['event']['id'] === (int)$ev['id']) return true;
+    }
+    return false;
+})());
+require_once dirname(__DIR__) . '/why-lib.php';
+$whyHtml = $ev !== null ? xeric_why_room_html($T, $ev['trail']) : '';
+ok('the inspector says who answered, how, with the weights, and why it ended',
+    str_contains($whyHtml, 'the room, beat by beat') && str_contains($whyHtml, 'Dot Vance')
+    && str_contains($whyHtml, 'message #') && str_contains($whyHtml, 'you walked out')
+    && str_contains($whyHtml, 'set aside'), mb_substr(strip_tags($whyHtml), 0, 300));
+
+// ---------------------------------------------------------------------------
+echo "\n# talking without you\n";
+
+xeric_player_move($db, 'bluebird', (int)xeric_clock_now($db, $T)['epoch']);
+$s4 = xeric_play_room_say($w, 'Back again.');
+xeric_play_room_run($w, $A, (string)$s4['lease'], ['endpoint' => function (string $h) use (&$calls): array { return stub($calls); },
+    'up' => false, 'wait' => 2.0, 'sleep' => fn(float $s) => null]);
+$c1 = xeric_play_room_carry($w, $A);
+ok('an idle room on a local machine may take one beat', $c1['ok'] && $c1['lease'] !== null, $c1['why']);
+xeric_play_room_run($w, $A, (string)$c1['lease'], ['endpoint' => function (string $h) use (&$calls): array { return stub($calls); },
+    'up' => false, 'wait' => 2.0, 'sleep' => fn(float $s) => null]);
+$c2 = xeric_play_room_carry($w, $A);
+xeric_play_room_run($w, $A, (string)($c2['lease'] ?? ''), ['endpoint' => function (string $h) use (&$calls): array { return stub($calls); },
+    'up' => false, 'wait' => 2.0, 'sleep' => fn(float $s) => null]);
+$c3 = xeric_play_room_carry($w, $A);
+ok('two in a row, and then it is your turn', $c2['ok'] && !$c3['ok'] && str_contains($c3['why'], 'your turn'), $c3['why']);
+$liveC = xeric_room_live_get($db);
+ok('the beats said alone are marked in the trail', count(array_filter((array)$liveC['trail'], fn($b) => !empty($b['alone']))) === 2);
+
+// ---------------------------------------------------------------------------
+echo "\n# a fork inherits no table\n";
+
+$copy = $tmp . '/fork-copy.db';
+$db->exec("VACUUM INTO " . $db->quote($copy));
+$cdb = xeric_state_open($copy);
+xeric_memory_add($cdb, 'ruth', 'Ruth heard Walt ask after the pie.', 'room.you', ['you' => 'Walt']);
+xeric_world_state_set($cdb, XERIC_ROOM_SEAL . '99', json_encode(['conv' => 99]));
+$cdb = null;
+ok('the fork scrub runs', xeric_session_fork_clear($copy));
+$cdb = xeric_state_open($copy);
+ok('a fork has no live room and no sealed one waiting',
+    xeric_room_live_get($cdb) === null && xeric_room_seals($cdb) === []
+    && (int)$cdb->query("SELECT COUNT(*) FROM world_state WHERE key LIKE 'room:%'")->fetchColumn() === 0);
+ok('nor any diary a room of the owner\'s wrote', (int)$cdb->query("SELECT COUNT(*) FROM memories WHERE source LIKE 'room%'")->fetchColumn() === 0);
+
+// ---------------------------------------------------------------------------
+echo "\n# who came and went, in the view\n";
+
+xeric_room_seal($db, 'stepped back', xeric_clock_now($db, $T));
+$nowV = xeric_clock_now($db, $T);
+$hm = fn(int $epoch): string => xeric_world_now($T, $epoch)['hhmm'];
+$TV = $T;
+foreach ($TV['cast']['characters'] as &$c) {
+    if ($c['handle'] === 'janelle') {
+        $c['week'] = [['days' => $all, 'from' => $hm((int)$nowV['epoch'] - 300), 'to' => $hm((int)$nowV['epoch'] + 3600),
+                       'where' => 'bluebird', 'doing' => 'in for a coffee']];
+    }
+}
+unset($c);
+xeric_player_move($db, 'bluebird', (int)$nowV['epoch'] - 3600);
+$lookV = xeric_play_look_html($TV, $db, $nowV, $slug, true);
+ok('somebody who walked in a few minutes ago is a beat in the view, from observables',
+    str_contains($lookV, '<p class="lookbeat">Janelle Kerr comes in'), $lookV);
+ok('and the beat names nobody by pronoun', preg_match('/lookbeat">[^<]*\b(he|she|him|her)\b/i', $lookV) === 0);
+$sV = xeric_play_room_say(['template' => $TV] + $w, 'Janelle! Sit down.');
+ok('inside a live room the view says no beat — the room\'s own narrator row is where it goes',
+    !str_contains(xeric_play_look_html($TV, $db, $nowV, $slug, true), 'lookbeat'));
+xeric_room_live_edit($db, function (?array &$l): void { $l['lease'] = null; $l['budget'] = 0; });
+
+// ---------------------------------------------------------------------------
+echo "\n# the page\n";
+
+$pp = (string)file_get_contents(dirname(__DIR__) . '/play.php');
+ok('the strip lives beside #look, never inside it',
+    strpos($pp, '<section id="room"') > strpos($pp, '<div id="look">') && str_contains($pp, '</div>' . "\n" . '    <!-- THE ROOM'));
+ok('the strip polls by cursor, and never while the tab is hidden',
+    str_contains($pp, "'room.php?w=' + encodeURIComponent(W) + '&after=' + ROOM.after")
+    && str_contains($pp, 'if (document.hidden) return;'));
+ok('each cast bubble has a speaker through speak.php', str_contains($pp, "if (VOICE && r.who === 'them' && r.id)"));
+ok('the people in the view light up as they talk', str_contains($pp, "b.classList.toggle('typing'")
+    && str_contains($pp, "b.classList.toggle('speaking'"));
+ok('a guest gets no composer', str_contains($pp, "if (ROOM.guest) { $('#rcompose').hidden = true;"));
+ok('every bubble is escaped on the way in', str_contains($pp, "esc(r.text)") && !preg_match('/innerHTML\s*=\s*r\.text/', $pp));
+
+// ---------------------------------------------------------------------------
+
+$db = null; $cdb = null; $w = null;
+gc_collect_cycles();
+rmtree($tmp);
+
+echo $FAILED === 0 ? "\nall $COUNT room web tests passed\n" : "\n$FAILED of $COUNT room web test(s) FAILED\n";
+exit($FAILED === 0 ? 0 : 1);

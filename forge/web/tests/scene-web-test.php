@@ -264,6 +264,9 @@ ok('in day order, not in the order they were drawn', $pm !== false && $pm < $pn 
 ok('each thumb is the bytes GET of its row', str_contains($h, '<img src="scene.php?w=' . $slug . '&amp;k=bluebird&amp;f=' . str_repeat('3', 40) . '"'));
 ok('and the view on screen is marked', preg_match('/class="lookthumb cur"[^>]*aria-pressed="true"/', $h) === 1
     && substr_count($h, 'lookthumb cur') === 1);
+ok('and only that thumb says it is NOW — the data-now dayView reads to clear "earlier:"',
+    preg_match('/class="lookthumb cur"[^>]*data-now="1"/', $h) === 1
+    && substr_count($h, 'data-now="1"') === 1 && substr_count($h, 'data-now="0"') === 2, $h);
 ok('the "earlier" label waits, hidden, for a swap', str_contains($h, '<p class="lookearlier" hidden></p>'));
 $v = xeric_play_look_view($T, $db, $slug, null, false);
 ok('the GET carries the strip too', array_column($v['day'], 'light') === ['morning light', 'noon', 'dusk']
@@ -337,11 +340,14 @@ echo "\n# the room, the machines card, and stepping inside\n";
 $h = xeric_play_look_html($Tr, $db, null, $slug, true);
 ok('the counter test has company enough for a room', count(xeric_scene_brief($Tr, $db)['who']) >= 2,
     json_encode(array_column(xeric_scene_brief($Tr, $db)['who'], 'handle')));
-ok('with two or more people present the look block says the room has no web surface yet',
-    str_contains($h, '<!-- the room (engine/room.php) has no web surface yet'), $h);
-ok('and never offers a join it cannot keep', stripos($h, 'join the conversation</') === false);
+ok('with two or more people present the look block offers to talk to the room',
+    str_contains($h, '<button type="button" class="nbtn" data-room>talk to the room</button>'), $h);
+ok('and the old "no web surface" placeholder is gone', !str_contains($h, 'has no web surface yet'));
+ok('a guest, who may read the room and never speak into it, is not offered the door',
+    !str_contains(xeric_play_look_html($Tr, $db, null, $slug, false), 'talk to the room'));
 ok('with fewer, it says nothing about it', count(xeric_scene_brief($T, $db)['who']) >= 2
-    || !str_contains(xeric_play_look_html($T, $db, null, $slug, true), 'engine/room.php'));
+    || !str_contains(xeric_play_look_html($T, $db, null, $slug, true), 'data-room'));
+
 ok('the machines card says a local machine draws the room you are in ahead',
     str_contains(xeric_play_scene_ahead_line(['base' => 'http://127.0.0.1:7860'], 'XERIC_SCENE_KEY'), 'the room you are standing in'));
 $line = xeric_play_scene_ahead_line(['base' => 'https://scenes.example.com'], 'XERIC_SCENE_KEY');

@@ -561,6 +561,71 @@ function xeric_travel_scene(array $t, string $to, array $now, array $presence, ?
 }
 
 /**
+ * Who came in and who went, in one line a bystander could have said — the
+ * doorway's sibling. "Dot Vance comes in, shaking the rain off." "Harlan Beck
+ * gets up and goes." Names, never pronouns; a verb that agrees with how many;
+ * and the only flourish is the weather's own line (the narrator's sky when
+ * one was set, the derived one otherwise), read for the one thing anybody
+ * coming through a door carries in with them. Where somebody went is NOT
+ * here: everyone saw them go, and where to is schedule knowledge a wall may
+ * be hiding. Indoors-only places get no weather — nobody shakes the rain off
+ * walking into a corridor of a station that has none.
+ *
+ * Used twice, so the two can never double up: the look block's beat, and
+ * inside a live room (engine/room.php) the narrator row that replaces it.
+ */
+function xeric_travel_comings_line(array $t, array $now, string $place, array $arrived, array $left, ?PDO $db = null): string
+{
+    $name  = fn(string $h): string => xeric_world_name($t, $h) ?: $h;
+    $bits  = [];
+    if ($arrived !== []) {
+        $who = xeric_join_list(array_map($name, array_values($arrived)));
+        $wx  = mb_strtolower(xeric_weather_line($t, $now, $db));
+        $with = '';
+        if (xeric_weather_climate($t) !== 'interior') {
+            if (preg_match('/\b(rain|shower|drizzle|downpour|storm)/u', $wx) && !str_contains($wx, 'never'))      $with = ', shaking the rain off';
+            elseif (preg_match('/\bsnow|sleet/u', $wx))                           $with = ', stamping the snow off';
+            elseif (preg_match('/\b(frost|bitter|freez|cold|chill)/u', $wx))       $with = ', bringing the cold in';
+            elseif (preg_match('/\b(heat|hot|close and heavy|shimmer)/u', $wx))    $with = ', out of the heat';
+            elseif (preg_match('/\bfog/u', $wx))                                  $with = ', out of the fog';
+            elseif (preg_match('/\bwind/u', $wx))                                 $with = ', the wind catching the door';
+        }
+        $bits[] = $who . (count($arrived) === 1 ? ' comes in' : ' come in') . $with . '.';
+    }
+    if ($left !== []) {
+        $who = xeric_join_list(array_map($name, array_values($left)));
+        $bits[] = $who . (count($left) === 1 ? ' gets up and goes.' : ' get up and go.');
+    }
+    return implode(' ', $bits);
+}
+
+/**
+ * Who came and went at a place in the last stretch of the world's clock — the
+ * observables the look block turns into a beat. Presence is read at two
+ * moments through the one reader, now and the start of the stretch (the last
+ * ten world-minutes, or since the player walked in, whichever is later — a
+ * room you have just entered had nobody arriving into it, it had you), and
+ * the difference is the news. PURE: two reads of the template's week, no
+ * state kept between pulses, so every surface that asks gets the same answer.
+ *
+ * @return array{arrived:string[],left:string[],line:string}
+ */
+function xeric_travel_comings(array $t, PDO $db, array $now, string $place, int $stretch = 600): array
+{
+    $epoch = (int)($now['epoch'] ?? 0);
+    $from  = max($epoch - max(60, $stretch), xeric_player_since($db));
+    $out   = ['arrived' => [], 'left' => [], 'line' => ''];
+    if ($from >= $epoch) return $out;
+    $dead   = xeric_dead_handles($db);
+    $then   = xeric_world_who_is_at(xeric_world_who_is_where($t, xeric_world_now($t, $from), $dead), $place);
+    $hereNow = xeric_world_who_is_at(xeric_world_who_is_where($t, $now, $dead), $place);
+    $out['arrived'] = array_values(array_diff($hereNow, $then));
+    $out['left']    = array_values(array_diff($then, $hereNow));
+    $out['line']    = xeric_travel_comings_line($t, $now, $place, $out['arrived'], $out['left'], $db);
+    return $out;
+}
+
+/**
  * Is this place open at this moment? Unreadable hours are open (sweeps.php).
  *
  * $dark is the set of rooms the world has lost, and it beats the hours outright:

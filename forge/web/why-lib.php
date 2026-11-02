@@ -155,3 +155,108 @@ pre.p.vol{border-color:var(--accent-dim)}
 .cast a.person{text-decoration:none}
 CSS;
 }
+
+/**
+ * A room's trail, beat by beat (engine/room.php): who spoke and how they were
+ * chosen, the weights with their reach × heat breakdown, who held their
+ * tongue and who was noticed for it, the carry roll that kept the room
+ * talking or handed the floor back, the lines set aside because the player
+ * spoke first, who came and went — and where they went, which the room never
+ * says and the inspector does — the line by message id, and why it ended.
+ * HTML, every value escaped here.
+ */
+function xeric_why_room_html(array $t, array $why): string
+{
+    $you  = (string)($why['player'] ?? '');
+    $name = function (string $h) use ($t, $you): string {
+        if ($h === XERIC_ROOM_YOU) return $you !== '' ? $you : 'you';
+        $n = xeric_world_name($t, $h);
+        return $n !== '' ? $n : $h;
+    };
+    $how = [
+        'you'       => 'said it',
+        'pinned'    => 'opened, as asked',
+        'addressed' => 'named in the line before, so the floor followed the name',
+        'owed'      => 'named by you, so owed an answer',
+        'draw'      => 'drawn by reach × heat',
+    ];
+    $out = '<h2>the room, beat by beat</h2>';
+    $meta = [];
+    if (!empty($why['live']))  $meta[] = 'with ' . $you . ' at the table, one message row a line';
+    if (isset($why['turns']))  $meta[] = (int)$why['turns'] . ' lines from the cast';
+    if (isset($why['said']))   $meta[] = (int)$why['said'] . ' from ' . ($you !== '' ? $you : 'you');
+    if (!empty($why['carried'])) $meta[] = (int)$why['carried'] . ' said without you';
+    if (($why['ended'] ?? '') !== '') $meta[] = 'it ended because ' . xeric_room_end_words((string)$why['ended']);
+    if ($meta !== []) $out .= '<p class="quiet">' . h(ucfirst(implode(' · ', $meta))) . '.</p>';
+
+    $out .= '<ol class="sys">';
+    foreach ((array)($why['beats'] ?? []) as $b) {
+        $b = (array)$b;
+        $mid = isset($b['mid']) ? ' <span class="quiet">· message #' . (int)$b['mid'] . '</span>' : '';
+        if (isset($b['stage'])) {
+            $went = [];
+            foreach ((array)($b['left'] ?? []) as $h => $where) {
+                $went[] = $name((string)$h) . ' went to ' . ($where !== null && $where !== ''
+                    ? xeric_world_place_name($t, (string)$where) : 'nowhere on the map');
+            }
+            $out .= '<li><span class="k">the room</span><span class="v">' . h((string)$b['stage'])
+                  . ($went !== [] ? '<br><span class="quiet">' . h(implode('; ', $went)) . ' (the room never says where)</span>' : '')
+                  . (!empty($b['minor']) ? '<br><span class="quiet">a child came in, so the conversation was sealed</span>' : '')
+                  . $mid . '</span></li>';
+            continue;
+        }
+        if (isset($b['refused'])) {
+            $out .= '<li class="off"><span class="k">stopped</span><span class="v">' . h((string)$b['refused'] . ': '
+                  . (string)($b['why'] ?? '')) . '</span></li>';
+            continue;
+        }
+        $sp = (string)($b['speaker'] ?? '');
+        $v  = h($how[(string)($b['how'] ?? '')] ?? (string)($b['how'] ?? ''));
+        if (!empty($b['alone'])) $v .= h(', talking on without you');
+        if (!empty($b['addressed'])) $v .= '<br><span class="quiet">named: ' . h(xeric_join_list(array_map($name, array_map('strval', (array)$b['addressed'])))) . '</span>';
+        if (!empty($b['weights'])) {
+            $ws = [];
+            foreach ((array)$b['weights'] as $h => $wt) {
+                $r = (array)($b['reach'] ?? []); $ht = (array)($b['heat'] ?? []);
+                $ws[] = $name((string)$h) . ' ' . number_format((float)$wt, 2)
+                      . (isset($r[$h]) ? ' (reach ' . number_format((float)$r[$h], 2) . ' × heat ' . (int)($ht[$h] ?? 0) . ')' : '');
+            }
+            $v .= '<br><span class="quiet">weights: ' . h(implode('; ', $ws)) . '</span>';
+        }
+        if (!empty($b['quiet'])) $v .= '<br><span class="quiet">held their tongue: ' . h(xeric_join_list(array_map($name, array_map('strval', (array)$b['quiet'])))) . '</span>';
+        if (($b['noticed'] ?? null) !== null) $v .= '<br><span class="quiet">' . h($name((string)$b['noticed'])) . '\'s silence was licensed into this line, once</span>';
+        if (is_array($b['carry'] ?? null)) {
+            $c = (array)$b['carry'];
+            $why2 = (string)($c['why'] ?? '');
+            $v .= '<br><span class="quiet">' . h(!empty($c['go'])
+                ? ($why2 === 'owed' ? 'kept talking: somebody you named had not answered yet'
+                   : 'kept talking: rolled ' . number_format((float)($c['roll'] ?? 0), 2) . ' under ' . number_format((float)($c['p'] ?? 0), 2))
+                : ($why2 === 'roll' ? 'the floor came back to you: rolled ' . number_format((float)($c['roll'] ?? 0), 2)
+                                      . ', needed under ' . number_format((float)($c['p'] ?? 0), 2)
+                   : 'the floor came back to you: ' . ((string)($c['floor'] ?? '') !== '' ? (string)$c['floor'] : $why2))) . '</span>';
+        }
+        $out .= '<li><span class="k">' . h($name($sp)) . '</span><span class="v">' . $v . $mid . '</span></li>';
+    }
+    $out .= '</ol>';
+
+    $dropped = (array)($why['dropped'] ?? []);
+    if ($dropped !== []) {
+        $out .= '<h2>lines set aside</h2><ul class="sys">';
+        foreach ($dropped as $d) {
+            $out .= '<li class="off"><span class="k">' . h($name((string)($d['speaker'] ?? ''))) . '</span><span class="v">'
+                  . h((string)($d['why'] ?? '')) . ', so what was written was never said</span></li>';
+        }
+        $out .= '</ul>';
+    }
+    $far = (array)($why['far'] ?? []);
+    if ($far !== []) {
+        $out .= '<p class="quiet">At the far table, in the room and never in the conversation: '
+              . h(xeric_join_list(array_map($name, array_map('strval', $far)))) . '.</p>';
+    }
+    $never = (array)($why['never_spoke'] ?? []);
+    if ($never !== []) {
+        $out .= '<p class="quiet">Never said a word: ' . h(xeric_join_list(array_map($name, array_map('strval', $never))))
+              . '. Silence is a seat at the table, not an error.</p>';
+    }
+    return $out;
+}
