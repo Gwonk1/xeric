@@ -102,6 +102,27 @@ room is asked for; a second look in the same light with the same people is the
 same picture, not a second render. The request format, and how to put a proxy
 in front of a panorama service, is in [`docs/VIEWPORT.md`](docs/VIEWPORT.md).
 
+**Hearing it.** Under the view is a line saying what the room sounds like. When
+the scene machine can make sound as well (an image machine cannot), a
+**listen** toggle plays it. It never plays on its own. Turn a world's sound off
+with `media.scene.sound.enabled: false`. On a local machine the heart also draws
+the room you are in ahead of time; on a metered one it draws nothing unless the
+template sets `media.scene.prerender`.
+
+**The voices.** Any text-to-speech server that answers `POST /v1/audio/speech`
+(Kokoro-FastAPI on your own machine, or a hosted one) gives every character a
+voice of their own:
+
+```bash
+XERIC_VOICE_BASE=http://127.0.0.1:8880   # the speech server
+XERIC_VOICE_MODEL=tts-1                  # the default
+XERIC_VOICE_FORMAT=mp3                   # or opus, wav
+XERIC_VOICE_KEY=...                      # environment only, never stored
+```
+
+Each person is dealt a voice from their name and keeps it. Pick one yourself
+with `speech.voice` on the character ([`docs/VOICE.md`](docs/VOICE.md)).
+
 ## Reading the inspector — the tuning tool
 
 `why.php?w=<slug>` is the index, and it is the thing to reach for whenever the

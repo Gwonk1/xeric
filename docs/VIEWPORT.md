@@ -10,10 +10,12 @@ where.
 
 The viewport is the first client to collect on that bet. It is the room you are
 standing in, at this minute, rendered by a machine **you** chose — a 360°
-panorama you can drag to look around, a still, or a link to a hosted room you
-can walk inside. `engine/scene.php` composes what the room looks like. It does
-not draw a single pixel, it names no vendor, and with no machine chosen it does
-nothing at all — **dormant is the shipping state and never an error.**
+panorama you can drag to look around (and, in a headset, step inside), a still,
+or a link to a hosted room you can walk inside — with the people in it tagged
+where they stand, and what the room sounds like underneath. `engine/scene.php`
+composes what the room looks like and sounds like. It does not draw a single
+pixel or make a single sound, it names no vendor, and with no machine chosen it
+does nothing at all — **dormant is the shipping state and never an error.**
 
 The engine half answers one question every room-making machine asks — *what is
 here, now* — and hands the answer over. Which machine draws it is the owner's
@@ -51,7 +53,8 @@ It is read off canon:
 - **who is here** — presence (`xeric_world_who_is_where`), the dead passed in
   explicitly so nobody is ever standing in the room they died in, and for each
   person only what a body in the doorway could see: name, build, appearance,
-  what they are wearing, what they are at.
+  what they are wearing, what they are at — and where they stand (see
+  [Where things sit](#where-things-sit)).
 - **the setting** — locale and era, as an era-true clause first, because a phone
   in an 1873 room is a broken room.
 
@@ -120,7 +123,143 @@ twenty minutes is not.
 
 Not in it either, and worth knowing: `kinds`, `quality` and `negative`. They
 shape how the machine is asked, not what the room looks like, so changing them
-does not invalidate a scene already rendered.
+does not invalidate a scene already rendered. Nor are the bearings below, which
+are a function of the interior and the company — both already in.
+
+---
+
+## Where things sit
+
+Every person and every named thing in a brief carries a **bearing**: whole
+degrees, 0 to 359, clockwise from straight ahead as you stand at the vantage
+(`xeric_scene_bearings`). It is **derived, never stored** — crc32 of the world,
+the place and the thing's own name, lowercased the way photo.php's per-thing
+seeds are — so two visits, two renders and two different clients all put the
+pie case in the same place, and nobody had to author a floor plan or keep one in
+step with the template. In Milldale's fixture Dot, alone behind the Bluebird's
+counter at 07:10, is at 239°.
+
+The bearings are **spread so a label can be read.** Anything landing within
+20° of something already placed moves on by 40°, as many times as it takes, in
+a fixed order: furniture first, by name, then people, by handle. Furniture
+first so a room's things never move because somebody walked in; people after,
+so they find their places around what was already there. Nine things always
+fit; a room more crowded than that keeps the raw bearing for whatever does not,
+an honest overlap rather than a loop.
+
+The brief hands the bearings to the machine (a machine that lays a room out has
+somewhere to put people), and to the play view, which hangs each person's name
+tag over the panorama at theirs. Whether a given machine actually *draws* Dot at
+239° is up to the machine; the tags and any headset agree with each other
+whether it does or not.
+
+---
+
+## Drift, answered with conditioning
+
+World models drift: ask one for the same diner twice and the booths move. A seed
+holds a room still only for a machine that honours seeds, and not every one
+does. But **every machine can be shown what it drew last time**, so the reaper
+sends the newest picture of the room along with the next request for it
+(`xeric_scene_reference`) — `reference_image` and `reference_fingerprint` in the
+envelope — and the pie case stays the pie case across light buckets because the
+last picture of it rides along.
+
+The reference is the newest finished *look* with an image type whose bytes are
+still on this disk. One that is missing, or heavier than 8 MB
+(`XERIC_SCENE_REFERENCE_CAP`), is passed over for the one before it, five deep
+at most, because conditioning on an older view of the same room still beats
+conditioning on none. A splat, a viewer link or a sound is not a picture and
+never rides along. Which picture was sent is recorded in the row's meta as
+`reference_fingerprint`. The image-machine fallback never takes one: an
+`images/generations` call has nowhere to put it.
+
+---
+
+## What you hear
+
+The second channel. `xeric_sound_brief` is the look brief's sibling, built from
+the same canon under the same refusals and **smaller on purpose**: the kind of
+place (read by keyword into eatery, worship, shop, outdoors, home or room), open
+or shut or gone dark, the weather line, the part of the day, the era — and the
+company **as a doorway hears it**: nobody, one, or several, and whether the one
+is talking. A count, never a name. No name, no doing text and no description
+reaches the sound brief at all; whether somebody is talking is one bit read off
+their week's `doing` by keyword and never echoed.
+
+It makes two things:
+
+- **a line** for the sidebar, at most fourteen words, built only from a fixed
+  vocabulary of phrases — *Somebody busy, not talking, cups and plates
+  knocking.* Nothing in it is template prose, so it cannot quote a wall even by
+  accident, and it is era-true by construction: rain on a roof, a floorboard,
+  cups and plates, a murmur. An 1873 fog town never hears an engine.
+- **a paragraph** for a machine that makes sound, in the look prompt's order,
+  with the era clause *in earshot* rather than in view, and the rating last.
+
+**Voices, never words.** When anybody is talking the paragraph says *voices as
+texture only, no words that can be made out* — an audio machine that rendered
+speech you could make out would be writing dialogue nobody wrote.
+
+Sound rows share `scene_jobs` with looks under `channel = 'sound'`, and a sound's
+fingerprint carries a **`sound:` prefix**, so one (key, fingerprint) index holds
+both channels and a sound can never be filed, served or mistaken as a look;
+enqueue refuses a brief whose channel and prefix disagree. The sound
+fingerprint holds the place, its kind, era and locale, open/dark, the weather,
+the part of the day, the headcount bucket, whether the one is talking, vantage,
+style, ask — and **the rating**, so a child walking into a room can never be
+served the row that was rendered for adults. Three people and five are the same
+murmur, rendered once.
+
+Which channels a machine is asked for is `xeric_scene_channels`: none when
+scenes are off or there is no machine, look only on an image machine or when
+`media.scene.sound.enabled` is false, look and sound otherwise. Sound rows for a
+machine that cannot make sound **wait untried** — no try is burned on a machine
+that was never going to answer — and the day one that can is chosen, they are
+already in the queue. A `generic` machine is assumed able to make both; one that
+cannot should say so through the template (`sound.enabled: false`), or its sound
+rows will spend their three tries and fail.
+
+---
+
+## The room through its day
+
+Every look row records the **light bucket** it was asked in, and
+`xeric_scene_day` hands back the room through its day: the newest finished look
+for every light it has been seen in, in the order a day goes — pre-dawn to
+lamplit night. Only lights that have a view are keyed, and views from before the
+light was written down sit it out. The play view draws it as a strip once there
+are two or more.
+
+---
+
+## Ahead of being looked at
+
+`media.scene.prerender` lets the heart draw rooms before anybody asks:
+
+| Mode | What the heart queues |
+|---|---|
+| `off` | nothing — the player's own room included |
+| `here` | the room the player is standing in |
+| `occupied` | that, and every staged room with somebody in it now |
+| `all` | every staged room in the story |
+
+**Unset, the answer is the machine's cost** (`xeric_scene_prerender`): `here`
+on a loopback machine, `off` on anything that bills. The heart runs with nobody
+watching, and it must never spend an API key nobody asked it to — that is now
+the fourth thing on heart.php's list of things it will not do. A template that
+wants prerender on a metered machine says `media.scene.prerender` in so many
+words. **A glance at a room is consent to draw it; a heartbeat is consent to
+nothing.** No machine, or scenes turned off, is `off` whatever the template says.
+
+Per world per tick the heart backfills (`xeric_scene_backfill` — look, and sound
+when the machine and world have it; idempotent by fingerprint, so offering the
+same rooms every minute adds a row only when one of them changed) and then
+draws at most two (`XERIC_HEART_SCENES`). It skips paused worlds and a busy
+model queue — a person waiting on a reply outranks a picture of a room, and on a
+local machine they are the same GPU — probes each machine once per pass however
+many worlds share it, and resolves the machine under the session the pass is
+acting for, so one owner's key never draws another owner's room.
 
 ---
 
@@ -148,7 +287,8 @@ does not invalidate a scene already rendered.
    becomes **a still of the room from where you stand**, rendered through the
    same `POST {base}/v1/images/generations` the photos use, seeded with the
    room's *interior* seed — the room, not its street face. That is a legitimate
-   viewport, not a degraded one.
+   viewport, not a degraded one. It is always synchronous, takes no reference
+   picture and makes no sound.
 4. **Nothing.** Dormant. No renders, no errors, no empty frame.
 
 A configured machine that is not answering reads as *no viewport here*, not as
@@ -181,24 +321,35 @@ configured auth header. The fields, as `scene.php` documents them:
 
 ```
 {
-  "kind_wanted": ["pano","image"],  preference order;
-                 media.scene.kinds, else this default
+  "channel":     "look" | "sound",
+  "kind_wanted": ["pano","image"] for a look, preference
+                 order (media.scene.kinds, else this);
+                 ["audio"] for a sound,
   "prompt":      the composed paragraph, rating clause last,
-  "negative":    media.scene.negative, only when set,
+  "negative":    media.scene.negative, a look's, only when set,
   "brief":       the structured brief — observables only,
-  "seed":        the place's interior seed (int),
-  "fingerprint": sha1, stable across visits that look alike,
+                 bearings included for a machine that lays
+                 a room out,
+  "seed":        the place's interior seed (a sound's own),
+  "fingerprint": stable across visits that look alike,
   "size":        [4096, 2048], only when a pano is wanted,
   "quality":     "draft" | "full",
-  "timeout_s":   how long Xeric will wait on this call
+  "timeout_s":   how long Xeric will wait on this call,
+  "reference_image":       {mime, b64} — the newest picture
+                           of this room, only when one exists,
+  "reference_fingerprint": which look that picture was of
 }
 ```
 
-Concretely — Milldale's fixture, the Bluebird at 07:10 on a Monday, the brief
-abbreviated:
+The body is built by one pure function, `xeric_scene_body`, so what an adapter
+receives is testable without a machine to receive it.
+
+Concretely — Milldale's fixture, the Bluebird at 07:10 on a Monday, the first
+look of the room (so no reference yet), the brief abbreviated:
 
 ```json
 {
+  "channel": "look",
   "kind_wanted": ["pano", "image"],
   "prompt": "a river town of nine hundred in southern Ohio. period-true to present day, nothing anachronistic in view. inside the Bluebird Diner, Eight booths, nine stools, a pie case that has held the same three pies since the Clinton administration. The window fogs from the inside every morning and somebody always writes in it. morning light, Bright and sharp, the first real chill in it. present: Dot Vance, Apron over everything, reading glasses on a chain she never uses for reading — counter, grill, everything. seen from where you stand, just inside the door. a wholesome everyday scene, nothing suggestive.",
   "brief": {
@@ -208,11 +359,12 @@ abbreviated:
     "weather": "Bright and sharp, the first real chill in it.",
     "open": true, "dark": false,
     "who": [{ "handle": "dot", "name": "Dot Vance", "doing": "counter, grill, everything",
-              "at_home": false, "appearance": "Apron over everything, …", "build": "", "wears": [] }],
+              "at_home": false, "appearance": "Apron over everything, …", "build": "", "wears": [],
+              "bearing": 239 }],
     "rating": "sfw", "minor": false, "vantage": "first_person",
     "seeds": { "place": { "exterior": 958866395, "interior": 428416240, "items": [] },
                "faces": { "dot": 660118203 } },
-    "…": "exterior, interior, you, setting, enabled, prompt, fingerprint"
+    "…": "channel, exterior, interior, you, setting, enabled, prompt, fingerprint"
   },
   "seed": 428416240,
   "fingerprint": "41048312ac3f57afb7223c08319e0f07e12433f0",
@@ -222,12 +374,31 @@ abbreviated:
 }
 ```
 
-`timeout_s` defaults to 300: rooms are slower than faces.
+`timeout_s` defaults to 300: rooms are slower than faces. The second look at the
+Bluebird — 16:00, afternoon light, Theo in the back booth — carries
+`"reference_image": {"mime": "image/png", "b64": "…"}` and
+`"reference_fingerprint": "41048312ac3f57afb7223c08319e0f07e12433f0"`, the
+morning's picture. Theo is a minor, so that prompt ends on the floor's words
+(see [Rating](#rating)).
+
+A sound request at the same 07:10 (brief omitted):
+
+```json
+{
+  "channel": "sound",
+  "kind_wanted": ["audio"],
+  "prompt": "a river town of nine hundred in southern Ohio. period-true to present day, nothing anachronistic in earshot. the sound of the Bluebird Diner, a diner, in the morning. Bright and sharp, the first real chill in it. one person here, busy and not talking. heard from where you stand, just inside the door. wholesome everyday sound, nothing suggestive.",
+  "seed": 1375495960,
+  "fingerprint": "sound:2794a047d77b9924bfdc352bee5b8c8ab131bc87",
+  "quality": "full",
+  "timeout_s": 300
+}
+```
 
 ### Answer
 
 ```
-{ "kind": "image"|"pano"|"splat"|"glb"|"viewer",
+{ "kind": "image"|"pano"|"splat"|"glb"|"viewer"|"audio",
   "mime": "...", and EXACTLY ONE of "b64" | "url",
   "extras": [...] optional, "meta": {...} optional,
   "usage": {...} optional, reaches the meter }
@@ -240,16 +411,19 @@ For example:
   "meta": { "seed": 428416240 }, "usage": { "credits": 1 } }
 ```
 
-- **image, pano, splat, glb**: a `url` is fetched **at once**, with the same auth
-  header — vendor links expire — and the bytes are stored on this disk. Xeric
-  keeps no link to anybody's bucket.
+- **image, pano, splat, glb, audio**: a `url` is fetched **at once**, with the
+  same auth header — vendor links expire — and the bytes are stored on this
+  disk. Xeric keeps no link to anybody's bucket.
+- **audio** must be one of `audio/mpeg`, `audio/ogg`, `audio/wav`, `audio/webm`,
+  `audio/mp4`, and is the only kind a sound may come back as. An answer that
+  names no kind is taken as an image for a look and audio for a sound.
 - **viewer**: the url *is* the scene, a hosted explorable room, and is stored as
   a string with no bytes.
 - `meta` (the seed used, cost, the vendor's own id) is recorded on the row as it
   came. `extras` (a depth map, a collider) is kept in it too.
 
 The answer is checked, and refused rather than guessed at: a kind outside the
-five, both or neither of `b64` and `url`, bad base64, an empty scene, or **a url
+six, a sound outside the five audio types, both or neither of `b64` and `url`, bad base64, an empty scene, or **a url
 that is not http(s)** — a reply naming `file://` is not a scene, it is a request
 to read this disk, and a viewer link that is `javascript:` is not a link.
 
@@ -302,6 +476,11 @@ def poll(job):
     return jsonify(kind="pano", mime="image/png", b64=base64.b64encode(png).decode(),
                    meta={"vendor_id": job, "seed": r.get("seed")})
 ```
+
+The sketch handles looks only. A request with `"channel": "sound"` wants
+`kind: "audio"` back from a text-to-audio upstream; a proxy with no such
+upstream should be paired with `media.scene.sound.enabled: false` in the
+template, since anything it answers to a sound will be counted as a failed try.
 
 The proxy owns its own key, so the one Xeric holds (if any) is only the proxy's.
 It may answer synchronously when its upstream is fast, and it may return `url`
@@ -360,11 +539,35 @@ Not a fit, today:
 
 The app's Content-Security-Policy admits only its own nonce-stamped inline
 scripts: no CDN, no third-party script, no frames, images only from itself or
-`data:`. So the play view shows a panorama with **a small inline WebGL viewer**,
-drag to look; a still is a plain `<img>`; splats and `.glb` files are offered as
-downloads; a `viewer` scene opens in a new tab, because a hosted room cannot be
-framed under that policy and should not be. The bytes are served from this
-disk, which is the other reason a `url` answer is fetched at once.
+`data:`, and media only from itself (`media-src 'self'`, added for the room's
+sound — without it `default-src 'none'` refuses every `<audio>`, silently). So
+the play view's **what you see** block is built from what it can serve itself:
+
+- **a panorama** in a small inline WebGL viewer — drag, or the arrow keys, to
+  turn; scroll to zoom — with **a name tag for each person present** hung at the
+  bearing the engine dealt them, just under the horizon. Each tag is a real
+  button: press it and you are in that character's thread. Furniture is not
+  tagged; its bearings ride in a data attribute for the next client.
+- **a still** as a plain `<img>`, the same name-tag buttons in a row beneath it,
+  left to right by bearing.
+- splats and `.glb` files **offered as downloads**; a `viewer` scene opens in a
+  new tab, because a hosted room cannot be framed under that policy and should
+  not be.
+- **the day strip**, when the room has been drawn in two or more lights: press
+  a thumbnail and the view rebuilds from that render, keeping the way you were
+  facing, labelled *earlier: golden hour*.
+- **what you hear**: the sound brief's line, always, whenever you are somewhere;
+  and when the machine has made the sound for exactly this fingerprint, an
+  audio element behind a **listen** toggle — never autoplay, never an older
+  sound. Audio is served only when the row's type is on the allowlist and its
+  bytes agree.
+- **step inside**: a WebXR button that exists only after the browser says
+  `immersive-vr` is supported — absent, not disabled. It draws the same
+  panorama into each eye in the headset and the flat view again when the
+  session ends. It has been run against fakes, not on real hardware.
+
+The bytes are served from this disk, which is the other reason a `url` answer
+is fetched at once.
 
 Somebody building a client outside the CSP — a separate page, a headset app —
 has better tools: **Pannellum** is the standard drop-in equirect viewer,
@@ -376,14 +579,16 @@ nothing in the engine assumes any of them.
 
 ## What is deliberately not built
 
-**No consent step beyond choosing a machine.** Photos ask once — *generate
-photos now?* — because a forge enqueues a whole cast's worth of renders the
-owner never individually requested. A scene is requested by somebody looking:
-the player is standing in a room and pressed a button to see it. The owner
-chose a scene machine, or an image machine, on the machines screen, and **that
-choice is the yes.** There is no `approved` column and no world_state gate,
-because a gate that only ever re-asks a question already answered is a second
-click, not a safeguard.
+**No consent step beyond choosing a machine** — for a glance. Photos ask once —
+*generate photos now?* — because a forge enqueues a whole cast's worth of
+renders the owner never individually requested. A scene is requested by
+somebody looking: the player is standing in a room and pressed a button to see
+it. The owner chose a scene machine, or an image machine, on the machines
+screen, and **that choice is the yes.** There is no `approved` column and no
+world_state gate, because a gate that only ever re-asks a question already
+answered is a second click, not a safeguard. Drawing *ahead* is the one place
+the choice of machine is not enough on its own: on a metered machine the
+template has to ask for it ([above](#ahead-of-being-looked-at)).
 
 **No streaming.** The world models that stream are not yet worth a machine that
 streams, and a viewport that re-imagines the room every frame has thrown away
@@ -397,6 +602,14 @@ somewhere you have not gone.
 
 **No language model in the loop.** The prompt is composed from template data.
 MODEL PROPOSES, CODE DISPOSES, for rooms too.
+
+**No speech in the room's sound.** The sound channel is texture: voices, never
+words. A character's actual lines are spoken by a different machine, line by
+line, in the thread — [VOICE.md](VOICE.md).
+
+**No way into the room's conversation from here yet.** Three to five people
+talking is `engine/room.php`, and only the CLI can start one today. The view
+knows who is standing together; it offers nothing it cannot deliver.
 
 ---
 
@@ -415,6 +628,14 @@ everyday photograph, fully clothed, ordinary daylight, suitable for a family
 album* — whatever the world's rating and whatever the ask said, and after both.
 It is one constant shared by the two composers, so a portrait and a room
 cannot drift apart.
+
+Sound has the same rule in its own medium's words, because a photograph's floor
+is about clothes and daylight and a sound's is about what may be heard:
+`XERIC_SOUND_FLOOR_FRAMING`, *only wholesome everyday sound, nothing
+suggestive, fit for a family to overhear*, forced in code, last. Below the
+floor, the sound ladder mirrors the picture's: *wholesome everyday sound,
+nothing suggestive*; *everyday sound, nothing explicit*; *sound in keeping with
+the world's adult rating*.
 
 It is not a knob because it is the one thing a knob would only ever be turned
 to break. Every other rating decision is the owner's, made once, about their

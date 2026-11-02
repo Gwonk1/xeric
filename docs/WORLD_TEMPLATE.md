@@ -340,6 +340,18 @@ Design principles, learned the hard way:
         "surface": "the woman who runs the church kitchen; she brings the good rolls",
         "appearance": "Small, square, white hair set once a week.",  // photo #SUBJECT
         "voice": "Short sentences, warm ones, and a long pause before the sentence that actually matters.",
+                                            // `voice` is PROSE for the model to
+                                            // write to. It is never read by the
+                                            // speech layer (docs/VOICE.md).
+        "speech": { "voice": "nova", "speed": 1.0 },
+                                            // optional, the SPOKEN voice: a voice
+                                            // id on the voice machine, by its name
+                                            // THERE ("af_bella", a Kokoro blend
+                                            // "af_bella+af_sky"). Unset, one is
+                                            // dealt from the handle's seed — never
+                                            // from pronouns. speed defaults to 1.0,
+                                            // clamped 0.7–1.3. A fixture may carry
+                                            // one too; same_as speaks as its person
         "temperature": 0.9,                 // baseline sampler heat
         "week": [ { "days": [0], "from": "08:00", "to": "12:00",
                     "where": "first_lutheran", "doing": "coffee urn, counting dishes" } ],
@@ -666,7 +678,13 @@ Design principles, learned the hard way:
       "kinds": ["pano", "image"],           // asked for in this order, from
                                             // pano | image | splat | glb | viewer
       "quality": "full",                    // | "draft" — anything else is full
-      "negative": ""                        // sent only when set
+      "negative": "",                       // sent only when set
+      "sound": { "enabled": true,           // what you hear: off with the rooms
+                 "style": "" }              // too, when "enabled" above is false
+      // "prerender": off | here | occupied | all — what the heart draws
+      //   before anybody looks. Deliberately UNSET by default, and unset is
+      //   decided by cost: "here" on a loopback machine, "off" on one that
+      //   bills. Writing a word is how a world asks the heart to spend.
     }
   },
 
@@ -678,6 +696,8 @@ Design principles, learned the hard way:
   //   the scene machine's address, kind (generic | image) and auth header
   //   live here or in XERIC_SCENE_BASE / _KIND / _AUTH — never the key,
   //   which is XERIC_SCENE_KEY in the environment and nowhere else
+  //   the voice machine likewise: XERIC_VOICE_BASE / _MODEL (tts-1) /
+  //   _FORMAT (mp3 | opus | wav), and XERIC_VOICE_KEY in the environment only
   //   "temps": { "floor": 0.55, "ceiling": 1.65, "room_share": 0.85 } }
 }
 ```

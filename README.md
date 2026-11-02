@@ -46,6 +46,8 @@ schema, worked end to end against `engine/fixtures/milldale.json` — the
 fictional world the engine is tested with.
 [`docs/VIEWPORT.md`](docs/VIEWPORT.md) is the viewport: what the engine tells a
 machine about the room you are standing in, and what it never will.
+[`docs/VOICE.md`](docs/VOICE.md) is how the cast is spoken aloud, and why a
+voice is never chosen by gender.
 
 ## A model that is not on this machine
 
@@ -70,7 +72,7 @@ A trailing `/v1` is stripped. See [`QUICKSTART.md`](QUICKSTART.md).
 | **engine** | PHP + SQLite + cron sweeps. Prompt assembly, event generation, proactive contact, photo pipeline, temperature physics. |
 | **setup forge** | A one-time pass by a capable model (remote or local) that writes your world. Runtime then runs on small local models. |
 | **story overlay** | An optional mystery laid over a finished world as a sidecar file: beats, who is wrong about what, and an ending the world survives. |
-| **media** | Photo composition (identity-stable characters via seed + appearance anchoring) and the viewport — the room you stand in, as a panorama or a still. Both are composed in code and dormant until you choose a machine; no machine, no renders, no errors. |
+| **media** | Photo composition (identity-stable characters via seed + appearance anchoring); the viewport — the room you stand in, as a panorama or a still, with its sound; and a voice for every character, dealt from a seed. All composed in code and dormant until you choose a machine; no machine, no renders, no errors. |
 
 ## License
 

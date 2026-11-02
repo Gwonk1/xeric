@@ -22,7 +22,7 @@ marker is written whether an hour produced an event or was skipped, so a tick
 that finds no new window does no work and costs no tokens. Nothing has to
 remember when it last ran.
 
-Three things it will not do:
+Four things it will not do:
 
 1. **Run a world that is stopped.** A paused world is paused for this too.
 2. **Take the model from somebody using it.** A person waiting on a reply
@@ -30,6 +30,11 @@ Three things it will not do:
    and tries again next minute — the window is still unswept and still there.
 3. **Live an unbounded gap in one tick.** A month away is ~240 model calls; a
    handful per world per tick, and a long gap fills over several minutes.
+4. **Spend a metered scene machine nobody asked it to.** It may draw a room
+   before anybody looks, at most two per world per tick. By default it does
+   that only on the owner's own electricity; on a machine that bills it draws
+   nothing until the template says `media.scene.prerender` out loud. A glance
+   is consent to draw a room; a heartbeat is consent to nothing.
 
 ---
 
@@ -181,8 +186,14 @@ the place and its interior on photo.php's seeds, the light bucketed by hour, the
 sky the cast was told, who is here and what they are wearing — and hands it to
 a scene machine: a 360° panorama you drag to look around, a still, or a link to
 a hosted room. With no scene machine it falls back to the image machine for a
-still; with neither it does nothing, and nothing is an error. The whole of it
-is in [docs/VIEWPORT.md](docs/VIEWPORT.md).
+still; with neither it does nothing, and nothing is an error. The people in it
+are name tags at bearings the engine derives, so a panorama and a headset agree
+about where Dot stands; each render takes the last picture of the room as a
+reference, which is the answer to drift; the room has a sound (texture, never
+words, a headcount and never a name); it can be seen through its day; a headset
+can step inside it. The heart draws ahead — the player's own room by default on
+a local machine, nothing on a metered one unless the template asks. The whole
+of it is in [docs/VIEWPORT.md](docs/VIEWPORT.md).
 
 **This is the bet `where.php` made, cashed in.** The surface was always meant
 to be the cheap, replaceable part and the world model the part that is not, and
@@ -194,16 +205,26 @@ because it reads only observables, a wall cannot leak through it by being
 mis-filtered. Scenes are keyed by what the room looks like rather than the
 minute, so two visits in the same light to the same company are one render.
 
-Next, in rough order of how much they would change:
+**Shipped beside it: voices.** `engine/voice.php` gives every person a stable
+spoken voice on any machine that answers `POST /v1/audio/speech`, and speaks
+exactly what the thread shows, without the stage directions. The voice is
+dealt from the handle's seed by rendezvous hashing, so adding a voice to the
+machine moves only the people who draw it. It is filtered by the world's
+language and never by pronouns or gender labels, because a voice picked by
+gender is the no-gendered-prose rule broken in audio. Clips are cached by what
+they sound like; the key is never stored. See [docs/VOICE.md](docs/VOICE.md).
 
+Next:
+
+- **The room conversation, in the view.** The viewport knows who is standing
+  together, and `engine/room.php` can already run three to five of them
+  talking, but only from the CLI. It has no web surface yet, and it is the
+  obvious next thing for the view to link to.
 - **Streaming**, when a world model that streams can hold a room still — today
   they reinvent the booths when you turn your head.
 - **Walking inside a splat.** The envelope already accepts splats and meshes;
   the play view offers them as downloads. Standing in one is a viewer, and
   walking out of its door must still be a trip that costs minutes.
-- **A scene per hour, rendered by the heart overnight** — opt-in, because it
-  spends money on a remote machine — so the room is already there when you
-  arrive in the morning light.
 
 ---
 
