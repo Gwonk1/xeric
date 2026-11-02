@@ -53,10 +53,18 @@ function xeric_state_open(string $dbPath): PDO
     return $db;
 }
 
-/** Wall clock, in one place, so tests and the demo can reason about it. */
-function xeric_state_time(): int
+/**
+ * Wall clock, in one place, so tests and the demo can reason about it.
+ *
+ * Passing an argument PINS it (the continuity benchmark's fake real clock:
+ * engine/continuity/harness.php); passing null lets go. Production never
+ * passes one, so production reads time() exactly as it always did.
+ */
+function xeric_state_time(?int $pin = null): int
 {
-    return time();
+    static $pinned = null;
+    if (func_num_args() > 0) $pinned = $pin;
+    return $pinned ?? time();
 }
 
 /**
