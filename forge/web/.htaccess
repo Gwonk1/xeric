@@ -50,7 +50,7 @@ Options -Indexes
 # directory whose CONTENTS matter. It emits nothing when executed, so it is
 # harmless while PHP handles .php — and it holds local_base, data_dir and the
 # php path the moment PHP stops.
-<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|review-lib|why-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
+<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|review-lib|why-lib|api-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
   Require all denied
 </If>
 

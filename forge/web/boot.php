@@ -1510,9 +1510,33 @@ function xeric_web_nonce(): string
     return $n ??= base64_encode(random_bytes(16));
 }
 
+/**
+ * The shaper every JSON body passes through on its way out, when one is set.
+ *
+ * ONE SEAM, FOR THE CLIENT API. api.php answers under a versioned envelope
+ * (`api`, a boolean `ok`, `error` and `kind` on a refusal), and the refusals
+ * that matter most are raised deep inside code that has never heard of it —
+ * xeric_limit_guard(), xeric_play_owner_only(), the spend guard. Each of those
+ * ends in xeric_web_json(), so registering a shaper here is how they come out
+ * enveloped without any of them changing. Nothing registers one but api.php,
+ * so every other page answers exactly as it always has.
+ *
+ * Called with a callable: registers it. Called with an explicit null: clears
+ * it. Called with nothing: hands back what is registered. The callable takes
+ * (array $body, int $status) and returns the body to send.
+ */
+function xeric_web_json_shaper(?callable $fn = null): ?callable
+{
+    static $shaper = null;
+    if (func_num_args() > 0) $shaper = $fn;
+    return $shaper;
+}
+
 /** JSON out, and stop. */
 function xeric_web_json(array $body, int $status = 200): void
 {
+    $shape = xeric_web_json_shaper();
+    if ($shape !== null) $body = $shape($body, $status);
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
@@ -1590,6 +1614,28 @@ function xeric_web_spend_guard(): void
                     'kind'  => 'cross_site'], 403);
 }
 
+/**
+ * A body handed over by a router, in place of the request's own.
+ *
+ * The client API's write half will `require` the existing verb scripts
+ * unchanged, and a verb reads its arguments through xeric_web_input(). The
+ * router has already read and checked the body by then (php://input can be
+ * read once on some SAPIs), so it sets it here. Null clears it. Nothing sets
+ * one today but a test; with nothing set, input is read exactly as before.
+ */
+function xeric_web_input_set(?array $body): void
+{
+    $slot = &xeric_web_input_slot();
+    $slot = $body;
+}
+
+/** @internal the one place the router's body is kept */
+function &xeric_web_input_slot(): ?array
+{
+    static $slot = null;
+    return $slot;
+}
+
 function xeric_web_input(): array
 {
     // EVERY POST THAT READS A BODY PASSES THROUGH HERE, which is why the guard
@@ -1597,6 +1643,11 @@ function xeric_web_input(): array
     // eighteenth page would forget it. The four endpoints that read $_POST
     // directly call xeric_web_csrf_guard() themselves.
     xeric_web_csrf_guard();
+
+    // The guard first, always: a body a router set is still a request that
+    // arrived from somewhere, and where it came from is decided the same way.
+    $set = xeric_web_input_slot();
+    if ($set !== null) return $set;
 
     $raw = (string)file_get_contents('php://input');
     if ($raw !== '') {
@@ -1661,10 +1712,15 @@ function xeric_web_fail(string $detail, string $where = ''): void
         exit;
     }
 
-    if (!xeric_web_wants_html()) {
+    // A registered shaper (the client API) means the caller asked for an
+    // object, whatever its Accept header says.
+    $shape = xeric_web_json_shaper();
+    if ($shape !== null || !xeric_web_wants_html()) {
+        $body = ['error' => $sentence, 'kind' => 'bug'];
+        if ($shape !== null) $body = $shape($body, 500);
         http_response_code(500);
         header('Content-Type: application/json; charset=utf-8');
-        echo json_encode(['error' => $sentence, 'kind' => 'bug']);
+        echo json_encode($body);
         exit;
     }
 

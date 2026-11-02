@@ -1607,12 +1607,12 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
              '/photo-worker.php', '/scene-worker.php', '/story-worker.php', '/forge/worker.php',
              '/heart.php', '/router.php',
              '/worker.php/extra', '/boot.php', '/ui.php', '/play-lib.php', '/review-lib.php',
-             '/why-lib.php', '/session.php', '/limits.php', '/queue.php',
+             '/why-lib.php', '/api-lib.php', '/session.php', '/limits.php', '/queue.php',
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
               '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php', '/speak.php',
-              '/hear.php', '/forge/forge.php', '/forge/play.php'];
+              '/hear.php', '/api.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
 ok('every include, worker and test path is denied', $served === [], implode(' ', $served));
@@ -1624,7 +1624,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
           'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php', 'speak.php',
-          'debrief.php', 'join.php', 'hear.php'];
+          'debrief.php', 'join.php', 'hear.php', 'api.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
     $b = basename($f);
@@ -1647,7 +1647,7 @@ ok('and every file in forge/web that is not a page is on the list',
 // A whole class of bug that a linter will not find and a page test will not
 // reach, because it only appears on the path that spends three minutes.
 $webDir = dirname(__DIR__);
-$libFiles = ['play-lib.php', 'review-lib.php', 'why-lib.php', 'boot.php', 'ui.php',
+$libFiles = ['play-lib.php', 'review-lib.php', 'why-lib.php', 'api-lib.php', 'boot.php', 'ui.php',
              'session.php', 'limits.php', 'queue.php', 'pdf.php'];
 
 $declaredIn = [];
