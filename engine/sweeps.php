@@ -578,7 +578,10 @@ function xeric_sweep_story_settle(PDO $db, array $now, array $stories): array
  * @param array $now      from xeric_world_now()/xeric_clock_now() — injected
  * @param array $opts     chance, window, force, seed, spine, max_participants,
  *                        model_rating, temperature, timeout, diverge_retries,
- *                        stories (the overlays the caller composed with)
+ *                        stories (the overlays the caller composed with),
+ *                        endpoint_for — fn(string $handle): array, the machine
+ *                        pinned to a character (xeric_sweep_voice); absent,
+ *                        every hour goes to $endpoint exactly as it always did
  * @return array{events:array,notes:array}  `notes` is why nothing happened, in
  *         words a human can act on; an empty `events` is an ordinary outcome.
  * @throws RuntimeException when the model fails or answers with nothing usable.
@@ -806,8 +809,27 @@ function xeric_sweep_window(array $t, PDO $db, array $endpoint, array $now, arra
     // The leans stop at the chooser. They are handles and kind keys, never
     // words, but the composer has no business with them at all: the lean
     // moves the casting, and the performance is the cast's own.
-    $written = xeric_sweep_compose($t, $db, $endpoint, $now, $chosen,
-        ['stories' => $stories] + array_diff_key($opts, ['intents' => true]));
+    //
+    // WHOSE MACHINE WRITES IT (docs/FUTURE.md M3, "more than one voice of
+    // weights"). Only when the caller handed a resolver: without one the hour
+    // goes to the endpoint it was given and nothing below differs by a byte.
+    $copts = ['stories' => $stories] + array_diff_key($opts, ['intents' => true, 'endpoint_for' => true]);
+    $voice = null;
+    if (isset($opts['endpoint_for']) && is_callable($opts['endpoint_for'])) {
+        $voice = xeric_sweep_voice($t, $chosen, $endpoint, $opts['endpoint_for']);
+        $copts['fallback_endpoint'] = $voice['fallback'];
+        $copts['fallback_why']      = $voice['why'];
+        if ($voice['slot'] !== null) $copts['id_slot'] = $voice['slot'];
+    }
+    $written = xeric_sweep_compose($t, $db, $voice['endpoint'] ?? $endpoint, $now, $chosen, $copts);
+    if ($voice !== null) {
+        $chosen['trail']['voice'] = $voice['trail'];
+        if (($written['fell_back'] ?? '') !== '') {
+            $chosen['trail']['voice']['fell_back'] = $written['fell_back'];
+            $chosen['trail']['voice']['machine']   = 'default';
+            $chosen['trail']['voice']['slot']      = null;
+        }
+    }
 
     if ($beat !== null) {
         $title = trim((string)($beat['as_event']['title'] ?? ''));
@@ -1647,15 +1669,32 @@ function xeric_sweep_compose(array $t, PDO $db, array $endpoint, array $now, arr
 
     $t0   = microtime(true);
     $best = null;
+    $fellBack = '';
 
     for ($attempt = 0; $attempt <= $retries; $attempt++) {
+        $copts = [
+            'temperature' => (float)($opts['temperature'] ?? 0.9),
+            'max_tokens'  => (int)($opts['max_tokens'] ?? 700),
+        ] + array_intersect_key($opts, ['timeout' => 1, 'id_slot' => 1]);
         try {
-            $raw = xeric_chat_json($endpoint, 'sweep', $messages, [
-                'temperature' => (float)($opts['temperature'] ?? 0.9),
-                'max_tokens'  => (int)($opts['max_tokens'] ?? 700),
-            ] + array_intersect_key($opts, ['timeout' => 1]));
+            $raw = xeric_chat_json($endpoint, 'sweep', $messages, $copts);
         } catch (Throwable $e) {
-            throw new RuntimeException('sweep: the xeric did not answer, ' . $e->getMessage(), 0, $e);
+            // A PINNED MACHINE THAT STOPS ANSWERING IS NOT A DEAD WORLD. The
+            // hour goes to the world's default once — no slot, which was the
+            // pinned machine's — and the caller writes down that it did. The
+            // default failing too is the ordinary dead model, and throws.
+            $fb = $opts['fallback_endpoint'] ?? null;
+            if (!is_array($fb) || $fellBack !== '') {
+                throw new RuntimeException('sweep: the xeric did not answer, ' . $e->getMessage(), 0, $e);
+            }
+            $endpoint = $fb;
+            $fellBack = (string)($opts['fallback_why'] ?? 'the pinned machine was not answering');
+            unset($opts['id_slot']);
+            try {
+                $raw = xeric_chat_json($endpoint, 'sweep', $messages, array_diff_key($copts, ['id_slot' => 1]));
+            } catch (Throwable $e2) {
+                throw new RuntimeException('sweep: the xeric did not answer, ' . $e2->getMessage(), 0, $e2);
+            }
         }
 
         $parsed = xeric_sweep_parse($t, $db, $raw, $chosen);
@@ -1690,13 +1729,95 @@ function xeric_sweep_compose(array $t, PDO $db, array $endpoint, array $now, arr
     }
 
     $ms = (int)round((microtime(true) - $t0) * 1000);
-    return [
+    $out = [
         'title'    => $best['title'],
         'prose'    => $best['prose'],
         'memories' => $best['memories'],
         'usage'    => ['ms' => $ms, 'attempts' => $attempt + 1],
         'notes'    => array_merge($notes, $best['notes']),
     ];
+    if ($fellBack !== '') $out['fell_back'] = $fellBack;
+    return $out;
+}
+
+/**
+ * Whose voice of weights writes this hour: the machine, the slot, the trail.
+ *
+ * ONE CALL PER EVENT, SO ONE VOICE PER EVENT. A sweep writes the whole hour —
+ * prose, title and every witness's memory — in a single completion
+ * (xeric_sweep_compose); there is no per-speaker call to split. So the hour is
+ * written by the machine pinned to its CENTRE (xeric_sweep_centre), and a
+ * centre with no pin is written by the world's default, which is the endpoint
+ * the caller handed in.
+ *
+ * GROUPING BY MACHINE, AND WHY IT IS ALREADY DONE. A window composes exactly
+ * one event with one call, so a window's calls are trivially grouped by
+ * endpoint. Windows themselves are NOT reordered to batch a machine's hours
+ * together: each window is chosen from the world the last one left (who died,
+ * who remembers what, the mood), and an afternoon lived out of order is a
+ * different afternoon. What keeps a speaker warm across interleaved windows is
+ * the SLOT: on llama.cpp a centre keeps its own (xeric_llm_slot), so Dot's
+ * hours on machine B never evict Ruth's prefix on machine B's other slot.
+ *
+ * $resolve is fn(string $handle): array — an endpoint, which may carry
+ * `pin` => ['machine' => label, 'down' => bool] (the web layer's
+ * xeric_play_sweep_endpoints says which machine it is and whether the pin's
+ * machine answered), and `server`/`slots` for the slot.
+ *
+ * @return array{endpoint:array,fallback:?array,slot:?int,trail:array,why:string}
+ */
+function xeric_sweep_voice(array $t, array $chosen, array $default, callable $resolve): array
+{
+    $centre = xeric_sweep_centre($t, $chosen);
+    $name   = $centre !== '' ? xeric_world_name($t, $centre) : '';
+    try {
+        $ep = $centre !== '' ? $resolve($centre) : $default;
+    } catch (Throwable $e) {
+        // A resolver that throws is a pin nobody can honour; the hour is
+        // still owed, and the default still answers for it.
+        $ep = $default + ['pin' => ['machine' => '', 'down' => true]];
+    }
+    if (!is_array($ep) || $ep === []) $ep = $default;
+
+    $pin    = is_array($ep['pin'] ?? null) ? $ep['pin'] : null;
+    $down   = $pin !== null && !empty($pin['down']);
+    $pinned = $pin !== null && !$down;
+    $slot   = xeric_llm_slot($ep, $centre);
+    $trail  = [
+        'centre'  => $centre,
+        'machine' => $pinned ? (string)($pin['machine'] ?? '') : 'default',
+        'slot'    => $slot,
+        'why'     => 'the hour is written in one call, by the machine pinned to the person it centres on',
+    ];
+    $why = 'written by the default, ' . ($name !== '' ? $name . "'s" : 'the pinned')
+         . ' machine was not answering';
+    if ($down) $trail['fell_back'] = $why;
+
+    return [
+        'endpoint' => $ep,
+        // Only a LIVE pin has somewhere to fall back to; the default falling
+        // over is the ordinary dead model, and the window throws as it did.
+        'fallback' => $pinned ? $default : null,
+        'slot'     => $slot,
+        'trail'    => $trail,
+        'why'      => $why,
+    ];
+}
+
+/**
+ * The person an hour centres on: the protagonist when they are in the room —
+ * the chooser already leaned the hour toward them (xeric_sweep_choose, "whose
+ * story this is") — else the first person the grouping named, which is the
+ * one already standing there (the worker on shift, before any visitor) and is
+ * the cast order the event is stored in. Deterministic: the same room, the
+ * same centre, the same machine, the same slot.
+ */
+function xeric_sweep_centre(array $t, array $chosen): string
+{
+    $handles = array_values(array_map('strval', (array)($chosen['handles'] ?? [])));
+    $star = (string)($t['cast']['protagonist']['handle'] ?? '');
+    if ($star !== '' && in_array($star, $handles, true)) return $star;
+    return (string)($handles[0] ?? '');
 }
 
 /**

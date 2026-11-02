@@ -2798,10 +2798,12 @@ function xeric_play_say_error(string $raw, string $name): string
 // already one call per speaker (the duet's first law), so there is no call
 // anywhere that would have to split.
 //
-// WHAT IS DELIBERATELY NOT PINNED: sweeps. One call writes a whole hour and
-// every witness's memory of it; an hour has no single voice to route. The
-// assignment is stored in the world db (an arc, not the template) because a
-// machine address is a fact about THIS house, and templates travel.
+// SWEEPS ARE PINNED BY THEIR CENTRE. One call writes a whole hour and every
+// witness's memory of it, so an hour is written by the machine pinned to the
+// person it centres on (engine/sweeps.php xeric_sweep_voice), through
+// xeric_play_sweep_endpoints() below. The assignment is stored in the world db
+// (an arc, not the template) because a machine address is a fact about THIS
+// house, and templates travel.
 //
 // NAMED xeric_play_speaker_*, NOT xeric_voice_*: engine/voice.php is the cast
 // out loud (text-to-speech), and it owns that prefix — including the engine's
@@ -2837,14 +2839,96 @@ function xeric_play_speaker_set(PDO $db, string $handle, string $base, ?string $
  */
 function xeric_play_speaker_endpoint(array $t, PDO $db, string $handle, ?string $sid = null): array
 {
+    return xeric_play_speaker_pinned($db, $handle, $sid)['endpoint'] ?? xeric_play_endpoint($sid);
+}
+
+/**
+ * The pin and whether it can speak: `base` is '' for no pin; `endpoint` is
+ * null when there is a pin and its machine is detached or not answering.
+ * $up is the reachability probe (xeric_llm_up by default), a seam for tests.
+ *
+ * @return array{base:string,endpoint:?array}
+ */
+function xeric_play_speaker_pinned(PDO $db, string $handle, ?string $sid = null, ?callable $up = null): array
+{
     $base = xeric_play_speaker_machine($db, $handle);
-    if ($base !== '' && in_array($base, xeric_model_wired($sid), true)) {
+    if ($base === '') return ['base' => '', 'endpoint' => null];
+    if (in_array($base, xeric_model_wired($sid), true)) {
         try {
             $ep = xeric_web_endpoint(xeric_model_descriptor($base));
-            if (xeric_llm_up($ep, 3)) return $ep;
-        } catch (Throwable $e) { /* fall through to the engine */ }
+            if ($up !== null ? $up($ep) : xeric_llm_up($ep, 3)) return ['base' => $base, 'endpoint' => $ep];
+        } catch (Throwable $e) { /* not answering */ }
     }
-    return xeric_play_endpoint($sid);
+    return ['base' => $base, 'endpoint' => null];
+}
+
+/**
+ * What server a machine is and how many llama.cpp slots it has, asked once
+ * per process per address: the discovery name (xeric_model_who — 'llama.cpp',
+ * 'llama.cpp router', 'Ollama …') and /props `total_slots`. Only a local
+ * address is asked anything (xeric_model_who makes no request of a hosted
+ * one), and anything that is not llama.cpp gets slots 1 — which
+ * xeric_llm_slot() reads as "send no id_slot".
+ *
+ * @return array{server:string,slots:int}
+ */
+function xeric_play_speaker_server(string $base): array
+{
+    static $memo = [];
+    $base = rtrim(trim($base), '/');
+    if ($base === '' || !preg_match('#^https?://#i', $base)) return ['server' => '', 'slots' => 1];
+    if (isset($memo[$base])) return $memo[$base];
+    $server = '';
+    $slots  = 1;
+    try {
+        $server = (string)(xeric_model_who($base)['name'] ?? '');
+        if ($server === 'llama.cpp' || $server === 'llama.cpp router') {
+            $p = xeric_model_peek($base . '/props', 2, xeric_model_probe_key($base));
+            $slots = max(1, (int)($p['total_slots'] ?? 1));
+        }
+    } catch (Throwable $e) { $server = ''; $slots = 1; }
+    return $memo[$base] = ['server' => $server, 'slots' => $slots];
+}
+
+/**
+ * The resolver a sweep is handed: fn(string $handle): array, the endpoint
+ * that writes an hour centred on that person (engine/sweeps.php
+ * xeric_sweep_voice). Their pinned machine when it answers; else the world's
+ * default — `$w['endpoint']` when the caller already holds it (the heart and
+ * the tick worker do), xeric_play_endpoint() otherwise — and a pin that did
+ * not answer says so in `pin.down`, which the sweep writes into the trail.
+ *
+ * Every endpoint carries `server`/`slots` so a llama.cpp keeps a slot per
+ * speaker (xeric_llm_slot). Answers are kept for the resolver's life (one
+ * catch-up): a machine is probed once, not once per hour; one that dies
+ * mid-stretch is caught by the sweep's own fallback.
+ *
+ * $w: db (required), sid, endpoint; `up` and `server` are test seams
+ * (fn(array $ep): bool, fn(string $base): array{server,slots}).
+ */
+function xeric_play_sweep_endpoints(array $w): callable
+{
+    $db      = $w['db'];
+    $sid     = $w['sid'] ?? null;
+    $default = $w['endpoint'] ?? null;
+    $up      = $w['up'] ?? null;
+    $server  = $w['server'] ?? 'xeric_play_speaker_server';
+    $memo    = [];
+    $tag = static function (array $ep) use ($server): array {
+        $base = (string)(($ep['local'] ?? '') !== '' ? $ep['local'] : ($ep['base'] ?? ''));
+        return $ep + (array)$server($base);
+    };
+    return function (string $handle) use ($db, $sid, &$default, $up, $tag, &$memo): array {
+        if (isset($memo[$handle])) return $memo[$handle];
+        $default ??= xeric_play_endpoint($sid);
+        $p = xeric_play_speaker_pinned($db, $handle, $sid, $up);
+        if ($p['base'] === '') $ep = $tag($default);
+        else {
+            $pin = ['machine' => (string)preg_replace('#^https?://#', '', $p['base']), 'down' => $p['endpoint'] === null];
+            $ep  = ($p['endpoint'] !== null ? $tag($p['endpoint']) : $tag($default)) + ['pin' => $pin];
+        }
+        return $memo[$handle] = $ep;
+    };
 }
 
 /** The compact picker's rows: the engine default plus every connected machine. */

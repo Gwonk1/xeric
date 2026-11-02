@@ -295,6 +295,10 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
             // every tick re-derives from scratch, and the heart is permanently
             // blind to hours it has already lived.
             $sweepOpts = ['window' => $size, 'clock' => (int)$now['epoch'], 'stories' => $w['stories']];
+            // EACH HOUR IN ITS CENTRE'S OWN VOICE: a character pinned to a
+            // machine has the hours they are at the centre of written there,
+            // in their own llama.cpp slot; everyone else the world default.
+            $sweepOpts['endpoint_for'] = xeric_play_sweep_endpoints($w + ['sid' => $sid, 'endpoint' => $endpoint]);
             // UNDER A CEILING, ASKED BEFORE EACH WINDOW, so the world stops at
             // the hour it ran out rather than six hours past it — and asked
             // INSIDE the one catchup call, not by walking windows here: the

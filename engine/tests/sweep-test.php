@@ -2800,6 +2800,149 @@ $leaned = array_filter($cuC['events'], fn($e) => in_array(1, (array)($e['trail']
 ok('catchup: a recorded intent reaches the chooser — the trail says "leaned by intent #1"',
     $leaned !== [] && !str_contains(json_encode($cuC['events']), 'LEAN-SWEEP-NEEDLE'), json_encode(array_column($cuC['events'], 'kind')));
 
+// ---------------------------------------------------------------------------
+// More than one voice of weights — the per-character pin, in sweeps
+// ---------------------------------------------------------------------------
+
+/** A machine that writes events and logs which machine it is, per call. */
+function stub_machine(string $name, array &$log, array $tags = [], bool $dead = false, ?callable $mem = null): array
+{
+    $inner = stub_event($mem);
+    return ['base' => 'stub://' . $name, 'stub' => function (string $tag, array $msgs, array $opts) use ($name, &$log, $inner, $dead) {
+        $log[] = ['machine' => $name, 'handles' => stub_handles($msgs), 'opts' => $opts, 'msgs' => $msgs];
+        if ($dead) throw new RuntimeException('llm: cannot reach ' . $name . ' (Connection refused)');
+        return ($inner['stub'])($tag, $msgs, $opts);
+    }] + $tags;
+}
+
+/** stub_half()'s sentences from a counter of the caller's own, so two runs can match. */
+function stub_mem_from(int &$n): callable
+{
+    static $halves = null;
+    if ($halves === null) { $halves = []; for ($i = 0; $i < 18; $i++) $halves[] = stub_half(); }
+    return function (array $handles) use (&$n, $halves): array {
+        $out = [];
+        foreach ($handles as $h) $out[$h] = ucfirst(str_replace('_', ' ', $h)) . ' ' . $halves[$n++ % 18] . '.';
+        return $out;
+    };
+}
+
+// Dot first in the cast, so she is the centre of the hours she starts in.
+$TV = $T2;
+usort($TV['cast']['characters'], fn($a, $b) => ($b['handle'] === 'dot') <=> ($a['handle'] === 'dot'));
+$fromV = ep('2026-07-30 08:00');
+// Seeded once per stretch, not per window: a per-window seed draws the same
+// room every hour, and these checks need hours centred on different people.
+$vOpts = ['chance' => 1.0, 'max_events' => 8, 'max_windows' => 14];
+
+// NO RESOLVER: today's single endpoint, every call, nothing new in the trail.
+$logN = []; $nN = 0;
+mt_srand(61);
+$cuN = xeric_sweep_catchup($TV, fresh_db('voice-none'), stub_machine('A', $logN, [], false, stub_mem_from($nN)), $fromV, $fromV + 14 * 3600, $vOpts);
+ok('voice: with no resolver every call goes to the one endpoint',
+    $logN !== [] && array_unique(array_column($logN, 'machine')) === ['A'], json_encode(array_column($logN, 'machine')));
+ok('voice: and carries no slot, and the trail has no voice in it',
+    !in_array(true, array_map(fn($l) => array_key_exists('id_slot', $l['opts']), $logN), true)
+    && !str_contains(json_encode(array_column($cuN['events'], 'trail')), '"voice"'));
+
+// A resolver that pins nobody leaves the prompts byte-identical: the pin moves
+// WHERE the hour is written, never what it is asked.
+$logD = []; $nD = 0;
+$defA = stub_machine('A', $logD, [], false, stub_mem_from($nD));
+mt_srand(61);
+xeric_sweep_catchup($TV, fresh_db('voice-default'), $defA, $fromV, $fromV + 14 * 3600,
+    $vOpts + ['endpoint_for' => fn(string $h): array => $defA]);
+ok('voice: a resolver that pins nobody asks the same things, byte for byte',
+    json_encode(array_column($logN, 'msgs')) === json_encode(array_column($logD, 'msgs')),
+    (function () use ($logN, $logD) { foreach ($logN as $i => $l) { $a = json_encode($l['msgs']); $b = json_encode($logD[$i]['msgs'] ?? null);
+        if ($a !== $b) { $k = 0; while ($k < strlen($a) && $a[$k] === ($b[$k] ?? '')) $k++; return "call $i: " . substr($a, max(0, $k - 80), 200) . ' VS ' . substr($b, max(0, $k - 80), 200); } } return count($logN) . '/' . count($logD); })());
+
+// DOT PINNED TO B: Dot-centred hours go to B, every other hour to A.
+$logP = [];
+$mA = stub_machine('A', $logP, ['server' => 'Ollama 0.5', 'slots' => 4]);
+$mB = stub_machine('B', $logP, ['server' => 'llama.cpp', 'slots' => 4]);
+$pinB = fn(string $h): array => $h === 'dot' ? $mB + ['pin' => ['machine' => 'b.lan:8080', 'down' => false]] : $mA;
+mt_srand(61);
+$cuP = xeric_sweep_catchup($TV, fresh_db('voice-pin'), $mA, $fromV, $fromV + 14 * 3600, $vOpts + ['endpoint_for' => $pinB]);
+$right = true; $sawB = false; $sawA = false;
+foreach ($logP as $l) {
+    $centre = xeric_sweep_centre($TV, ['handles' => $l['handles']]);
+    $want = $centre === 'dot' ? 'B' : 'A';
+    if ($l['machine'] !== $want) $right = false;
+    $sawB = $sawB || $l['machine'] === 'B';
+    $sawA = $sawA || $l['machine'] === 'A';
+}
+ok('voice: a Dot-centred hour is written by her machine, every other by the default',
+    $right && $sawA && $sawB, json_encode(array_map(fn($l) => [$l['machine'], $l['handles']], $logP)));
+$trailOk = true;
+foreach ($cuP['events'] as $e) {
+    $v = (array)($e['trail']['voice'] ?? []);
+    $c = (string)($v['centre'] ?? '');
+    if ($c === '' || $c !== xeric_sweep_centre($TV, ['handles' => $e['participants']])
+        || ($v['machine'] ?? '') !== ($c === 'dot' ? 'b.lan:8080' : 'default')) $trailOk = false;
+}
+ok('voice: the trail says whose hour it was and which machine wrote it', $cuP['events'] !== [] && $trailOk,
+    json_encode(array_map(fn($e) => $e['trail']['voice'] ?? null, $cuP['events'])));
+ok('voice: the centre is the protagonist when they are in the room, else the first named',
+    xeric_sweep_centre(['cast' => ['protagonist' => ['handle' => 'dot']]], ['handles' => ['ruth', 'dot']]) === 'dot'
+    && xeric_sweep_centre($T2, ['handles' => ['ruth', 'dot']]) === 'ruth');
+
+// GROUPING. One event is one call, so a window's calls are one machine's; the
+// stretch keeps its own chronology rather than batching a machine's hours,
+// because each hour is chosen from the world the last one left.
+$epochs = array_column($cuP['events'], 'world_epoch');
+$sorted = $epochs; sort($sorted);
+ok('voice: one call per hour, each window on one machine, the hours in the order they happened',
+    count($logP) === count($cuP['events']) && $epochs === $sorted, count($logP) . ' calls, ' . count($cuP['events']) . ' events');
+
+// THE SLOT: sent to llama.cpp only, stable per handle.
+$slotsB = array_values(array_unique(array_map(fn($l) => $l['opts']['id_slot'] ?? 'none',
+    array_filter($logP, fn($l) => $l['machine'] === 'B'))));
+$slotsA = array_filter($logP, fn($l) => $l['machine'] === 'A' && array_key_exists('id_slot', $l['opts']));
+ok('voice: Dot keeps one slot on the llama.cpp machine, every hour', $slotsB === [crc32('dot') % 4], json_encode($slotsB));
+ok('voice: and the machine that is not llama.cpp never sees an id_slot', $slotsA === []);
+$logS = [];
+$mS = stub_machine('S', $logS, ['server' => 'llama.cpp', 'slots' => 1]);
+xeric_sweep_catchup($TV, fresh_db('voice-oneslot'), $mS, $fromV, $fromV + 6 * 3600,
+    ['chance' => 1.0, 'seed' => 62, 'max_events' => 3, 'endpoint_for' => fn(string $h): array => $mS]);
+ok('voice: a llama.cpp with one slot is sent none', $logS !== []
+    && !in_array(true, array_map(fn($l) => array_key_exists('id_slot', $l['opts']), $logS), true));
+
+// DOWN. A pin the resolver found not answering is written by the default and
+// says so; a pinned machine that dies mid-call falls back the same way; the
+// stretch never stalls on either.
+$logX = [];
+$mAx = stub_machine('A', $logX);
+$downPin = fn(string $h): array => $h === 'dot' ? $mAx + ['pin' => ['machine' => 'b.lan:8080', 'down' => true]] : $mAx;
+mt_srand(61);
+$cuX = xeric_sweep_catchup($TV, fresh_db('voice-down'), $mAx, $fromV, $fromV + 14 * 3600, $vOpts + ['endpoint_for' => $downPin]);
+$dotX = array_values(array_filter($cuX['events'], fn($e) => ($e['trail']['voice']['centre'] ?? '') === 'dot'));
+ok('voice: a pin whose machine is down is written by the default, and the trail says whose',
+    $dotX !== [] && ($dotX[0]['trail']['voice']['fell_back'] ?? '') === "written by the default, Dot Vance's machine was not answering"
+    && ($dotX[0]['trail']['voice']['machine'] ?? '') === 'default'
+    && array_unique(array_column($logX, 'machine')) === ['A'],
+    json_encode(array_map(fn($e) => $e['trail']['voice'] ?? null, $cuX['events'])));
+
+$logY = [];
+$mAy = stub_machine('A', $logY);
+$mBy = stub_machine('B', $logY, ['server' => 'llama.cpp', 'slots' => 4], true);
+$deadPin = fn(string $h): array => $h === 'dot' ? $mBy + ['pin' => ['machine' => 'b.lan:8080', 'down' => false]] : $mAy;
+mt_srand(61);
+$cuY = xeric_sweep_catchup($TV, fresh_db('voice-dies'), $mAy, $fromV, $fromV + 14 * 3600, $vOpts + ['endpoint_for' => $deadPin]);
+$dotY = array_values(array_filter($cuY['events'], fn($e) => ($e['trail']['voice']['centre'] ?? '') === 'dot'));
+$retry = false;
+foreach ($logY as $i => $l) {
+    if ($l['machine'] === 'B' && isset($logY[$i + 1]) && $logY[$i + 1]['machine'] === 'A'
+        && !array_key_exists('id_slot', $logY[$i + 1]['opts'])) $retry = true;
+}
+ok('voice: a pinned machine that stops answering mid-stretch falls back that hour, and the hour lands',
+    $dotY !== [] && $retry && str_contains((string)($dotY[0]['trail']['voice']['fell_back'] ?? ''), 'was not answering')
+    && array_key_exists('slot', $dotY[0]['trail']['voice']) && $dotY[0]['trail']['voice']['slot'] === null,
+    json_encode(array_map(fn($l) => $l['machine'], $logY)));
+ok('voice: and never stalls the stretch — as many hours as with nobody pinned',
+    count($cuY['events']) === count($cuP['events']) && !str_contains(json_encode($cuY['notes']), 'gave up'),
+    count($cuY['events']) . ' vs ' . count($cuP['events']));
+
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);
 

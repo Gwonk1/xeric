@@ -39,11 +39,10 @@
  *      the person with the most unsettled material about the last speaker is
  *      likeliest next: their own stored memories that mention them, counted
  *      as rows, never paraphrased — plus one notch for an open expectation
- *      naming the last speaker. Expectations today point only at the user
- *      (constructs.php v1), so that notch reads a field no current row
- *      carries (`of`, a cast handle) and stays dormant until cast-to-cast
- *      expectations exist; the seam is tested so the day it lights up is not
- *      the day it is discovered broken.
+ *      naming the last speaker. Expectations between townspeople carry `of`
+ *      (the cast handle who promised), formed by constructs.php's cast-to-cast
+ *      pass since milestone three, so this notch is live; the seam was tested
+ *      before it lit up so the day it did was not the day it broke.
  *   3. THE THUMB. Everything is multiplied by xeric_learn_reach(), exactly
  *      as the duet's opener draw, and resolved by xeric_learn_order() — a
  *      weighted SHUFFLE, never a ranking, because the hottest person taking
@@ -127,7 +126,7 @@ require_once __DIR__ . '/chat.php';       // clean pieces, floor, dedupe, the mo
 require_once __DIR__ . '/sweeps.php';     // the protected-secret test, the ceiling idiom
 require_once __DIR__ . '/learn.php';      // the weighted shuffle, and reach
 require_once __DIR__ . '/death.php';      // the dead do not talk, even in company
-require_once __DIR__ . '/constructs.php'; // expectations — the dormant cast-to-cast seam
+require_once __DIR__ . '/constructs.php'; // expectations — the cast-to-cast seam, live since M3
 require_once __DIR__ . '/panel.php';      // and, in a discussion room, the open record
 require_once __DIR__ . '/clock.php';      // the live room stops when the world does
 require_once __DIR__ . '/travel.php';     // where you are standing, and the doorway's beat
@@ -215,7 +214,10 @@ const XERIC_ROOM_LEASE = 120;
  * @param array $opts    beats, say_first (handle), seed, temperature, timeout,
  *                       max_tokens, max_chars, memory_limit, effective_rating,
  *                       model_rating, on_line (fn(handle,name,text,kind) as lines
- *                       land — kind is 'line' or 'exit')
+ *                       land — kind is 'line' or 'exit'), endpoint_for
+ *                       (fn(handle): array — the speaker's pinned machine, the
+ *                       same resolver a sweep takes; absent, every line goes to
+ *                       $endpoint as it always did; the close stays on $endpoint)
  * @return array{lines:array,event_id:int,title:string,prose:string,place:?string,
  *               place_name:string,memories:array<string,array>,spoke_first:string,
  *               last_word:string,turns:int,beats:int,departures:array,
@@ -388,13 +390,25 @@ function xeric_room(array $t, PDO $db, array $handles, array $now, array $endpoi
             $notice !== null ? $names[$notice] . ' has not said a word in a while. You may notice that, or let it be.' : '',
             $db);
 
+        // THE SPEAKER'S OWN MACHINE, when the caller pinned one, and the
+        // speaker's own llama.cpp slot on it (xeric_llm_slot): five system
+        // prompts through one slot re-read every prefix every beat.
+        $sep = $endpoint;
+        if (isset($opts['endpoint_for']) && is_callable($opts['endpoint_for'])) {
+            try { $sep = ($opts['endpoint_for'])($speaker); } catch (Throwable $e) { $sep = $endpoint; }
+            if (!is_array($sep) || $sep === []) $sep = $endpoint;
+        }
+        $sopts = [
+            'temperature' => (float)($opts['temperature'] ?? 0.85),
+            'max_tokens'  => (int)($opts['max_tokens'] ?? XERIC_ROOM_MAX_TOKENS),
+        ] + array_intersect_key($opts, ['timeout' => 1]);
+        $slot = xeric_llm_slot($sep, $speaker);
+        if ($slot !== null) $sopts['id_slot'] = $slot;
+
         $u  = [];
         $t0 = microtime(true);
         try {
-            $raw = xeric_chat_say($endpoint, $messages, [
-                'temperature' => (float)($opts['temperature'] ?? 0.85),
-                'max_tokens'  => (int)($opts['max_tokens'] ?? XERIC_ROOM_MAX_TOKENS),
-            ] + array_intersect_key($opts, ['timeout' => 1]), $u);
+            $raw = xeric_chat_say($sep, $messages, $sopts, $u);
         } catch (Throwable $e) {
             throw new RuntimeException('room: ' . $names[$speaker] . ' did not answer, ' . $e->getMessage(), 0, $e);
         }
@@ -614,7 +628,7 @@ function xeric_room_together(array $t, PDO $db, array $handles, array $now): arr
  * The heat term counts ROWS, never content: the candidate's stored memories
  * that mention the last speaker (the engine's one mention test), capped at
  * XERIC_ROOM_MATERIAL, plus one for an open expectation whose `of` names the
- * last speaker — dormant until constructs.php grows cast-to-cast rows
+ * last speaker — cast-to-cast rows, which constructs.php forms since M3
  * (header). No model is asked what is unresolved; the material is rows, so
  * the trail's numbers are checkable against the database that produced them.
  *
@@ -653,8 +667,8 @@ function xeric_room_draw(array $present, ?string $last, string $lastText, array 
             // the PLAYER made carries no `of` at all (constructs.php: absent
             // means the user), so when the last line was the player's the
             // notch is lit by exactly the rows the room's guest is on the
-            // hook for — the seam the header calls dormant, lit from the
-            // other side.
+            // hook for — the same seam the cast-to-cast rows light from
+            // the other side.
             foreach ($expects[$h] ?? [] as $e) {
                 $of = (string)($e['of'] ?? '');
                 $owes = $last === XERIC_ROOM_YOU ? $of === '' : $of === $last;
@@ -1627,13 +1641,19 @@ function xeric_room_step(array $t, PDO $db, array $live, array $lines, array $no
         $notice !== null ? $names[$notice] . ' has not said a word in a while. You may notice that, or let it be.' : '',
         $db, (string)$live['place'], $you);
 
+    // The caller resolved the speaker's machine (the pin); the slot on it is
+    // the speaker's own when that machine is a llama.cpp with slots to spare.
+    $sopts = [
+        'temperature' => (float)($opts['temperature'] ?? 0.85),
+        'max_tokens'  => (int)($opts['max_tokens'] ?? XERIC_ROOM_MAX_TOKENS),
+    ] + array_intersect_key($opts, ['timeout' => 1]);
+    $slot = xeric_llm_slot($endpoint, $speaker);
+    if ($slot !== null) $sopts['id_slot'] = $slot;
+
     $u  = [];
     $t0 = microtime(true);
     try {
-        $raw = xeric_chat_say($endpoint, $messages, [
-            'temperature' => (float)($opts['temperature'] ?? 0.85),
-            'max_tokens'  => (int)($opts['max_tokens'] ?? XERIC_ROOM_MAX_TOKENS),
-        ] + array_intersect_key($opts, ['timeout' => 1]), $u);
+        $raw = xeric_chat_say($endpoint, $messages, $sopts, $u);
     } catch (Throwable $e) {
         throw new RuntimeException('room: ' . $names[$speaker] . ' did not answer, ' . $e->getMessage(), 0, $e);
     }

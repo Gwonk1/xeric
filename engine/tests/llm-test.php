@@ -90,6 +90,55 @@ ok('a current id that left the catalog is kept rather than swapped',
 ok('a string status is accepted the same way as {value}',
     xeric_llm_router_catalog(['data' => [['id' => 'a', 'status' => 'loading']]])[0]['status'] === 'loading');
 
+// ID_SLOT RIDES THE BODY ONLY WHEN IT WAS ASKED FOR. A loopback server that
+// answers every completion with the request body it got, so the assertion is
+// on the bytes that crossed the wire, not on a payload array nobody sent.
+$slotDir = sys_get_temp_dir() . '/xeric-llm-slot-' . getmypid();
+@mkdir($slotDir, 0775, true);
+file_put_contents($slotDir . '/router.php', <<<'ROUTER'
+<?php
+header('Content-Type: application/json');
+$body = (string)file_get_contents('php://input');
+echo json_encode(['choices' => [['message' => ['role' => 'assistant', 'content' => $body]]]]);
+ROUTER);
+$sock = @stream_socket_server('tcp://127.0.0.1:0');
+$sport = $sock ? (int)substr((string)strrchr((string)stream_socket_get_name($sock, false), ':'), 1) : 0;
+if ($sock) fclose($sock);
+$sproc = $sport > 0 ? @proc_open([PHP_BINARY, '-S', '127.0.0.1:' . $sport, $slotDir . '/router.php'],
+    [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'a'], 2 => ['file', '/dev/null', 'a']], $spipes) : false;
+$slive = false;
+for ($i = 0; is_resource($sproc) && $i < 60 && !$slive; $i++) {
+    $c = @fsockopen('127.0.0.1', $sport, $en, $es, 0.2);
+    if ($c) { fclose($c); $slive = true; } else usleep(50000);
+}
+if (!$slive) {
+    echo "ok   - SKIPPED: no loopback server for the id_slot body checks\n";
+} else {
+    $sep = ['kind' => 'local', 'base' => 'http://127.0.0.1:' . $sport, 'model' => 'm', 'key' => ''];
+    $msgs = [['role' => 'user', 'content' => 'hi']];
+    $plain = json_decode(xeric_llm_chat($sep, $msgs, ['max_tokens' => 5]), true);
+    ok('a body with no id_slot asked for carries none', is_array($plain) && !array_key_exists('id_slot', $plain));
+    $slotted = json_decode(xeric_llm_chat($sep, $msgs, ['max_tokens' => 5, 'id_slot' => 3]), true);
+    ok('a body given id_slot carries it, as an integer', ($slotted['id_slot'] ?? null) === 3);
+    $junk = json_decode(xeric_llm_chat($sep, $msgs, ['id_slot' => '2']), true);
+    ok('a slot that is not an integer is not sent', is_array($junk) && !array_key_exists('id_slot', $junk));
+    proc_terminate($sproc);
+}
+@unlink($slotDir . '/router.php'); @rmdir($slotDir);
+
+// WHO DECIDES: only an endpoint that says llama.cpp, with more than one slot.
+$llama = ['kind' => 'local', 'base' => 'http://x', 'server' => 'llama.cpp', 'slots' => 4];
+ok('llama.cpp with four slots: a slot per handle, stable', xeric_llm_slot($llama, 'dot') === crc32('dot') % 4
+    && xeric_llm_slot($llama, 'dot') === xeric_llm_slot($llama, 'dot'));
+ok('the router is llama.cpp too', xeric_llm_slot(['server' => 'llama.cpp router', 'slots' => 2], 'ruth') === crc32('ruth') % 2);
+ok('one slot, or slots unknown: nothing sent',
+    xeric_llm_slot(['server' => 'llama.cpp', 'slots' => 1], 'dot') === null
+    && xeric_llm_slot(['server' => 'llama.cpp'], 'dot') === null);
+ok('anything that is not llama.cpp never gets one',
+    xeric_llm_slot(['server' => 'Ollama 0.5', 'slots' => 4], 'dot') === null
+    && xeric_llm_slot(['server' => 'vLLM', 'slots' => 4], 'dot') === null
+    && xeric_llm_slot(['kind' => 'local', 'base' => 'http://127.0.0.1:8080'], 'dot') === null);
+
 foreach (['XERIC_LOCAL_BASE' => $prevBase, 'XERIC_LOCAL_KEY' => $prevKey,
           'XERIC_API_KEY' => $prevApi, 'XERIC_LOCAL_MODEL' => $prevModel] as $k => $v) {
     if ($v === false || $v === null) putenv($k);

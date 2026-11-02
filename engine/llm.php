@@ -287,6 +287,12 @@ function xeric_llm_chat(array $endpoint, array $messages, array $opts = [], ?arr
     // response_format on recent builds; when it doesn't, the prompt and the
     // repair loop in xeric_llm_json() still carry it.
     if (!empty($opts['json'])) $payload['response_format'] = ['type' => 'json_object'];
+    // llama.cpp's slot, ONLY WHEN THE CALLER NAMED ONE. Nothing in here guesses
+    // it or decides whether the server is llama.cpp: xeric_llm_slot() does, and
+    // a caller that did not ask gets the body it always got, byte for byte.
+    if (isset($opts['id_slot']) && is_int($opts['id_slot']) && $opts['id_slot'] >= 0) {
+        $payload['id_slot'] = $opts['id_slot'];
+    }
 
     $headers = [];
     if ($key !== '') $headers[] = 'Authorization: Bearer ' . $key;
@@ -296,6 +302,32 @@ function xeric_llm_chat(array $endpoint, array $messages, array $opts = [], ?arr
     $txt = $res['choices'][0]['message']['content'] ?? null;
     if (!is_string($txt)) throw new RuntimeException('llm: no completion in response');
     return $txt;
+}
+
+/**
+ * The llama.cpp slot a speaker keeps, or null to send none.
+ *
+ * THE PREFIX-CACHE TRAP, from the speaker's side. llama.cpp caches one prompt
+ * per SLOT, and a server handing out slots by availability puts three
+ * speakers' system prompts through one slot in turn — every beat re-reads the
+ * whole prefix. Pinning a handle to crc32(handle) % slots keeps each speaker's
+ * prefix warm in a slot of its own (two speakers that hash together share,
+ * which is no worse than today).
+ *
+ * Null — send nothing — unless the endpoint SAYS it is llama.cpp (`server`,
+ * the machine-discovery name: 'llama.cpp' or 'llama.cpp router') AND says how
+ * many slots it has (`slots`, /props total_slots) and that is more than one.
+ * One slot is slot 0 whatever we send; anything else (Ollama, vLLM, a hosted
+ * API) would reject or ignore an unknown field, so it never sees one.
+ */
+function xeric_llm_slot(array $endpoint, string $handle): ?int
+{
+    $server = strtolower(trim((string)($endpoint['server'] ?? '')));
+    if ($server !== 'llama.cpp' && $server !== 'llama.cpp router') return null;
+    if (strtolower((string)($endpoint['kind'] ?? 'local')) === 'anthropic') return null;
+    $n = (int)($endpoint['slots'] ?? 1);
+    if ($n <= 1 || $handle === '') return null;
+    return (int)(crc32($handle) % $n);
 }
 
 /**

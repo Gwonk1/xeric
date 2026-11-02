@@ -409,6 +409,75 @@ ok('the renewal is a full lease from now', $probe['lease']['until'] > microtime(
     && $probe['lease']['id'] === 'x');
 
 // ---------------------------------------------------------------------------
+echo "\n# the pin: whose machine speaks, and the slot on it\n";
+
+// A second machine, connected but never dialled: reachability and discovery
+// go through the resolver's seams, so nothing here touches a network.
+$pinBase = 'http://10.0.0.9:8080';
+xeric_web_session_edit(function (array &$s) use ($pinBase): void {
+    $s['wired'] = array_values(array_unique(array_merge((array)($s['wired'] ?? []), [$pinBase])));
+}, $A);
+xeric_play_speaker_set($db, 'dot', $pinBase, $A);
+$llamaOf = fn(string $b): array => $b === $pinBase ? ['server' => 'llama.cpp', 'slots' => 4] : ['server' => 'Ollama 0.5', 'slots' => 4];
+$defEp   = ['kind' => 'local', 'base' => 'http://127.0.0.1:1', 'model' => ''];
+$res = xeric_play_sweep_endpoints(['db' => $db, 'sid' => $A, 'endpoint' => $defEp,
+                                    'up' => fn(array $ep): bool => true, 'server' => $llamaOf]);
+$dotEp = $res('dot'); $ruthEp = $res('ruth');
+ok('the resolver sends a pinned speaker to her machine, tagged llama.cpp with its slots',
+    str_starts_with((string)($dotEp['local'] ?? $dotEp['base'] ?? ''), $pinBase) && ($dotEp['server'] ?? '') === 'llama.cpp'
+    && ($dotEp['pin']['machine'] ?? '') === '10.0.0.9:8080' && empty($dotEp['pin']['down']), json_encode($dotEp));
+ok('and an unpinned one to the world\'s default, with no pin on it',
+    ($ruthEp['base'] ?? '') === 'http://127.0.0.1:1' && !isset($ruthEp['pin']));
+ok('only the llama.cpp machine hands out a slot, the same one every time',
+    xeric_llm_slot($dotEp, 'dot') === crc32('dot') % 4 && xeric_llm_slot($res('dot'), 'dot') === crc32('dot') % 4
+    && xeric_llm_slot($ruthEp, 'ruth') === null);
+$resDown = xeric_play_sweep_endpoints(['db' => $db, 'sid' => $A, 'endpoint' => $defEp,
+                                        'up' => fn(array $ep): bool => false, 'server' => $llamaOf]);
+$dotDown = $resDown('dot');
+ok('a pinned machine that is not answering hands back the default, marked down',
+    ($dotDown['base'] ?? '') === 'http://127.0.0.1:1' && !empty($dotDown['pin']['down']), json_encode($dotDown));
+
+// THE ROOM USES THE PIN: its default resolution is the speaker endpoint, and
+// a resolver handed in reaches every beat with that beat's speaker — the
+// pinned one's lines on her machine, with her slot, the rest on the default.
+$pvSrc2 = (string)file_get_contents(dirname(__DIR__) . '/play-view.php');
+ok('the room resolves each speaker through the pin by default',
+    str_contains($pvSrc2, "\$o['endpoint'] ?? fn(string \$h): array => xeric_play_speaker_endpoint(\$t, \$db, \$h, \$sid)"));
+// Pastor Dale is the pinned one here: this seed's room opens on him.
+$pinned = 'pastor_dale';
+$sP = xeric_play_room_say($w, 'Well, what does everybody think of the new pastor\'s sermons?');
+$seenP = [];
+$machine = function (string $name, array $tags) use (&$seenP): array {
+    $n = 0;
+    return ['base' => 'stub://' . $name, 'stub' => function (string $tag, array $msgs, array $opts = []) use ($name, &$seenP, &$n) {
+        if ($tag === 'extract') return ['memories' => []];
+        $seenP[] = ['machine' => $name, 'slot' => $opts['id_slot'] ?? null];
+        $n++;
+        return 'Hard to say, line ' . $name . $n . '.';
+    }] + $tags;
+};
+$mB = $machine('B', ['server' => 'llama.cpp', 'slots' => 4]);
+$mA = $machine('A', ['server' => 'Ollama 0.5', 'slots' => 4]);
+$whoSpoke = [];
+$rP = xeric_play_room_run($w, $A, (string)$sP['lease'], [
+    'endpoint' => function (string $h) use ($mA, $mB, &$whoSpoke, $pinned): array { $whoSpoke[] = $h; return $h === $pinned ? $mB : $mA; },
+    'up' => false, 'wait' => 2.0, 'seed' => 'pin', 'sleep' => fn(float $s) => null,
+]);
+$pairs = [];
+foreach ($seenP as $i => $c) $pairs[] = [$whoSpoke[$i] ?? '?', $c['machine'], $c['slot']];
+$pinRight = $pairs !== [];
+foreach ($pairs as [$h, $m, $sl]) {
+    if ($m !== ($h === $pinned ? 'B' : 'A')) $pinRight = false;
+    if ($sl !== ($h === $pinned ? crc32($pinned) % 4 : null)) $pinRight = false;
+}
+$machinesSeen = array_values(array_unique(array_column($pairs, 1)));
+sort($machinesSeen);
+ok('each beat goes to its speaker\'s machine, and only the llama.cpp one carries a slot',
+    $rP['beats'] >= 1 && $pinRight && $machinesSeen === ['A', 'B'], json_encode([$rP['beats'], $pairs]));
+xeric_room_live_edit($db, function (?array &$l): void { if ($l !== null) { $l['lease'] = null; $l['budget'] = 0; } });
+xeric_play_speaker_set($db, 'dot', '', $A);
+
+// ---------------------------------------------------------------------------
 echo "\n# a skip lands its own close\n";
 
 // A model on loopback, so the skip is let through and the close has diaries
