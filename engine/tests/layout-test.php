@@ -295,6 +295,55 @@ ok('asked, both pictures ride as {mime, b64} and are the same bytes',
     && base64_decode($bodyQ['layout_depth']['b64']) === $D1
     && base64_decode($bodyQ['layout_seg']['b64']) === $S1);
 ok('the body is still JSON', json_encode($bodyQ) !== false);
+xeric_layout_casts(0);
+$bodyQ1 = xeric_scene_body($b, ['layout_images' => true]);
+ok('ONE cast per body: depth and segmentation are the same rays read twice, and the bytes have not changed',
+    xeric_layout_casts() === 1 && base64_decode($bodyQ1['layout_depth']['b64']) === $D1
+    && base64_decode($bodyQ1['layout_seg']['b64']) === $S1, (string)xeric_layout_casts());
+xeric_layout_casts(0);
+$pp = xeric_layout_pngs($L, 64, 32);
+ok('and xeric_layout_pngs is that one cast, at any size', xeric_layout_casts() === 1
+    && $pp['depth'] === xeric_layout_depth_png($L, 64, 32) && $pp['seg'] === xeric_layout_seg_png($L, 64, 32));
+
+// THE LAYOUT IT WAS ASKED WITH. A look queued while Mabel was in the room and
+// reaped after she left is rendered as asked — its prompt, its fingerprint,
+// and its box with her in it, the control images drawn from that box.
+$Tm = $Ti;
+$Tm['media']['scene']['layout_images'] = true;
+$bNow = xeric_scene_brief($Tm, $db, 'bluebird');
+$asked = $bNow;
+$mabel = ['id' => 'mabel', 'label' => 'Mabel', 'kind' => 'person', 'bearing' => 90, 'distance' => 1.5, 'x' => 1.5, 'z' => 0.0,
+          'y' => 0.0, 'w' => 0.5, 'd' => 0.5, 'h' => 1.7, 'size' => 'small', 'seed' => 4242];
+$asked['layout']['objects'][] = $mabel;
+$asked['fingerprint'] = sha1('the bluebird, with mabel in it');
+$asked['prompt'] = 'The Bluebird Diner, Mabel at the counter.';
+$jid = xeric_scene_enqueue($db, $asked);
+$db->prepare('DELETE FROM scene_jobs WHERE id != ?')->execute([$jid]);
+$sentBody = null;
+$scenesDir = sys_get_temp_dir() . '/xeric-layout-scenes-' . getmypid();
+$rp = xeric_scene_reap($Tm, $db, $scenesDir, ['stub' => function (string $tag, array $br, array $o) use (&$sentBody) {
+    $sentBody = xeric_scene_body($br, $o);
+    return ['kind' => 'image', 'bytes' => "\x89PNG\r\n\x1a\nx", 'mime' => 'image/png'];
+}], 1, true);
+$sentL = $sentBody['layout'] ?? [];
+ok('the room has moved on since: the reaper says so', preg_grep('/changed since/', $rp['notes']) !== [], json_encode($rp));
+ok('and sends the stored layout with the stored prompt — Mabel still in it',
+    in_array('Mabel', array_column((array)($sentL['objects'] ?? []), 'label'), true)
+    && ($sentBody['prompt'] ?? '') === $asked['prompt'] && ($sentBody['fingerprint'] ?? '') === $asked['fingerprint']
+    && !in_array('Mabel', array_column($bNow['layout']['objects'], 'label'), true), json_encode(array_column((array)($sentL['objects'] ?? []), 'label')));
+ok('its control images are drawn from that stored box, not from the room now',
+    base64_decode((string)($sentBody['layout_seg']['b64'] ?? '')) === xeric_layout_seg_png($asked['layout'])
+    && base64_decode((string)($sentBody['layout_seg']['b64'] ?? '')) !== xeric_layout_seg_png($bNow['layout']));
+$db->prepare("UPDATE scene_jobs SET status = 'pending', layout = '', fingerprint = ? WHERE id = ?")->execute([sha1('older'), $jid]);
+$sentBody = null;
+xeric_scene_reap($Tm, $db, $scenesDir, ['stub' => function (string $tag, array $br, array $o) use (&$sentBody) {
+    $sentBody = xeric_scene_body($br, $o);
+    return ['kind' => 'image', 'bytes' => "\x89PNG\r\n\x1a\nx", 'mime' => 'image/png'];
+}], 1, true);
+ok('a changed room queued before layouts were kept goes with none, never with today\'s',
+    is_array($sentBody) && !isset($sentBody['layout']) && !isset($sentBody['layout_seg']), json_encode(array_keys((array)$sentBody)));
+foreach (glob($scenesDir . '/*') ?: [] as $f) @unlink($f);
+@rmdir($scenesDir);
 $sound = xeric_sound_brief($Ti, $db, 'bluebird', $mon0710);
 ok('a sound has no room to lay out', !isset(xeric_scene_body($sound, ['channel' => 'sound'])['layout']));
 

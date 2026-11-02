@@ -980,6 +980,14 @@ function xeric_scene_takes_reference(array $endpoint): bool
  *               a scene_jobs row: a look answered with a stream is refused
  *               here, so the reaper and the heart cannot start one.
  *
+ *     CANNOT    { "error": "...", "cannot": true }, any status — the machine
+ *               saying plainly that it does not do what was asked (today:
+ *               does not stream). A 404, 405, 415 or 501 to a stream request
+ *               means the same. Any OTHER refusal of a stream — 401, 403,
+ *               408, 409, 429, 5xx — is "not now": its `error` is shown to
+ *               the person in the machine's own words, and nothing is
+ *               written down, so the next "go live" asks again.
+ *
  *     LATER     { "status": "pending", "job": "<id>", "retry_after_s": n },
  *               usually as a 202: Xeric does not block. The reaper records
  *               the job and asks again on its next pass with
@@ -1079,8 +1087,10 @@ function xeric_scene_body(array $brief, array $opts = []): array
     if (is_array($brief['layout'] ?? null)) {
         $body['layout'] = $brief['layout'];
         if (!empty($opts['layout_images'])) {
-            $body['layout_depth'] = ['mime' => 'image/png', 'b64' => base64_encode(xeric_layout_depth_png($brief['layout']))];
-            $body['layout_seg']   = ['mime' => 'image/png', 'b64' => base64_encode(xeric_layout_seg_png($brief['layout']))];
+            // One cast, both pictures: they are the same rays read two ways.
+            $png = xeric_layout_pngs($brief['layout']);
+            $body['layout_depth'] = ['mime' => 'image/png', 'b64' => base64_encode($png['depth'])];
+            $body['layout_seg']   = ['mime' => 'image/png', 'b64' => base64_encode($png['seg'])];
         }
     }
     return $body;
@@ -1098,7 +1108,12 @@ function xeric_scene_body(array $brief, array $opts = []): array
  * records it, or a stub's own) whose body names no asset, or a picture where
  * a sound was asked for — comes back as `cannot`, not as a throw: it is the
  * machine telling us what it is, and a try is for things that might go
- * better next time. For a look the same 4xx is an ordinary failed try.
+ * better next time. For a look the same 4xx is an ordinary failed try, and
+ * its note carries the machine's own `error` words.
+ *
+ * For a STREAM, cannot is narrower (XERIC_SCENE_STREAM_CANNOT, or the body
+ * {error, cannot: true}); any other non-2xx throws with the machine's words,
+ * and a throw is never written down against the machine.
  */
 function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, string $want = 'image',
                             array $endpoint = []): array
@@ -1108,12 +1123,29 @@ function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, str
             'kind' => '', 'url' => null, 'extras' => array_values((array)($j['extras'] ?? [])),
             'pending' => null, 'cannot' => false, 'session' => null];
 
-    $http = (int)($j['_http'] ?? 200);
-    if ($http >= 400 && $http < 500
-        && !isset($j['b64']) && !isset($j['url']) && !isset($j['bytes']) && !isset($j['job'])
-        && !isset($j['session'])) {
-        if ($want === 'audio' || $want === 'stream') { $res['cannot'] = true; return $res; }
-        throw new RuntimeException('scene: the machine refused the request (HTTP ' . $http . ')');
+    $http  = (int)($j['_http'] ?? 200);
+    $asset = isset($j['b64']) || isset($j['url']) || isset($j['bytes']) || isset($j['job']) || isset($j['session']);
+    $words = xeric_scene_words($j);
+    // A STREAM REQUEST IS READ STRICTLY, because "cannot" is written down
+    // against the machine and takes "go live" away. Only a route that is not
+    // there or a shape it does not take (XERIC_SCENE_STREAM_CANNOT), or the
+    // machine saying so in so many words ({error, cannot: true}), is cannot.
+    // Every other refusal — a key it did not like (401/403), a timeout (408),
+    // a session already running (409), too many (429), busy or broken (5xx,
+    // 503 included) — is the machine saying not now, in its own words, and is
+    // never cached: the next press asks again.
+    if ($want === 'stream' && ($http >= 300 || ($j['cannot'] ?? null) === true)) {
+        if (($j['cannot'] ?? null) === true || (in_array($http, XERIC_SCENE_STREAM_CANNOT, true) && !$asset)) {
+            $res['cannot'] = true;
+            return $res;
+        }
+        throw new RuntimeException('stream: the machine would not start a live view just now (HTTP ' . $http
+                                   . ($words !== '' ? ': ' . $words : '') . '); press go live again in a moment');
+    }
+    if ($http >= 400 && !$asset) {
+        if ($want === 'audio' && $http < 500) { $res['cannot'] = true; return $res; }
+        throw new RuntimeException('scene: the machine refused the request (HTTP ' . $http . ')'
+                                   . ($words !== '' ? ': ' . $words : ''));
     }
 
     if (!empty($j['pending']) || strtolower((string)($j['status'] ?? '')) === 'pending') {
@@ -1186,9 +1218,31 @@ function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, str
 }
 
 /**
+ * The statuses that mean a machine CANNOT stream, rather than will not just
+ * now: no such route (404), not that verb (405), not that body (415), not
+ * built (501). Everything else non-2xx is transient (xeric_scene_answer).
+ */
+const XERIC_SCENE_STREAM_CANNOT = [404, 405, 415, 501];
+
+/**
+ * The machine's own words for a refusal — `error` as a string, or the
+ * `error.message` some vendors nest it in — as one line a person can be shown:
+ * control characters gone, whitespace folded, 200 characters at most. '' when
+ * it said nothing.
+ */
+function xeric_scene_words(array $j): string
+{
+    $e = $j['error'] ?? null;
+    if (is_array($e)) $e = $e['message'] ?? null;
+    if (!is_string($e)) return '';
+    $e = trim((string)preg_replace('/\s+/u', ' ', (string)preg_replace('/[\x00-\x1f\x7f]/u', ' ', $e)));
+    return mb_strlen($e) > 200 ? rtrim(mb_substr($e, 0, 199)) . '…' : $e;
+}
+
+/**
  * One JSON round trip to the machine. The status rides back as `_http`, so a
- * plain "no" (a 4xx) can be told from a broken answer; a 4xx with no JSON is
- * still a "no", anything else that is not a JSON object throws. Redirects are
+ * plain "no" (a 4xx or 5xx) can be told from a broken answer; a refusal with
+ * no JSON is still a "no", anything else that is not a JSON object throws. Redirects are
  * NOT followed — the key goes to the address the owner typed and nowhere a
  * Location header names; a machine behind a redirect is configured at its
  * final address.
@@ -1202,7 +1256,9 @@ function xeric_scene_http(string $method, string $url, array $auth, ?array $body
     [$raw, $status] = xeric_scene_get($url, $http);
     $j = is_string($raw) ? json_decode($raw, true) : null;
     if (!is_array($j)) {
-        if ($status >= 400 && $status < 500) return ['_http' => $status];
+        // A refusal with no body is still a refusal, and its status is the
+        // whole of what it said (xeric_scene_answer reads it).
+        if ($status >= 400) return ['_http' => $status];
         throw new RuntimeException('scene: the machine did not answer in JSON');
     }
     return ['_http' => $status] + $j;
@@ -1457,9 +1513,14 @@ function xeric_scene_insert(PDO $db, array $brief): array
     // Stamped with the rating it was ASKED under (xeric_state_rating): the
     // prompt is composed now and rendered as stored, so this is the rating the
     // picture is generated under, and a viewer below it is not shown it.
-    $ins = $db->prepare('INSERT OR IGNORE INTO scene_jobs (key, fingerprint, channel, light, prompt, created_at, rating)
-                         VALUES (?, ?, ?, ?, ?, ?, ?)');
-    $ins->execute([$key, $fp, $channel, $light, (string)($brief['prompt'] ?? ''), xeric_state_time(), xeric_state_rating()]);
+    // And with the layout it was asked with, for the same reason as the
+    // prompt: what is rendered later is what was asked for now.
+    $layout = $channel === 'look' && is_array($brief['layout'] ?? null)
+            ? (string)json_encode($brief['layout'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
+    $ins = $db->prepare('INSERT OR IGNORE INTO scene_jobs (key, fingerprint, channel, light, prompt, created_at, rating, layout)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    $ins->execute([$key, $fp, $channel, $light, (string)($brief['prompt'] ?? ''), xeric_state_time(), xeric_state_rating(),
+                   $layout]);
     if ($ins->rowCount() === 1) return ['id' => (int)$db->lastInsertId(), 'added' => true];
     $row = xeric_scene_of($db, $key, $fp, $channel);
     return ['id' => $row !== null ? (int)$row['id'] : 0, 'added' => false];
@@ -1573,7 +1634,7 @@ const XERIC_SCENE_REMOTE_TTL = 1800;
  *   at render time from the row's key and the world's current clock — the
  *   seeds and the structured remainder go to the machine fresh. But the row
  *   is what was asked for: if the room has changed since (somebody left, the
- *   light turned), the STORED prompt and fingerprint are rendered anyway and
+ *   light turned), the STORED prompt, fingerprint and layout are rendered anyway and
  *   a note says so, because a job keyed by one look that rendered another
  *   would file a picture under the wrong name. The changed room is another
  *   fingerprint, and the next glance asks for it. A look takes the newest
@@ -1714,6 +1775,13 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
                                 . 'rendering it as asked';
                 $brief['prompt']      = (string)$job['prompt'];
                 $brief['fingerprint'] = $fp;
+                // The box it was asked with, too — its control images are
+                // drawn from this — and none rather than today's when a row
+                // from before kept none: a layout of another room is worse
+                // than no layout.
+                $kept = json_decode((string)($job['layout'] ?? ''), true);
+                if (is_array($kept)) $brief['layout'] = $kept;
+                else unset($brief['layout']);
             }
             $opts = $optsFor($channel);
             $ours = [];

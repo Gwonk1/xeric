@@ -1289,7 +1289,8 @@ function xeric_api_route(string $method, array $seg, array $get, array $server, 
     }
 
     if ($name === 'look') {
-        return xeric_api_yes(xeric_api_shape_look(xeric_play_look_view($t, $db, $slug, null, false), $slug));
+        return xeric_api_yes(xeric_api_shape_look(xeric_play_look_view($t, $db, $slug, null, false,
+                                                                       !xeric_play_is_guest($w)), $slug));
     }
 
     if ($name === 'look_bytes') {

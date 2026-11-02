@@ -240,6 +240,7 @@ function xeric_layout(array $brief, array $t): array
  */
 function xeric_layout_cast(array $layout, int $w, int $h): array
 {
+    xeric_layout_casts(xeric_layout_casts() + 1);
     $room = $layout['room'];
     $v    = $layout['vantage'];
     [$ox, $oy, $oz] = [(float)$v['x'], (float)$v['y'], (float)$v['z']];
@@ -321,6 +322,31 @@ function xeric_layout_cast(array $layout, int $w, int $h): array
     return [$dist, $hit];
 }
 
+/**
+ * How many times the grid has been cast in this process — the tests' seam,
+ * so "one cast per body" is a number and not a hope. $set resets it.
+ */
+function xeric_layout_casts(?int $set = null): int
+{
+    static $n = 0;
+    if ($set !== null) $n = $set;
+    return $n;
+}
+
+/**
+ * Both pictures from ONE cast: the depth map and the segmentation map are the
+ * same rays read two ways, and a 512 x 256 cast is the expensive half of
+ * either. What a request carries both of asks here.
+ *
+ * @return array{depth:string,seg:string}
+ */
+function xeric_layout_pngs(array $layout, int $w = 512, int $h = 256): array
+{
+    $cast = xeric_layout_cast($layout, $w, $h);
+    return ['depth' => xeric_layout_depth_png($layout, $w, $h, $cast),
+            'seg'   => xeric_layout_seg_png($layout, $w, $h, $cast)];
+}
+
 /** The farthest any ray can go: the room's own diagonal. */
 function xeric_layout_far(array $layout): float
 {
@@ -328,10 +354,14 @@ function xeric_layout_far(array $layout): float
     return sqrt($r['width'] ** 2 + $r['depth'] ** 2 + $r['height'] ** 2);
 }
 
-/** An equirectangular depth map, 8-bit grayscale PNG: near is bright, the far diagonal black. */
-function xeric_layout_depth_png(array $layout, int $w = 512, int $h = 256): string
+/**
+ * An equirectangular depth map, 8-bit grayscale PNG: near is bright, the far
+ * diagonal black. $cast is xeric_layout_cast's answer for this layout at this
+ * size, when the caller already has it (xeric_layout_pngs).
+ */
+function xeric_layout_depth_png(array $layout, int $w = 512, int $h = 256, ?array $cast = null): string
 {
-    [$dist] = xeric_layout_cast($layout, $w, $h);
+    [$dist] = $cast ?? xeric_layout_cast($layout, $w, $h);
     $far = xeric_layout_far($layout);
     $raw = '';
     for ($r = 0; $r < $h; $r++) {
@@ -350,9 +380,9 @@ function xeric_layout_depth_png(array $layout, int $w = 512, int $h = 256): stri
  * 0–249, each person theirs in 300–339 — so a model, or a test, can tell a
  * person from a pie case by hue alone.
  */
-function xeric_layout_seg_png(array $layout, int $w = 512, int $h = 256): string
+function xeric_layout_seg_png(array $layout, int $w = 512, int $h = 256, ?array $cast = null): string
 {
-    [, $hit] = xeric_layout_cast($layout, $w, $h);
+    [, $hit] = $cast ?? xeric_layout_cast($layout, $w, $h);
     $pal = ['floor' => [64, 64, 64], 'wall' => [160, 160, 160], 'ceiling' => [224, 224, 224]];
     foreach ($layout['objects'] as $i => $o) $pal[$i] = xeric_layout_colour($o);
     $raw = '';

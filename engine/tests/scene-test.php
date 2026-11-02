@@ -1448,8 +1448,95 @@ ok('stream: metered_only applies — the owner\'s own machine is not rationed un
     xeric_budget_allows($Tbl, $dbL, $t1420, 'stream', 1, false)['ok'] && !xeric_budget_allows($Tbl, $dbL, $t1420, 'stream', 1, true)['ok']
     && xeric_budget_amount('stream', ['stream_seconds' => 12]) === 12 && xeric_budget_amount('stream', []) === 0);
 $id7 = $go($wall + 600);
-ok('stream: the sweep ends a live view nobody beats for, without reaching the network',
-    xeric_stream_sweep($dbL, $wall + 640) === 1 && xeric_stream_get($dbL, $id7)['reason'] === 'the page went away');
+$heard = []; $tailed = [];
+$sw = xeric_stream_sweep($dbL, $wall + 640, ['endpoint' => $streamer,
+                                             'meter' => function (int $s, bool $c) use (&$tailed) { $tailed[] = [$s, $c]; }]);
+$r7 = xeric_stream_get($dbL, $id7);
+$m7 = json_decode((string)$r7['meta'], true);
+ok('stream: the sweep ends a live view nobody beats for', $sw === 1 && $r7['reason'] === 'the page went away');
+ok('stream: and DELETEs it on the machine — a closed tab must not leave a costly session drawing to its own max_seconds',
+    array_values(array_filter($heard, fn($h) => $h[0] === 'end' && $h[2]['session'] === 'sess-1')) !== []
+    && ($m7['end_confirmed'] ?? null) === true && !isset($m7['unconfirmed_end']), json_encode([$heard, $m7]));
+ok('stream: and meters the tail after the last beat, capped as a beat is', (int)$r7['seconds'] === XERIC_STREAM_BEAT_CAP
+    && $tailed === [[XERIC_STREAM_BEAT_CAP, false]], json_encode([$r7['seconds'], $tailed]));
+// The machine is the one ON THE ROW: never the one chosen now, whose key is
+// not lent to another address. Nobody listens at this one, so the DELETE fails,
+// and the seconds the machine said it might run on are written down and said.
+$there = ['base' => 'http://127.0.0.1:9', 'stub' => fn($tag) => $tag === 'stream' ? ['kind' => 'stream', 'session' => [
+    'id' => 'far-1', 'url' => 'http://127.0.0.1:9/live/far-1.m3u8', 'protocol' => 'hls', 'max_seconds' => 900]] : []];
+$id8 = (int)(xeric_stream_start($Ts, $dbL, $there, ['now' => $t1420, 'wall' => $wall + 700])['row']['id'] ?? 0);
+$asked8 = [];
+$elsewhere = ['base' => 'https://another.example', 'key' => 'k-another', 'stub' => function ($tag, $b, $o) use (&$asked8) {
+    $asked8[] = $tag; return []; }];
+xeric_stream_sweep($dbL, $wall + 740, ['endpoint' => $elsewhere]);
+$m8 = json_decode((string)xeric_stream_get($dbL, $id8)['meta'], true);
+ok('stream: the sweep tells the machine the session is on, not the one chosen since (whose key goes nowhere else)',
+    $id8 > 0 && $asked8 === [] && ($m8['end_confirmed'] ?? null) === false, json_encode([$asked8, $m8]));
+ok('stream: a DELETE that failed records what the machine may still bill: its max_seconds less what has run',
+    ($m8['unconfirmed_end'] ?? 0) === 900 - 40, json_encode($m8));
+$un = xeric_stream_unconfirmed_line($dbL, $wall + 741);
+ok('stream: and the inspector says so', $un !== null && str_contains($un, 'could not be told to stop')
+    && str_contains($un, '860 seconds'), (string)$un);
+$failing = ['base' => 'https://scenes.example:8443', 'stub' => function (string $tag, array $b, array $o) use ($streamer) {
+    if ($tag === 'end') throw new RuntimeException('connection reset');
+    return ($streamer['stub'])($tag, $b, $o);
+}];
+$id9 = (int)(xeric_stream_start($Ts, $dbL, $failing, ['now' => $t1420, 'wall' => $wall + 800])['row']['id'] ?? 0);
+$tail9 = [];
+xeric_stream_end($dbL, $failing, $id9, 'you ended it', $wall + 804, ['meter' => function (int $s) use (&$tail9) { $tail9[] = $s; }]);
+$r9 = xeric_stream_get($dbL, $id9);
+$m9 = json_decode((string)$r9['meta'], true);
+ok('stream: an explicit end meters its tail too, and a machine that throws on DELETE is an unconfirmed end',
+    $tail9 === [4] && (int)$r9['seconds'] === 4 && ($m9['end_confirmed'] ?? null) === false
+    && ($m9['unconfirmed_end'] ?? 0) === 900 - 4, json_encode([$tail9, $m9]));
+ok('stream: an ended view is ended once: a second end meters and tells nothing',
+    !xeric_stream_end($dbL, $failing, $id9, 'again', $wall + 900, ['meter' => function (int $s) use (&$tail9) { $tail9[] = $s; }])
+    && $tail9 === [4]);
+
+// What a machine says when it will not stream NOW is not "cannot".
+foreach ([401, 403, 408, 409, 429, 500, 503] as $code) {
+    $msg = '';
+    try { $aT = xeric_scene_answer(['_http' => $code, 'error' => 'not now, code ' . $code], [], 0, false, 'stream'); }
+    catch (Throwable $e) { $msg = $e->getMessage(); }
+    ok("stream: a $code is transient — thrown in the machine's own words, never cannot",
+        str_contains($msg, 'not now, code ' . $code) && str_contains($msg, 'HTTP ' . $code) && !str_contains($msg, 'must name'), $msg);
+}
+foreach ([404, 405, 415, 501] as $code) {
+    ok("stream: a $code is cannot", xeric_scene_answer(['_http' => $code], [], 0, false, 'stream')['cannot'] === true);
+}
+ok('stream: and so is the machine saying so in so many words, {error, cannot: true}',
+    xeric_scene_answer(['_http' => 400, 'error' => 'this box has no video model', 'cannot' => true], [], 0, false, 'stream')['cannot']
+    && xeric_scene_answer(['error' => 'no', 'cannot' => true], [], 0, true, 'stream')['cannot']);
+ok('stream: a bodyless refusal reaches the reader with its status', xeric_scene_words([]) === ''
+    && xeric_scene_words(['error' => ['message' => "two\nlines\x07"]]) === 'two lines');
+$dbL3P = $dir . '-live3.sqlite';
+foreach ([$dbL3P, $dbL3P . '-wal', $dbL3P . '-shm'] as $f) @unlink($f);
+$dbL3 = xeric_state_open($dbL3P);
+xeric_clock_begin($dbL3, $T);
+xeric_player_move($dbL3, 'bluebird', $t1420['epoch'] - 600);
+$busy = ['base' => 'https://busy.example', 'stub' => fn($tag) => $tag === 'stream'
+    ? ['_http' => 503, 'error' => 'drawing 2 sessions already'] : []];
+$bz = xeric_stream_start($Ts, $dbL3, $busy, ['now' => $t1420]);
+ok('stream: a worldmodel that is busy says so in its words — not "a stream must name its session", and not written down',
+    !$bz['ok'] && str_contains($bz['why'], 'drawing 2 sessions already') && !str_contains($bz['why'], 'must name')
+    && xeric_stream_machine_says($dbL3, $busy) === null && xeric_stream_offer($Ts, $dbL3, $busy)['ok'], $bz['why']);
+$locked = ['base' => 'https://busy.example', 'stub' => fn($tag) => $tag === 'stream' ? ['_http' => 409] : []];
+$lk = xeric_stream_start($Ts, $dbL3, $locked, ['now' => $t1420]);
+ok('stream: a bodyless 409 is "not now" too, and go live stays', !$lk['ok'] && str_contains($lk['why'], 'HTTP 409')
+    && xeric_stream_machine_says($dbL3, $locked) === null, $lk['why']);
+// A no does not keep: a day, or another machine, and it is asked again.
+$deafA = ['base' => 'https://deaf-a.example'];
+$deafB = ['base' => 'https://deaf-b.example'];
+xeric_stream_machine_note($dbL3, $deafA, false, $wall);
+ok('stream: a machine\'s no is believed for a day', xeric_stream_machine_says($dbL3, $deafA, $wall + 3600) === false
+    && xeric_stream_machine_says($dbL3, $deafA, $wall + XERIC_STREAM_NO_FOR + 1) === null);
+xeric_stream_machine_note($dbL3, $deafA, false, $wall);
+ok('stream: and is cleared when the machine\'s base changes', xeric_stream_machine_says($dbL3, $deafB, $wall + 60) === null
+    && xeric_stream_machine_says($dbL3, $deafA, $wall + 60) === null);
+xeric_world_state_set($dbL3, 'scene.stream.machines', json_encode(['https://deaf-a.example' => false]));
+ok('stream: a no kept before its time was written is not believed', xeric_stream_machine_says($dbL3, $deafA) === null);
+$dbL3 = null;
+foreach ([$dbL3P, $dbL3P . '-wal', $dbL3P . '-shm'] as $f) @unlink($f);
 ok('stream: origins are strict — no path, no credentials, nothing a CSP could misread',
     xeric_stream_origin('https://Scenes.Example:8443/v1/x?y') === 'https://scenes.example:8443'
     && xeric_stream_origin('https://a.example:443/') === 'https://a.example'

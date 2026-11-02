@@ -614,12 +614,37 @@ not in anybody else's view.
 conditioning can carry (the light two buckets on from where it began, or the
 room shut or gone dark — go live again for a fresh start); at max_seconds; when
 the tab is hidden for more than 30 s or stops beating; or when the world's
-`stream_seconds_per_day` are spent ([BUDGET.md](BUDGET.md)). The machine is
-told (`DELETE {base}/v1/scenes/{session}`, best effort), and the view goes back
+`stream_seconds_per_day` are spent ([BUDGET.md](BUDGET.md)). **Every end, by
+every path** — the button, the tab, the budget, the beat, the sweep that finds
+nobody beating — meters the tail since the last beat (at most 15 s, never past
+the session's end) and tells the machine **on the session's own row**
+(`DELETE {base}/v1/scenes/{session}`, best effort, the current machine's key
+lent only when it is that same machine). A DELETE that fails on a machine that
+said how long it would run (`max_seconds`, `expires_at`) is written down as
+`meta.unconfirmed_end` — the seconds it may still bill, never counted as spent,
+always said, in the inspector and under the ended view. Then the view goes back
 to the stored panorama with a line: *the live view ended: you left the
-Bluebird Diner.*
+Bluebird Diner.* A page's own end sends a code, never a sentence — `closed`
+(the button), `hidden`, `unplayable`, `connect_failed` — and the engine keeps
+the sentence (`xeric_stream_why`).
 
-**Metered by the second.** The page POSTs `stream.php {a: 'beat'}` every 10 s;
+**Cannot, or not now.** A stream request answered with a 404, 405, 415 or 501,
+or with `{"error": "...", "cannot": true}` at any status, means the machine
+does not stream: it is written down against that address for a day (another
+address clears it), and "go live" goes. Every other refusal — 401, 403, 408,
+409, 429, any 5xx — is *not now*: the person is shown the machine's own
+`error`, and nothing is written down.
+
+**Metered by the second, from the first picture.** The heartbeat starts only
+once the element is actually playing — the `playing` event, the first decoded
+WHEP frame, the first MJPEG picture — and a session that shows none within 20 s,
+or that this browser cannot play at all, is ended with its reason before the
+stored room comes back; a machine whose only protocol this tab cannot play is
+not offered again in it (sessionStorage, per page and machine origin). Every
+end pauses the element, removes its `src` and loads nothing. The server's HTML
+names a live session in data attributes on an empty slot and never as a `src`;
+the client makes the one element, once a session, and moves it across repaints.
+The page POSTs `stream.php {a: 'beat'}` every 10 s;
 the server counts the seconds since the last beat (at most 15 per beat, never
 past the session's end), owner-only, refused cross-site, and writes them into
 the world's ledger as kind `stream`.

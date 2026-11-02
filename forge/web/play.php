@@ -2325,6 +2325,8 @@ echo xeric_play_css_link() . '<style>
     var live = document.querySelector('#look .lookstreambox');
     if (live) XV.mount({ kind: 'stream', box: live, onEnd: function () { refreshState(); } });
     else XV.unmount();
+    // A machine this tab found it cannot play is not offered again (xeric-view.js liveGate).
+    XV.liveGate($$('#look [data-golive]'), 'play');
     var box = document.querySelector('#look .lookpanobox');
     if (box) XV.mount(box);
     var sc = document.querySelector('#look canvas.looksplat');      // a room to stand inside (xeric-splat.js)

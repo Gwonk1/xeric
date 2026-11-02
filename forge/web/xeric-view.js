@@ -372,6 +372,14 @@ root.XericView = function (o) {
   // model drawing the room as video, played straight from the scene machine's
   // own origin — the one remote origin the page's CSP names (ui.php).
   //
+  // A STREAM MUST NEVER BILL FOR A PICTURE NOBODY SEES. So, on both pages:
+  // the heartbeat that meters it starts only once an element is actually
+  // playing (whenPlaying — the 'playing' event, the first decoded frame, the
+  // first MJPEG picture); a session that never gets there, or that this
+  // browser cannot play at all, is ENDED, with its real reason, before the
+  // stored room comes back; and every end pauses the element, takes its
+  // source away and loads nothing, so no connection is left open behind it.
+  //
   // WHEP, MINIMALLY, AND NO LIBRARY: a receive-only RTCPeerConnection, its
   // offer POSTed as application/sdp to the session url once ICE has gathered
   // (non-trickle, two seconds at most), the answer set, and the track put on
@@ -384,7 +392,7 @@ root.XericView = function (o) {
     var PC = dep.PC || root.RTCPeerConnection, F = dep.fetch || root.fetch;
     var closed = false, res = null;
     if (!PC || !F) {
-      return { ready: Promise.reject(new Error('this browser has no WebRTC')), close: function () {}, pc: null };
+      return { ready: Promise.reject(new Error('this browser has no WebRTC')), close: function () {}, pc: null, unsupported: true };
     }
     var pc = new PC({ bundlePolicy: 'max-bundle' });
     pc.addTransceiver('video', { direction: 'recvonly' });
@@ -432,13 +440,94 @@ root.XericView = function (o) {
     return !!(v && v.canPlayType && v.canPlayType('application/vnd.apple.mpegurl'));
   }
 
-  // The heartbeat, alone — the stand page runs it beside its own sphere.
-  // Every ten seconds a POST to stream.php says the view is still on screen;
-  // the server counts the seconds and answers whether it goes on. Hidden for
-  // more than thirty seconds, the page ends it itself. o: id, beat, beatS,
-  // auth(headers), fetch, onEnd(reason).
+  // The same question, asked of one bare <video> kept for asking: never
+  // given a source, never attached, so asking opens nothing.
+  var hlsProbe = null;
+  function canHls() {
+    if (!hlsProbe) hlsProbe = document.createElement('video');
+    return playsHls(hlsProbe);
+  }
+
+  // cb() once, when the element is showing a picture: a <video>'s 'playing'
+  // (or, where the browser has it, its first decoded frame), an <img>'s first
+  // MJPEG part (its load, or a natural width — browsers differ on which a
+  // multipart picture gives). Returns the cancel.
+  function whenPlaying(m, cb) {
+    var done = false, t = 0;
+    function off() {
+      clearInterval(t);
+      if (m && m.removeEventListener) { m.removeEventListener('playing', go); m.removeEventListener('load', go); }
+    }
+    function go() { if (done) return; done = true; off(); cb(); }
+    if (!m) return function () {};
+    if (m.tagName === 'IMG') {
+      if (m.addEventListener) m.addEventListener('load', go);
+      t = setInterval(function () { if (m.naturalWidth > 0) go(); }, 250);
+    } else {
+      if (m.addEventListener) m.addEventListener('playing', go);
+      if (typeof m.requestVideoFrameCallback === 'function') {
+        try { m.requestVideoFrameCallback(function () { go(); }); } catch (e) {}
+      }
+    }
+    return function () { done = true; off(); };
+  }
+
+  // Put a live element down for good: paused, its source taken away, loaded
+  // with nothing — the only way a browser is sure to close the connection a
+  // <video src> (or an <img src> of MJPEG) holds open, attached or not.
+  function silence(m) {
+    if (!m) return;
+    if (m.tagName === 'VIDEO') {
+      try { m.pause(); } catch (e) {}
+      try { m.removeAttribute('src'); m.srcObject = null; } catch (e) {}
+      try { if (m.load) m.load(); } catch (e) {}
+    } else {
+      try { m.removeAttribute('src'); } catch (e) {}
+    }
+  }
+
+  // THIS BROWSER CANNOT PLAY THAT MACHINE. When the only protocol a machine's
+  // session came in is one this page cannot show (HLS without native support
+  // and no MJPEG beside it; MJPEG or anything but video on the sphere; a
+  // machine whose video a texture refuses), the session is ended as
+  // `unplayable` and the machine's origin is remembered for this tab, per
+  // page, so "go live" is not offered again to start another one nobody can
+  // see. sessionStorage: it is this browser's fact, not the world's.
+  var NOPLAY = 'xeric.live.noplay|';
+  function originOf(u) {
+    try { return new URL(u, root.location && root.location.href ? root.location.href : undefined).origin; } catch (e) { return ''; }
+  }
+  function liveMark(surface, url) {
+    var o = originOf(url);
+    if (!o) return;
+    try { root.sessionStorage.setItem(NOPLAY + surface + '|' + o, '1'); } catch (e) {}
+  }
+  function liveCannot(surface, origin) {
+    if (!origin) return false;
+    try { return root.sessionStorage.getItem(NOPLAY + surface + '|' + origin) === '1'; } catch (e) { return false; }
+  }
+  // The play page's go-live buttons (data-origin, play-view.php): hidden for
+  // a machine this tab already found it cannot play. Returns how many.
+  function liveGate(btns, surface) {
+    var n = 0;
+    (btns || []).forEach(function (b) {
+      if (!b || !b.dataset || !liveCannot(surface || 'play', b.dataset.origin)) return;
+      b.hidden = true; b.disabled = true; n++;
+      var note = b.parentNode && b.parentNode.querySelector ? b.parentNode.querySelector('.note') : null;
+      if (note) note.textContent = 'this browser cannot play this machine\'s live view';
+    });
+    return n;
+  }
+
+  // The heartbeat, alone — both pages run it beside their own element. Every
+  // ten seconds a POST to stream.php says the view is still on screen; the
+  // server counts the seconds and answers whether it goes on. Hidden for more
+  // than thirty seconds, the page ends it itself. o: id, beat, beatS,
+  // auth(headers), fetch, onEnd(reason), wait (true: beat only from start(),
+  // when the element is playing). end(code) sends one of the server's codes
+  // (stream.php: closed, hidden, unplayable, connect_failed), never a sentence.
   function streamBeat(o) {
-    var dead = false, hidAt = 0, hideT = 0;
+    var dead = false, hidAt = 0, hideT = 0, timer = 0, started = false;
     function post(body) {
       var F = o.fetch || root.fetch;
       var h = { 'Content-Type': 'application/json' };
@@ -471,43 +560,61 @@ root.XericView = function (o) {
         }, 31000);
       } else { hidAt = 0; clearTimeout(hideT); }
     }
+    function start() {
+      if (dead || started) return;
+      started = true;
+      timer = setInterval(beat, (+o.beatS || 10) * 1000);
+    }
     if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', vis);
-    var timer = setInterval(beat, (+o.beatS || 10) * 1000);
+    if (!o.wait) start();
     return {
-      beat: beat, stop: stop,
+      beat: beat, stop: stop, start: start,
+      get started() { return started; },
       end: function (why) { if (dead) return; stop(); return post({ a: 'end', why: why || 'closed' }).catch(function () {}); }
     };
   }
 
-  // The play view's live box (play-view.php renders it): the media element,
-  // the heartbeat, and the stored room back with "the live view ended:
-  // <reason>" when it ends — opt.onEnd(reason) then asks the server for the
-  // view, which says the same. HLS where the browser plays it; the MJPEG
-  // fallback where it does not and the session offers one; otherwise the
-  // view is ended at once and says why, rather than billing for a picture
-  // nobody can see.
+  // How long a session may take to show its first picture before it is
+  // ended as connect_failed, seconds: under the server's thirty-second sweep.
+  var LIVE_CONNECT_S = 20;
+
+  // The play view's live box. play-view.php renders it EMPTY — the session in
+  // data attributes and a .lookstreamslot, never a src — and this makes the
+  // one live element, once per session: HLS where the browser plays it, the
+  // MJPEG fallback where it does not and the session offers one, the WHEP
+  // client's <video> for WebRTC, a picture for MJPEG. A repaint of the same
+  // session moves that element into the new slot (move); nothing else ever
+  // opens a second connection. Otherwise the view is ended at once, with its
+  // reason, rather than billing for a picture nobody can see — and the stored
+  // room comes back with "the live view ended: <reason>"; opt.onEnd(reason)
+  // then asks the server for the view, which says the same.
   function stream(box, opt) {
     opt = opt || {};
     var d = box.dataset, pr = d.protocol, url = d.url, fb = d.fallback || '';
-    var media = box.querySelector('video, img.lookstreamimg'), w = null, hb = null, dead = false;
-    function line(t) { var st = box.querySelector('.lookstreamstate'); if (st) st.textContent = t; }
+    var media = null, w = null, hb = null, dead = false, unwatch = null, connT = 0, said = '';
+    function line(t) { said = t; var st = box.querySelector('.lookstreamstate'); if (st) st.textContent = t; }
+    function slotOf(b) { return b.querySelector('.lookstreamslot') || b; }
     function asImg(src) {
       var im = document.createElement('img');
-      im.className = 'lookstreamimg'; im.alt = 'live'; im.src = src;
-      if (media) media.replaceWith(im);
-      media = im;
+      im.className = 'lookstreamimg'; im.alt = d.alt || 'live'; im.src = src;
+      return im;
+    }
+    function asVideo() {
+      var v = document.createElement('video');
+      v.className = 'lookstream'; v.muted = true; v.playsInline = true; v.autoplay = true;
+      v.setAttribute('playsinline', ''); v.setAttribute('muted', '');
+      return v;
     }
     function quiet() {
+      if (unwatch) { unwatch(); unwatch = null; }
+      clearTimeout(connT);
       if (w) { w.close(); w = null; }
-      if (media && media.tagName === 'VIDEO') {
-        try { media.pause(); } catch (e) {}
-        try { media.removeAttribute('src'); media.srcObject = null; } catch (e) {}
-      }
+      silence(media);
     }
-    function end(reason, told) {
+    function end(reason, told, code) {
       if (dead) return;
       dead = true;
-      if (hb) { if (told) hb.stop(); else hb.end('closed'); }
+      if (hb) { if (told) hb.stop(); else hb.end(code || 'closed'); }
       quiet();
       var back = document.createElement('div');
       back.className = 'lookmain lookstill';
@@ -522,45 +629,113 @@ root.XericView = function (o) {
       if (box.parentNode) box.replaceWith(back);
       if (opt.onEnd) opt.onEnd(reason);
     }
-    var how = '';
+    var how = '', why = 'this live view is HLS, and this browser does not play HLS by itself (Safari, Vision Pro and Quest do)';
     if (pr === 'hls') {
-      if (playsHls(media)) {
-        how = 'video';
-        if (!media.getAttribute('src')) media.setAttribute('src', url);
-        var p = media.play && media.play();
-        if (p && p.catch) p.catch(function () {});
-      } else if (fb) {
-        how = 'mjpeg'; asImg(fb);
+      if (canHls()) { how = 'video'; media = asVideo(); media.setAttribute('src', url); }
+      else if (fb) {
+        how = 'mjpeg'; media = asImg(fb);
         line('live — this browser does not play HLS itself, so this is the machine\'s picture-by-picture view');
       }
     } else if (pr === 'webrtc-whep') {
-      how = 'video';
-      w = whep(url, media, opt);
-      w.ready.catch(function () { end('the live view could not be connected', false); });
+      if (opt.PC || root.RTCPeerConnection) { how = 'video'; media = asVideo(); }
+      else why = 'this live view is WebRTC, and this browser has no WebRTC';
     } else if (pr === 'mjpeg') {
-      how = 'mjpeg';
-      if (!media || media.tagName !== 'IMG') asImg(url);
-    }
+      how = 'mjpeg'; media = asImg(url);
+    } else why = 'this live view is in a form this page cannot play';
+    if (media) slotOf(box).appendChild(media);
+    hb = streamBeat({ id: d.stream, beat: d.beat, beatS: opt.beatS, auth: opt.auth, fetch: opt.fetch, wait: true,
+                      onEnd: function (reason) { end(reason, true); } });
     var api = {
       streamId: d.stream, how: how,
       get alive() { return !dead; },
       get media() { return media; },
-      end: function (reason) { end(reason || 'you ended it', false); },
-      // A repaint with the same live view: the playing element moves into the
-      // new box, so the picture does not blink and WHEP does not reconnect.
+      get beating() { return !!(hb && hb.started); },
+      end: function (reason) { end(reason || 'you ended it', false, 'closed'); },
+      // A repaint with the same live view: the one element moves into the new
+      // box's slot, so the picture does not blink, WHEP does not reconnect and
+      // no second connection is ever opened.
       move: function (nb) {
-        var fresh = nb.querySelector('video, img.lookstreamimg');
-        if (fresh && media && fresh !== media) fresh.replaceWith(media);
+        if (media) slotOf(nb).appendChild(media);
         box = nb; d = nb.dataset;
+        if (said) line(said);
       },
       // Thrown away without a repaint to move into (the player walked on, the
       // view changed): the server is told, so the machine stops drawing now
       // rather than when the sweep notices.
       destroy: function () { if (dead) return; dead = true; if (hb) hb.end('page'); quiet(); }
     };
-    hb = streamBeat({ id: d.stream, beat: d.beat, beatS: opt.beatS, auth: opt.auth, fetch: opt.fetch,
-                      onEnd: function (reason) { end(reason, true); } });
-    if (!how) end('this live view is HLS, and this browser does not play HLS by itself (Safari, Vision Pro and Quest do)', false);
+    if (!how) { liveMark('play', url); end(why, false, 'unplayable'); return api; }
+    if (pr === 'webrtc-whep') {
+      w = whep(url, media, opt);
+      w.ready.catch(function () { end('the live view could not be connected', false, 'connect_failed'); });
+    } else if (media.tagName === 'VIDEO') {
+      var pl = media.play && media.play();
+      if (pl && pl.catch) pl.catch(function () {});
+    }
+    unwatch = whenPlaying(media, function () { clearTimeout(connT); if (!dead) hb.start(); });
+    connT = setTimeout(function () { end('the live view never showed a picture', false, 'connect_failed'); },
+                       (opt.connectS == null ? LIVE_CONNECT_S : +opt.connectS) * 1000);
+    return api;
+  }
+
+  // THE STAND PAGE'S LIVE VIEW, on the sphere (stand.php): a muted, detached
+  // <video> handed to the panorama as its texture. Only HLS the browser plays
+  // natively, or WHEP, can be a texture; anything else — MJPEG, HLS on a
+  // browser without it — is `unplayable` HERE and the session is ended before
+  // the stored panorama comes back, and the machine remembered for this tab.
+  // The beat waits for the video to play; a WHEP that fails, or a video that
+  // never plays, ends it as connect_failed; fail(code, reason) is the page's
+  // own fallback (a texture the browser refuses), which ends it the same way.
+  // off() puts the element down without telling the server (the view was
+  // repainted away; the server's sweep, or its own end, has the session).
+  // o: auth, fetch, onEnd(reason, told, code), PC, dep (whep's), connectS.
+  function standLive(live, o) {
+    o = o || {};
+    var v = document.createElement('video'), w = null, hb = null, dead = false, unwatch = null, connT = 0;
+    v.muted = true; v.playsInline = true; v.autoplay = true; v.crossOrigin = 'anonymous';
+    v.setAttribute('playsinline', '');
+    function quiet() {
+      if (unwatch) { unwatch(); unwatch = null; }
+      clearTimeout(connT);
+      if (w) { w.close(); w = null; }
+      silence(v);
+    }
+    function finish(reason, told, code) {
+      if (dead) return;
+      dead = true;
+      if (hb) { if (told) hb.stop(); else hb.end(code || 'closed'); }
+      quiet();
+      if (o.onEnd) o.onEnd(reason, !!told, code || '');
+    }
+    hb = streamBeat({ id: live.id, beat: live.beat || 'stream.php', beatS: live.beat_s, auth: o.auth, fetch: o.fetch,
+                      wait: true, onEnd: function (reason) { finish(reason, true); } });
+    var api = {
+      id: live.id, video: v,
+      get alive() { return !dead; },
+      get beating() { return !!(hb && hb.started); },
+      fail: function (code, reason) {
+        if (code === 'unplayable') liveMark('stand', live.url);
+        finish(reason, false, code);
+      },
+      end: function (reason) { finish(reason || 'you ended it', false, 'closed'); },
+      off: function () { if (dead) return; dead = true; if (hb) hb.stop(); quiet(); }
+    };
+    var PC = o.PC || (o.dep && o.dep.PC) || root.RTCPeerConnection;
+    if (live.protocol === 'hls' && playsHls(v)) {
+      v.setAttribute('src', live.url);
+    } else if (live.protocol === 'webrtc-whep' && PC) {
+      var dep = {}; Object.keys(o.dep || {}).forEach(function (k) { dep[k] = o.dep[k]; }); dep.PC = PC;
+      w = whep(live.url, v, dep);
+      w.ready.catch(function () { finish('the live view could not be connected; this is the stored room', false, 'connect_failed'); });
+    } else {
+      api.video = null;
+      api.fail('unplayable', 'this browser cannot play this live view on the sphere, so this is the stored room');
+      return api;
+    }
+    var p = v.play && v.play(); if (p && p.catch) p.catch(function () {});
+    unwatch = whenPlaying(v, function () { clearTimeout(connT); if (!dead) hb.start(); });
+    connT = setTimeout(function () { finish('the live view never showed a picture; this is the stored room', false, 'connect_failed'); },
+                       (o.connectS == null ? LIVE_CONNECT_S : +o.connectS) * 1000);
     return api;
   }
 
@@ -1429,6 +1604,7 @@ root.XericView = function (o) {
     pano: pano, xr: xr, xrRay: xrRay, mat4inv: mat4inv, panoProgram: panoProgram,
     // The live view's: the WHEP client, the HLS question, the heartbeat.
     whep: whep, playsHls: playsHls, stream: stream, streamBeat: streamBeat,
+    standLive: standLive, whenPlaying: whenPlaying, liveCannot: liveCannot, liveMark: liveMark, liveGate: liveGate,
     gaze: gaze, phoneGaze: phoneGaze, dayView: dayView,
     speak: speak, unspeak: unspeak, refuseSpeak: refuseSpeak, hold: hold,
     // The stand page's: the headset's tags, ray and hold, the voice's panner.

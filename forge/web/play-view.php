@@ -387,7 +387,8 @@ function xeric_play_audio_sniff(string $head): string
  * live in this room, if one is; `stream_ended` the one that ended here in the
  * last ten minutes, for "the live view ended: <reason>"; `stream_offer` whether
  * "go live" may be shown (a read, never a call). Live views nobody has beaten
- * for are swept first — in the database only, no network on a read path.
+ * for are swept first (xeric_stream_sweep): the one network call a read path
+ * may make, a DELETE that stops a machine billing, once per abandoned view.
  *
  * @return array{brief:?array,row:?array,stale:bool,pending:bool,failed:bool,scenes_dir:string,
  *               day:array<string,array>,sound:?array,sound_row:?array,stream:?array,stream_ended:?array,
@@ -452,14 +453,17 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
     }
 
     try {
-        xeric_stream_sweep($db);
+        $ep = null;
+        try { $ep = xeric_scene_endpoint(); } catch (Throwable $e) { $ep = null; }
+        // A view nobody beats for is ended as every view is: its tail into
+        // the ledger, and the machine on its row told to stop.
+        xeric_stream_sweep($db, null, ['endpoint' => $ep,
+                                       'meter' => xeric_stream_ledger($db, $now ?? xeric_clock_now($db, $t))]);
         $key = (string)$brief['key'];
         $out['stream'] = xeric_stream_live($db, $key);
         // A live view stamped above this viewer is not theirs to watch.
         if ($out['stream'] !== null && !xeric_state_shown((string)$out['stream']['rating'])) $out['stream'] = null;
         if ($out['stream'] === null) $out['stream_ended'] = xeric_stream_ended($db, $key);
-        $ep = null;
-        try { $ep = xeric_scene_endpoint(); } catch (Throwable $e) { $ep = null; }
         $out['stream_offer'] = xeric_stream_offer($t, $db, $ep);
     } catch (Throwable $e) {
         // A locked table: no live view this repaint, and nothing else lost.
@@ -494,6 +498,21 @@ function xeric_play_stream_origin(?array $t = null, ?PDO $db = null): string
     } catch (Throwable $e) {
         return '';
     }
+}
+
+/**
+ * MAY "GO LIVE" BE PRESSED, here, by this viewer — the one answer the page's
+ * button and the look's JSON both read, so they cannot disagree: the owner
+ * only (a guest never runs the meter), nothing already live in the room, the
+ * current look not still being drawn (a live view is conditioned on the
+ * picture on screen), that picture a still or a panorama, and the world and
+ * the machine offering it (xeric_stream_offer). $l is xeric_play_look's.
+ */
+function xeric_play_stream_can_offer(array $l, bool $mine): bool
+{
+    $row = $l['row'] ?? null;
+    return $mine && ($l['stream'] ?? null) === null && empty($l['pending']) && $row !== null
+        && in_array((string)$row['kind'], ['image', 'pano'], true) && !empty($l['stream_offer']['ok']);
 }
 
 /** A live session as a client is handed it: where to play it from, how, and until when. */
@@ -533,9 +552,12 @@ function xeric_play_look_back(PDO $db, string $key, string $scenesDir, int $trie
  * only, the engine's own promise, and nothing in it is not already on the map
  * or in a portrait), the row trimmed to what a viewer needs, and the machine
  * asked — the one network call in here, which is why the sidebar does not
- * make it and this does.
+ * make it and this does. $mine is whether the viewer is the owner: false (a
+ * guest's view) unless the caller says so, because "go live" is offered only
+ * to the one who pays for it.
  */
-function xeric_play_look_view(array $t, PDO $db, string $slug, ?array $now = null, bool $probe = true): array
+function xeric_play_look_view(array $t, PDO $db, string $slug, ?array $now = null, bool $probe = true,
+                              bool $mine = false): array
 {
     $l  = xeric_play_look($t, $db, $now);
     $ep = xeric_scene_endpoint();
@@ -579,8 +601,11 @@ function xeric_play_look_view(array $t, PDO $db, string $slug, ?array $now = nul
         // last one ended, and whether "go live" may be pressed.
         'stream'  => ['live'  => xeric_play_stream_public($l['stream']),
                       'ended' => $l['stream_ended'] !== null ? (string)$l['stream_ended']['reason'] : null,
-                      'offer' => (bool)$l['stream_offer']['ok'] && $l['row'] !== null
-                                 && in_array((string)$l['row']['kind'], ['pano', 'image'], true)],
+                      'offer' => ($offer = xeric_play_stream_can_offer($l, $mine)),
+                      // The machine's origin when go live is offered: a browser
+                      // that found it could not play that machine says so once
+                      // and stops offering (xeric-view.js liveCannot).
+                      'origin' => $offer ? (string)$l['stream_offer']['origin'] : ''],
         'machine' => [
             'up'     => $probe && $ep !== null && xeric_scene_up($ep, 3),
             'costly' => $ep !== null && xeric_scene_costly($ep),
@@ -856,15 +881,15 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
                 ? xeric_play_look_src($slug, (string)$row['key'], (string)$row['fingerprint']) : '';
         $pr  = (string)$stream['protocol'];
         $url = (string)$stream['url'];
-        $media = match ($pr) {
-            'hls'         => '<video class="lookstream" playsinline muted autoplay preload="none" src="' . h($url) . '"></video>',
-            'webrtc-whep' => '<video class="lookstream" playsinline muted autoplay data-whep="' . h($url) . '"></video>',
-            default       => '<img class="lookstreamimg" alt="' . h('Live: ' . (string)$b['name']) . '" src="' . h($url) . '">',
-        };
+        // AN EMPTY SLOT, NEVER A SOURCE. A <video src> or an <img src> here
+        // would open another connection to the machine on every repaint —
+        // before the client could move the element it already holds into
+        // place — so the server names the session in data attributes only,
+        // and xeric-view.js makes the one live element, once per session.
         $view .= '<div class="lookmain lookstreambox" data-stream="' . (int)$stream['id'] . '" data-protocol="' . h($pr) . '"'
                . ' data-url="' . h($url) . '" data-fallback="' . h((string)$stream['fallback']) . '"'
-               . ' data-beat="stream.php" data-poster="' . h($poster) . '">'
-               . $media . '<p class="lookstreamstate" role="status">live</p>'
+               . ' data-beat="stream.php" data-poster="' . h($poster) . '" data-alt="' . h('Live: ' . (string)$b['name']) . '">'
+               . '<div class="lookstreamslot"></div><p class="lookstreamstate" role="status">live</p>'
                . xeric_play_look_tags($b['who'], 'looktagrow')
                . ($mine ? '<p class="lookliveact"><button type="button" class="nbtn ghost" data-liveend>end the live view</button>'
                         . ' <span class="note">live, metered by the second</span></p>' : '')
@@ -927,7 +952,9 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
         $view .= '<p class="lookearlier" hidden></p>'
                . $meta . ($l['stale'] ? ' <span class="lookstale">from an earlier hour</span>' : '') . '</p>';
         if ($l['stream_ended'] !== null) {
-            $view .= '<p class="lookliveend">the live view ended: ' . h((string)$l['stream_ended']['reason']) . '</p>';
+            $un = xeric_stream_unconfirmed_line($db, null, $l['stream_ended']);
+            $view .= '<p class="lookliveend">the live view ended: ' . h((string)$l['stream_ended']['reason']) . '</p>'
+                   . ($un !== null && $mine ? '<p class="note lookliveunconfirmed">' . h($un) . '</p>' : '');
         }
     } else {
         $view .= xeric_play_look_prose($b);
@@ -1027,9 +1054,9 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
     // and this machine stream (xeric_stream_offer — off unless the template
     // says so). Never while the room is being drawn: a live view is
     // conditioned on the picture, and that picture is the one on screen.
-    if ($stream === null && $mine && !$l['pending'] && $row !== null
-        && in_array((string)$row['kind'], ['image', 'pano'], true) && !empty($l['stream_offer']['ok'])) {
-        $act .= '<p class="lookact"><button type="button" class="nbtn ghost" data-golive>go live</button>'
+    if (xeric_play_stream_can_offer($l, $mine)) {
+        $act .= '<p class="lookact"><button type="button" class="nbtn ghost" data-golive data-origin="'
+              . h((string)$l['stream_offer']['origin']) . '">go live</button>'
               . ' <span class="note">a world model draws this room as video, metered by the second'
               . (!empty($l['stream_offer']['costly']) ? ' on a machine that bills' : '') . '</span></p>';
     }

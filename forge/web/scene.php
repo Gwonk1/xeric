@@ -159,4 +159,4 @@ try {
 } catch (Throwable $e) {
     xeric_web_json(['error' => $e->getMessage()], 404);
 }
-xeric_web_json(xeric_play_look_view($w['template'], $w['db'], (string)$w['slug']));
+xeric_web_json(xeric_play_look_view($w['template'], $w['db'], (string)$w['slug'], null, true, !xeric_play_is_guest($w)));

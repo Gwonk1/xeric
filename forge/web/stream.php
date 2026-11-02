@@ -4,7 +4,7 @@
  *
  *     POST stream.php {w, a: 'start'}                       go live in the room you stand in
  *     POST stream.php {w, a: 'beat', id, hidden_for?}       still watching; counts the seconds
- *     POST stream.php {w, a: 'end',  id, why?}              stop watching
+ *     POST stream.php {w, a: 'end',  id, why?}              stop watching (why: a code, below)
  *
  * ALL THREE ARE THE OWNER'S. A live view bills by the second on the owner's
  * machine; a guest reads the room and never runs its meter. The play page
@@ -19,11 +19,15 @@
  * machine is. Spend-guarded twice: the start asks the ceiling before a
  * session exists, and every beat asks it again after counting, ending the
  * view the moment the day's seconds are gone. A page that stops beating is
- * swept out after thirty seconds and is not billed for them.
+ * swept out after thirty seconds, billed for the tail the machine drew (one
+ * capped beat's worth), and the machine is told to stop.
  *
- * `why` on an end is the page's own word for why it stopped (the tab was
- * hidden, the person pressed the button), chosen from a short list here — a
- * page cannot write a sentence into the row another page will read out.
+ * `why` on an end is the page's own CODE for why it stopped — `closed` (the
+ * person pressed the button), `hidden` (the tab), `unplayable` (this browser
+ * cannot play the session, so it ended it before the meter ran on a picture
+ * nobody saw), `connect_failed` (WHEP, or a session that never started
+ * playing) — and engine/stream.php's xeric_stream_why turns the code into the
+ * sentence. A page cannot write a sentence into the row another page reads out.
  */
 
 declare(strict_types=1);
@@ -79,12 +83,10 @@ $row = $id > 0 ? xeric_stream_get($db, $id) : null;
 if ($row === null) xeric_web_json(['error' => 'there is no such live view'], 404);
 
 if ($a === 'end') {
-    $why = match ((string)($in['why'] ?? '')) {
-        'hidden' => 'the tab was hidden for more than ' . XERIC_STREAM_AWAY . ' seconds',
-        'closed' => 'you ended it',
-        default  => 'the page stopped it',
-    };
-    xeric_stream_end($db, $ep, $id, $why);
+    // The seconds since the last beat are metered by the end itself, and the
+    // machine on the session's own row is told to stop (xeric_stream_end).
+    xeric_stream_end($db, $ep, $id, xeric_stream_why((string)($in['why'] ?? '')), null,
+                     ['meter' => xeric_stream_ledger($db, xeric_clock_now($db, $t))]);
     $row = xeric_stream_get($db, $id);
     xeric_web_json(['ok' => 1, 'live' => false, 'reason' => (string)$row['reason']]);
 }
@@ -94,9 +96,7 @@ $now = xeric_clock_now($db, $t);
 $r = xeric_stream_beat($t, $db, $ep, $id, [
     'now'        => $now,
     'hidden_for' => max(0, (int)($in['hidden_for'] ?? 0)),
-    'meter'      => function (int $s, bool $costly) use ($db, $now): void {
-        xeric_budget_note($db, $now, 'stream', $s, $costly);
-    },
+    'meter'      => xeric_stream_ledger($db, $now),
 ]);
 xeric_web_json(['ok' => 1, 'live' => $r['live'], 'reason' => $r['reason'], 'counted' => $r['counted'],
                 'seconds' => $r['seconds'], 'events' => count($r['events']), 'ends_at' => $r['ends_at']]);

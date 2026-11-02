@@ -622,12 +622,19 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     // down (xeric_budget_stopped) and this is the one place a person asks
     // "why has nothing happened since two o'clock?".
     $stoppedWhy = xeric_world_state_get($db, 'budget.stopped') !== null ? xeric_budget_why($db, $now) : null;
+    // A LIVE VIEW THE MACHINE WAS NOT TOLD TO STOP (engine/stream.php): the
+    // seconds it may still bill are nobody's to count, so they are said here.
+    $unconfirmed = null;
+    try { $unconfirmed = xeric_stream_unconfirmed_line($db); } catch (Throwable $e) { $unconfirmed = null; }
     ?>
   <h1>Why this xeric does what it does</h1>
   <p class="sub"><?= h((string)$T['meta']['name']) ?> at <?= h(xeric_play_when($now)) ?>. Nothing on this page
     calls a model or changes anything, it is a read of what is already there.</p>
   <?php if ($stoppedWhy !== null): ?>
   <p class="quiet budgetstop"><?= h($stoppedWhy) ?></p>
+  <?php endif; ?>
+  <?php if ($unconfirmed !== null): ?>
+  <p class="quiet budgetstop streamunconfirmed"><?= h($unconfirmed) ?></p>
   <?php endif; ?>
 
   <h2>what each of them is told</h2>

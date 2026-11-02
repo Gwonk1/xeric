@@ -68,6 +68,8 @@ const XERIC_STREAM_BEAT_CAP = 15;
 const XERIC_STREAM_AWAY     = 30;
 /** One session's ceiling when the template does not say, seconds. */
 const XERIC_STREAM_MAX      = 300;
+/** How long a machine's "I do not stream" is believed before it is asked again, seconds. */
+const XERIC_STREAM_NO_FOR   = 86400;
 /** The protocols a page here can show, in no order. */
 const XERIC_STREAM_PROTOCOLS = ['hls', 'webrtc-whep', 'mjpeg'];
 
@@ -124,21 +126,41 @@ function xeric_stream_machine_origin(?array $endpoint): string
 /**
  * Has this machine said whether it streams? true, false, or null for not yet
  * asked. Cached per machine (its address), in the world's own state: the
- * first "go live" asks, and the answer — a session, or anything else — is
- * written down against that address. Choosing another machine asks afresh.
+ * first "go live" asks, and the answer — a session, or a plain cannot
+ * (xeric_scene_answer) — is written down against that address with the time
+ * it was said. A refusal that is only "not now" is never written down.
+ *
+ * A NO DOES NOT KEEP. It is believed for a day (XERIC_STREAM_NO_FOR) and then
+ * asked again — machines get upgraded — and a no for any OTHER address is
+ * wiped as it is read, so choosing another machine is clearing it (the sound
+ * mark's rule). A no from before the time was kept is not believed at all.
  */
-function xeric_stream_machine_says(PDO $db, array $endpoint): ?bool
+function xeric_stream_machine_says(PDO $db, array $endpoint, ?int $wall = null): ?bool
 {
+    $wall ??= time();
     $map = json_decode((string)(xeric_world_state_get($db, 'scene.stream.machines') ?? ''), true);
-    $id  = xeric_scene_machine_id($endpoint);
-    return is_array($map) && array_key_exists($id, $map) ? (bool)$map[$id] : null;
+    if (!is_array($map)) return null;
+    $id = xeric_scene_machine_id($endpoint);
+    $kept = $map;
+    foreach ($map as $k => $v) {
+        $says = is_array($v) ? (bool)($v['streams'] ?? false) : (bool)$v;
+        $at   = is_array($v) ? (int)($v['at'] ?? 0) : 0;
+        if ($says) continue;
+        if ((string)$k !== $id || $at <= 0 || $wall - $at > XERIC_STREAM_NO_FOR) unset($kept[$k]);
+    }
+    if ($kept !== $map) {
+        xeric_world_state_set($db, 'scene.stream.machines', json_encode((object)$kept, JSON_UNESCAPED_SLASHES));
+    }
+    if (!array_key_exists($id, $kept)) return null;
+    $v = $kept[$id];
+    return is_array($v) ? (bool)($v['streams'] ?? false) : (bool)$v;
 }
 
-function xeric_stream_machine_note(PDO $db, array $endpoint, bool $streams): void
+function xeric_stream_machine_note(PDO $db, array $endpoint, bool $streams, ?int $wall = null): void
 {
     $map = json_decode((string)(xeric_world_state_get($db, 'scene.stream.machines') ?? ''), true);
     if (!is_array($map)) $map = [];
-    $map[xeric_scene_machine_id($endpoint)] = $streams;
+    $map[xeric_scene_machine_id($endpoint)] = ['streams' => $streams, 'at' => $wall ?? time()];
     xeric_world_state_set($db, 'scene.stream.machines', json_encode($map, JSON_UNESCAPED_SLASHES));
 }
 
@@ -341,7 +363,8 @@ function xeric_stream_session(array $s, array $endpoint): array
  * stream seconds spent; nowhere to stand; the machine does not stream (and
  * that is written down against it); a session this engine cannot play.
  *
- * $opts: scenes_dir (for the reference), wall (real time, tests), now.
+ * $opts: scenes_dir (for the reference), wall (real time, tests), now,
+ * meter (for the tail of a view this one replaces; the ledger by default).
  *
  * @return array{ok:bool,why:string,row:?array,status:int}
  */
@@ -366,7 +389,8 @@ function xeric_stream_start(array $t, PDO $db, ?array $endpoint, array $opts = [
     $live = xeric_stream_live($db);
     if ($live !== null) {
         if ((string)$live['key'] === (string)$brief['key']) return ['ok' => true, 'why' => '', 'row' => $live, 'status' => 200];
-        xeric_stream_end($db, $endpoint, (int)$live['id'], 'a live view of somewhere else began', $wall);
+        xeric_stream_end($db, $endpoint, (int)$live['id'], 'a live view of somewhere else began', $wall,
+                         ['meter' => $opts['meter'] ?? xeric_stream_ledger($db, $now)]);
     }
 
     $ref = null;
@@ -390,7 +414,7 @@ function xeric_stream_start(array $t, PDO $db, ?array $endpoint, array $opts = [
         return $no(preg_replace('/^(scene|stream): /', '', $e->getMessage()), 502);
     }
     if ($a['cannot']) {
-        xeric_stream_machine_note($db, $endpoint, false);
+        xeric_stream_machine_note($db, $endpoint, false, $wall);
         return $no('this scene machine does not stream; it has been written down, and "go live" is gone until another machine is chosen');
     }
     if ($a['pending'] !== null) return $no('the machine said later, and a live view cannot wait', 502);
@@ -399,15 +423,19 @@ function xeric_stream_start(array $t, PDO $db, ?array $endpoint, array $opts = [
     } catch (Throwable $e) {
         return $no(preg_replace('/^stream: /', '', $e->getMessage()), 502);
     }
-    xeric_stream_machine_note($db, $endpoint, true);
+    xeric_stream_machine_note($db, $endpoint, true, $wall);
 
     // The first of three ceilings: this world's, the machine's, its expiry.
     $ends = $wall + $cfg['max_seconds'];
     if ($s['max_seconds'] > 0) $ends = min($ends, $wall + $s['max_seconds']);
     if ($s['expires_at'] > $wall) $ends = min($ends, $s['expires_at']);
     $cond = xeric_stream_conditions($brief);
+    // What the MACHINE said it would run to, kept beside ours: if it is never
+    // told to stop, that is how long it may go on billing (xeric_stream_end).
     $meta = $a['meta'] + ($ref !== null ? ['reference_fingerprint' => $ref['fingerprint']] : [])
-          + (($brief['layout'] ?? null) !== null ? ['layout' => true] : []);
+          + (($brief['layout'] ?? null) !== null ? ['layout' => true] : [])
+          + ($s['max_seconds'] > 0 ? ['machine_max_seconds' => $s['max_seconds']] : [])
+          + ($s['expires_at'] > $wall ? ['machine_expires_at' => $s['expires_at']] : []);
     $db->prepare("INSERT INTO scene_streams (key, machine, session, url, protocol, fallback, status, started_at,
                   last_beat, ends_at, costly, cond, rating, meta) VALUES (?, ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?)")
        ->execute([(string)$brief['key'], xeric_scene_machine_id($endpoint), $s['id'], $s['url'], $s['protocol'],
@@ -600,52 +628,181 @@ function xeric_stream_minutes(int $s): string
 }
 
 /**
- * End a live view, for a reason. Idempotent: only a live row is ended, and
- * true says this call ended it. The machine is told (DELETE
- * {base}/v1/scenes/{session}, best effort, short) so it stops drawing — and
- * billing — as soon as the page does; null for $endpoint tells nobody, for a
- * read path that must not reach the network.
+ * The world's ledger as a meter: fn(int $seconds, bool $costly) that writes
+ * the seconds as kind `stream` on the world's date (engine/budget.php). The
+ * one shape every caller that ends or beats a live view hands in.
  */
-function xeric_stream_end(PDO $db, ?array $endpoint, int $id, string $reason, ?int $wall = null): bool
+function xeric_stream_ledger(PDO $db, array $now): Closure
+{
+    return function (int $s, bool $costly) use ($db, $now): void {
+        xeric_budget_note($db, $now, 'stream', $s, $costly);
+    };
+}
+
+/**
+ * What the page's own words for an end mean (forge/web/stream.php's `why`):
+ * a short code, never a sentence, so a page cannot write into the row
+ * another page reads out. Anything else is the page having stopped it.
+ */
+function xeric_stream_why(string $code): string
+{
+    return match ($code) {
+        'hidden'         => 'the tab was hidden for more than ' . XERIC_STREAM_AWAY . ' seconds',
+        'closed'         => 'you ended it',
+        'unplayable'     => 'this browser cannot play this machine\'s live view, so it was stopped before it billed for a picture nobody could see',
+        'connect_failed' => 'the live view could not be connected, so it was stopped',
+        default          => 'the page stopped it',
+    };
+}
+
+/**
+ * Where a session is told to stop: THE ADDRESS ON ITS ROW, never whatever
+ * machine happens to be chosen now. The owner may have picked another since;
+ * the session is still running on the one it was started on. The key is
+ * borrowed from $current only when $current IS that machine — a key is never
+ * sent to an address it was not configured for. null when the row names no
+ * address this engine can reach (a stub's session, with no stub to hand).
+ */
+function xeric_stream_row_endpoint(array $row, ?array $current): ?array
+{
+    $machine = (string)($row['machine'] ?? '');
+    if ($current !== null && xeric_scene_machine_id($current) === $machine) return $current;
+    if ($machine === '' || $machine === 'stub' || xeric_stream_origin($machine) === '') return null;
+    return ['base' => $machine, 'kind' => 'generic'];
+}
+
+/**
+ * DELETE {base}/v1/scenes/{session}, short. true when the machine said it is
+ * stopped (2xx, or a 404: there is no such session to stop), false when it
+ * could not be reached or refused. A stub hears it as stub('end', {reason},
+ * {session}); a stub that throws, or answers {_http: >= 400}, did not confirm.
+ */
+function xeric_stream_tell_end(?array $endpoint, array $row, string $reason): bool
+{
+    if ($endpoint === null) return false;
+    try {
+        if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) {
+            $r = ($endpoint['stub'])('end', ['reason' => $reason], ['session' => (string)$row['session']]);
+            $st = is_array($r) ? (int)($r['_http'] ?? 200) : 200;
+            return $st < 400 || $st === 404;
+        }
+        $base = rtrim(trim((string)($endpoint['base'] ?? '')), '/');
+        if ($base === '') return false;
+        $headers = array_merge(['Accept: application/json'], xeric_scene_auth_headers($endpoint));
+        [, $st] = xeric_scene_get($base . '/v1/scenes/' . rawurlencode((string)$row['session']),
+            ['method' => 'DELETE', 'header' => implode("\r\n", $headers), 'timeout' => 5,
+             'ignore_errors' => true, 'follow_location' => 0]);
+        return ($st >= 200 && $st < 300) || $st === 404;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+/**
+ * End a live view, for a reason. Idempotent: only a live row is ended, and
+ * true says this call ended it. EVERY END DOES THREE THINGS, whichever path
+ * it came by — the page's button, the tab hidden, the budget, the beat that
+ * found the player gone, the sweep that found nobody beating:
+ *
+ *   THE TAIL IS METERED. The seconds since the last beat happened on the
+ *   machine whether or not anybody beat for them: up to the beat's own cap
+ *   (XERIC_STREAM_BEAT_CAP), never past the session's end, onto the row and
+ *   into $opts['meter'] (the ledger, xeric_stream_ledger).
+ *
+ *   THE MACHINE IS TOLD. DELETE {base}/v1/scenes/{session}, best effort and
+ *   short, to the address ON THE ROW (xeric_stream_row_endpoint) — $endpoint
+ *   is only the machine chosen now, whose key is lent when it is the same one.
+ *
+ *   AN UNCONFIRMED STOP IS WRITTEN DOWN. If the machine could not be told,
+ *   and it said when it would stop by itself (max_seconds, expires_at), the
+ *   seconds it may still bill are kept as meta.unconfirmed_end — never
+ *   counted as spent (nobody knows they were), always shown
+ *   (xeric_stream_unconfirmed_line), because a closed tab must not leave a
+ *   costly session running where nobody can see it.
+ *
+ * $opts: meter (fn(int, bool)).
+ */
+function xeric_stream_end(PDO $db, ?array $endpoint, int $id, string $reason, ?int $wall = null, array $opts = []): bool
 {
     xeric_stream_schema($db);
-    $q = $db->prepare("UPDATE scene_streams SET status = 'ended', reason = ?, ended_at = ? WHERE id = ? AND status = 'live'");
-    $q->execute([$reason, $wall ?? time(), $id]);
+    $wall ??= time();
+    $before = xeric_stream_get($db, $id);
+    if ($before === null || (string)$before['status'] !== 'live') return false;
+    $tail = min(max(0, $wall - (int)$before['last_beat']), XERIC_STREAM_BEAT_CAP,
+                max(0, (int)$before['ends_at'] - (int)$before['last_beat']));
+    $q = $db->prepare("UPDATE scene_streams SET status = 'ended', reason = ?, ended_at = ?, seconds = seconds + ?,
+                       last_beat = MAX(last_beat, ?) WHERE id = ? AND status = 'live'");
+    $q->execute([$reason, $wall, $tail, $wall, $id]);
     if ($q->rowCount() !== 1) return false;
-    $row = xeric_stream_get($db, $id);
-    if ($endpoint !== null && $row !== null) {
-        try {
-            if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) {
-                ($endpoint['stub'])('end', ['reason' => $reason], ['session' => (string)$row['session']]);
-            } elseif (trim((string)($endpoint['base'] ?? '')) !== '') {
-                xeric_scene_http('DELETE', rtrim((string)$endpoint['base'], '/') . '/v1/scenes/'
-                               . rawurlencode((string)$row['session']), xeric_scene_auth_headers($endpoint), null, 5);
-            }
-        } catch (Throwable $e) {
-            // Its own max_seconds ends it there too.
-        }
+    $costly = (int)$before['costly'] === 1;
+    if ($tail > 0 && isset($opts['meter']) && is_callable($opts['meter'])) {
+        try { ($opts['meter'])($tail, $costly); } catch (Throwable $e) { /* the seconds happened */ }
     }
+    $told = xeric_stream_tell_end(xeric_stream_row_endpoint($before, $endpoint), $before, $reason);
+    $meta = json_decode((string)$before['meta'], true);
+    if (!is_array($meta)) $meta = [];
+    $meta['end_confirmed'] = $told;
+    if (!$told) {
+        $until = 0;
+        $mx = (int)($meta['machine_max_seconds'] ?? 0);
+        $ex = (int)($meta['machine_expires_at'] ?? 0);
+        if ($mx > 0) $until = (int)$before['started_at'] + $mx;
+        if ($ex > 0) $until = $until > 0 ? min($until, $ex) : $ex;
+        if ($until > $wall) $meta['unconfirmed_end'] = $until - $wall;
+    }
+    $db->prepare('UPDATE scene_streams SET meta = ? WHERE id = ?')
+       ->execute([json_encode((object)$meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $id]);
     return true;
 }
 
 /**
  * Live views nobody is watching any more: no beat for longer than the away
- * window, or past their end. Ended in the database only — this runs on read
- * paths (the sidebar), which never reach the network. The seconds after the
- * last beat are not metered; the machine's own max_seconds is what stops it.
+ * window, or past their end. Ended as every view is (xeric_stream_end): the
+ * tail metered, the machine on the row told to stop — this runs on the
+ * sidebar's read path, and the one network call it may make is a DELETE,
+ * which stops spending and never starts it, once per abandoned session.
+ *
+ * $opts: endpoint (the machine chosen now, for its key), meter.
  */
-function xeric_stream_sweep(PDO $db, ?int $wall = null): int
+function xeric_stream_sweep(PDO $db, ?int $wall = null, array $opts = []): int
 {
     xeric_stream_schema($db);
     $wall ??= time();
     $n = 0;
+    $ep = $opts['endpoint'] ?? null;
+    $end = ['meter' => $opts['meter'] ?? null];
     $rows = $db->query("SELECT id, last_beat, ends_at FROM scene_streams WHERE status = 'live'")->fetchAll(PDO::FETCH_ASSOC);
     foreach ($rows as $r) {
         if ($wall - (int)$r['last_beat'] > XERIC_STREAM_AWAY) {
-            $n += (int)xeric_stream_end($db, null, (int)$r['id'], 'the page went away', $wall);
+            $n += (int)xeric_stream_end($db, $ep, (int)$r['id'], 'the page went away', $wall, $end);
         } elseif ($wall >= (int)$r['ends_at']) {
-            $n += (int)xeric_stream_end($db, null, (int)$r['id'], 'it reached its limit', $wall);
+            $n += (int)xeric_stream_end($db, $ep, (int)$r['id'], 'it reached its limit', $wall, $end);
         }
     }
     return $n;
+}
+
+/**
+ * The line a person is owed when a machine may still be billing for a live
+ * view nobody could tell it to stop: the newest such end in the last day, or
+ * null. The inspector shows it, and so does "the live view ended".
+ */
+function xeric_stream_unconfirmed_line(PDO $db, ?int $wall = null, ?array $row = null): ?string
+{
+    xeric_stream_schema($db);
+    $wall ??= time();
+    if ($row === null) {
+        $q = $db->prepare("SELECT * FROM scene_streams WHERE status = 'ended' AND ended_at >= ? AND meta LIKE '%unconfirmed_end%'
+                           ORDER BY ended_at DESC, id DESC LIMIT 1");
+        $q->execute([$wall - 86400]);
+        $row = $q->fetch(PDO::FETCH_ASSOC) ?: null;
+        $q->closeCursor();
+    }
+    if ($row === null) return null;
+    $meta = json_decode((string)$row['meta'], true);
+    $s = is_array($meta) ? (int)($meta['unconfirmed_end'] ?? 0) : 0;
+    if ($s <= 0) return null;
+    return 'The scene machine could not be told to stop the live view that ended at '
+         . gmdate('H:i', (int)$row['ended_at']) . ' UTC; it may go on billing for up to '
+         . xeric_stream_minutes($s) . ' more' . ((int)$row['costly'] === 1 ? ', on a machine that bills' : '') . '.';
 }

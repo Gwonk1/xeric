@@ -477,6 +477,11 @@ function xeric_state_alters(): array
         ['events',     'rating', "TEXT NOT NULL DEFAULT ''"],
         ['scene_jobs', 'rating', "TEXT NOT NULL DEFAULT ''"],
         ['photo_jobs', 'rating', "TEXT NOT NULL DEFAULT ''"],
+        // THE ROOM AS A BOX, as it was when a look was asked for (engine/
+        // layout.php), JSON. The prompt is rendered as stored; so is this, or
+        // a room Mabel has left would be sent with her words and without her
+        // body. '' is every row from before, and reads as "no layout kept".
+        ['scene_jobs', 'layout', "TEXT NOT NULL DEFAULT ''"],
     ];
 }
 

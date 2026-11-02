@@ -274,6 +274,7 @@
         "stream.ended",
         "stream.live",
         "stream.offer",
+        "stream.origin",
         "world"
     ],
     "thread": [

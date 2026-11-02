@@ -76,8 +76,9 @@ if ($b === null) { fwrite(STDERR, "layout: no room called $key (or not in the st
 $L = $b['layout'];
 @mkdir((string)$o['out'], 0775, true);
 $dir = rtrim((string)$o['out'], '/');
-file_put_contents($dir . '/depth.png', xeric_layout_depth_png($L));
-file_put_contents($dir . '/seg.png', xeric_layout_seg_png($L));
+$png = xeric_layout_pngs($L);
+file_put_contents($dir . '/depth.png', $png['depth']);
+file_put_contents($dir . '/seg.png', $png['seg']);
 file_put_contents($dir . '/layout.json', json_encode($L, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
 
 printf("%s at %s, %s — %.0f x %.0f x %.0f m, %s\n", $b['name'], $b['now']['hhmm'], $b['light'],

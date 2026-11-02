@@ -446,39 +446,31 @@ body.insecure #talk{display:none}
     }
   };
 
-  // THE LIVE VIEW, on the sphere: when the room is live (look.stream.live)
-  // and this browser can play the session — HLS natively, or WHEP — a muted
-  // <video> is handed to the panorama as its texture, one texImage2D a frame.
-  // Anything else, or a texture the browser refuses (a machine that sends
-  // no CORS), is the stored panorama. The heartbeat keeps it metered.
-  function liveVideo(live) {
-    if (!live || !live.live) return null;
-    var v = document.createElement('video');
-    v.muted = true; v.playsInline = true; v.autoplay = true; v.crossOrigin = 'anonymous';
-    v.setAttribute('playsinline', '');
-    if (live.protocol === 'hls' && XV.playsHls(v)) {
-      v.src = live.url;
-    } else if (live.protocol === 'webrtc-whep') {
-      S.whep = XV.whep(live.url, v);
-      S.whep.ready.catch(function () { note('The live view could not be connected; this is the stored room.'); });
-    } else {
-      return null;
-    }
-    var p = v.play && v.play(); if (p && p.catch) p.catch(noop);
-    return v;
-  }
+  // THE LIVE VIEW, on the sphere: when the room is live (look.stream.live),
+  // xeric-view.js's standLive makes the one muted <video> the panorama takes
+  // as its texture — HLS where this browser plays it natively, or WHEP — and
+  // the heartbeat that meters it starts only once that video is PLAYING.
+  // Anything this page cannot show (MJPEG, HLS without native support, a
+  // texture the browser refuses because the machine sends no CORS, a WHEP
+  // that never connects) ENDS the session with its real reason before the
+  // stored panorama comes back: a stream must never bill for a picture
+  // nobody sees. The play page does the same (xeric-view.js stream()).
   function liveOff() {
-    if (S.beat) { S.beat.stop(); S.beat = null; }
-    if (S.whep) { S.whep.close(); S.whep = null; }
+    if (S.live) { S.live.off(); S.live = null; }
   }
-  function liveBeat(live) {
-    if (S.beat) return;
-    S.beat = XV.streamBeat({ id: live.id, beat: live.beat || 'stream.php', beatS: live.beat_s, auth: auth,
-      onEnd: function (reason) {
-        S.beat = null;
-        note('the live view ended: ' + reason);
-        api(WP + 'look').then(function (res) { if (res.ok) takeLook(res.d); });
-      } });
+  function liveEnded(reason, told) {
+    S.live = null;
+    note('the live view ended: ' + reason);
+    // The server said so (told), or this page ended it: either way the view
+    // the server now gives is the stored room, said why.
+    api(WP + 'look').then(function (res) { if (res.ok) takeLook(res.d); });
+  }
+  function liveFor(live) {
+    if (!live) { liveOff(); return null; }
+    if (S.live && S.live.alive && S.live.id === live.id) return S.live.video;   // the same session: the same element
+    liveOff();
+    S.live = XV.standLive(live, { auth: auth, onEnd: liveEnded });
+    return S.live && S.live.alive ? S.live.video : null;
   }
   function paintView(look) {
     var scene = look && look.scene, view = $('#view');
@@ -486,11 +478,13 @@ body.insecure #talk{display:none}
     var live = look && look.stream && look.stream.live && look.stream.live.live ? look.stream.live : null;
     var vkey = scene ? scene.src + (live ? '#live' + live.id : '') : '';
     var gl = $('#golive');
-    if (gl) gl.hidden = !(look && look.stream && look.stream.offer && !live && scene && scene.kind === 'pano');
+    // Not offered again in this tab for a machine it found it cannot play.
+    if (gl) gl.hidden = !(look && look.stream && look.stream.offer && !live && scene && scene.kind === 'pano'
+                          && !XV.liveCannot('stand', look.stream.origin || ''));
     if (XV.lookView && XV.lookView.inside && (!scene || vkey !== S.viewSrc)) { S.pending = look; return; }
     if (scene && vkey === S.viewSrc && view.querySelector('.lookmain')) { retag(); return; }
     XV.unmount();
-    liveOff();
+    if (!(live && scene && scene.kind === 'pano' && S.live && S.live.alive && S.live.id === live.id)) liveOff();
     $$all('#view .lookmain').forEach(function (x) { x.remove(); });
     S.viewSrc = vkey;
     if (!scene) {
@@ -521,10 +515,11 @@ body.insecure #talk{display:none}
       S.who.forEach(function (w) { var t = tagButton(w); t.hidden = true; tags.appendChild(t); });
       box.appendChild(tags);
       view.insertBefore(box, $('#caption'));
-      var vid = liveVideo(live);
-      if (live) liveBeat(live);
+      var vid = liveFor(live);
       XV.mount(box, { load: loadPic, stand: hooks, video: vid,
-        videoFail: function () { note('The live view will not draw in here (the machine sends no CORS), so this is the stored room.'); } });
+        videoFail: function () {
+          if (S.live) S.live.fail('unplayable', 'it will not draw in here (the machine sends no CORS), so this is the stored room');
+        } });
     } else {
       // A still: drawn to fit, the people as a row under it.
       box.className = 'lookmain lookstill';
