@@ -487,6 +487,43 @@ It may answer synchronously when its upstream is fast, and it may return `url`
 instead of `b64` — Xeric fetches it immediately either way. A `GET` on the base
 should answer something, because that is how "is it up" is asked.
 
+### Reference proxies
+
+Three of them ship in [`tools/proxies/`](../tools/proxies/README.md), one file
+each, Python standard library only, so the first proxy anybody writes can be a
+copy of one that runs:
+
+- **`skybox.py`** — the Blockade Labs Skybox shape. Makes `pano` only, passes
+  the seed, returns the depth map as an extra. It takes no picture to condition
+  on, so it remembers which upstream id drew which fingerprint and *remixes*
+  that render when a reference rides along — `meta.reference_used: "remix"`.
+- **`marble.py`** — the World Labs Marble shape. Answers the world's `pano` by
+  default, or its `.spz` as kind `splat` when `media.scene.kinds` puts splat
+  first; the collider `.glb` and the other asset ride as `extras`. A reference
+  picture becomes an image `world_prompt`. `quality: draft` uses `--model`;
+  full uses `--full-model` only when one was typed.
+- **`images.py`** — any local `/v1/images/generations`. What kind `image`
+  already does, plus the two things that kind cannot: a 2:1 `pano` with
+  `--pano` (the owner's word that a 360 LoRA is loaded), and the last picture
+  of the room sent to `/v1/images/edits` with `--edits`. Synchronous.
+
+What they share is the contract's other side. The vendor key comes from the
+proxy's own environment and nowhere else — Xeric holds none
+(`XERIC_SCENE_BASE=http://127.0.0.1:9100`, `XERIC_SCENE_KIND=generic`, no
+`XERIC_SCENE_KEY`). Only loopback clients are answered unless `--allow-remote`.
+`kind_wanted` is read in order and the first makeable kind answered; nothing
+makeable is a `400 {error}` with no asset, so a sound request reads as the
+engine's plain *cannot*. An async upstream is waited on inline for `--wait`
+seconds, then answered `202 pending`. `meta` always carries `vendor`,
+`vendor_id`, `seed_used` and `elapsed_s`.
+
+**The vendors' fields were not verified when these were written.** Each sits
+in one `to_upstream` / `from_upstream` pair, every field marked *verify*, and
+`--dry-run` prints the upstream request (key redacted) and answers a 1×1 PNG,
+so the whole path — reaper, adapter, proxy — runs without an account.
+`python3 -I tools/proxies/test_proxies.py` drives all three against a fake of
+each upstream.
+
 ---
 
 ## The provider landscape, November 2026
