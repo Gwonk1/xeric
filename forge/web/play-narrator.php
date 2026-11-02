@@ -76,7 +76,7 @@ function xeric_play_narrator_history(PDO $db, int $n = XERIC_PLAY_NARRATOR_SHOWN
 {
     $id = xeric_play_narrator_conv($db);
     if ($id === null) return [];
-    $rows = xeric_messages_recent($db, $id, max(2, $n * 2));
+    $rows = xeric_messages_recent($db, $id, max(2, $n * 2), 0, xeric_state_rating());
     $out  = [];
     $q    = null;
     foreach ($rows as $r) {

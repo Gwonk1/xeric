@@ -341,14 +341,26 @@ function xeric_player_where(array $t, PDO $db, ?int $player = null): ?string
  * "Neil gets up and goes", which presence cannot derive for a body the way it
  * derives a character's from the week. Only when the roster has more than one
  * person in it, so a world of one never grows the row and stays byte-identical.
+ *
+ * AND THE LAST FEW MOVES, with their epochs (`player.moves[.p<n>]`, the newest
+ * XERIC_PLAYER_MOVES of [epoch|null, from, to]): `where_from` is the last stop
+ * only, and a friend who went diner → mill → store inside one doorway's
+ * stretch was read as having come from the mill — so the diner never saw them
+ * leave. The log answers "where were they at $at" (xeric_player_where_at).
+ * Same rule: written only in a world with company.
  */
 function xeric_player_move(PDO $db, ?string $key, ?int $worldEpoch = null, ?int $player = null): void
 {
     $player ??= xeric_player_current(null, $db);
     $key = ($key === null) ? '' : trim($key);
     if (xeric_players_many($db)) {
-        xeric_world_state_set($db, xeric_player_key('player.where_from', $player),
-                              (string)(xeric_player_where_raw($db, $player) ?? ''));
+        $was = (string)(xeric_player_where_raw($db, $player) ?? '');
+        xeric_world_state_set($db, xeric_player_key('player.where_from', $player), $was);
+        $log = json_decode((string)(xeric_world_state_get($db, xeric_player_key('player.moves', $player)) ?? '[]'), true);
+        if (!is_array($log)) $log = [];
+        $log[] = [$worldEpoch, $was, $key];
+        xeric_world_state_set($db, xeric_player_key('player.moves', $player),
+                              json_encode(array_slice($log, -XERIC_PLAYER_MOVES), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
     xeric_world_state_set($db, xeric_player_key('player.where', $player), $key);
     if ($worldEpoch !== null) {
@@ -361,6 +373,30 @@ function xeric_player_since(PDO $db, ?int $player = null): int
 {
     $player ??= xeric_player_current(null, $db);
     return (int)(xeric_world_state_get($db, xeric_player_key('player.where_since', $player)) ?? '0');
+}
+
+/** How many moves a body's log keeps — far more than one doorway's stretch ever holds. */
+const XERIC_PLAYER_MOVES = 8;
+
+/**
+ * Where a player's body stood at world moment $at, off their move log: the
+ * destination of the newest move at or before $at, else where the oldest
+ * logged move set out from. A body that has not moved since $at is where it is
+ * now; a log that does not exist (a world from before it, a move with no
+ * company yet) falls back to `where_from`, the one stop it had. '' is nowhere.
+ */
+function xeric_player_where_at(PDO $db, int $player, int $at, ?string $now = null): ?string
+{
+    if (xeric_player_since($db, $player) <= $at) return $now ?? xeric_player_where_raw($db, $player);
+    $log = json_decode((string)(xeric_world_state_get($db, xeric_player_key('player.moves', $player)) ?? ''), true);
+    if (!is_array($log) || $log === []) return xeric_player_where_from($db, $player);
+    $hit = null;
+    foreach ($log as $m) {
+        if (!is_array($m) || ($m[0] ?? null) === null) continue;
+        if ((int)$m[0] <= $at) $hit = $m;
+    }
+    $v = trim((string)($hit !== null ? ($hit[2] ?? '') : ($log[0][1] ?? '')));
+    return $v === '' ? null : $v;
 }
 
 /** Where they were before they got where they are — null when unknown or nowhere. */
@@ -717,9 +753,11 @@ function xeric_travel_comings_line(array $t, array $now, string $place, array $a
  * state kept between pulses, so every surface that asks gets the same answer.
  *
  * THE OTHER PLAYERS COME AND GO LIKE ANYBODY. A body has no week to read at
- * the start of the stretch, so it is read off what the move wrote: standing
- * here since before the stretch began means they were here then; arrived
- * inside it means they were wherever `where_from` says. Their handles (`p<n>`)
+ * the start of the stretch, so it is read off what the moves wrote: standing
+ * here since before the stretch began means they were here then; moved inside
+ * it means they were wherever their move log puts them at its start
+ * (xeric_player_where_at) — not merely their last stop, which misses a body
+ * that walked out and on again inside one stretch. Their handles (`p<n>`)
  * ride in `arrived` / `left` after the cast's, and the line names them from
  * the roster. You are never news to yourself.
  *
@@ -742,7 +780,7 @@ function xeric_travel_comings(array $t, PDO $db, array $now, string $place, int 
     foreach (xeric_travel_players($t, $db) as $id => $p) {
         if ((int)$id === $me) continue;
         $nowHere  = $p['where'] === $place;
-        $thenHere = $p['since'] <= $from ? $nowHere : xeric_player_where_from($db, (int)$id) === $place;
+        $thenHere = $p['since'] <= $from ? $nowHere : xeric_player_where_at($db, (int)$id, $from, $p['where']) === $place;
         if ($nowHere === $thenHere) continue;
         $out[$nowHere ? 'arrived' : 'left'][] = $p['handle'];
         $names[$p['handle']] = $p['name'];

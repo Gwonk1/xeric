@@ -798,6 +798,14 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
         $claim->execute([xeric_state_time(), (int)$job['id']]);
         if ($claim->rowCount() !== 1) continue;
         try {
+            // COMPOSED AT THE LOWER of the row's stamp (whose request queued
+            // it — a kids' headset's photo is that headset's) and this
+            // process's rating, capped by the world's. The reaper is whoever's
+            // request happened to run it; an adult worker reaping a kids'
+            // headset's photo must not compose it at the adult's rating.
+            $renderR = xeric_photo_render_rating((string)($job['rating'] ?? ''));
+            $worldR  = xeric_world_rating($t);
+            $compose = $renderR !== '' && xeric_rating_rank($renderR) < xeric_rating_rank($worldR) ? $renderR : $worldR;
             if ($kind === 'message') {
                 // A photo sent in a thread: subject is handle#messageId, the
                 // ask is the model's own proposal, and the frame is wherever
@@ -810,13 +818,16 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                     'handle' => $mh, 'ask' => (string)($job['ask'] ?? ''),
                     'place' => $at !== null ? (string)$at : '', 'now' => $now,
                     'with_carries' => true, 'loras' => (array)($endpoint['loras'] ?? []),
+                    'effective_rating' => $compose,
                 ]);
             } else {
                 $composed = $kind === 'place'
                     ? xeric_photo_prompt($t, 'place', ['place' => $subj, 'now' => $now,
-                                                       'loras' => (array)($endpoint['loras'] ?? [])])
+                                                       'loras' => (array)($endpoint['loras'] ?? []),
+                                                       'effective_rating' => $compose])
                     : xeric_photo_prompt($t, 'portrait', ['handle' => $subj, 'ask' => 'a portrait',
-                                                          'loras' => (array)($endpoint['loras'] ?? [])]);
+                                                          'loras' => (array)($endpoint['loras'] ?? []),
+                                                          'effective_rating' => $compose]);
             }
             // PORTRAIT CHAINING. Every later photo of a person is conditioned
             // on their portrait, on a machine that takes a likeness. A first
@@ -834,7 +845,7 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                     if ($ref !== null) $ref['id'] = (int)$job['id'];
                 } else {
                     $ref = xeric_photo_reference($db, (string)($composed['handle'] ?? ''), $photosDir,
-                        XERIC_PHOTO_REFERENCE_CAP, xeric_photo_render_rating((string)($job['rating'] ?? '')));
+                        XERIC_PHOTO_REFERENCE_CAP, $renderR);
                 }
                 if ($ref !== null) $rOpts['reference'] = $ref;
             }
@@ -852,15 +863,16 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                 $meta['reference_of']          = (int)$ref['id'];
                 $meta['reference_fingerprint'] = (string)$ref['fingerprint'];
             }
-            // RE-STAMPED AT THE RENDER: a photo's prompt is composed here, from
-            // the template this reaper was opened with, so this is the rating
-            // it was generated under — not whoever happened to enqueue the row.
-            // An unclamped process ('') leaves the enqueue stamp standing.
+            // THE QUEUED STAMP STANDS. It was composed at or below it (above),
+            // so re-stamping at whoever reaped it could only ever raise it — a
+            // kids' headset's photo, reaped by an adult worker, locked out of
+            // the very headset that asked for it. A row from before stamps
+            // ('') takes the rating it was composed under; '' stays ''.
             $st = $db->prepare("UPDATE photo_jobs SET status = ?, file = ?, tries = tries + 1, done_at = ?, meta = ?,
-                                rating = CASE WHEN ? = '' THEN rating ELSE ? END WHERE id = ?");
+                                rating = CASE WHEN rating = '' THEN ? ELSE rating END WHERE id = ?");
             $st->execute(['done', $file, xeric_state_time(),
                           json_encode((object)$meta, JSON_UNESCAPED_SLASHES),
-                          xeric_state_rating(), xeric_state_rating(), (int)$job['id']]);
+                          $renderR, (int)$job['id']]);
             $out['done']++;
             if (($fn = xeric_photo_meter()) !== null) {
                 $fn(['images' => 1] + $img['usage'], (string)($endpoint['base'] ?? 'stub'));

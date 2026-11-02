@@ -4154,9 +4154,12 @@ echo xeric_play_css_link() . '<style>
     if (focus && !ROOM.guest && window.innerWidth > 720) $('#rcomposer').focus();
   }
 
+  // '__you' is this screen's own lane, and only it wears this viewer's face;
+  // another player's line comes as '__you.p<n>' with their name, and is drawn
+  // as their initials — never this viewer's avatar on a friend's words.
   function roomFace(h, name) {
     if (h === '__you' && MEFACE) return { text: MEFACE.txt, hue: MEFACE.hue };
-    var row = h && document.querySelector('#cast .person[data-h="' + h + '"]');
+    var row = h && h.indexOf('__you') !== 0 && document.querySelector('#cast .person[data-h="' + h + '"]');
     if (row && row.dataset.av) return { text: row.dataset.av, hue: parseInt(row.dataset.hue || '0', 10) };
     var n = String(name || '?').trim(), hh = 0;
     for (var i = 0; i < n.length; i++) hh = (hh * 31 + n.charCodeAt(i)) % 360;

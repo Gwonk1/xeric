@@ -296,7 +296,7 @@ function xeric_room(array $t, PDO $db, array $handles, array $now, array $endpoi
     // and departures ride the transcript instead — a system prompt that
     // tracked the head-count would pay a full re-read per exit.
     $protected = xeric_sweep_protected($t);
-    $recent    = xeric_events_recent($db, 12);
+    $recent    = xeric_events_recent($db, 12, $eff);      // written for the room's ceiling
     $walls = $system = $tails = $material = $memrows = $expects = [];
     foreach ($handles as $me) {
         $others         = array_values(array_diff($handles, [$me]));
@@ -1439,8 +1439,16 @@ function xeric_room_live_people(PDO $db): array
     return $live === null ? [] : array_values(array_map('strval', (array)$live['present']));
 }
 
-/** The room's message rows, oldest first, after a cursor. */
-function xeric_room_rows(PDO $db, int $conv, int $after = 0): array
+/**
+ * The room's message rows, oldest first, after a cursor.
+ *
+ * $viewer as xeric_messages_recent(): null is every row as written — the
+ * landing writes diaries and the event's prose from what was said, whoever's
+ * request closed the table. A page names its viewer's rating; a cast prompt
+ * names the room's ceiling (`eff`), so after a lower-rated seat folds it down
+ * an adult-stamped line from before is redacted out of every later prompt.
+ */
+function xeric_room_rows(PDO $db, int $conv, int $after = 0, ?string $viewer = null): array
 {
     $st = $db->prepare('SELECT id, role, handle, content, world_epoch, created_at, player, rating FROM messages
                          WHERE conversation_id = ? AND id > ? ORDER BY id');
@@ -1448,9 +1456,10 @@ function xeric_room_rows(PDO $db, int $conv, int $after = 0): array
     $rows = $st->fetchAll();
     $st->closeCursor();
     // `player` is who at the centre said a user row (NULL: the first); a row
-    // stamped above whoever this process reads for comes back emptied
-    // (xeric_state_message_shown), to the page and to the room's prompt alike.
-    return array_map('xeric_state_message_shown', $rows ?: []);
+    // stamped above the named viewer comes back emptied
+    // (xeric_state_message_shown).
+    if ($viewer === null) return $rows ?: [];
+    return array_map(fn($m) => xeric_state_message_shown($m, $viewer), $rows ?: []);
 }
 
 /**
@@ -1472,18 +1481,68 @@ function xeric_room_lines(array $live, array $rows): array
             // WHICH person at the centre — NULL is the first, as everywhere.
             $pid = max(XERIC_PLAYER_FIRST, (int)($r['player'] ?? 0));
             $ph  = xeric_room_player_handle($pid);
-            $out[] = ['mid' => (int)$r['id'], 'handle' => $ph,
-                      'name' => (string)($names[$ph] ?? $names[XERIC_ROOM_YOU] ?? 'you'), 'text' => (string)$r['content'], 'kind' => 'line',
-                      'player' => $pid];
+            $line = ['mid' => (int)$r['id'], 'handle' => $ph,
+                     'name' => (string)($names[$ph] ?? $names[XERIC_ROOM_YOU] ?? 'you'), 'text' => (string)$r['content'], 'kind' => 'line',
+                     'player' => $pid];
         } elseif ($role === 'character' && $h !== '') {
-            $out[] = ['mid' => (int)$r['id'], 'handle' => $h, 'name' => (string)($names[$h] ?? $h),
-                      'text' => (string)$r['content'], 'kind' => 'line'];
+            $line = ['mid' => (int)$r['id'], 'handle' => $h, 'name' => (string)($names[$h] ?? $h),
+                     'text' => (string)$r['content'], 'kind' => 'line'];
         } else {
-            $out[] = ['mid' => (int)$r['id'], 'handle' => '', 'name' => '',
-                      'text' => (string)$r['content'], 'kind' => 'stage'];
+            $line = ['mid' => (int)$r['id'], 'handle' => '', 'name' => '',
+                     'text' => (string)$r['content'], 'kind' => 'stage'];
         }
+        // The row's stamp rides along when it has one, so a prompt built from
+        // these lines can still be held to its audience (xeric_room_lines_shown).
+        $stamp = strtolower(trim((string)($r['rating'] ?? '')));
+        if ($stamp !== '') $line['rating'] = $stamp;
+        $out[] = $line;
     }
     return $out;
+}
+
+/**
+ * Lines as an audience at $viewer may hear them: a line stamped above it keeps
+ * its place and its speaker and loses its words (XERIC_STATE_UNSHOWN). The cast
+ * prompt applies this at the room's ceiling whatever its caller read the rows
+ * at, so a transcript read whole can never reach a model writing for a table
+ * a kids' headset has folded down — fail closed, at the last door.
+ */
+function xeric_room_lines_shown(array $lines, string $viewer): array
+{
+    foreach ($lines as &$l) {
+        if (xeric_state_shown((string)($l['rating'] ?? ''), $viewer)) continue;
+        $l['text'] = XERIC_STATE_UNSHOWN;
+        $l['redacted'] = true;
+    }
+    unset($l);
+    return $lines;
+}
+
+/**
+ * Write one row into a live room, STAMPED AT THE TABLE'S CEILING whenever that
+ * is lower than the rating of the request writing it.
+ *
+ * Every line in a room is said to the table, not to the person who typed it:
+ * everybody seated hears it the moment it lands. So a line is stamped at what
+ * the table may hear — the lower of the writer's own rating and the room's
+ * `eff` — cast and players and stage directions alike. After a kids' headset
+ * sits down and folds the ceiling, an adult's next line is stamped where the
+ * kid can read it, because the kid heard it; the adult's lines from before
+ * the fold keep their own stamps and stay gaps, because the kid never did.
+ * An unclamped process ('' — the CLI, a test) writes '' as it always has.
+ */
+function xeric_room_append(PDO $db, array $live, string $role, ?string $handle, string $content,
+                           ?int $worldEpoch, ?int $player = null): int
+{
+    $was = xeric_state_rating();
+    $eff = strtolower(trim((string)($live['eff'] ?? '')));
+    $low = $was !== '' && $eff !== '' && xeric_rating_rank($eff) < xeric_rating_rank($was);
+    if ($low) xeric_state_rating($eff);
+    try {
+        return xeric_message_append($db, (int)$live['conv'], $role, $handle, $content, $worldEpoch, null, $player);
+    } finally {
+        if ($low) xeric_state_rating($was);
+    }
 }
 
 /**
@@ -1870,9 +1929,13 @@ function xeric_room_step(array $t, PDO $db, array $live, array $lines, array $no
     $memrows   = xeric_memories_for($db, $speaker, 40);
     $named     = $names;
     foreach ($others as $o) $named[$o] = $named[$o] ?? xeric_world_name($t, $o);
-    $material  = xeric_room_material($t, $speaker, $others, $named, $memrows, xeric_events_recent($db, 12), $protected);
+    $material  = xeric_room_material($t, $speaker, $others, $named, $memrows,
+                                         xeric_events_recent($db, 12, (string)$live['eff']), $protected);
     $tail      = xeric_room_scene($t, $speaker, $others, (array)$live['room'], $walls, $material);
-    $heard     = xeric_room_heard($live, $lines, $speaker);
+    // What this speaker heard, AS THE TABLE MAY HEAR IT: the prompt is written
+    // for everybody seated, so it is held to the room's ceiling here, whatever
+    // the caller read the rows at.
+    $heard     = xeric_room_lines_shown(xeric_room_heard($live, $lines, $speaker), (string)$live['eff']);
 
     // Who has been quiet — every player at the table counted — said once per
     // stretch each, through this mouth, and never stronger than "you may notice".

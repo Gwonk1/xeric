@@ -217,7 +217,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
 // ===========================================================================
 } elseif ($eventId > 0) {
     $ev = null;
-    foreach (xeric_events_recent($db, 200) as $row) {
+    foreach (xeric_events_recent($db, 200, xeric_state_rating()) as $row) {
         if ((int)$row['id'] === $eventId) { $ev = $row; break; }
     }
     if ($ev === null) {
@@ -615,7 +615,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
 // The index
 // ===========================================================================
 } else {
-    $events = xeric_events_recent($db, 25);
+    $events = xeric_events_recent($db, 25, xeric_state_rating());
     $lastRaw = xeric_world_state_get($db, 'why:last_tick');
     $last = $lastRaw !== null ? json_decode($lastRaw, true) : null;
     // WHY THE HOURS STOPPED, when they stopped for money: the heart wrote it

@@ -684,7 +684,8 @@ ok('together: the heart\'s open stamps what it writes with the world\'s rating',
     $hw['db']->query('SELECT rating FROM events WHERE id = ' . (int)$hev)->fetchColumn() === 'mature');
 xeric_session_use($TG);
 xeric_play_open($tslug);
-$gev = array_values(array_filter(xeric_events_recent($odb, 50), fn($e) => (int)$e['id'] === (int)$hev))[0] ?? [];
+// Read FOR the guest — the viewer is named; storage read with no viewer is whole.
+$gev = array_values(array_filter(xeric_events_recent($odb, 50, xeric_state_rating()), fn($e) => (int)$e['id'] === (int)$hev))[0] ?? [];
 ok('together: and the guest reads that hour without what happened in it',
     ($gev['title'] ?? '') === XERIC_STATE_UNSHOWN_HOUR && ($gev['prose'] ?? 'x') === '');
 
@@ -788,6 +789,9 @@ ok('two: the owner\'s poll has the friend\'s line, under her name, marked as not
 ok('two: and the friend\'s poll has the owner\'s, the other way round',
     count($sG) === 2 && $sG[0]['own'] === false && $sG[0]['text'] === 'Morning, Ruth. Pie any good?' && $sG[1]['own'] === true
     && ($pG['json']['live']['mine'] ?? false) === true && ($pG['json']['guest'] ?? true) === false, json_encode($sG));
+ok('two: each poll sends `__you` for the viewer\'s own lines only, and the friend\'s as `__you.p<n>` with her name',
+    $sO[0]['h'] === '__you' && $sO[1]['h'] === '__you.p' . $ann && $sO[1]['name'] === 'Ann'
+    && $sG[0]['h'] === '__you.p1' && $sG[0]['name'] !== '' && $sG[1]['h'] === '__you', json_encode([$sO, $sG]));
 ok('two: the summary names both at the table, and says whether this viewer is seated',
     count((array)($pG['json']['live']['players'] ?? [])) === 2 && ($pG['json']['live']['seated'] ?? false) === true);
 
@@ -839,6 +843,72 @@ ok('two: and their poll of the room answers nothing of the owner\'s table',
     && !str_contains($ps['raw'], 'pie') && xeric_room_live_get($db2) !== null, mb_substr($ps['raw'], 0, 200));
 $sw2 = null;
 xeric_session_use($O2);
+
+// THE PAGE'S FACE FOR A ROW, run: `__you` is the viewer's own avatar; a
+// friend's `__you.p<n>` is drawn as her initials, never the viewer's face.
+$playSrc = (string)file_get_contents(dirname(__DIR__) . '/play.php');
+$rf = preg_match('/  function roomFace\(h, name\) \{.*?\n  \}\n/s', $playSrc, $rfm) ? $rfm[0] : '';
+$nodeBin = (string)getenv('XERIC_NODE');
+if ($nodeBin === '' || !is_executable($nodeBin)) $nodeBin = trim((string)@shell_exec('command -v node 2>/dev/null'));
+if ($rf !== '' && $nodeBin !== '') {
+    $js = $tmp . '/roomface.js';
+    file_put_contents($js, "var MEFACE = { txt: 'WB', hue: 200 };\n"
+        . "var document = { querySelector: function (q) { return /__you/.test(q) ? { dataset: { av: 'WB', hue: '200' } } : null; } };\n"
+        . $rf . "\nconsole.log(JSON.stringify([roomFace('__you', 'Walt'), roomFace('__you.p2', 'Ann Price'), roomFace('__you.p1', 'Walt Beck')]));\n");
+    $faces = json_decode(trim((string)shell_exec(escapeshellarg($nodeBin) . ' ' . escapeshellarg($js) . ' 2>&1')), true);
+    ok('two: roomFace draws the viewer\'s face for `__you` and the friend\'s initials for `__you.p<n>`, never the viewer\'s',
+        is_array($faces) && $faces[0]['text'] === 'WB' && $faces[1]['text'] === 'AP' && $faces[2]['text'] === 'WB'
+        && $faces[2]['hue'] !== 200, json_encode($faces));
+} elseif (getenv('XERIC_REQUIRE_NODE') === '1') {
+    ok('two: roomFace runs in node, which XERIC_REQUIRE_NODE=1 says there must be', false, $rf === '' ? 'roomFace not found' : 'no node');
+} else {
+    echo "SKIP - roomFace in node (no node on this machine; set XERIC_NODE)\n";
+}
+
+// -- the fold, through the pages: a line said after it is said to the kid too --
+// The owner (affirmed, mature) opens a table; a kids' headset sits down and
+// folds the ceiling; the owner's next line is stamped at the table's ceiling,
+// so the kid reads it — and the owner's line from before the fold stays a gap.
+$fslug = 'fold-town';
+$fT = $fixT;
+$fT['meta']['rating'] = 'mature';
+$fdir = xeric_web_worlds_dir() . '/' . $fslug;
+@mkdir($fdir, 0775, true);
+file_put_contents($fdir . '/world-template.json', json_encode($fT, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+file_put_contents($fdir . '/seed.json', json_encode(xeric_forge_default_seed($fT), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+$O3 = bin2hex(random_bytes(16));
+xeric_session_use($O3);
+xeric_session_claim($fslug, $O3);
+xeric_web_session_edit(function (array &$s): void {
+    $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:1', 'base' => '', 'model' => ''];
+}, $O3);
+xeric_session_affirm(true, $O3);
+$w3  = xeric_play_open($fslug);
+$db3 = $w3['db'];
+if (xeric_clock_is_paused($db3)) xeric_clock_resume($db3);
+$kid = xeric_player_add($db3, $w3['template'], 'Kit');
+$K3  = bin2hex(random_bytes(16));
+xeric_session_join($fslug, $kid, $K3);
+$n3 = xeric_clock_now($db3, $w3['template']);
+xeric_player_move($db3, 'bluebird', (int)$n3['epoch'], 1);
+xeric_player_move($db3, 'bluebird', (int)$n3['epoch'], $kid);
+$f1 = xeric_play_room_say($w3, 'That deacon is a pompous old goat.');
+xeric_room_live_edit($db3, function (?array &$l): void { $l['lease'] = ['id' => 'fold0123456789ab', 'until' => microtime(true) + 60]; });
+$ksay = page('room.php', $K3, ['w' => $fslug, 'a' => 'say'], ['text' => 'Hi, everybody.']);
+$l3 = xeric_room_live_get($db3);
+$f2 = xeric_play_room_say($w3, 'Morning, Kit. Pie?');
+$rate = fn(int $id): string => (string)$db3->query('SELECT rating FROM messages WHERE id = ' . $id)->fetchColumn();
+ok('fold: the kids\' headset sitting down folds the table to its rating',
+    xeric_state_rating() === 'mature' && !empty($l3['lowered']) && (string)$l3['eff'] === xeric_rating_clamp('mature', false),
+    $ksay['status'] . ' ' . json_encode($l3['eff'] ?? null));
+ok('fold: a player\'s line before the fold keeps its own stamp; the one after is stamped at the table\'s ceiling',
+    $rate((int)$f1['mid']) === 'mature' && $rate((int)$f2['mid']) === (string)$l3['eff'], $rate((int)$f1['mid']) . ' / ' . $rate((int)$f2['mid']));
+$kp = page('room.php', $K3, ['w' => $fslug, 'after' => '0'], [], 'GET');
+$kRows = array_column((array)($kp['json']['rows'] ?? []), null, 'id');
+ok('fold: and the kid reads the line said to the table after it, while the one from before is a gap',
+    ($kRows[(int)$f2['mid']]['text'] ?? '') === 'Morning, Kit. Pie?' && empty($kRows[(int)$f2['mid']]['redacted'])
+    && !empty($kRows[(int)$f1['mid']]['redacted']) && !str_contains($kp['raw'], 'pompous'), mb_substr($kp['raw'], 0, 400));
+$w3 = null; $db3 = null;
 
 xeric_state_rating('');
 xeric_session_use($A);

@@ -1267,6 +1267,42 @@ live_say_as($TR, $dbC2, $SUN, 'Hello.', ['id' => 3, 'name' => 'Corey', 'rating' 
 ok('ceiling: and a higher-rated seat never raises it back mid-session', xeric_room_live_get($dbC2)['eff'] === 'sfw'
     && count(xeric_room_live_get($dbC2)['players']) === 3);
 
+// -- after the fold, every cast prompt is written for the kid at the table ---
+// Walt's adult session says something stamped mature; the cast answers; Ann's
+// kids' headset sits down and folds the ceiling. The rows are handed to the
+// beat whole (as a caller that forgot would), and the prompt still carries
+// the adult line only as a gap, though the worker carrying the beat is the
+// adult's. The close, run on the kid's request, writes
+// its diaries from what was actually said: the landing is background work.
+$dbF = fresh_db('two-fold'); $cF = [];
+$epF = stub_room($cF, ['Ruth Amberg' => ['Ruth heard Walt call the deacon a pompous old goat.']], null, fn(int $n) => 'Line ' . $n . '.');
+xeric_player_move($dbF, 'first_lutheran', (int)$SUN['epoch']);
+xeric_player_move($dbF, 'first_lutheran', (int)$SUN['epoch'], 2);
+$liveF = xeric_room_open($TR, $dbF, $SUN, 'first_lutheran', ['id' => 1, 'name' => 'Walt', 'rating' => 'mature']);
+$liveF['conv'] = xeric_conversation_create($dbF, '', 'room', 'first_lutheran');
+xeric_world_state_set($dbF, XERIC_ROOM_LIVE, json_encode($liveF));
+xeric_state_rating('mature');
+$adultMid = live_say($TR, $dbF, $SUN, 'The deacon is a pompous old goat.');
+live_beat($TR, $dbF, $SUN, $epF);
+xeric_state_rating('sfw');
+live_say_as($TR, $dbF, $SUN, 'Hi everybody.', ['id' => 2, 'name' => 'Ann', 'rating' => 'sfw']);
+xeric_state_rating('mature');                       // the beat is carried by Walt's adult worker
+$loF = live_beat($TR, $dbF, $SUN, $epF);
+xeric_state_rating('sfw');                          // and the close by Ann's kids' headset
+$bytesF = json_encode($loF['messages'], JSON_UNESCAPED_UNICODE);
+ok('fold: the cast prompt after the fold carries no adult-stamped line\'s words — a gap in its place, the kid\'s line whole',
+    (string)$dbF->query('SELECT rating FROM messages WHERE id = ' . $adultMid)->fetchColumn() === 'mature'
+    && !str_contains($bytesF, 'pompous old goat') && str_contains($bytesF, XERIC_STATE_UNSHOWN)
+    && str_contains($bytesF, 'Hi everybody.'), mb_substr($bytesF, -500));
+$convF = xeric_room_seal($dbF, 'stepped back', $SUN);
+$landF = xeric_room_land_live($TR, $dbF, xeric_room_seals($dbF)[$convF], $epF);
+$dF = array_values(array_filter($cF, fn($c) => $c['tag'] === 'extract'));
+$dFb = json_encode(array_column($dF, 'msgs'), JSON_UNESCAPED_UNICODE);
+ok('fold: a room landed with a kid at the table writes its diaries from the real lines, not placeholders',
+    $dF !== [] && str_contains($dFb, 'pompous old goat') && !str_contains($dFb, XERIC_STATE_UNSHOWN)
+    && (int)$landF['event_id'] > 0, mb_substr($dFb, 0, 400));
+xeric_state_rating('');
+
 // -- the close, with two: both in every head's company, the title, the trail ---
 $dbL2 = fresh_db('two-close'); $cL2 = [];
 $epL2 = stub_room($cL2, ['Ruth Amberg' => ['Ruth saw Walt and Ann come in together.']], null, fn(int $n) => 'Plain ' . $n . '.');

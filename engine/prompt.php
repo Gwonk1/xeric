@@ -114,7 +114,7 @@ function xeric_prompt_build(array $t, PDO $db, string $speakerHandle, array $now
     // takes. XERIC_PROMPT_HISTORY_CHUNK is how many turns share one cache entry.
     $history = $convId !== null
         ? xeric_messages_recent($db, (int)$convId, (int)($opts['history_limit'] ?? 20),
-                                XERIC_PROMPT_HISTORY_CHUNK)
+                                XERIC_PROMPT_HISTORY_CHUNK, xeric_state_rating())
         : [];
 
     // WHO SAID WHAT, once more than one person at the centre has spoken in

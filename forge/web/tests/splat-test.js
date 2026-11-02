@@ -17,6 +17,15 @@ const results = [];
 function ok(name, cond, detail) { results.push([name, !!cond, detail === undefined ? '' : String(detail)]); }
 const near = (a, b, eps) => Math.abs(a - b) < (eps === undefined ? 1e-5 : eps);
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 5));
+// UNTIL A CONDITION, not for a guess at how long. A fixed tick is right for
+// the three-splat fixtures, which settle in a turn of the loop; a check whose
+// work scales with the machine (parsing and sorting 250,001 splats on this
+// thread) waits for the state it asserts, up to a deadline that only a real
+// hang reaches, and then asserts exactly as before.
+const until = async (cond, ms) => {
+  const end = Date.now() + (ms || 10000);
+  while (!cond() && Date.now() < end) await tick(5);
+};
 
 const [, , VIEW_SRC, WORKER_SRC, XV_SRC, FIX_SPLAT, FIX_PLY] = process.argv;
 const workerCode = fs.readFileSync(WORKER_SRC, 'utf8');
@@ -389,7 +398,9 @@ ok('the 3 m rule: a step to 4 m comes back to 3, inside is untouched',
                      arrayBuffer: () => Promise.resolve(bigBuf.slice(0)) });
   k = canvas('webgl2'); ready = null;
   const D = XS.mount(k.cv, 'x', { Worker: DyingWorker, onReady: (x) => { ready = x; } });
-  await tick(80);
+  const drawnN = () => k.cv.gl.calls.filter((x) => x[0] === 'drawArraysInstanced').map((x) => x[1][3]);
+  await until(() => ready && D.state.truncated && D.state.order && D.state.order.length === XS.CAP_NO_WORKER && drawnN().slice(-1)[0] === XS.CAP_NO_WORKER
+    && /showing 250,000 of/.test(k.st.textContent));
   const drawn = k.cv.gl.calls.filter((x) => x[0] === 'drawArraysInstanced').map((x) => x[1][3]);
   ok('a worker that dies after load: cut to CAP_NO_WORKER, sorted here, and the page says so',
     ready && ready.n === bigN && D.state.n === XS.CAP_NO_WORKER && D.state.truncated

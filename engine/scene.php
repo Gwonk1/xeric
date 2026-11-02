@@ -309,7 +309,20 @@ function xeric_scene_brief(array $t, PDO $db, ?string $key = null, ?array $now =
     // and that means a name: a player has no appearance in the template, and
     // the engine does not invent one for a real person. The bearing is where
     // they stand, which is the room's to say, not theirs.
-    $players = xeric_travel_others_at($t, $db, $key);
+    $bodies  = xeric_travel_players($t, $db);
+    $players = xeric_travel_others_at($t, $db, $key, null, $bodies);
+    // EVERY HUMAN IN THE ROOM, the one looking included: two players standing
+    // in one room are looking at ONE room, so what the room is (its prompt,
+    // its fingerprint) is keyed on the set of them, never on who is asking —
+    // otherwise Ann's look and Walt's look at the same moment are two
+    // fingerprints and two renders of one place. `who` still leaves the viewer
+    // out, because a person is not company to themselves. Set only when
+    // somebody else is here, so a world of one composes what it always did.
+    $company = [];
+    if ($players !== []) {
+        foreach ($bodies as $pb) if ($pb['where'] === $key) $company[(string)$pb['handle']] = (string)$pb['name'];
+        ksort($company, SORT_STRING);
+    }
     if ($players !== []) {
         $placed = array_merge(array_values($bear['items']), array_values($bear['who']));
         $world  = (string)($t['meta']['name'] ?? 'xeric');
@@ -353,7 +366,7 @@ function xeric_scene_brief(array $t, PDO $db, ?string $key = null, ?array $now =
         'enabled'  => $cfg['enabled'],
         'vantage'  => $cfg['vantage'],
         'seeds'    => ['place' => $seeds, 'faces' => $faces],
-    ];
+    ] + ($company !== [] ? ['company' => $company] : []);
 
     $brief['prompt']      = xeric_scene_prompt($brief, $name, $desc, $items, $cfg, trim((string)($opts['ask'] ?? '')));
     $brief['fingerprint'] = xeric_scene_fingerprint($brief, $desc, $items, $cfg, trim((string)($opts['ask'] ?? '')));
@@ -396,8 +409,10 @@ function xeric_scene_prompt(array $b, string $name, string $desc, array $items, 
         $people = [];
         foreach ($b['who'] as $w) {
             $line = $w['name'];
-            // Another player: a name and nothing the template never said.
-            if (!empty($w['player'])) { $people[] = $line; continue; }
+            // Another player: a name and nothing the template never said —
+            // and with company, every human present is named below instead,
+            // the same list whoever is looking.
+            if (!empty($w['player'])) { if (!isset($b['company'])) $people[] = $line; continue; }
             if ($w['build'] !== '')      $line .= ', ' . rtrim($w['build'], '.');
             if ($w['appearance'] !== '') $line .= ', ' . rtrim($w['appearance'], '.');
             if ($w['wears'] !== [])      $line .= ', wearing ' . implode(', ', $w['wears']);
@@ -405,6 +420,7 @@ function xeric_scene_prompt(array $b, string $name, string $desc, array $items, 
             elseif ($w['at_home'])       $line .= ' — at home';
             $people[] = $line;
         }
+        foreach ((array)($b['company'] ?? []) as $pn) $people[] = (string)$pn;
         $bits[] = 'present: ' . implode('; ', $people);
     }
 
@@ -452,6 +468,10 @@ function xeric_scene_fingerprint(array $b, string $desc, array $items, array $cf
     }
     ksort($people, SORT_STRING);
     ksort($players, SORT_STRING);
+    // ONE ROOM, ONE KEY: with company the players are the whole set standing
+    // in it, the viewer included (xeric_scene_brief's `company`), so everyone
+    // in the room shares a fingerprint and one render serves them all.
+    if (isset($b['company'])) $players = (array)$b['company'];
     // A SECOND HUMAN IN THE ROOM IS A DIFFERENT ROOM — but the key is there
     // only when somebody is, so a world of one hashes exactly what it always
     // hashed and no view on anybody's disk goes stale for this.

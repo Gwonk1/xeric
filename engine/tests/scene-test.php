@@ -1211,6 +1211,47 @@ foreach (glob($fake . '/*') ?: [] as $f) @unlink($f);
 @rmdir($fake);
 
 // ---------------------------------------------------------------------------
+echo "\n# two people, one room, one picture\n";
+// ---------------------------------------------------------------------------
+
+// Walt and Ann both at the Bluebird. Each of them looks; it is one room, so
+// it is one fingerprint and one render — the set of everybody standing in it,
+// the viewer included. Each brief's `who` still leaves its own viewer out.
+$dbTP = $dir . '-two.sqlite';
+foreach ([$dbTP, $dbTP . '-wal', $dbTP . '-shm'] as $f) @unlink($f);
+$dbT = xeric_state_open($dbTP);
+xeric_clock_begin($dbT, $T);
+$tAnn = xeric_player_add($dbT, $T, 'Ann Price');
+xeric_player_move($dbT, 'bluebird', $mon0710['epoch'] - 600, 1);
+xeric_player_move($dbT, 'bluebird', $mon0710['epoch'] - 300, $tAnn);
+xeric_player_current(fn() => 1);
+$bW = xeric_scene_brief($T, $dbT, null, $mon0710);
+$kW = xeric_scene_ahead_key($T, $dbT, $mon0710);
+xeric_player_current(fn() => $tAnn);
+$bA = xeric_scene_brief($T, $dbT, null, $mon0710);
+$kA = xeric_scene_ahead_key($T, $dbT, $mon0710);
+xeric_player_current(fn() => 1);
+$pW = array_column(array_filter($bW['who'], fn($w) => !empty($w['player'])), 'handle');
+$pA = array_column(array_filter($bA['who'], fn($w) => !empty($w['player'])), 'handle');
+ok('two: Walt\'s look and Ann\'s look at the same moment in the same room share one fingerprint, and one prompt',
+    $bW['fingerprint'] === $bA['fingerprint'] && $bW['prompt'] === $bA['prompt'], $bW['fingerprint'] . ' / ' . $bA['fingerprint']);
+ok('two: and one ahead key, so drawing ahead renders it once', $kW === $kA);
+ok('two: each brief\'s `who` still leaves out the person looking', $pW === ['p2'] && $pA === ['p1']);
+ok('two: the picture names everybody standing in it, the one looking included',
+    str_contains($bW['prompt'], 'Walt') && str_contains($bW['prompt'], 'Ann Price'));
+xeric_player_move($dbT, 'beck_hardware', $mon0710['epoch'] - 60, $tAnn);
+$bW1 = xeric_scene_brief($T, $dbT, null, $mon0710);
+$dbS1P = $dir . '-solo1.sqlite';
+foreach ([$dbS1P, $dbS1P . '-wal', $dbS1P . '-shm'] as $f) @unlink($f);
+$dbS1 = xeric_state_open($dbS1P);
+xeric_clock_begin($dbS1, $T);
+xeric_player_move($dbS1, 'bluebird', $mon0710['epoch'] - 600);
+ok('two: with nobody else in the room the fingerprint is the solo one — no players key',
+    $bW1['fingerprint'] === xeric_scene_brief($T, $dbS1, null, $mon0710)['fingerprint'] && !isset($bW1['company']));
+$dbT = $dbS1 = null;
+foreach ([$dbTP, $dbS1P] as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
+
+// ---------------------------------------------------------------------------
 
 foreach ($envKeep as $k => $v) { if ($v !== false) putenv($k . '=' . $v); }
 foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);

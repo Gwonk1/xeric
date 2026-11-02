@@ -540,6 +540,31 @@ ok('comings: you are never news to yourself',
     !in_array('p2', xeric_travel_comings($M, $cw, $mAt('2026-11-02 07:15'), 'beck_hardware')['arrived'], true));
 xeric_player_current(fn() => 1);
 
+// Two moves inside one stretch: Ann at the diner since 06:00; Walt there too,
+// then off to the mill at 07:03 and on to Beck's at 07:07. At 07:10 her doorway
+// must say he went — where he was at 07:00 is the diner, not his last stop.
+$cw2 = fresh('body-comings-twice');
+xeric_player_add($cw2, $M, 'Ann Price');
+xeric_player_move($cw2, 'bluebird', $mAt('2026-11-02 06:00')['epoch'], 2);
+xeric_player_move($cw2, 'bluebird', $mAt('2026-11-02 06:00')['epoch'], 1);
+xeric_player_move($cw2, 'the_mill', $mAt('2026-11-02 07:03')['epoch'], 1);
+xeric_player_move($cw2, 'beck_hardware', $mAt('2026-11-02 07:07')['epoch'], 1);
+xeric_player_current(fn() => 2);
+$cm3 = xeric_travel_comings($M, $cw2, $m0710, 'bluebird');
+$cm3b = xeric_travel_comings($M, $cw2, $m0710, 'the_mill');
+xeric_player_current(fn() => 1);
+ok('comings: a friend who moved twice inside the stretch is read off their move log — Walt left the diner',
+    in_array('p1', $cm3['left'], true) && str_contains($cm3['line'], 'Walt gets up and goes'), json_encode($cm3));
+ok('comings: and the mill he passed through saw nothing come or go of him at the stretch\'s ends',
+    !in_array('p1', $cm3b['arrived'], true) && !in_array('p1', $cm3b['left'], true), json_encode($cm3b));
+$mv = json_decode((string)xeric_world_state_get($cw2, 'player.moves'), true);
+ok('comings: the log is short, epoch-stamped, and a world of one never writes it',
+    is_array($mv) && count($mv) === 3 && $mv[2] === [$mAt('2026-11-02 07:07')['epoch'], 'the_mill', 'beck_hardware']
+    && xeric_world_state_get($solo, 'player.moves') === null);
+for ($i = 0; $i < 12; $i++) xeric_player_move($cw2, $i % 2 ? 'bluebird' : 'the_mill', $mAt('2026-11-02 08:00')['epoch'] + $i * 60, 1);
+ok('comings: trimmed to the last ' . XERIC_PLAYER_MOVES . ' moves',
+    count(json_decode((string)xeric_world_state_get($cw2, 'player.moves'), true)) === XERIC_PLAYER_MOVES);
+
 // -- the trip: one body, one clock ------------------------------------------------
 $tr = fresh('body-trip');
 xeric_clock_begin($tr, $M);

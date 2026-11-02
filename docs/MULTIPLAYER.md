@@ -45,9 +45,11 @@ different things.
 Every player has their own position. Player 1's is the `player.where` /
 `player.where_since` row every world already has; player n's is
 `player.where.p<n>` / `player.where_since.p<n>`. In a world with company, a
-move also records where the body came from (`player.where_from[.p<n>]`), the
-one fact another player's doorway needs to say somebody got up and left. A
-world of one never writes that row.
+move also records where the body came from (`player.where_from[.p<n>]`) and
+keeps its last eight moves with their epochs (`player.moves[.p<n>]`), which is
+how another player's doorway says somebody got up and left — even somebody who
+went on somewhere else inside the same stretch. A world of one never writes
+either row.
 
 Which body a request is about is **the current player**. The engine never
 reads a session: `xeric_player_current()` is a seam, the web layer installs a
@@ -67,8 +69,10 @@ The read model shows the others without learning a new shape:
   followed by "(another player)".
 - **The look** (`xeric_scene_brief`): other players present are in `who`
   with `player: true`, a name and a bearing. A second human in the room is a
-  different room, so the fingerprint includes them; with nobody else there
-  the key is absent and the fingerprint is exactly what it was. Their tag in
+  different room, so the fingerprint includes them — all of them, the one
+  looking too (`company`), because two players in one room are looking at one
+  room and share one fingerprint and one render; with nobody else there the
+  key is absent and the fingerprint is exactly what it was. Their tag in
   the view is focusable and opens nothing — talking to a person who is
   standing beside you is the room's business, not a phone's.
 - **Comings and goings**: another player walking in or out is a beat, like
@@ -132,6 +136,38 @@ not what it is: "(a line you are not shown)", the prose instead of the render,
 the caption instead of the photo. That is the kids' headset. Unstamped rows —
 everything written before this — read as they always did.
 
+**Redaction is a presentation concern and an audience concern, never a side
+effect of reading storage.** The shared readers — `xeric_messages_recent`,
+`xeric_room_rows`, `xeric_events_recent` — take an explicit viewer rating, and
+with none they return every row as written; the process rating is never read
+inside them.
+
+- **Whatever renders to a person names that person's rating**: the thread
+  view and the API's thread reader, the book, the sidebar, why, the room poll.
+- **A prompt written for an audience is built at the audience's ceiling**: a
+  thread's character prompt at the session's rating; the live room's cast
+  prompts at the room's `eff`, so once a lower-rated seat has folded it, an
+  adult-stamped line from earlier is a gap in every later cast prompt —
+  `xeric_room_step` holds the transcript to `eff` itself, whatever it is
+  handed.
+- **Background work reads everything**: the chat harvest, a room's close
+  (its diaries and its prose), sleep, the narrator's audit and investigate.
+  A kids' headset's turn running the harvest neither learns from
+  placeholders nor steps the watermark past lines it was not shown.
+- **Stamps in a room are the table's.** A line in a live room is said to
+  everybody seated, so every row written into it — cast, players, stage
+  directions — is stamped at the lower of its writer's rating and the room's
+  `eff` (`xeric_room_append`). After a kids' headset sits down, an adult's
+  next line is one the kid can read, because the kid heard it; the adult's
+  lines from before the fold keep their stamps and stay gaps.
+- **A photo is composed at the lower of its queued stamp and the reaper's
+  rating**, under the world's, and keeps the stamp it was queued with: an
+  adult worker reaping a kids' headset's photo neither composes it as adult
+  nor locks it out of the headset that asked.
+
+What this leaves: a memory harvested from adult lines carries no stamp of its
+own (PUNCHLIST).
+
 A guest's open never pauses or resumes the owner's clock.
 
 ## The room with two humans
@@ -148,7 +184,10 @@ across the upgrade lands.
   says something to it is seated, and hears from their own row on — the rule
   an adult of the cast walking in already had. The first player's handle in
   the transcript is still `__you`; the n-th is `__you.p<n>`, a sigil the
-  mention test can never find in a sentence. One table talks at a time in a
+  mention test can never find in a sentence. The poll is per screen: a row's
+  `h` is `__you` only on the viewer's own lines, and everybody else's carry
+  `__you.p<n>` (the first player's as `__you.p1`) with their name, so the page
+  draws a friend's initials, never the viewer's face. One table talks at a time in a
   world: a line from somebody standing elsewhere while a room is going is
   refused with the place it is going on at.
 - **Leaving is walking out.** When a seated player's body leaves the place
@@ -181,10 +220,11 @@ across the upgrade lands.
   on, and the page says so ("Somebody at the table reads at a lower rating,
   so the room keeps to it for everyone"). It folds down only, never back up
   mid-session. Down is safe without a seal because every cast prompt is
-  rebuilt at the session's ceiling each beat; the cast lines after the fold
-  are stamped at it, so the kids' headset can read the answers. What a person
-  typed keeps their own request's stamp, so an adult session's lines still
-  read as gaps on the kids' headset — the stamp rule, doing its job.
+  rebuilt at the session's ceiling each beat, from the transcript as the
+  ceiling may hear it; every line after the fold, a player's included, is
+  stamped at it, so the kids' headset can read the room from then on. Lines
+  from before the fold keep their stamps and read as gaps on the kids'
+  headset (see "Who said it, and who may read it").
 - **Cost.** Each player's line is one message on *their* session's hour. A
   cast beat is charged, as a reroll, to the session whose line started the
   turn — whichever worker happens to be carrying it. The payer's session id

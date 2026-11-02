@@ -890,15 +890,48 @@ function xeric_web_session_path(?string $sid = null): string
     return xeric_web_sessions_dir() . '/' . $sid . '.json';
 }
 
-/** Read the session. Missing, unreadable or corrupt all mean "a fresh one". */
+/**
+ * Read the session. Missing, unreadable or corrupt all mean "a fresh one".
+ *
+ * UNDER A SHARED LOCK, because xeric_web_session_edit() truncates the file and
+ * then writes it, holding LOCK_EX across both. An unlocked read that lands
+ * between the two reads an empty file — "a fresh one" — and a fresh one has no
+ * machine attached and claims no world: the owner's very next open paused
+ * their own running clock (play-lib's reconcile) or forked their own world as
+ * a stranger's. It happened whenever a worker charged the session (a cast
+ * beat's reroll, a meter) in the same millisecond as a page load, which is
+ * what made api-test fail one run in a few. LOCK_SH waits out the writer and
+ * never blocks another reader — except THIS process's own edit, whose
+ * callback may read the record it is editing: flock is per open file, so a
+ * second descriptor asking for LOCK_SH under our own LOCK_EX would wait for
+ * ever. A record this process holds is read without asking (the lock it holds
+ * already keeps every writer out).
+ */
 function xeric_web_session_read(?string $sid = null): array
 {
-    $raw = @file_get_contents(xeric_web_session_path($sid));
+    $raw  = false;
+    $path = xeric_web_session_path($sid);
+    $fh   = @fopen($path, 'r');
+    if ($fh) {
+        if (!xeric_web_session_held($path)) @flock($fh, LOCK_SH);
+        $raw = stream_get_contents($fh);
+        @flock($fh, LOCK_UN);
+        fclose($fh);
+    }
     $s = $raw === false ? null : json_decode($raw, true);
     if (!is_array($s)) $s = [];
     $s['answers'] = (array)($s['answers'] ?? []);
     $s['model']   = (array)($s['model'] ?? []);
     return $s;
+}
+
+/** The session records this process holds LOCK_EX on right now ($set: take or let go). */
+function xeric_web_session_held(string $path, ?bool $set = null): bool
+{
+    static $held = [];
+    if ($set === true) $held[$path] = ($held[$path] ?? 0) + 1;
+    if ($set === false && isset($held[$path]) && --$held[$path] <= 0) unset($held[$path]);
+    return isset($held[$path]);
 }
 
 /**
@@ -926,12 +959,20 @@ function xeric_web_session_edit(callable $fn, ?string $sid = null)
     }
 
     @flock($fh, LOCK_EX);
-    $s = json_decode((string)stream_get_contents($fh), true);
-    if (!is_array($s)) $s = [];
-    $s['answers'] = (array)($s['answers'] ?? []);
-    $s['model']   = (array)($s['model'] ?? []);
+    xeric_web_session_held($path, true);
+    try {
+        $s = json_decode((string)stream_get_contents($fh), true);
+        if (!is_array($s)) $s = [];
+        $s['answers'] = (array)($s['answers'] ?? []);
+        $s['model']   = (array)($s['model'] ?? []);
 
-    $ret = $fn($s);
+        $ret = $fn($s);
+    } catch (Throwable $e) {
+        xeric_web_session_held($path, false);
+        @flock($fh, LOCK_UN);
+        fclose($fh);
+        throw $e;
+    }
 
     unset($s['model']['key']);
     $s['at'] = time();
@@ -939,6 +980,7 @@ function xeric_web_session_edit(callable $fn, ?string $sid = null)
     rewind($fh);
     fwrite($fh, json_encode($s, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     fflush($fh);
+    xeric_web_session_held($path, false);
     @flock($fh, LOCK_UN);
     fclose($fh);
 

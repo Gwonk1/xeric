@@ -1092,16 +1092,22 @@ function xeric_play_room_rows(array $t, array $live, array $rows, ?PDO $db = nul
         $role = (string)$r['role'];
         $h    = (string)($r['handle'] ?? '');
         $p    = max(XERIC_PLAYER_FIRST, (int)($r['player'] ?? 0));
+        // WHOSE FACE: `__you` is the viewer's own lane and nobody else's — the
+        // page draws the viewer's own avatar for it — so another player's line
+        // goes out as `__you.p<n>` with that player's name, and the page draws
+        // their initials. A row nobody can say is the viewer's is not theirs.
+        $mine  = $viewer !== null && $p === $viewer;
+        $other = $role === 'user' && !$mine && ($viewer !== null || $many);
         $row = [
             'id'   => (int)$r['id'],
             'who'  => $role === 'user' ? 'me' : ($role === 'character' && $h !== '' ? 'them' : 'narr'),
-            'h'    => $role === 'character' ? $h : ($role === 'user' ? XERIC_ROOM_YOU : ''),
-            'name' => $role === 'user' ? ($many ? xeric_player_name($db, $p, $t) : $me)
+            'h'    => $role === 'character' ? $h : ($role === 'user' ? ($other ? XERIC_ROOM_YOU . '.p' . $p : XERIC_ROOM_YOU) : ''),
+            'name' => $role === 'user' ? (($many || $other) && $db !== null ? xeric_player_name($db, $p, $t) : $me)
                     : ($role === 'character' ? (string)($names[$h] ?? xeric_world_name($t, $h)) : ''),
             'text' => (string)$r['content'],
             'when' => $r['world_epoch'] !== null ? xeric_play_stamp($t, (int)$r['world_epoch']) : '',
         ];
-        if ($many && $role === 'user') {
+        if (($many || ($other && $db !== null)) && $role === 'user') {
             $row['player'] = $p;
             // Whose line on THIS screen: the viewer's own lane, or a friend's.
             if ($viewer !== null) $row['own'] = $p === $viewer;
@@ -1135,7 +1141,7 @@ function xeric_play_room_presence(array $t, PDO $db, array &$live, array $now): 
     $coming  = array_merge($p['arrived'], $p['minors']);
     if ($leaving === [] && $coming === []) return null;
     $line = xeric_travel_comings_line($t, $now, (string)$live['place'], $coming, $leaving, $db);
-    $mid  = xeric_message_append($db, (int)$live['conv'], 'narrator', null, $line, (int)$now['epoch']);
+    $mid  = xeric_room_append($db, $live, 'narrator', null, $line, (int)$now['epoch']);
     foreach ($leaving as $h) xeric_room_unseat($live, (string)$h, $mid, $p['left'][$h], (int)$now['epoch']);
     foreach ($p['arrived'] as $h) xeric_room_seat($t, $live, (string)$h, $mid, $now);
     $live['trail'][] = array_filter(['mid' => $mid, 'stage' => $line,
@@ -1165,7 +1171,7 @@ function xeric_play_room_unseat(array $t, PDO $db, ?array &$live, int $player, a
             : (count(xeric_room_players_ever($live)) > 1 ? 'everyone left' : 'you left'), $now);
     }
     $line = xeric_pronoun_cap((string)$seat['name']) . ' ' . $how . ($how === 'steps back' ? ' from the table.' : '.');
-    $mid  = xeric_message_append($db, (int)$live['conv'], 'narrator', null, $line, (int)$now['epoch']);
+    $mid  = xeric_room_append($db, $live, 'narrator', null, $line, (int)$now['epoch']);
     xeric_room_player_leave($live, $player, $mid, (int)$now['epoch']);
     if ((string)($live['floor'] ?? '') === (string)$seat['handle']) $live['floor'] = null;
     $live['trail'][] = ['mid' => $mid, 'stage' => $line, 'player_left' => (string)$seat['handle']];
@@ -1245,10 +1251,12 @@ function xeric_play_room_say(array $w, string $text, ?array $now = null): array
         $seat   = xeric_room_player_of($live, (int)$player['id']);
         $joined = $seat === null;
         if ($joined) $seat = xeric_room_player_join($live, $player, 0);
-        $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
+        $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv'], 0, (string)$live['eff']));
         $heard = xeric_room_hear($t, $live, $lines, $text);
-        $mid   = xeric_message_append($db, (int)$live['conv'], 'user', null, $heard, (int)$now['epoch'],
-                                      null, (int)$player['id']);
+        // Said to the table, so stamped at what the table may hear
+        // (xeric_room_append): after a kids' headset folds the ceiling, this
+        // line is one the kid can read, because the kid heard it.
+        $mid   = xeric_room_append($db, $live, 'user', null, $heard, (int)$now['epoch'], (int)$player['id']);
         if ($joined) {
             foreach ($live['players'] as $i => $p) {
                 if ((int)$p['id'] === (int)$player['id']) $live['players'][$i]['joined_at_row'] = $mid;
@@ -1404,7 +1412,11 @@ function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []
                 $live['lease'] = null; $live['typing'] = null;
                 return ['stop' => 'done'];
             }
-            $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv']));
+            // READ FOR THE TABLE: the cast prompt this feeds is written for
+            // everybody seated, so an adult-stamped line from before a kids'
+            // headset folded the ceiling comes back a gap (and xeric_room_step
+            // holds the prompt to `eff` again, whatever it is handed).
+            $lines = xeric_room_lines($live, xeric_room_rows($db, (int)$live['conv'], 0, (string)$live['eff']));
             $draw  = xeric_room_next($t, $db, $live, $lines);
             $sp    = (string)$draw['speaker'];
             $live['typing'] = ['h' => $sp, 'at' => microtime(true), 'queue' => ''];
@@ -1512,15 +1524,10 @@ function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []
                 return 'dropped';
             }
             // STAMPED AT THE TABLE'S CEILING when that is lower than this
-            // process's: the line was generated at the room's rating, and a
-            // kids' headset that lowered it must be able to read the answer.
-            $was = xeric_state_rating();
-            if ($was !== '' && xeric_rating_rank((string)$live['eff']) < xeric_rating_rank($was)) xeric_state_rating((string)$live['eff']);
-            try {
-                $mid = xeric_message_append($db, (int)$live['conv'], 'character', $sp, (string)$beat['text'], (int)$after['epoch']);
-            } finally {
-                xeric_state_rating($was);
-            }
+            // process's (xeric_room_append): the line was generated at the
+            // room's rating, and a kids' headset that lowered it must be able
+            // to read the answer.
+            $mid = xeric_room_append($db, $live, 'character', $sp, (string)$beat['text'], (int)$after['epoch']);
             $carry = xeric_room_carry($live, $beat, [
                 'limit_ok'      => $limitOk,
                 'player_here'   => xeric_room_players_here($t, $db, $live) !== [],

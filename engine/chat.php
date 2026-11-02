@@ -1076,15 +1076,17 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // was — the name the model gave, else the newest line this harvest is the
     // first to read — and never simply whoever's turn ran the harvest: Ann
     // bringing the dish must not credit Walt.
-    $actor = static function ($v) use ($many, $voices, $nameOf, $turns, $readTo, $player): int {
+    // A NAME IS A WHOLE NAME. The model's answer is matched against each
+    // voice's full and first name, word-bounded, longest first — "Ann" is
+    // not inside "Hannah" — and an answer that names nobody here, or more
+    // than one of them, credits nobody (null): a guess must never pay a
+    // stranger's trust.
+    $actor = static function ($v) use ($many, $voices, $nameOf, $turns, $readTo, $player): ?int {
         if (!$many) return $player;
         if (is_string($v) && trim($v) !== '') {
-            $want = mb_strtolower(trim($v));
-            foreach (array_keys($voices) as $p) {
-                $n = mb_strtolower(trim($nameOf((int)$p)));
-                $first = (string)(preg_split('/\s+/u', $n) ?: [$n])[0];
-                if ($n !== '' && ($want === $n || $want === $first || str_contains($want, $n))) return (int)$p;
-            }
+            $names = [];
+            foreach (array_keys($voices) as $p) $names[(int)$p] = $nameOf((int)$p);
+            return xeric_chat_name_player($v, $names);
         }
         foreach ([true, false] as $fresh) {
             foreach (array_reverse($turns) as $tn) {
@@ -1095,7 +1097,9 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
         }
         return $player;
     };
-    if (!empty($raw['kept'])) xeric_expect_keep($template, $db, $speaker, $now, null, $actor($raw['kept']), 'said');
+    if (!empty($raw['kept']) && ($by = $actor($raw['kept'])) !== null) {
+        xeric_expect_keep($template, $db, $speaker, $now, null, $by, 'said');
+    }
     // THE PROMISE IS WHOEVER SAID IT'S, not whoever's turn happened to pay for
     // the harvest: the words are matched back to the line that carries them.
     $promise = is_array($raw['promise'] ?? null) ? $raw['promise'] : null;
@@ -1104,8 +1108,7 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // An explanation repairs the freshest miss; with none to repair it owns up
     // to a confidence let out; with neither, it thaws a grudge that hardened
     // past both windows. One explanation, one thing mended.
-    if (!empty($raw['explained'])) {
-        $by = $actor($raw['explained']);
+    if (!empty($raw['explained']) && ($by = $actor($raw['explained'])) !== null) {
         if (xeric_expect_repair($template, $db, $speaker, $now, null, $by) === null
             && xeric_confide_mend($template, $db, $speaker, $now, $by) === null) {
             xeric_grudge_thaw($template, $db, $speaker, '', $by, $now);
@@ -1116,20 +1119,94 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // to read: what she asked the person at the centre to keep (her words,
     // checked against what she actually said), and whether they just repeated
     // somebody else's to her. Code-only; neither can fail the harvest.
+    // EACH LINE IS ITS OWN PLAYER'S, as a promise is: what Ann repeated is
+    // Ann's breach even when Walt's turn ran the harvest, and a confidence is
+    // put on whoever she was answering when she said it — or, when that
+    // cannot be told, on nobody.
     try {
-        $herLines = $theirLines = [];
+        $herLines = [];
+        $theirLines = [];
         foreach ($turns as $tn) {
             if ((int)($tn['id'] ?? 0) <= $readTo) continue;
             $role = (string)($tn['role'] ?? '');
-            if ($role === 'character') $herLines[]   = (string)$tn['content'];
-            elseif ($role === 'user')  $theirLines[] = (string)$tn['content'];
+            if ($role === 'character') $herLines[] = (string)$tn['content'];
+            elseif ($role === 'user') $theirLines[max(XERIC_PLAYER_FIRST, (int)($tn['player'] ?? 0))][] = (string)$tn['content'];
         }
-        xeric_confide_repeat($template, $db, $speaker, $theirLines, $now, $player);
-        xeric_confide_to_player($template, $db, $speaker, is_array($raw['confided'] ?? null) ? $raw['confided'] : null,
-                                $now, $player, implode("\n", $herLines));
+        foreach ($theirLines as $p => $ls) xeric_confide_repeat($template, $db, $speaker, $ls, $now, (int)$p);
+        $confided = is_array($raw['confided'] ?? null) ? $raw['confided'] : null;
+        $to = $many ? xeric_chat_confidant($turns, $confided, $readTo) : $player;
+        if ($to !== null) {
+            xeric_confide_to_player($template, $db, $speaker, $confided, $now, $to, implode("\n", $herLines));
+        }
     } catch (Throwable $e) { /* a confidence lost is re-proposed next harvest */ }
 
     return count($keep);
+}
+
+/**
+ * Which player a model's answer names, of $names (player id => roster name).
+ *
+ * Whole names only: each player's full name and first name, case-insensitive,
+ * bounded by anything that is not a letter or digit, tried longest first so
+ * "Ann Marie" is found before "Ann" can be found inside it (and at one length
+ * a whole name before a first name), and every span matched is taken out
+ * before a shorter name is tried. Exactly one player named is that player;
+ * none, or two different ones, is null — nobody.
+ *
+ * @param array<int,string> $names
+ */
+function xeric_chat_name_player(string $answer, array $names): ?int
+{
+    $text = ' ' . mb_strtolower(trim($answer)) . ' ';
+    // Each spelling once, with who owns it whole and whose first name it is.
+    $by = [];
+    foreach ($names as $p => $n) {
+        $n = mb_strtolower(trim((string)$n));
+        if ($n === '') continue;
+        $by[$n]['whole'][] = (int)$p;
+        $first = (string)((preg_split('/\s+/u', $n) ?: [$n])[0]);
+        if ($first !== '' && $first !== $n) $by[$first]['first'][] = (int)$p;
+    }
+    uksort($by, fn($a, $b) => mb_strlen($b) <=> mb_strlen($a) ?: strcmp($a, $b));
+    $found = [];
+    foreach ($by as $n => $own) {
+        $re = '/(?<![\p{L}\p{N}])' . preg_quote((string)$n, '/') . '(?![\p{L}\p{N}])/u';
+        if (!preg_match($re, $text)) continue;
+        // Somebody's whole name beats somebody else's first name; two people
+        // answering to one spelling are both found, and so nobody is.
+        foreach ($own['whole'] ?? $own['first'] ?? [] as $p) $found[$p] = true;
+        $text = (string)preg_replace($re, ' ', $text);
+    }
+    return count($found) === 1 ? (int)array_key_first($found) : null;
+}
+
+/**
+ * Whom a character confided in, with more than one person in the thread: the
+ * player whose line she was answering when she said the quoted words — the
+ * newest user line before hers, else the first after it. Her line has to be
+ * found (letters and digits, as xeric_chat_promiser matches), and so does the
+ * person; otherwise nobody, because a confidence put on the wrong person is a
+ * secret they can be punished for breaking.
+ */
+function xeric_chat_confidant(array $turns, ?array $confided, int $readTo = 0): ?int
+{
+    $norm = static fn(string $s): string => (string)preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s));
+    $quote = trim($norm((string)($confided['quote'] ?? '')));
+    if ($quote === '') return null;
+    $turns = array_values($turns);
+    foreach (array_reverse(array_keys($turns)) as $i) {
+        $t = $turns[$i];
+        if ((string)($t['role'] ?? '') !== 'character' || (int)($t['id'] ?? 0) <= $readTo) continue;
+        if (!str_contains(' ' . $norm((string)($t['content'] ?? '')) . ' ', ' ' . $quote . ' ')) continue;
+        for ($j = $i - 1; $j >= 0; $j--) {
+            if ((string)($turns[$j]['role'] ?? '') === 'user') return max(XERIC_PLAYER_FIRST, (int)($turns[$j]['player'] ?? 0));
+        }
+        for ($j = $i + 1; $j < count($turns); $j++) {
+            if ((string)($turns[$j]['role'] ?? '') === 'user') return max(XERIC_PLAYER_FIRST, (int)($turns[$j]['player'] ?? 0));
+        }
+        return null;
+    }
+    return null;
 }
 
 /**

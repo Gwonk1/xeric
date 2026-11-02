@@ -173,6 +173,22 @@ ok('reroll: a second render of a portrait takes the first as its likeness',
     isset($byKind['portrait']) && ($byKind['portrait']['opts']['reference']['bytes'] ?? '') === $keep
     && ($meta($job('portrait', 'ruth'))['reference_of'] ?? 0) === $ruthId);
 
+// THE KIDS' HEADSET'S PHOTO, REAPED BY AN ADULT WORKER: composed at the lower
+// of the queued stamp and the reaper's own rating, and still the kid's after.
+$XM = $T;
+$XM['meta']['rating'] = 'mature';
+$db->prepare('INSERT INTO photo_jobs (kind, subject, caption, created_at, rating) VALUES (?, ?, ?, ?, ?)')
+   ->execute(['place', 'beck_hardware', 'the hardware store', 4, 'sfw']);
+xeric_state_rating('mature');
+$seen = [];
+xeric_photo_reap($XM, $db, $photos, $stub(false), 5);
+xeric_state_rating('');
+$kidShot = array_values(array_filter($seen, fn($s) => ($s['composed']['kind'] ?? '') === 'place'))[0] ?? null;
+ok('rating: an sfw-queued photo reaped by a mature worker composes at sfw, not at the reaper\'s rating',
+    $kidShot !== null && $kidShot['composed']['rating'] === 'sfw', json_encode($kidShot['composed']['rating'] ?? null));
+ok('rating: and keeps the stamp it was queued with — never re-stamped upward, so the kid can see it',
+    (string)$job('place', 'beck_hardware')['status'] === 'done' && (string)$job('place', 'beck_hardware')['rating'] === 'sfw');
+
 echo "\n# the wire\n";
 
 // A forty-line images machine: /edits/ answers the edits route, /bare/ only generations.

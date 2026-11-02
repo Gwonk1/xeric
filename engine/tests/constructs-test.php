@@ -995,6 +995,36 @@ ok('ritual: and turning up again keeps it', (xeric_sibling_get($dR, 'dot', 'ritu
     && xeric_constructs_licences($T, $dR) === []);
 ok('ritual: inspector line', str_contains(implode("\n", xeric_constructs_why($T, $dR, 'dot')), 'ritual (kept)'));
 
+// A BODY EACH, for the ritual too: the owner's three mornings at the Bluebird,
+// two of whose ticks ran on a guest's request while the guest stood at the
+// hardware store. The pass reads every body, so the ritual is still the
+// owner's — and the guest's own two visits to Beck's form nothing of theirs.
+$dR2 = $sibDb('ritual-two');
+$rAnn = xeric_player_add($dR2, $T, 'Ann');
+xeric_player_move($dR2, 'beck_hardware', ep('2026-08-03 06:00'), $rAnn);
+foreach (['2026-08-03', '2026-08-04', '2026-08-05'] as $i => $d) {
+    xeric_player_move($dR2, 'bluebird', ep($d . ' 08:15'), 1);
+    xeric_player_current(fn() => $i === 1 ? 1 : $rAnn);
+    xeric_constructs_tick($T, $dR2, $at($d . ' 08:20'));
+    xeric_player_move($dR2, null, ep($d . ' 09:00'), 1);
+}
+xeric_player_current(fn() => 1);
+$rit2 = xeric_sibling_get($dR2, 'dot', 'ritual.bluebird');
+ok('ritual, two: the owner\'s three mornings form the ritual even when a guest\'s request ran two of the ticks',
+    ($rit2['state'] ?? '') === 'kept' && !isset($rit2['p'])
+    && xeric_sibling_rows($dR2, 'dot', 'ritual.bluebird.p') === [] && xeric_sibling_rows($dR2, 'harlan', 'ritual.') === [],
+    json_encode([$rit2, xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits'), xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits.p' . $rAnn)]));
+ok('ritual, two: each body keeps its own visit log', count(json_decode((string)xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits'), true) ?: []) === 3
+    && count(json_decode((string)xeric_arc_get($dR2, xeric_arc_world(), 'ritual.visits.p' . $rAnn), true) ?: []) === 1);
+// And the miss is the owner's, named as the owner, on a morning the guest's tick runs.
+xeric_player_current(fn() => $rAnn);
+xeric_constructs_tick($T, $dR2, $at('2026-08-06 10:30'));
+xeric_player_current(fn() => 1);
+ok('ritual, two: the morning the owner does not come is the owner\'s miss, whoever\'s request noticed it',
+    (xeric_sibling_get($dR2, 'dot', 'ritual.bluebird')['state'] ?? '') === 'missed'
+    && str_contains((string)(xeric_memories_for($dR2, 'dot', 1)[0]['text'] ?? ''), 'Walt did not come into'),
+    (string)(xeric_memories_for($dR2, 'dot', 1)[0]['text'] ?? ''));
+
 // -- milestone: the tenth on a ledger, once ---------------------------------
 $dM = $sibDb('mile');
 xeric_arc_set($dM, 'ruth', 'economy.casserole_ledger', 10);

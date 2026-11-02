@@ -444,7 +444,11 @@ and the map, and are answered by the same cast in one transcript, in tests —
 in-process and through real page requests — and a stranger's fork has no
 table at all. Two phones in a real browser have not been tried; the rendered
 room and the hearing are as tested as M2's were, which is to say against
-stubs and headless Chrome, never on a device.
+stubs and headless Chrome, never on a device. Since review, redaction is a
+presentation and audience concern rather than a side effect of reading
+storage — background work (the harvest, a room's close, sleep, the narrator's
+audit) reads every line whole, prompts are built at their audience's ceiling,
+and a line said at a folded table is stamped where everyone at it can read it.
 
 ### M5 — "When the world models hold still"
 

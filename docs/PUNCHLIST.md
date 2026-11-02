@@ -109,10 +109,10 @@ Filed by the room with two humans in it, not yet fixed.
 - **One table talks at a time in a world** — `forge/web/play-view.php` `xeric_play_room_say()`
   refuses a line from somebody standing elsewhere while a room is live; two rooms at once would
   need `room:live` keyed by place.
-- **A kids' headset reads an adult player's own room lines as gaps** — a player line keeps its
-  request's stamp (`xeric_message_append`); only the cast lines after the fold are stamped at
-  the room's ceiling (`xeric_play_room_run`). Stamping player text lower would want a content
-  check at that ceiling, which nothing has.
+- **Memories harvested from adult lines are not stamped** — the harvest now reads every line
+  whole (`engine/chat.php` `xeric_chat_extract()`, viewer null), so a memory can carry an adult
+  line's substance into a prompt a kids' headset's turn builds; `memories` has no `rating`
+  column. The room's close is the same (`xeric_room_land_live()`).
 - **The ceiling never comes back up** after the lower-rated player leaves —
   `engine/room.php` `xeric_room_player_join()` folds down only, by design (the hour is one
   record), so the rest of that session stays at the floor.
@@ -129,6 +129,30 @@ Filed by the room with two humans in it, not yet fixed.
   cursor, not from `joined_at_row`; harmless while guests may read the room anyway.
 
 ## Closed
+
+- **Storage readers redacted at whoever's request ran them** — `xeric_messages_recent()`,
+  `xeric_room_rows()` and `xeric_events_recent()` take an explicit viewer (null: whole); a kids'
+  headset's turn no longer makes the harvest skip adult lines or a room's close write diaries
+  from placeholders; a cast prompt after the fold is held to the room's `eff`
+  (`xeric_room_lines_shown()`); every room line is stamped at the table's ceiling
+  (`xeric_room_append()`); the photo reaper composes at the lower of the queued stamp and its own
+  rating and never re-stamps (review of M4).
+- **The harvest's name match found "Ann" inside "Hannah"** — `xeric_chat_name_player()`, whole
+  names, longest first, ambiguous is nobody; confidences and repeats go to the line's own player
+  (`xeric_chat_confidant()`).
+- **The room poll drew the viewer's face on a friend's lines** — `h` is `__you` only for the
+  viewer's own rows, `__you.p<n>` otherwise (`xeric_play_room_rows()`, `roomFace()`).
+- **The ritual pass read one body** — `xeric_ritual_step()` reads every player's, with a visit
+  log and rows each.
+- **Two players in one room fingerprinted it twice** — `xeric_scene_brief()`'s `company` keys
+  the room on everybody in it.
+- **A friend who moved twice in a stretch never left** — `player.moves[.p<n>]`, the last eight
+  moves, answers `xeric_player_where_at()`.
+- **api-test and splat-test flaked** — an unlocked session read could land between
+  `xeric_web_session_edit()`'s truncate and write and read "no machine", pausing the owner's
+  clock (`xeric_web_session_read()` takes `LOCK_SH`); api-test's servers take kernel-assigned
+  ports and wait for their own "started"; splat-test's 250,001-splat check waits for its state
+  instead of 80 ms.
 
 - **The live room seated one player** — `engine/room.php` seats `players`; the floor, silence,
   the ceiling and the close are per person; a guest with a roster seat may speak (M4).

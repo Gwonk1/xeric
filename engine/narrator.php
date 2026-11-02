@@ -346,7 +346,9 @@ function xeric_narrator_lived(array $t, PDO $db, array $now, array $opts = []): 
     }
 
     // -- what happened, with its reasons ----------------------------------
-    $events = xeric_events_recent($db, max(1, (int)($opts['events'] ?? 10)));
+    // ASK answers the person asking, so it reads the book as they may read it;
+    // the audit and investigate below read it whole (background, null).
+    $events = xeric_events_recent($db, max(1, (int)($opts['events'] ?? 10)), xeric_state_rating());
     if ($events !== []) {
         $lines[] = '';
         $lines[] = 'WHAT HAS HAPPENED, NEWEST FIRST';

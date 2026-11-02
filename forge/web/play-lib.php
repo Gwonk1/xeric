@@ -1685,7 +1685,7 @@ function xeric_play_side_html(array $t, PDO $db, ?array $now = null, string $slu
     // renders nothing, so counting it would print a number the section cannot
     // show — and a "6" that opens onto four lines is worse than no number.
     $events = array_values(array_filter(
-        xeric_events_recent($db, 6),
+        xeric_events_recent($db, 6, xeric_state_rating()),
         fn($e) => trim((string)($e['title'] ?? '')) !== ''
     ));
     if ($events !== []) {
@@ -1778,7 +1778,7 @@ function xeric_play_overview(array $t, PDO $db): string
 
     // What the xeric has done lately, in the sentences it already wrote.
     $recent = [];
-    foreach (xeric_events_recent($db, 6) as $e) {
+    foreach (xeric_events_recent($db, 6, xeric_state_rating()) as $e) {
         $ti = trim((string)($e['title'] ?? ''));
         if ($ti !== '') $recent[] = $ti;
     }
@@ -1883,7 +1883,7 @@ function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60): 
     if ($conv === null) return ['conversation_id' => null, 'messages' => []];
 
     $id   = (int)$conv['id'];
-    $rows = xeric_messages_recent($db, $id, $limit);
+    $rows = xeric_messages_recent($db, $id, $limit, 0, xeric_state_rating());   // as this viewer reads it
     xeric_play_mark_read($db, $id);
 
     // The photos running behind this conversation, mapped by the message they
@@ -2525,7 +2525,7 @@ function xeric_web_model(?string $sid = null): array
  */
 function xeric_play_events_html(array $t, PDO $db, string $slug, bool $mine = true, int $limit = 8): string
 {
-    $rows = xeric_events_recent($db, $limit);
+    $rows = xeric_events_recent($db, $limit, xeric_state_rating());
     if ($rows === []) {
         return '<p class="quiet">Nothing has happened here yet. Press one of the buttons above and it will.</p>';
     }

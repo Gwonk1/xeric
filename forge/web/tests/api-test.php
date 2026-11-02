@@ -199,6 +199,17 @@ ok('a failed frame says text, error and ok:false', $e['ok'] === false && $e['tex
 
 echo "\n# the seams in boot.php\n";
 
+// THE SESSION RECORD IS READ UNDER A SHARED LOCK (the api-test flake: a read
+// between an edit's truncate and its write read "no machine"), and an edit's
+// own callback reading the record it holds must not wait on itself.
+$lockSid = bin2hex(random_bytes(16));
+xeric_web_session_edit(function (array &$s): void { $s['model'] = ['kind' => 'local']; }, $lockSid);
+$inside = xeric_web_session_edit(fn(array &$s) => xeric_web_session_read($lockSid)['model']['kind'] ?? '', $lockSid);
+ok('a session read takes the shared lock, and an edit reading its own record does not deadlock',
+    $inside === 'local' && !xeric_web_session_held(xeric_web_session_path($lockSid))
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/boot.php'), '@flock($fh, LOCK_SH)'));
+@unlink(xeric_web_session_path($lockSid));
+
 ok('no shaper is registered unless api.php registers one', xeric_web_json_shaper() === null);
 xeric_web_json_shaper('xeric_api_envelope');
 ok('registering one is read back', xeric_web_json_shaper() === 'xeric_api_envelope');
@@ -267,36 +278,49 @@ echo json_encode(['object' => 'list', 'data' => [['id' => 'stub']]]);
 return true;
 PHP);
 
+// A PORT THE KERNEL HANDS OUT, AND A SERVER THAT IS PROVABLY OURS. This
+// probed a random port in 8700-9199 by connecting to it and called "nobody
+// answered" free, then took any connection on it as readiness — so two suites
+// (or two runs) picking the same port both "started", and one of them asked
+// the other's server questions about a world it did not have. Port 0 asks the
+// kernel for one nobody holds; readiness is OUR process's own log saying it
+// started, and a "Failed to listen" (somebody bound it in the gap) is a fresh
+// port, never a connection to whoever won.
 $freePort = function (): int {
-    for ($try = 8700 + random_int(0, 250); $try < 9199; $try++) {
-        $probe = @fsockopen('127.0.0.1', $try, $e1, $e2, 0.2);
-        if ($probe === false) return $try;
-        fclose($probe);
-    }
-    return 0;
+    $srv = @stream_socket_server('tcp://127.0.0.1:0', $e1, $e2);
+    if ($srv === false) return 0;
+    $name = (string)stream_socket_get_name($srv, false);
+    fclose($srv);
+    return (int)substr($name, strrpos($name, ':') + 1);
 };
-$listen = function (int $port, string $env, string $docroot, string $router) use ($tmp): int {
-    $pid = (int)trim((string)shell_exec($env . ' ' . escapeshellarg(PHP_BINARY) . ' -S 127.0.0.1:' . $port
-        . ' -t ' . escapeshellarg($docroot) . ' ' . escapeshellarg($router)
-        . ' > ' . escapeshellarg($tmp . '/server-' . $port . '.log') . ' 2>&1 & echo $!'));
-    for ($i = 0; $i < 60; $i++) {
-        $s = @fsockopen('127.0.0.1', $port, $e1, $e2, 0.3);
-        if ($s !== false) { fclose($s); return $pid; }
-        usleep(150000);
+$listen = function (int $port, string $env, string $docroot, string $router) use ($tmp, $freePort): array {
+    for ($attempt = 0; $attempt < 5; $attempt++, $port = $freePort()) {
+        $log = $tmp . '/server-' . $port . '.log';
+        $pid = (int)trim((string)shell_exec($env . ' exec ' . escapeshellarg(PHP_BINARY) . ' -S 127.0.0.1:' . $port
+            . ' -t ' . escapeshellarg($docroot) . ' ' . escapeshellarg($router)
+            . ' > ' . escapeshellarg($log) . ' 2>&1 & echo $!'));
+        for ($i = 0; $i < 100 && $pid > 0; $i++) {
+            $out = (string)@file_get_contents($log);
+            if (str_contains($out, 'Failed to listen')) break;
+            if (str_contains($out, '127.0.0.1:' . $port . ') started')) {
+                $s = @fsockopen('127.0.0.1', $port, $e1, $e2, 0.5);
+                if ($s !== false) { fclose($s); return [$port, $pid]; }
+            }
+            if (!@posix_kill($pid, 0)) break;
+            usleep(50000);
+        }
+        if ($pid > 0) @posix_kill($pid, 15);
     }
-    return -$pid;
+    return [0, 0];
 };
-$mport = $freePort();
-$mpid  = $listen($mport, 'PHP_CLI_SERVER_WORKERS=4', $machine, $machine . '/stub.php');
+[$mport, $mpid] = $listen($freePort(), 'PHP_CLI_SERVER_WORKERS=4', $machine, $machine . '/stub.php');
 $MACHINE = 'http://127.0.0.1:' . $mport;
 
 $serve = function (string $solo) use ($tmp, $WEB, $freePort, $listen, $MACHINE): array {
-    $port = $freePort();
     $env = 'XERIC_DATA_DIR=' . escapeshellarg($tmp) . ' XERIC_WORLDS_DIR=' . escapeshellarg($tmp . '/worlds')
          . ' XERIC_LOCAL_BASE=http://127.0.0.1:1 XERIC_SOLO=' . $solo . ' PHP_CLI_SERVER_WORKERS=4'
          . ' XERIC_VOICE_BASE=' . $MACHINE . ' XERIC_EARS_BASE=' . $MACHINE;
-    $pid = $listen($port, $env, $WEB, $WEB . '/router.php');
-    return $pid > 0 ? [$port, $pid] : [0, -$pid];
+    return $listen($freePort(), $env, $WEB, $WEB . '/router.php');
 };
 [$port, $pid]   = $serve('0');
 [$sport, $spid] = $serve('1');
@@ -873,7 +897,7 @@ ok('and a solo-identified one', $st === 403 && ($d['kind'] ?? '') === 'cross_sit
 ok('a Bearer-identified one passes: no browser sends that header on its own', $st === 200
     && xeric_player_where($vT, $vdb) === 'beck_hardware', "$st " . json_encode($d));
 [$st, , , $d] = req($port, $V . '/go', array_merge($C, [$JS]), 'POST', json_encode(['to' => 'bluebird']));
-ok('and the cookie owner, same-site, walks too', $st === 200 && xeric_player_where($vT, $vdb) === 'bluebird');
+ok('and the cookie owner, same-site, walks too', $st === 200 && xeric_player_where($vT, $vdb) === 'bluebird', "$st " . json_encode($d));
 
 echo "\n# DNS rebinding: the Host pin\n";
 

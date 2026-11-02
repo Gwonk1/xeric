@@ -2034,17 +2034,18 @@ function xeric_grudge_step(array $t, PDO $db, string $handle, int $epoch, array 
 /**
  * Note where the body arrived, once per arrival. A world arc rather than a
  * table, capped, so rewind's arc diff un-happens a visit with the rest of the
- * undone hours. @return bool whether this arrival was new
+ * undone hours. $logKey is the player's own log ('ritual.visits[.p<n>]').
+ * @return bool whether this arrival was new
  */
-function xeric_ritual_visit(PDO $db, string $place, int $since): bool
+function xeric_ritual_visit(PDO $db, string $place, int $since, string $logKey = 'ritual.visits'): bool
 {
     if ($place === '' || $since <= 0) return false;
-    $log = json_decode((string)(xeric_arc_get($db, xeric_arc_world(), 'ritual.visits') ?? '[]'), true);
+    $log = json_decode((string)(xeric_arc_get($db, xeric_arc_world(), $logKey) ?? '[]'), true);
     if (!is_array($log)) $log = [];
     foreach ($log as $v) if ((string)$v[0] === $place && (int)$v[1] === $since) return false;
     $log[] = [$place, $since];
     $log = array_slice($log, -60);
-    xeric_arc_set($db, xeric_arc_world(), 'ritual.visits', json_encode($log, JSON_UNESCAPED_UNICODE));
+    xeric_arc_set($db, xeric_arc_world(), $logKey, json_encode($log, JSON_UNESCAPED_UNICODE));
     return true;
 }
 
@@ -2055,58 +2056,44 @@ function xeric_ritual_part(int $hour): string
 }
 
 /**
- * The ritual pass, world-wide: log the body's arrival; a third arrival at the
+ * Whose ritual row, whose visit log: the first player keeps the bare keys
+ * every world on disk already has, player n gets `.p<n>` (the suffix rule).
+ */
+function xeric_ritual_key(string $place, int $player = XERIC_PLAYER_FIRST): string
+{
+    return 'ritual.' . $place . ($player > XERIC_PLAYER_FIRST ? '.p' . $player : '');
+}
+
+/**
+ * The ritual pass, world-wide: log each body's arrival; a third arrival at the
  * same place in the same hour on a different day forms a ritual on whoever
  * the week put there for at least two of them; and a day whose hour passed
  * with no arrival is noticed by whoever was there to notice.
+ *
+ * A BODY EACH. Every person at the centre's own position is read (`by`),
+ * never just the body of whoever's request ran this tick — in a world with
+ * company that was somebody else's, so a guest's requests running two of the
+ * owner's three mornings logged the guest standing elsewhere and the owner's
+ * ritual never formed. Each player keeps their own visit log and their own
+ * rows; a world of one reads, writes and keys exactly what it always did.
  * @return int transitions
  */
 function xeric_ritual_step(array $t, PDO $db, int $epoch, array $gone, ?array $body): int
 {
     $n = 0;
     $body ??= xeric_constructs_body($t, $db);
-    $where = (string)($body['where'] ?? '');
-    $since = (int)($body['since'] ?? 0);
-    $log   = json_decode((string)(xeric_arc_get($db, xeric_arc_world(), 'ritual.visits') ?? '[]'), true) ?: [];
-    if ($where !== '' && $since > 0 && $since <= $epoch && xeric_ritual_visit($db, $where, $since)) {
-        $log[] = [$where, $since];
-        $hour  = (int)xeric_sibling_local($t, $since)->format('G');
-        $days  = [];
-        foreach ($log as $v) {
-            if ((string)$v[0] !== $where || $since - (int)$v[1] > XERIC_RITUAL_WINDOW) continue;
-            if (abs((int)xeric_sibling_local($t, (int)$v[1])->format('G') - $hour) > 1) continue;
-            $days[xeric_sibling_local($t, (int)$v[1])->format('Y-m-d')] = (int)$v[1];
-        }
-        $today = xeric_sibling_local($t, $since)->format('Y-m-d');
-        // Every holder of an existing ritual here: kept again.
-        foreach ((array)($t['cast']['characters'] ?? []) as $c) {
-            $h = (string)($c['handle'] ?? '');
-            $r = $h === '' ? null : xeric_sibling_get($db, $h, 'ritual.' . $where);
-            if ($r === null || abs((int)$r['hour'] - $hour) > 1) continue;
-            $r['state'] = 'kept'; $r['last'] = $today; unset($r['licence'], $r['missed']);
-            xeric_sibling_put($db, $h, 'ritual.' . $where, $r);
-            $n++;
-        }
-        if (count($days) >= XERIC_RITUAL_VISITS) {
-            $seen = [];
-            foreach ($days as $at) {
-                foreach (xeric_world_who_is_where($t, xeric_world_now($t, $at), array_keys($gone)) as $h => $p) {
-                    if (($p['where'] ?? null) === $where) $seen[(string)$h] = ($seen[(string)$h] ?? 0) + 1;
-                }
-            }
-            foreach ($seen as $h => $count) {
-                if ($count < 2 || xeric_world_character($t, $h) === null) continue;
-                if (xeric_sibling_get($db, $h, 'ritual.' . $where) !== null) continue;
-                xeric_sibling_put($db, $h, 'ritual.' . $where, [
-                    'place' => $where, 'hour' => $hour, 'state' => 'kept', 'last' => $today, 'formed' => $since,
-                ]);
-                $n++;
-            }
-        }
+    $bodies = (array)($body['by'] ?? []);
+    if ($bodies === []) {
+        $bodies = [XERIC_PLAYER_FIRST => ['where' => $body['where'] ?? null, 'since' => $body['since'] ?? 0]];
+    }
+    ksort($bodies);
+    foreach ($bodies as $pid => $b) {
+        $n += xeric_ritual_arrive($t, $db, $epoch, $gone, (int)$pid, (string)($b['where'] ?? ''), (int)($b['since'] ?? 0));
     }
 
     // The miss: a day after the last one whose hour, plus grace, has passed
     // with no arrival — noticed only by a holder the week had there then.
+    // Each row is one player's (`p`, absent: the first), and so is its miss.
     foreach ((array)($t['cast']['characters'] ?? []) as $c) {
         $h = (string)($c['handle'] ?? '');
         if ($h === '' || isset($gone[$h])) continue;
@@ -2121,12 +2108,59 @@ function xeric_ritual_step(array $t, PDO $db, int $epoch, array $gone, ?array $b
             $there = xeric_world_who_is_where($t, xeric_world_now($t, $dueAt), array_keys($gone))[$h]['where'] ?? null;
             if ($there === (string)$r['place']) {
                 $r['state'] = 'missed'; $r['missed'] = $dueAt; $r['licence'] = 'pending';
-                xeric_memory_add($db, $h, xeric_sibling_user($t, $db) . ' did not come into '
+                $user = xeric_sibling_user($t, $db, (int)($r['p'] ?? XERIC_PLAYER_FIRST));
+                xeric_memory_add($db, $h, $user . ' did not come into '
                     . xeric_world_place_name($t, (string)$r['place']) . ' on ' . $local->format('l')
-                    . ', the way ' . xeric_sibling_user($t, $db) . ' usually does.', 'construct', ['ritual' => $key], $dueAt);
+                    . ', the way ' . $user . ' usually does.', 'construct', ['ritual' => $key], $dueAt);
                 $n++;
             }
             xeric_sibling_put($db, $h, $key, $r);
+        }
+    }
+    return $n;
+}
+
+/** One player's arrival, for the ritual pass: logged, kept, formed. @return int transitions */
+function xeric_ritual_arrive(array $t, PDO $db, int $epoch, array $gone, int $pid, string $where, int $since): int
+{
+    $n = 0;
+    $logKey = 'ritual.visits' . ($pid > XERIC_PLAYER_FIRST ? '.p' . $pid : '');
+    $log   = json_decode((string)(xeric_arc_get($db, xeric_arc_world(), $logKey) ?? '[]'), true) ?: [];
+    if ($where !== '' && $since > 0 && $since <= $epoch && xeric_ritual_visit($db, $where, $since, $logKey)) {
+        $key   = xeric_ritual_key($where, $pid);
+        $log[] = [$where, $since];
+        $hour  = (int)xeric_sibling_local($t, $since)->format('G');
+        $days  = [];
+        foreach ($log as $v) {
+            if ((string)$v[0] !== $where || $since - (int)$v[1] > XERIC_RITUAL_WINDOW) continue;
+            if (abs((int)xeric_sibling_local($t, (int)$v[1])->format('G') - $hour) > 1) continue;
+            $days[xeric_sibling_local($t, (int)$v[1])->format('Y-m-d')] = (int)$v[1];
+        }
+        $today = xeric_sibling_local($t, $since)->format('Y-m-d');
+        // Every holder of an existing ritual here: kept again.
+        foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+            $h = (string)($c['handle'] ?? '');
+            $r = $h === '' ? null : xeric_sibling_get($db, $h, $key);
+            if ($r === null || abs((int)$r['hour'] - $hour) > 1) continue;
+            $r['state'] = 'kept'; $r['last'] = $today; unset($r['licence'], $r['missed']);
+            xeric_sibling_put($db, $h, $key, $r);
+            $n++;
+        }
+        if (count($days) >= XERIC_RITUAL_VISITS) {
+            $seen = [];
+            foreach ($days as $at) {
+                foreach (xeric_world_who_is_where($t, xeric_world_now($t, $at), array_keys($gone)) as $h => $p) {
+                    if (($p['where'] ?? null) === $where) $seen[(string)$h] = ($seen[(string)$h] ?? 0) + 1;
+                }
+            }
+            foreach ($seen as $h => $count) {
+                if ($count < 2 || xeric_world_character($t, $h) === null) continue;
+                if (xeric_sibling_get($db, $h, $key) !== null) continue;
+                xeric_sibling_put($db, $h, $key, [
+                    'place' => $where, 'hour' => $hour, 'state' => 'kept', 'last' => $today, 'formed' => $since,
+                ] + ($pid > XERIC_PLAYER_FIRST ? ['p' => $pid] : []));
+                $n++;
+            }
         }
     }
     return $n;
@@ -2249,8 +2283,9 @@ function xeric_siblings_block(array $t, PDO $db, string $handle, int $player = X
         if ($w !== null && $w['state'] === 'sore')    $lines[] = '- ' . $user . ' went quiet on you for a long while. You noticed, and you have not decided what you think of it.';
         foreach (xeric_sibling_rows($db, $handle, 'ritual.') as $r) {
             $place = xeric_world_place_name($t, (string)$r['place']);
-            if ($r['state'] === 'kept')   $lines[] = '- ' . $user . ' comes into ' . $place . ' most ' . xeric_ritual_part((int)$r['hour']) . '. It is part of how your day goes.';
-            if ($r['state'] === 'missed') $lines[] = '- ' . $user . ' did not come into ' . $place . ' ' . xeric_sibling_local($t, (int)$r['missed'])->format('l') . ', the way ' . $user . ' usually does. You noticed.';
+            $ru    = isset($r['p']) ? xeric_sibling_user($t, $db, (int)$r['p']) : $user;   // whose ritual
+            if ($r['state'] === 'kept')   $lines[] = '- ' . $ru . ' comes into ' . $place . ' most ' . xeric_ritual_part((int)$r['hour']) . '. It is part of how your day goes.';
+            if ($r['state'] === 'missed') $lines[] = '- ' . $ru . ' did not come into ' . $place . ' ' . xeric_sibling_local($t, (int)$r['missed'])->format('l') . ', the way ' . $ru . ' usually does. You noticed.';
         }
         foreach (xeric_sibling_rows($db, $handle, 'milestone.') as $m) {
             if ($m['state'] === 'due') $lines[] = '- It is ' . $m['what'] . '. You noticed, and you might say so once.';
@@ -2301,9 +2336,10 @@ function xeric_constructs_licences(array $t, PDO $db): array
         }
         foreach (xeric_sibling_rows($db, $h, 'ritual.') as $k => $r) {
             if (($r['licence'] ?? '') !== 'pending' || $r['state'] !== 'missed') continue;
+            $ru = isset($r['p']) ? xeric_sibling_user($t, $db, (int)$r['p']) : $user;
             $out[] = ['handle' => $h, 'kind' => 'ritual', 'key' => $k, 'rank' => 4,
-                      'hint' => $user . ' did not come into ' . xeric_world_place_name($t, (string)$r['place'])
-                              . ' the way ' . $user . ' usually does. You noticed.'];
+                      'hint' => $ru . ' did not come into ' . xeric_world_place_name($t, (string)$r['place'])
+                              . ' the way ' . $ru . ' usually does. You noticed.'];
         }
         foreach (xeric_sibling_rows($db, $h, 'milestone.') as $k => $m) {
             if (($m['licence'] ?? '') !== 'pending' || $m['state'] !== 'due') continue;
@@ -2362,7 +2398,8 @@ function xeric_constructs_why(array $t, PDO $db, string $handle): array
                . 'Thaws on an explanation or a promise kept.';
     }
     foreach (xeric_sibling_rows($db, $handle, 'ritual.') as $r) {
-        $out[] = 'ritual (' . $r['state'] . '): ' . $user . ' came into ' . xeric_world_place_name($t, (string)$r['place'])
+        $ru = isset($r['p']) ? xeric_sibling_user($t, $db, (int)$r['p']) : $user;
+        $out[] = 'ritual (' . $r['state'] . '): ' . $ru . ' came into ' . xeric_world_place_name($t, (string)$r['place'])
                . ' around ' . (int)$r['hour'] . ':00 on three different days; ' . $name . ' was there for it, and notices a miss.';
     }
     foreach (xeric_sibling_rows($db, $handle, 'milestone.') as $m) {

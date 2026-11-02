@@ -107,7 +107,7 @@ if ($action === '') {
             $names = $seal ?? ['names' => [XERIC_ROOM_YOU => xeric_play_room_player($w)['name']]];
         }
     }
-    $rows = $conv > 0 ? xeric_room_rows($db, $conv, $after) : [];
+    $rows = $conv > 0 ? xeric_room_rows($db, $conv, $after, xeric_state_rating()) : [];   // as this viewer reads it
     $pub  = xeric_play_room_public($T, $live, !$guest, $me);
     xeric_web_json([
         'ok'    => true,

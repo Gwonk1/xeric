@@ -631,9 +631,24 @@ function xeric_message_append(PDO $db, int $conversationId, string $role, ?strin
  *
  * $chunk = 0 keeps the old exact-N behaviour for callers that want a bounded
  * read rather than a prompt.
+ *
+ * ── $viewer: WHO THESE ROWS ARE READ FOR ─────────────────────────────────
+ *
+ * Redaction is a presentation concern and a prompt-for-a-viewer concern,
+ * never a side effect of reading storage. Null — the default — is every row
+ * as written: the harvest, a sleep, the narrator's audit read what was said,
+ * because they write memories and watermarks from it, and a kids' headset
+ * whose turn happened to run the harvest must never make it learn from
+ * placeholders or step its watermark past adult lines it was not shown. A
+ * caller that hands the rows to a person, or builds a prompt FOR one, names
+ * that person's rating (xeric_state_rating() for "the session asking", a
+ * room's ceiling for a room) and gets them as that person may read them.
+ * The process rating is never read in here.
  */
-function xeric_messages_recent(PDO $db, int $conversationId, int $limit = 20, int $chunk = 0): array
+function xeric_messages_recent(PDO $db, int $conversationId, int $limit = 20, int $chunk = 0, ?string $viewer = null): array
 {
+    $as = $viewer === null ? fn(array $rows): array => $rows
+        : fn(array $rows): array => array_map(fn($m) => xeric_state_message_shown($m, $viewer), $rows);
     if ($chunk > 1) {
         $st = $db->prepare('SELECT COUNT(*) c FROM messages WHERE conversation_id = ?');
         $st->execute([$conversationId]);
@@ -645,15 +660,15 @@ function xeric_messages_recent(PDO $db, int $conversationId, int $limit = 20, in
         $st->execute([$conversationId, $drop]);
         $rows = $st->fetchAll();
         $st->closeCursor();
-        // AS THIS VIEWER MAY READ THEM, prompts included: a line stamped above
-        // the session asking is not shown to it, and is not handed to a model
-        // writing for it either — that is the same leak by a longer road.
-        return array_map('xeric_state_message_shown', $rows ?: []);
+        // AS THE NAMED VIEWER MAY READ THEM, prompts included: a line stamped
+        // above the person a prompt is written for is not handed to a model
+        // writing for them either — that is the same leak by a longer road.
+        return $as($rows ?: []);
     }
 
     $st = $db->prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?');
     $st->execute([$conversationId, $limit]);
-    return array_map('xeric_state_message_shown', array_reverse($st->fetchAll()));
+    return $as(array_reverse($st->fetchAll()));
 }
 
 function xeric_messages_count(PDO $db, int $conversationId): int
@@ -816,8 +831,14 @@ function xeric_event_add(PDO $db, string $title, int $worldEpoch, ?string $place
     return (int)$db->lastInsertId();
 }
 
-/** Newest first — this is history being read backwards, not a prompt block. */
-function xeric_events_recent(PDO $db, int $limit = 10): array
+/**
+ * Newest first — this is history being read backwards, not a prompt block.
+ *
+ * $viewer as xeric_messages_recent(): null is every hour as written (the
+ * sweeps, the narrator, a room's landing); a rating is the hours as a person
+ * at that rating may read them (the book, why, a prompt written for them).
+ */
+function xeric_events_recent(PDO $db, int $limit = 10, ?string $viewer = null): array
 {
     $st = $db->prepare('SELECT * FROM events ORDER BY world_epoch DESC, id DESC LIMIT ?');
     $st->execute([$limit]);
@@ -827,7 +848,7 @@ function xeric_events_recent(PDO $db, int $limit = 10): array
         // A bool on the way out, the same shape a sweep hands its caller, so a
         // wall that reads it does not have to know it came from a column.
         $r['on_spine'] = (int)($r['on_spine'] ?? 0) === 1;
-        $r = xeric_state_event_shown($r);
+        if ($viewer !== null) $r = xeric_state_event_shown($r, $viewer);
     }
     return $rows;
 }
