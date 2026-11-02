@@ -1607,12 +1607,14 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
              '/photo-worker.php', '/scene-worker.php', '/story-worker.php', '/room-worker.php', '/forge/worker.php',
              '/heart.php', '/router.php',
              '/worker.php/extra', '/boot.php', '/ui.php', '/play-lib.php', '/review-lib.php',
+             '/model-lib.php', '/play-shelf.php', '/play-view.php', '/play-book.php', '/play-watch.php',
              '/why-lib.php', '/api-lib.php', '/session.php', '/limits.php', '/queue.php',
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
               '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php', '/speak.php',
-              '/hear.php', '/room.php', '/api.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php'];
+              '/hear.php', '/room.php', '/api.php', '/api.php/v1/worlds/x/pulse', '/forge/forge.php', '/forge/play.php',
+              '/xeric.css', '/xeric-shelf.css', '/xeric-view.js', '/forge/xeric.css?v=0123456789abcdef'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
 ok('every include, worker and test path is denied', $served === [], implode(' ', $served));
@@ -1647,7 +1649,8 @@ ok('and every file in forge/web that is not a page is on the list',
 // A whole class of bug that a linter will not find and a page test will not
 // reach, because it only appears on the path that spends three minutes.
 $webDir = dirname(__DIR__);
-$libFiles = ['play-lib.php', 'review-lib.php', 'why-lib.php', 'api-lib.php', 'boot.php', 'ui.php',
+$libFiles = ['play-lib.php', 'model-lib.php', 'play-shelf.php', 'play-view.php', 'play-book.php', 'play-watch.php',
+             'review-lib.php', 'why-lib.php', 'api-lib.php', 'boot.php', 'ui.php',
              'session.php', 'limits.php', 'queue.php', 'pdf.php'];
 
 $declaredIn = [];
@@ -3744,7 +3747,8 @@ ok('register: and one nobody ships is dropped rather than carried',
 // no caller anywhere, and the kinds it stores (chat / event) are the same split
 // the clean room draws. This is the app's own data getting the shape it was
 // written for.
-$libT = (string)file_get_contents(dirname(__DIR__) . '/play-lib.php');
+$libT = (string)file_get_contents(dirname(__DIR__) . '/play-lib.php')
+      . (string)file_get_contents(dirname(__DIR__) . '/xeric.css');     // the rules moved, the sidebar did not
 ok('threads: the sidebar has a list of what you are in the middle of',
     str_contains($libT, "xeric_play_sideblock('threads'"));
 ok('threads: each row opens that person, through the binding the panel already has',

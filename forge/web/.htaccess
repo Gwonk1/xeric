@@ -51,7 +51,11 @@ Options -Indexes
 # directory whose CONTENTS matter. It emits nothing when executed, so it is
 # harmless while PHP handles .php — and it holds local_base, data_dir and the
 # php path the moment PHP stops.
-<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|review-lib|why-lib|api-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
+#
+# model-lib and the play-* parts are play-lib.php split by surface (the map is at
+# the top of play-lib.php): the same library in more files, and as much an
+# include as it ever was.
+<If "%{REQUEST_URI} =~ m#(^|/)(boot|ui|play-lib|model-lib|play-shelf|play-view|play-book|play-watch|review-lib|why-lib|api-lib|session|limits|queue|pdf|config\.local)\.php(/|$)#">
   Require all denied
 </If>
 
@@ -74,5 +78,19 @@ Options -Indexes
   <Files ~ "^(build|progress)\.php$">
     SetEnv no-gzip 1
     SetEnv dont-vary 1
+  </Files>
+</IfModule>
+
+
+# THE STATIC FILES: xeric.css, xeric-shelf.css and xeric-view.js. Served as
+# files by whatever serves this directory (Apache here, `php -S` through
+# router.php, which hands back everything but `/`). Every page that loads one
+# asks for it by content (`xeric.css?v=<16 hex of sha256>`, xeric_play_asset in
+# play-lib.php), so a versioned address can be kept for a year: the next deploy
+# changes the address, never the bytes behind an old one. An unversioned request
+# gets the server's ordinary revalidation and nothing stronger.
+<IfModule mod_headers.c>
+  <Files ~ "^xeric(-shelf)?\.css$|^xeric-view\.js$">
+    Header always set Cache-Control "public, max-age=31536000, immutable" "expr=%{QUERY_STRING} =~ /^v=[0-9a-f]{16}$/"
   </Files>
 </IfModule>

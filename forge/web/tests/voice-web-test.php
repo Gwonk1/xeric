@@ -215,8 +215,8 @@ ok('speak.php takes the speaker from the row, never the query', !str_contains($s
 ok('and spends its rate limit only through the render hook',
     preg_match("/function \(\) use \(\\\$w, \\\$sid\): void \{.*?xeric_limit_guard\(xeric_limit_check\('reroll'/s", $sp) === 1
     && substr_count($sp, 'xeric_limit_check(') === 1);
-ok('the speaker refuses once and stands down', str_contains((string)file_get_contents(dirname(__DIR__) . '/play.php'),
-    'btn.disabled = true;'));
+ok('the speaker refuses once and stands down', preg_match('/function refuseSpeak\(btn, why\) \{[^}]*btn\.disabled = true;/',
+    (string)file_get_contents(dirname(__DIR__) . '/xeric-view.js')) === 1);
 
 echo "\n# the door: what is said aloud is anybody's, a new line is the owner's\n";
 

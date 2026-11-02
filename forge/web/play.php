@@ -690,7 +690,7 @@ if ($action !== '') {
 if ($slug === '') {
     $worlds = xeric_play_worlds($sid);
     xeric_web_head('Xeric');
-    echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
+    echo xeric_play_css_link(true);
     ?>
 <body class="shelf">
 <div class="shelfwrap">
@@ -850,7 +850,7 @@ try {
     // a world that was never here, and a world that was and has been let go.
     $gone = !is_dir(xeric_web_worlds_dir() . '/' . $slug);
     xeric_web_head('Xeric: ' . $slug);
-    echo '<style>' . xeric_play_css() . '</style>';
+    echo xeric_play_css_link();
     echo '<main><div class="top"><p class="wordmark">XERIC</p><span class="kicker">play</span></div>';
     echo '<h1>That xeric will not open</h1>';
     echo '<p class="note bad">' . h($e->getMessage()) . '</p>';
@@ -871,7 +871,7 @@ try {
 if (!xeric_review_launched($w['template'])) {
     $mine = $w['mine'];
     xeric_web_head('Xeric: ' . (string)$w['template']['meta']['name']);
-    echo '<style>' . xeric_play_css() . '</style>';
+    echo xeric_play_css_link();
     echo '<main><div class="top"><p class="wordmark">XERIC</p><span class="kicker">play</span>'
         . xeric_web_meter_html() . '<span class="count"><a href="play.php">all xerics</a></span></div>';
     echo '<h1>' . h((string)$w['template']['meta']['name']) . '</h1>';
@@ -926,7 +926,7 @@ $earsOn = (function (): bool {
 })();
 
 xeric_web_head('Xeric: ' . (string)$T['meta']['name'], ['microphone' => true]);
-echo '<style>' . xeric_play_css() . '
+echo xeric_play_css_link() . '<style>
 /* ── the ⚙ cog and its modal rows (xeric controls) ── */
 /* color set EXPLICITLY: a button never inherits text colour, it takes the
    browser ButtonText default, black, which on the dark theme is invisible. */
@@ -1003,6 +1003,9 @@ echo '<style>' . xeric_play_css() . '
 .looktag:hover, .looktag:focus-visible { border-color:var(--fg); }
 .looktagrow { display:flex; flex-wrap:wrap; gap:.3rem; margin:.3rem 0 .2rem; }
 .lookxr { position:absolute; right:.5rem; bottom:.5rem; }
+/* look with the phone: the corner opposite the headset, so both can be offered at once */
+.lookgaze { position:absolute; left:.5rem; bottom:.5rem; }
+.lookgaze.on { border-color:var(--fg); }
 /* the room through its day */
 .lookday { display:flex; gap:.35rem; overflow-x:auto; margin:.2rem 0 .5rem; }
 .lookthumb { flex:0 0 auto; width:4.6rem; padding:0; border:1px solid var(--line); border-radius:.4rem;
@@ -1471,6 +1474,7 @@ echo '<style>' . xeric_play_css() . '
 <div id="coverlay"><div id="cmodal" role="dialog" aria-modal="true"></div></div>
 <div id="ptoast" role="status"></div>
 
+<script nonce="<?= h(xeric_web_nonce()) ?>" src="<?= h(xeric_play_asset('xeric-view.js')) ?>"></script>
 <script nonce="<?= h(xeric_web_nonce()) ?>">
 (function () {
   'use strict';
@@ -1690,6 +1694,7 @@ echo '<style>' . xeric_play_css() . '
 
   var $  = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  var XV = XericView({ world: W });                   // the viewer (xeric-view.js, loaded above)
   var screens = $$('.screen');
   var openHandle = null, busy = false;
   // When the current turn started. A fetch that never settles — a dropped
@@ -2195,12 +2200,16 @@ echo '<style>' . xeric_play_css() . '
   //
   // lookHtml is the STRING the server sent, not the DOM's re-serialisation
   // of it (which differs in its quoting), so an unchanged view compares equal.
-  var lookEs = null, lookPoll = null, lookView = null, lookHtml = <?= js($state['look_html']) ?>;
-  var lookYaw = {};                                   // where you were facing, per view, across repaints
+  //
+  // THE VIEWER ITSELF IS xeric-view.js — the look-around, step inside, the
+  // phone, the day strip and the speaker — one static file the room strip and
+  // the stand page load too. XV holds the view on screen and where you were
+  // facing in each one; this page holds when to build it.
+  var lookEs = null, lookPoll = null, lookHtml = <?= js($state['look_html']) ?>;
   function bindLook() {
-    if (lookView) { lookView.destroy(); lookView = null; }
+    XV.unmount();
     var box = document.querySelector('#look .lookpanobox');
-    if (box) lookView = pano(box);
+    if (box) XV.mount(box);
     var img = document.querySelector('#look .lookimg');
     // Bound, not an onerror= attribute: the CSP grants no inline handlers.
     if (img) img.addEventListener('error', function () { this.remove(); });
@@ -2226,7 +2235,7 @@ echo '<style>' . xeric_play_css() . '
     if (!t || !$('#look').contains(t)) return;
     // A person in the room is a thread, opened exactly as the cast chip opens it.
     if (t.classList.contains('looktag')) { openThread(t.dataset.h); return; }
-    if (t.classList.contains('lookthumb')) { dayView(t); return; }
+    if (t.classList.contains('lookthumb')) { XV.dayView(t); return; }
     if (t.hasAttribute('data-listen')) {
       var au = document.querySelector('#look audio');
       if (!au) return;
@@ -2237,50 +2246,6 @@ echo '<style>' . xeric_play_css() . '
     if (t.hasAttribute('data-look') && !t.disabled) look(t);
   });
 
-  // THE DAY STRIP: pressing a light puts that hour's view where the view is.
-  // The main view is rebuilt rather than re-pointed — a WebGL canvas whose
-  // context has been handed back cannot be given another — and the people's
-  // buttons move across with it, because they are where people are NOW
-  // whichever hour the walls are lit for. Where you were facing is kept.
-  function dayView(th) {
-    var main = document.querySelector('#look .lookmain');
-    if (!main) return;
-    var src = th.dataset.src, kind = th.dataset.kind, old = main.dataset.src || '';
-    if (lookYaw[old] && !lookYaw[src]) lookYaw[src] = lookYaw[old];
-    var tags = main.querySelector('.looktags, .looktagrow');
-    var el = document.createElement('div');
-    if (kind === 'pano') {
-      el.className = 'lookmain lookpanobox';
-      el.dataset.src = src;
-      el.dataset.alt = th.dataset.light || '';
-      if (main.dataset.bearings) el.dataset.bearings = main.dataset.bearings;
-      var cv = document.createElement('canvas');
-      cv.className = 'lookpano'; cv.tabIndex = 0; cv.setAttribute('role', 'img');
-      cv.setAttribute('aria-label', 'A look around the room, ' + (th.dataset.light || '') + '. Drag, or use the arrow keys, to turn.');
-      el.appendChild(cv);
-      if (tags) { tags.className = 'looktags'; $$('.looktag', tags).forEach(function (b) { b.hidden = true; }); }
-    } else {
-      el.className = 'lookmain lookstill';
-      el.dataset.src = src;
-      var im = document.createElement('img');
-      im.className = 'lookimg'; im.src = src; im.alt = th.dataset.light || '';
-      el.appendChild(im);
-      if (tags) { tags.className = 'looktagrow'; $$('.looktag', tags).forEach(function (b) { b.hidden = false; }); }
-    }
-    if (tags) el.appendChild(tags);
-    if (lookView) { lookView.destroy(); lookView = null; }
-    main.replaceWith(el);
-    if (kind === 'pano') lookView = pano(el);
-    $$('#look .lookthumb').forEach(function (x) {
-      x.classList.toggle('cur', x === th);
-      x.setAttribute('aria-pressed', x === th ? 'true' : 'false');
-    });
-    var lab = document.querySelector('#look .lookearlier');
-    if (lab) {
-      lab.hidden = th.dataset.now === '1';
-      lab.textContent = th.dataset.now === '1' ? '' : 'earlier: ' + (th.dataset.light || '');
-    }
-  }
 
   // A reload in the middle of a render has no job to follow; it comes back
   // and looks again, gently, until the room is in. Re-armed on every repaint,
@@ -2331,345 +2296,6 @@ echo '<style>' . xeric_play_css() . '
     lookEs.onerror = function () { if (lookEs && lookEs.readyState === 2) end(); };
   }
 
-  // THE LOOK-AROUND. An equirectangular panorama is a sphere unrolled: every
-  // pixel's column is a compass bearing and its row an elevation. To look
-  // through it, each pixel of the canvas is turned into a ray from your eye
-  // (its position on a virtual screen tan(fov/2) wide), the ray is turned by
-  // where you are facing (pitch, then yaw), and the ray's bearing and
-  // elevation say which texel of the panorama it hits. That is the whole
-  // viewer, and it is one fragment shader. No library, because the CSP loads
-  // none and because there is nothing here a library would add.
-  //
-  // FRAMES ONLY ON DEMAND: one draw per drag, wheel or key, coalesced through
-  // requestAnimationFrame. A still sidebar costs nothing. WebGL first; a 2D
-  // canvas that pans the strip sideways if there is no WebGL; the plain image
-  // if there is no canvas at all.
-  //
-  // THE PEOPLE are real buttons laid over the canvas, not pixels drawn on it,
-  // so they can be tabbed to, read out and pressed. Each frame puts each one
-  // at its bearing (degrees clockwise from where the room faces you, the
-  // engine's own number) just under the horizon, fades it toward the edge of
-  // the view and hides it past the edge, where a hidden button is also not a
-  // tab stop.
-  function pano(box) {
-    var cv = box.querySelector('canvas'), src = box.dataset.src;
-    var v = lookYaw[src] || { yaw: 0, pitch: 0, fov: 1.4 };
-    lookYaw[src] = v;
-    var tags = [].slice.call(box.querySelectorAll('.looktag'));
-    var img = new Image(), gl = null, g2 = null, prog = null, tex = null, raf = 0, dead = false, xrh = null;
-    function plain() {
-      if (dead) return;
-      // The still, and the people as the row a still has under it.
-      var st = document.createElement('div');
-      st.className = 'lookmain lookstill';
-      var im = document.createElement('img');
-      im.className = 'lookimg'; im.src = src; im.alt = box.dataset.alt || '';
-      st.appendChild(im);
-      var tg = box.querySelector('.looktags');
-      if (tg) { tg.className = 'looktagrow'; tags.forEach(function (b) { b.hidden = false; b.style.cssText = ''; }); st.appendChild(tg); }
-      box.replaceWith(st);
-      dead = true;
-    }
-    try { gl = cv.getContext('webgl', { antialias: false, preserveDrawingBuffer: false }); } catch (e) { gl = null; }
-    if (gl) {
-      prog = panoProgram(gl, 'uniform vec2 r;uniform float y,p,f;'
-        + 'void main(){vec2 q=(gl_FragCoord.xy/r)*2.0-1.0;q.x*=r.x/r.y;'
-        + 'vec3 d=normalize(vec3(q.x*f,q.y*f,-1.0));'
-        + 'float cp=cos(p),sp=sin(p);d=vec3(d.x,d.y*cp-d.z*sp,d.y*sp+d.z*cp);'
-        + 'float cy=cos(y),sy=sin(y);d=vec3(d.x*cy+d.z*sy,d.y,-d.x*sy+d.z*cy);'
-        + 'gl_FragColor=look(d);}');
-      if (!prog) gl = null;
-    }
-    if (!gl) { try { g2 = cv.getContext('2d'); } catch (e) { g2 = null; } }
-    if (!gl && !g2) { plain(); return { destroy: function () {} }; }
-
-    function size() {
-      var dpr = Math.min(window.devicePixelRatio || 1, 2);
-      var w = Math.max(1, Math.round(cv.clientWidth * dpr)), h = Math.max(1, Math.round(cv.clientHeight * dpr));
-      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-    }
-    // THE SEAM: one frame from three plain numbers — yaw (radians, positive
-    // turns you left), pitch (radians, positive looks up) and fov (vertical,
-    // radians). Nothing in here reads the drag state, so anything that wants
-    // to aim the view (a name tag at a bearing, a day strip, a headset) calls
-    // this with its own numbers.
-    function drawAt(yaw, pitch, fov) {
-      if (dead || !img.complete || !img.naturalWidth) return;
-      size();
-      if (gl) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, cv.width, cv.height);
-        gl.useProgram(prog);
-        gl.uniform2f(gl.getUniformLocation(prog, 'r'), cv.width, cv.height);
-        gl.uniform1f(gl.getUniformLocation(prog, 'y'), yaw);
-        gl.uniform1f(gl.getUniformLocation(prog, 'p'), pitch);
-        gl.uniform1f(gl.getUniformLocation(prog, 'f'), Math.tan(fov / 2));
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        return;
-      }
-      // The strip, twice its height so a band about the horizon fills the
-      // frame, drawn three times side by side so turning never runs off the
-      // end. Positive yaw slides it right, the same way the shader turns.
-      var h = cv.height * 2, w = h * img.naturalWidth / img.naturalHeight;
-      var x = (((yaw / (2 * Math.PI)) % 1 + 1) % 1) * w - w / 2 + cv.width / 2;
-      var y0 = -cv.height / 2 + pitch / Math.PI * h;
-      g2.clearRect(0, 0, cv.width, cv.height);
-      for (var i = -1; i <= 1; i++) g2.drawImage(img, x + i * w, y0, w, h);
-    }
-    // The tags for the same three numbers, in CSS pixels over the canvas. The
-    // WebGL view is a perspective, so a bearing lands at tan(angle); the 2D
-    // strip is linear, so it lands at angle × pixels-per-radian.
-    function placeTags(yaw, pitch, fov) {
-      if (!tags.length || dead) return;
-      var W = cv.clientWidth, H = cv.clientHeight, f = Math.tan(fov / 2), asp = W / Math.max(1, H);
-      var below = -0.12;                              // a little under the horizon: about chest height
-      var k = 2 * H / Math.PI;                        // the strip's pixels per radian, both ways
-      tags.forEach(function (t) {
-        var a = (+t.dataset.b || 0) * Math.PI / 180 + yaw;
-        a = Math.atan2(Math.sin(a), Math.cos(a));     // -π..π, the short way round
-        var x, y;
-        if (gl) {
-          if (Math.abs(a) >= Math.PI / 2) { t.hidden = true; return; }
-          x = Math.tan(a) / (f * asp);
-          y = Math.tan(below - pitch) / f;
-        } else {
-          x = a * k / (W / 2);
-          y = (below - pitch) * k / (H / 2);
-        }
-        var ax = Math.abs(x);
-        if (ax > 1 || Math.abs(y) > 1) { t.hidden = true; return; }
-        t.hidden = false;
-        t.style.left = ((x + 1) / 2 * W + cv.offsetLeft) + 'px';
-        t.style.top = ((1 - y) / 2 * H + cv.offsetTop) + 'px';
-        t.style.opacity = ax > 0.75 ? String(Math.max(0.15, (1 - ax) / 0.25)) : '1';
-      });
-    }
-    function ask() {
-      if (!raf) raf = requestAnimationFrame(function () {
-        raf = 0; drawAt(v.yaw, v.pitch, v.fov); placeTags(v.yaw, v.pitch, v.fov);
-      });
-    }
-    function turn(dx, dy) {
-      v.yaw += dx; v.pitch = Math.max(-1.45, Math.min(1.45, v.pitch + dy)); ask();
-    }
-
-    img.addEventListener('load', function () {
-      if (dead) return;
-      if (gl) {
-        var source = img, max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
-        if (img.naturalWidth > max) {               // a phone's ceiling: shrink once, on a 2D canvas
-          var c2 = document.createElement('canvas');
-          c2.width = max; c2.height = Math.round(max * img.naturalHeight / img.naturalWidth);
-          c2.getContext('2d').drawImage(img, 0, 0, c2.width, c2.height);
-          source = c2;
-        }
-        var buf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-        // Location 0 by construction (panoProgram binds it), so the headset's
-        // program reads the same quad without being told where it is.
-        gl.enableVertexAttribArray(0);
-        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-        tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        // No mipmaps and clamp both ways: a panorama is never a power of two,
-        // and WebGL 1 will only sample one of those like this. The wrap at the
-        // seam is done in the shader with fract().
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, source); }
-        catch (e) { plain(); return; }
-      }
-      ask();
-    });
-    img.addEventListener('error', function () { dead = true; box.remove(); });
-    img.src = src;                                    // same origin: img-src 'self', and no tainted texture
-
-    var drag = null;
-    cv.addEventListener('pointerdown', function (e) {
-      drag = { x: e.clientX, y: e.clientY };
-      cv.setPointerCapture(e.pointerId);
-      cv.classList.add('grabbing');
-    });
-    cv.addEventListener('pointermove', function (e) {
-      if (!drag) return;
-      // A drag across the whole canvas turns you by the field of view: the
-      // room moves under the finger at the speed the finger moves.
-      var k = v.fov / Math.max(1, cv.clientHeight);
-      turn((e.clientX - drag.x) * k, (e.clientY - drag.y) * k);
-      drag = { x: e.clientX, y: e.clientY };
-    });
-    function up() { drag = null; cv.classList.remove('grabbing'); }
-    cv.addEventListener('pointerup', up);
-    cv.addEventListener('pointercancel', up);
-    cv.addEventListener('wheel', function (e) {
-      e.preventDefault();
-      v.fov = Math.max(0.5, Math.min(2.0, v.fov * (e.deltaY > 0 ? 1.08 : 1 / 1.08)));
-      ask();
-    }, { passive: false });
-    cv.addEventListener('keydown', function (e) {
-      var s = 0.12;
-      if (e.key === 'ArrowLeft')       turn(s, 0);     // positive yaw is turning left
-      else if (e.key === 'ArrowRight') turn(-s, 0);
-      else if (e.key === 'ArrowUp')    turn(0, s);
-      else if (e.key === 'ArrowDown')  turn(0, -s);
-      else return;
-      e.preventDefault();
-    });
-    window.addEventListener('resize', ask);
-    if (gl) xrh = xr({ gl: gl, box: box, redraw: ask,
-                       ready: function () { return !dead && !!tex; }, dead: function () { return dead; } });
-    return {
-      view: v, draw: drawAt, tags: placeTags, redraw: ask,
-      destroy: function () {
-        dead = true;
-        if (xrh) xrh.end();
-        window.removeEventListener('resize', ask);
-        if (raf) cancelAnimationFrame(raf);
-        // Hand the context back: a page that repaints its sidebar after every
-        // turn would otherwise collect WebGL contexts until the browser drops one.
-        if (gl) { var lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); }
-      }
-    };
-  }
-
-  // STEP INSIDE. The same panorama on a headset, through the same context and
-  // the same sampling GLSL (panoProgram's look()), with one change: the ray for
-  // each pixel comes from the headset rather than from yaw and pitch. Per eye,
-  // the inverse of projection × view — the view's rotation only, because a
-  // panorama is at infinity and leaning forward must not walk you into the pie
-  // case — turns a pixel's position on that eye's viewport into a direction in
-  // the 'local' space, which is -z ahead and y up exactly as the 2D view is.
-  //
-  // OFFERED, NEVER DANGLED: the button exists only once the browser has said
-  // an immersive session is supported; absent rather than disabled otherwise.
-  // The people's tags do not come along — buttons do not exist in there, and
-  // drawing them into the shader would be a second renderer of who is where.
-  // Anything that throws, anywhere, takes the button away and says nothing;
-  // the 2D view is the floor and it is still there.
-  function xr(api) {
-    var gl = api.gl, box = api.box, btn = null, session = null, xprog = null;
-    function off() { session = null; if (btn) { btn.remove(); btn = null; } }
-    function fail() { var s = session; off(); try { if (s) s.end(); } catch (e) {} }
-    try {
-      var nx = navigator.xr;
-      if (!nx || typeof nx.isSessionSupported !== 'function') return { end: function () {} };
-      nx.isSessionSupported('immersive-vr').then(function (yes) {
-        if (!yes || api.dead()) return;
-        btn = document.createElement('button');
-        btn.type = 'button'; btn.className = 'nbtn lookxr'; btn.textContent = 'step inside';
-        btn.addEventListener('click', function () {
-          if (session) { try { session.end(); } catch (e) { fail(); } return; }
-          enter();
-        });
-        box.appendChild(btn);
-      }, off).catch(off);
-    } catch (e) { off(); }
-
-    function enter() {
-      try {
-        var ready = gl.makeXRCompatible ? gl.makeXRCompatible() : Promise.resolve();
-        ready.then(function () { return navigator.xr.requestSession('immersive-vr'); }).then(function (s) {
-          session = s;
-          xprog = xprog || panoProgram(gl, 'uniform mat4 m;uniform vec4 vp;'
-            + 'void main(){vec2 q=((gl_FragCoord.xy-vp.xy)/vp.zw)*2.0-1.0;'
-            + 'vec4 w=m*vec4(q,1.0,1.0);gl_FragColor=look(normalize(w.xyz/w.w));}');
-          if (!xprog) throw new Error('no headset shader');
-          s.updateRenderState({ baseLayer: new XRWebGLLayer(s, gl) });
-          s.addEventListener('end', function () {
-            session = null;
-            if (btn) btn.textContent = 'step inside';
-            try { gl.bindFramebuffer(gl.FRAMEBUFFER, null); } catch (e) {}
-            api.redraw();                               // the 2D view, back where it was
-          });
-          if (btn) btn.textContent = 'step out';
-          return s.requestReferenceSpace('local').then(function (space) {
-            var frame = function (t, f) {
-              if (session !== s) return;
-              try {
-                s.requestAnimationFrame(frame);
-                var pose = f.getViewerPose(space);
-                if (!pose || !api.ready()) return;
-                var layer = s.renderState.baseLayer;
-                gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-                gl.useProgram(xprog);
-                for (var i = 0; i < pose.views.length; i++) {
-                  var view = pose.views[i], vp = layer.getViewport(view);
-                  gl.viewport(vp.x, vp.y, vp.width, vp.height);
-                  gl.uniform4f(gl.getUniformLocation(xprog, 'vp'), vp.x, vp.y, vp.width, vp.height);
-                  gl.uniformMatrix4fv(gl.getUniformLocation(xprog, 'm'), false, xrRay(view));
-                  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-                }
-              } catch (e) { fail(); }
-            };
-            s.requestAnimationFrame(frame);
-          });
-        }).catch(fail);
-      } catch (e) { fail(); }
-    }
-    return { end: function () { if (session) fail(); } };
-  }
-
-  // inverse(P × R), column-major as WebXR hands matrices over: R is the
-  // view's world-to-eye matrix with its translation taken out.
-  function xrRay(view) {
-    var r = Array.prototype.slice.call(view.transform.inverse.matrix);
-    r[12] = r[13] = r[14] = 0;
-    var p = view.projectionMatrix, m = new Array(16);
-    for (var c = 0; c < 4; c++) for (var row = 0; row < 4; row++) {
-      var sum = 0;
-      for (var k = 0; k < 4; k++) sum += p[k * 4 + row] * r[c * 4 + k];
-      m[c * 4 + row] = sum;
-    }
-    return mat4inv(m);
-  }
-
-  // A 4×4 inverse by cofactors; the singular case cannot come from a real
-  // projection, and answers identity rather than NaN if it ever does.
-  function mat4inv(a) {
-    var b00 = a[0] * a[5] - a[1] * a[4], b01 = a[0] * a[6] - a[2] * a[4], b02 = a[0] * a[7] - a[3] * a[4],
-        b03 = a[1] * a[6] - a[2] * a[5], b04 = a[1] * a[7] - a[3] * a[5], b05 = a[2] * a[7] - a[3] * a[6],
-        b06 = a[8] * a[13] - a[9] * a[12], b07 = a[8] * a[14] - a[10] * a[12], b08 = a[8] * a[15] - a[11] * a[12],
-        b09 = a[9] * a[14] - a[10] * a[13], b10 = a[9] * a[15] - a[11] * a[13], b11 = a[10] * a[15] - a[11] * a[14];
-    var det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-    if (!det) return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-    det = 1 / det;
-    return new Float32Array([
-      (a[5] * b11 - a[6] * b10 + a[7] * b09) * det, (a[2] * b10 - a[1] * b11 - a[3] * b09) * det,
-      (a[13] * b05 - a[14] * b04 + a[15] * b03) * det, (a[10] * b04 - a[9] * b05 - a[11] * b03) * det,
-      (a[6] * b08 - a[4] * b11 - a[7] * b07) * det, (a[0] * b11 - a[2] * b08 + a[3] * b07) * det,
-      (a[14] * b02 - a[12] * b05 - a[15] * b01) * det, (a[8] * b05 - a[10] * b02 + a[11] * b01) * det,
-      (a[4] * b10 - a[5] * b08 + a[7] * b06) * det, (a[1] * b08 - a[0] * b10 - a[3] * b06) * det,
-      (a[12] * b04 - a[13] * b02 + a[15] * b00) * det, (a[9] * b02 - a[8] * b04 - a[11] * b00) * det,
-      (a[5] * b07 - a[4] * b09 - a[6] * b06) * det, (a[0] * b09 - a[1] * b07 + a[2] * b06) * det,
-      (a[13] * b01 - a[12] * b03 - a[14] * b00) * det, (a[8] * b03 - a[9] * b01 + a[10] * b00) * det
-    ]);
-  }
-
-  // One program, two ways to aim it. Both share the quad (attribute 0) and
-  // look(d): a direction in, the panorama's texel out — bearing to column,
-  // elevation to row, the seam wrapped with fract(). Null when the GPU will
-  // not compile it, which every caller reads as "no WebGL here".
-  function panoProgram(gl, body) {
-    var vs = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
-    var fs = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n'
-      + 'uniform sampler2D t;'
-      + 'vec4 look(vec3 d){float lon=atan(d.x,-d.z);float lat=asin(clamp(d.y,-1.0,1.0));'
-      + 'return texture2D(t,vec2(fract(lon/6.2831853+0.5),0.5-lat/3.1415927));}' + body;
-    var sh = function (type, text) {
-      var s = gl.createShader(type); gl.shaderSource(s, text); gl.compileShader(s);
-      return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
-    };
-    var a = sh(gl.VERTEX_SHADER, vs), b = sh(gl.FRAGMENT_SHADER, fs);
-    if (!a || !b) return null;
-    var p = gl.createProgram();
-    gl.attachShader(p, a); gl.attachShader(p, b);
-    gl.bindAttribLocation(p, 0, 'a');
-    gl.linkProgram(p);
-    return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
-  }
   bindLook();
 
   // Death, and undoing it. Same shape as go(): no model, no job, no queue — one
@@ -2952,65 +2578,7 @@ echo '<style>' . xeric_play_css() . '
     return { text: (initials || '?').toUpperCase(), hue: h };
   }
 
-  // THE SPEAKER, one per character line. ONE <audio> for the whole thread, so
-  // two lines can never talk over each other, and a press on a second line
-  // is a change of mind, not a duet. The line is asked for with a fetch first
-  // and only then handed to the <audio>: a fetch can read speak.php's 404 and
-  // the machine's own 503 sentence, an <audio> element can only say "error".
-  // The second request is the engine's cache, or this browser's — a file
-  // read either way, never a second render. Shown once and then the button
-  // stands down: a line that cannot be spoken will not be spoken on a retry.
-  var voiceAu = null, voiceBtn = null;
-  function speak(btn) {
-    if (!voiceAu) {
-      voiceAu = document.createElement('audio');
-      voiceAu.preload = 'none';
-      // The element's own events arrive late (a pause fires after the next
-      // press has begun), so they speak only for the button the element is
-      // PLAYING FOR — voiceAu.forBtn, set when the src is handed over — and
-      // never for whichever button happens to be newest.
-      voiceAu.addEventListener('playing', function () {
-        var b = voiceAu.forBtn; if (!b) return;
-        b.classList.remove('loading'); b.classList.add('on'); b.setAttribute('aria-pressed', 'true');
-      });
-      var stop = function () { var b = voiceAu.forBtn; if (b) unspeak(b); };
-      voiceAu.addEventListener('ended', stop);
-      voiceAu.addEventListener('pause', stop);
-      voiceAu.addEventListener('error', stop);
-    }
-    var again = voiceBtn === btn && (btn.classList.contains('on') || btn.classList.contains('loading'));
-    if (voiceBtn) unspeak(voiceBtn);
-    voiceAu.forBtn = null;
-    voiceAu.pause();
-    voiceBtn = null;
-    if (again) return;                                // the second press is "stop"
-    voiceBtn = btn;
-    btn.classList.add('loading');
-    var url = 'speak.php?w=' + encodeURIComponent(W) + '&m=' + encodeURIComponent(btn.dataset.m);
-    fetch(url).then(function (r) {
-      if (r.ok) return null;
-      if (r.status === 404) return 'There is nothing in this line to hear.';
-      return r.json().then(function (j) { return (j && j.error) || 'the voice machine did not answer'; },
-                           function () { return 'the voice machine did not answer'; });
-    }).then(function (why) {
-      if (voiceBtn !== btn) return;                   // another line was pressed meanwhile
-      if (why) { refuseSpeak(btn, why); return; }
-      voiceAu.forBtn = btn;
-      voiceAu.src = url;
-      var p = voiceAu.play();
-      if (p && p.catch) p.catch(function () { btn.classList.remove('loading'); });
-    }).catch(function () { refuseSpeak(btn, 'the voice machine could not be reached'); });
-  }
-  function unspeak(b) { b.classList.remove('loading', 'on'); b.setAttribute('aria-pressed', 'false'); }
-  function refuseSpeak(btn, why) {
-    btn.classList.remove('loading', 'on');
-    btn.disabled = true;
-    var n = document.createElement('span');
-    n.className = 'mspkno';
-    n.textContent = why;
-    btn.after(n);
-    if (voiceBtn === btn) voiceBtn = null;
-  }
+  // The speaker (speak, unspeak, refuseSpeak) is in xeric-view.js: XV.speak.
 
   function addMsg(who, text, when, photo, mid) {
     var li = document.createElement('li');
@@ -3045,7 +2613,7 @@ echo '<style>' . xeric_play_css() . '
     li.innerHTML = face + '<span class="b">' + body
                  + (when ? '<span class="st">' + esc(when) + '</span>' : '') + spk + '</span>';
     var sb = li.querySelector('.mspk');
-    if (sb) sb.addEventListener('click', function () { speak(sb); });
+    if (sb) sb.addEventListener('click', function () { XV.speak(sb); });
     // BOUND, NOT WRITTEN AS AN ATTRIBUTE. An inline `onerror=` is inline script,
     // and the Content-Security-Policy grants no 'unsafe-inline' — so as an
     // attribute this would silently never fire, and a photo that failed to load
@@ -4212,155 +3780,11 @@ echo '<style>' . xeric_play_css() . '
   });
 
   // -- hold to talk ------------------------------------------------------------
-  // PRESS, SPEAK, LET GO, READ, SEND. The recording goes to hear.php and the
-  // words come back into the box — never straight into the thread, because a
-  // machine that misheard a name would otherwise put a line in the player's
-  // mouth that they did not say. The microphone is asked for on the first
-  // press and on no earlier one (so the prompt is never a surprise); the
-  // tracks are stopped after every line, so the browser's recording light
-  // means what it says. Thirty seconds at most, the server's own ceiling.
-  // A refusal is shown once and the button stands down, the speaker's rule.
-  (function () {
-    var hb = document.getElementById('hear');
-    if (!hb) return;
-    var MAX_MS = 30000;
-    var holding = false, rec = null, chunks = [], timer = null, began = 0, sending = false, asking = false;
-
-    function pickType() {
-      if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) return '';
-      var c = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
-      for (var i = 0; i < c.length; i++) if (MediaRecorder.isTypeSupported(c[i])) return c[i];
-      return '';
-    }
-    function extOf(t) {
-      t = String(t || '');
-      if (t.indexOf('mp4') >= 0) return '.mp4';
-      if (t.indexOf('ogg') >= 0) return '.ogg';
-      return '.webm';
-    }
-    function lit(on) {
-      hb.classList.toggle('on', on);
-      hb.setAttribute('aria-pressed', on ? 'true' : 'false');
-    }
-    function refuseHear(why) {
-      holding = false;
-      lit(false);
-      hb.classList.remove('loading');
-      hb.disabled = true;
-      sayfail(why || 'the ears machine did not answer');
-    }
-    function stopTracks(stream) {
-      if (!stream) return;
-      stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
-    }
-
-    function start() {
-      if (hb.disabled || holding || rec || sending || asking || !openHandle) return;
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
-        refuseHear('This browser cannot record here, so the box takes typing only.');
-        return;
-      }
-      holding = true;
-      asking = true;
-      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-        asking = false;
-        // The first press is often spent answering the browser's question.
-        // If the button was let go meanwhile, nothing is recorded: the next
-        // press is the one that listens.
-        if (!holding) { stopTracks(stream); return; }
-        var type = pickType();
-        try {
-          rec = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
-        } catch (e) {
-          stopTracks(stream);
-          refuseHear('This browser cannot record here, so the box takes typing only.');
-          return;
-        }
-        chunks = [];
-        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
-        rec.onstop = function () {
-          var r = rec; rec = null;
-          stopTracks(stream);
-          var blob = new Blob(chunks, { type: (r && r.mimeType) || type || 'audio/webm' });
-          chunks = [];
-          if (Date.now() - began < 350 || !blob.size) return;   // a tap, not a line
-          send_(blob);
-        };
-        began = Date.now();
-        rec.start();
-        lit(true);
-        timer = setTimeout(stop, MAX_MS);
-      }, function () {
-        asking = false;
-        refuseHear('The microphone was not allowed, so the box takes typing only.');
-      });
-    }
-
-    function stop() {
-      holding = false;
-      if (timer) { clearTimeout(timer); timer = null; }
-      lit(false);
-      if (rec && rec.state === 'recording') rec.stop();
-    }
-
-    function send_(blob) {
-      sending = true;
-      hb.classList.add('loading');
-      var fd = new FormData();
-      fd.append('w', W);
-      fd.append('h', openHandle || '');
-      fd.append('audio', blob, 'line' + extOf(blob.type));
-      fetch('hear.php', { method: 'POST', body: fd })
-        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; },
-                                                   function () { return { ok: false, d: null }; }); })
-        .then(function (res) {
-          sending = false;
-          hb.classList.remove('loading');
-          if (!res.ok || !res.d || !res.d.ok) {
-            refuseHear((res.d && res.d.error) || 'the ears machine did not answer');
-            return;
-          }
-          var text = String(res.d.text || '').trim();
-          if (!text) { sayfail('Nothing was heard. Hold the button while you talk.'); return; }
-          var box = $('#composer');
-          $('#sayerr').hidden = true;
-          box.value = box.value.trim() ? (box.value.replace(/\s+$/, '') + ' ' + text) : text;
-          box.dispatchEvent(new Event('input'));            // let it grow to fit
-          box.focus();
-          box.selectionStart = box.selectionEnd = box.value.length;
-        })
-        .catch(function () {
-          sending = false;
-          hb.classList.remove('loading');
-          refuseHear('the ears machine could not be reached');
-        });
-    }
-
-    hb.addEventListener('pointerdown', function (e) {
-      if (e.button !== undefined && e.button !== 0) return;
-      e.preventDefault();
-      try { hb.setPointerCapture(e.pointerId); } catch (x) {}
-      start();
-    });
-    hb.addEventListener('pointerup', stop);
-    hb.addEventListener('pointercancel', stop);
-    hb.addEventListener('lostpointercapture', function () { if (holding) stop(); });
-    hb.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-    // The keyboard holds it too: Space (or Enter) held while the button has
-    // focus is the same as a finger on it.
-    hb.addEventListener('keydown', function (e) {
-      if (e.key !== ' ' && e.key !== 'Enter') return;
-      e.preventDefault();
-      if (!e.repeat) start();
-    });
-    hb.addEventListener('keyup', function (e) {
-      if (e.key !== ' ' && e.key !== 'Enter') return;
-      e.preventDefault();
-      stop();
-    });
-    hb.addEventListener('blur', function () { if (holding) stop(); });
-    hb.addEventListener('click', function (e) { e.preventDefault(); });
-  })();
+  // PRESS, SPEAK, LET GO, READ, SEND. The recorder is xeric-view.js's hold();
+  // the page hands it the button, whose thread is open, and how a refusal is
+  // said in the composer. The words come back into the box, never the thread.
+  var hb = document.getElementById('hear');
+  if (hb) XV.hold(hb, { handle: function () { return openHandle; }, fail: sayfail });
 
   // -- the time control ----------------------------------------------------
   var es = null, ticking = false, drops = 0;
@@ -4615,7 +4039,7 @@ echo '<style>' . xeric_play_css() . '
                    + '<span class="b">' + (r.who === 'them' ? '<span class="rwho">' + esc(r.name) + '</span>' : '')
                    + esc(r.text) + (r.when ? '<span class="st">' + esc(r.when) + '</span>' : '') + spk + '</span>';
       var sb = li.querySelector('.mspk');
-      if (sb) sb.addEventListener('click', function () { speak(sb); });
+      if (sb) sb.addEventListener('click', function () { XV.speak(sb); });
     }
     var box = $('#rmsgs');
     var near = (box.scrollHeight - box.scrollTop - box.clientHeight) < 80;

@@ -355,12 +355,13 @@ ok('and a costly one draws nothing unless the template asks, naming the key',
     str_contains($line, 'nothing') && str_contains($line, 'XERIC_SCENE_KEY') && str_contains($line, 'media.scene.prerender'));
 
 $pp = (string)file_get_contents(dirname(__DIR__) . '/play.php');
-ok('step inside lives in one function beside the viewer', str_contains($pp, '  function xr(api) {')
-    && strpos($pp, '  function xr(api) {') > strpos($pp, '  function pano(box) {'));
+$vj = (string)file_get_contents(dirname(__DIR__) . '/xeric-view.js');     // the viewer, served static
+ok('step inside lives in one function beside the viewer', str_contains($vj, '  function xr(api) {')
+    && strpos($vj, '  function xr(api) {') > strpos($vj, '  function pano(box) {'));
 ok('the button is made only after the browser says an immersive session is supported',
-    preg_match("/isSessionSupported\('immersive-vr'\)\.then\(function \(yes\) \{\s*if \(!yes[^}]*return;\s*btn = document\.createElement/s", $pp) === 1);
+    preg_match("/isSessionSupported\('immersive-vr'\)\.then\(function \(yes\) \{\s*if \(!yes[^}]*return;\s*btn = document\.createElement/s", $vj) === 1);
 ok('it renders through the same context, made xr-compatible, in the local space',
-    str_contains($pp, 'gl.makeXRCompatible') && str_contains($pp, 'new XRWebGLLayer(s, gl)') && str_contains($pp, "requestReferenceSpace('local')"));
+    str_contains($vj, 'gl.makeXRCompatible') && str_contains($vj, 'new XRWebGLLayer(s, gl)') && str_contains($vj, "requestReferenceSpace('local')"));
 ok('and the people open their threads the way the cast chips do',
     str_contains($pp, "if (t.classList.contains('looktag')) { openThread(t.dataset.h); return; }"));
 

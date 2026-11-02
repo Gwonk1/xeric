@@ -41,6 +41,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/play-lib.php';
+require_once __DIR__ . '/model-lib.php';   // the machines this screen lists (xeric_model_*)
 
 $sid  = xeric_session_id();
 $edit = xeric_web_local_editable();
@@ -598,7 +599,7 @@ $active = xeric_model_active($list, $sid);         // the engine, or -1
 $wired  = xeric_model_wired_at($list, $sid);      // every connected row
 
 xeric_web_head('Xeric');
-echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
+echo xeric_play_css_link(true);
 ?>
 <body class="shelf">
 <div class="shelfwrap">

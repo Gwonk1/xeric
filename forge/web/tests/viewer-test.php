@@ -4,18 +4,19 @@
  * exit 0 on pass.
  *
  * The look-around (WebGL panorama, the 2D strip under it, the plain image under
- * that), the people's tags at their bearings, the headset button, the day strip
- * and the speaker all live inline in play.php. scene-web-test.php and
- * voice-web-test.php prove what the SERVER hands over and grep the source for
- * shapes; nothing ran the code. The Node harness that once did was never
- * committed — this is it, committed.
+ * that), the people's tags at their bearings, the headset button, the phone,
+ * the day strip and the speaker live in xeric-view.js, one static file that
+ * play.php loads with its nonce. scene-web-test.php and voice-web-test.php
+ * prove what the SERVER hands over and grep the source for shapes; this runs
+ * the code.
  *
  * HOW: play.php is rendered for a real world (the tracked fixture), exactly as
- * a browser would receive it. Every inline <script> is cut out and must parse.
- * The viewer's functions are then cut out of the page's main script BY NAME,
- * brace-matched, and evaluated in viewer-test.js beside a fake DOM, WebGL,
- * 2D canvas and WebXR that record what was asked of them. The functions are
- * the served bytes, not a copy: change the viewer and this runs the change.
+ * a browser would receive it. Every <script> must carry the nonce and every
+ * inline one must parse; the page must load xeric-view.js by its content hash.
+ * That file — the served bytes, not a copy — is checked for the viewer's
+ * functions BY NAME, brace-matched, and evaluated whole in viewer-test.js
+ * beside a fake DOM, WebGL, 2D canvas, WebXR and DeviceOrientationEvent that
+ * record what was asked of them. Change the viewer and this runs the change.
  *
  * NEEDS NODE, and SKIPS (said as SKIP, exit 0) when there is none, the smoke
  * test's rule. Nothing is installed; any `node` on PATH, or XERIC_NODE.
@@ -142,20 +143,23 @@ function js_function(string $src, string $name): ?string
     return null;
 }
 
-$main = '';
-foreach ($m as $s) if (str_contains($s[2], 'function pano(')) $main = $s[2];
-ok('the viewer is in the page\'s main script', $main !== '');
+$viewFile = dirname(__DIR__) . '/xeric-view.js';
+$main = (string)@file_get_contents($viewFile);
+$hash = substr((string)@hash_file('sha256', $viewFile), 0, 16);
+$src  = array_values(array_filter($m, fn($s) => preg_match('/\bsrc="xeric-view\.js\?v=([0-9a-f]{16})"/', $s[1], $mm) === 1
+    && $mm[1] === $hash && trim($s[2]) === ''));
+ok('the viewer is the static file the page loads, by its hash, with the nonce, before the page\'s own script',
+    $main !== '' && str_contains($main, 'function pano(') && count($src) === 1
+    && strpos($html, 'src="xeric-view.js') < strpos($html, 'XericView({ world: W })'));
+$out = (string)shell_exec(escapeshellarg($node) . ' --check ' . escapeshellarg($viewFile) . ' 2>&1');
+ok('and it parses', trim($out) === '', trim($out));
 
-$want = ['pano', 'xr', 'xrRay', 'mat4inv', 'panoProgram', 'dayView', 'speak', 'unspeak', 'refuseSpeak'];
-$viewer = '';
+$want = ['pano', 'xr', 'xrRay', 'mat4inv', 'panoProgram', 'gaze', 'phoneGaze', 'dayView', 'speak', 'unspeak',
+         'refuseSpeak', 'hold'];
 $missing = [];
-foreach ($want as $fn) {
-    $body = js_function($main, $fn);
-    if ($body === null) { $missing[] = $fn; continue; }
-    $viewer .= $body . "\n\n";
-}
+foreach ($want as $fn) if (js_function($main, $fn) === null) $missing[] = $fn;
 ok('each of the viewer\'s functions is found: ' . implode(', ', $want), $missing === [], 'missing: ' . implode(', ', $missing));
-file_put_contents($tmp . '/viewer.js', $viewer);
+file_put_contents($tmp . '/viewer.js', $main);
 
 // -- run it ---------------------------------------------------------------------
 $out = (string)shell_exec('cd ' . escapeshellarg($tmp) . ' && ' . escapeshellarg($node) . ' '
@@ -167,6 +171,6 @@ foreach (explode("\n", $out) as $line) {
     ok($p[2] ?? '?', ($p[1] ?? '0') === '1', $p[3] ?? '');
     $ran++;
 }
-ok('the harness reported back (' . $ran . ' checks)', $ran >= 40, mb_substr($out, 0, 600));
+ok('the harness reported back (' . $ran . ' checks)', $ran >= 90, mb_substr($out, 0, 600));
 
 done($tmp);

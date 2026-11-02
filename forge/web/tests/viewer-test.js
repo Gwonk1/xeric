@@ -1,14 +1,14 @@
 // Xeric — the viewer's harness. NOT RUN ON ITS OWN: viewer-test.php renders
-// play.php, cuts the viewer's functions out of the page it was served, and
-// hands them to this file as VIEWER_SRC (a path in argv[2]). What is here is
-// the smallest DOM, WebGL, 2D canvas and WebXR that those functions touch —
+// play.php, checks it loads xeric-view.js, and hands that file to this one as
+// VIEWER_SRC (a path in argv[2]). What is here is the smallest DOM, WebGL, 2D
+// canvas, WebXR and DeviceOrientationEvent that the viewer touches —
 // fakes that record what was asked of them, so the assertions can read it
 // back. No dependency, no npm: plain Node.
 //
 // Every result is one line, "R\t<0|1>\t<name>\t<detail>", which the PHP side
 // turns into its own ok/FAIL lines so the suite reads like every other suite.
-// Sloppy mode on purpose: a strict direct eval keeps its declarations to
-// itself, and the viewer's functions have to land in this scope.
+// Sloppy mode on purpose: the file is evaluated in this scope, so the browser
+// globals it reads (document, window, Image, fetch…) are the fakes below.
 
 const fs = require('fs');
 
@@ -109,9 +109,12 @@ class El {
 const root = new El('html');
 const body = root.appendChild(new El('body'));
 const AUDIO = [];
+const docListeners = {};
 const document = {
   hidden: false,
   body,
+  addEventListener(t, f) { (docListeners[t] = docListeners[t] || []).push(f); },
+  removeEventListener(t, f) { docListeners[t] = (docListeners[t] || []).filter((x) => x !== f); },
   createElement(tag) {
     const e = new El(tag);
     if (tag === 'audio') {
@@ -252,26 +255,25 @@ function fakeXR(supported, opts) {
   return xr;
 }
 
-// -- the page's own state the extracted functions close over -------------------
+// -- the page's own glue: the world, and the network --------------------------
 var W = 'viewer-town';
-var lookYaw = {}, lookView = null;
-var voiceAu = null, voiceBtn = null;
-var $ = function (s) { return document.querySelector(s); };
-var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
 let FETCH = [];
 let fetchAnswer = () => Promise.resolve({ ok: true, status: 200 });
 function fetch(url) { FETCH.push(url); return fetchAnswer(url); }
 
-// -- the viewer, exactly as the page served it -----------------------------------
+// -- the viewer, exactly as the page is served it --------------------------------
 const VIEWER_SRC = fs.readFileSync(process.argv[2], 'utf8');
+let V = null;
 try {
-  eval(VIEWER_SRC);                                    // sloppy-mode direct eval: the functions land in this scope
-  ok('the viewer\'s functions, cut from the served page, load and run in Node', typeof pano === 'function'
-    && typeof xr === 'function' && typeof speak === 'function' && typeof dayView === 'function');
+  eval(VIEWER_SRC);                                    // sets window.XericView, reading this scope's fakes
+  V = window.XericView({ world: W });
+  ok('the viewer, as served, loads and runs in Node', typeof V.pano === 'function'
+    && typeof V.xr === 'function' && typeof V.speak === 'function' && typeof V.dayView === 'function');
 } catch (e) {
-  ok('the viewer\'s functions, cut from the served page, load and run in Node', false, e && e.stack);
+  ok('the viewer, as served, loads and runs in Node', false, e && e.stack);
   finish();
 }
+const { pano, xrRay, mat4inv, dayView, speak, phoneGaze } = V;
 
 const look = body.appendChild(new El('div'));
 look.id = 'look';
@@ -300,7 +302,31 @@ function makeBox(people, src) {
 const tag = (box, h) => box.querySelectorAll('.looktag').find((t) => t.dataset.h === h)
   || look.querySelectorAll('.looktag').find((t) => t.dataset.h === h);
 const px = (s) => parseFloat(String(s || 'NaN'));
-function reset(mode) { Object.assign(MODE, { webgl: true, twoD: true, compile: true, texThrows: false, max: 8192 }, mode || {}); navigator.xr = undefined; IMG_W = 4096; IMG_H = 2048; }
+function reset(mode) {
+  Object.assign(MODE, { webgl: true, twoD: true, compile: true, texThrows: false, max: 8192 }, mode || {});
+  navigator.xr = undefined; IMG_W = 4096; IMG_H = 2048;
+  delete window.DeviceOrientationEvent; delete window.matchMedia; delete window.screen; document.hidden = false;
+}
+
+// -- the phone ---------------------------------------------------------------
+// A DeviceOrientationEvent that exists (or, on "iOS", asks permission and
+// answers as told), and a reading delivered the way the browser delivers one:
+// to every window listener for `deviceorientation`.
+function fakeOrientation(permission) {
+  class DeviceOrientationEvent {}
+  if (permission !== undefined) {
+    DeviceOrientationEvent.asked = 0;
+    DeviceOrientationEvent.requestPermission = () => {
+      DeviceOrientationEvent.asked++;
+      return permission === 'throws' ? Promise.reject(new Error('NotAllowedError')) : Promise.resolve(permission);
+    };
+  }
+  window.DeviceOrientationEvent = DeviceOrientationEvent;
+  return DeviceOrientationEvent;
+}
+function orient(alpha, beta, gamma) {
+  (winListeners.deviceorientation || []).slice().forEach((f) => f({ type: 'deviceorientation', alpha, beta, gamma }));
+}
 
 async function main() {
   // == the panorama, through WebGL ==============================================
@@ -355,7 +381,7 @@ async function main() {
   cv0.dispatch('pointermove', { clientX: 400, clientY: 50, pointerId: 1 });
   ok('drag: a drag turns you by the distance dragged, and only while held',
     near(h.view.yaw - yaw0, 40 * h.view.fov / 200, 1e-9));
-  ok('seam: where you were facing is remembered for this view', lookYaw[box.dataset.src] === h.view);
+  ok('seam: where you were facing is remembered for this view', V.lookYaw[box.dataset.src] === h.view);
   const resizeBefore = (winListeners.resize || []).length;
   h.destroy();
   ok('destroy: the WebGL context is handed back', gl.lost === true);
@@ -485,9 +511,9 @@ async function main() {
   // == the day strip ================================================================
   reset();
   box = makeBox(PEOPLE, 'scene.php?w=viewer-town&k=morning');
-  lookView = pano(box); await tick(); await tick();
+  V.mount(box); await tick(); await tick();
   const oldGl = box.querySelector('canvas')._gl;
-  lookView.view.yaw = 1;
+  V.lookView.view.yaw = 1;
   const day = look.appendChild(document.createElement('div')); day.className = 'lookday';
   const thumb = (src, kind, light, now) => {
     const t = document.createElement('button'); t.className = 'lookthumb';
@@ -503,21 +529,115 @@ async function main() {
     && main.querySelector('img.lookimg').src === tNoon.dataset.src);
   ok('day: the people come along as the row a still has, shown', main.querySelector('.looktagrow')
     && main.querySelectorAll('.looktag').length === 6 && main.querySelectorAll('.looktag').every((t) => !t.hidden));
-  ok('day: the old WebGL context is handed back', oldGl.lost === true && lookView === null);
+  ok('day: the old WebGL context is handed back', oldGl.lost === true && V.lookView === null);
   ok('day: the pressed light is marked, and only it', tNoon.classList.contains('cur') && tNoon.getAttribute('aria-pressed') === 'true'
     && !tDusk.classList.contains('cur') && tDusk.getAttribute('aria-pressed') === 'false');
   ok('day: and the view says it is earlier', !earlier.hidden && earlier.textContent === 'earlier: noon');
   // back to a panorama: from the still, so seed where the still was facing
-  lookYaw[tNoon.dataset.src] = { yaw: 1, pitch: 0, fov: 1.4 };
+  V.lookYaw[tNoon.dataset.src] = { yaw: 1, pitch: 0, fov: 1.4 };
   dayView(tDusk); await tick(); await tick();
   main = look.querySelector('.lookmain');
   ok('day: pressing a panorama\'s light builds a fresh look-around', main.classList.contains('lookpanobox')
-    && !!main.querySelector('canvas.lookpano') && !!lookView && !!main.querySelector('canvas')._gl);
-  ok('day: where you were facing is kept across the swap', lookView && lookView.view.yaw === 1);
+    && !!main.querySelector('canvas.lookpano') && !!V.lookView && !!main.querySelector('canvas')._gl);
+  ok('day: where you were facing is kept across the swap', V.lookView && V.lookView.view.yaw === 1);
   ok('day: the people go back over the panorama, placed by bearing', main.querySelector('.looktags')
     && tag(main, 'theo').hidden === true);
   ok('day: the light marked now clears the earlier label', earlier.hidden && earlier.textContent === '');
-  lookView.destroy(); lookView = null;
+  V.unmount();
+
+  // == look with the phone =========================================================
+  const RAD = Math.PI / 180;
+  reset();
+  box = makeBox(PEOPLE); h = pano(box); await tick(); await tick();
+  ok('phone: no DeviceOrientationEvent, no toggle, and no error', !box.querySelector('.lookgaze'));
+  h.destroy();
+
+  reset(); fakeOrientation();
+  window.matchMedia = (q) => ({ matches: q !== '(pointer: coarse)' });
+  box = makeBox(PEOPLE); h = pano(box); await tick(); await tick();
+  ok('phone: the event on a mouse-and-keyboard machine is not a phone, so no toggle', !box.querySelector('.lookgaze'));
+  h.destroy();
+
+  reset(); fakeOrientation();
+  box = makeBox(PEOPLE); h = pano(box); await tick(); await tick();
+  gl = box.querySelector('canvas')._gl;
+  let gz = box.querySelector('.lookgaze');
+  ok('phone: with DeviceOrientationEvent the toggle is offered, on the view, as a button',
+    !!gz && gz.tagName === 'BUTTON' && gz.parentNode === box && gz.textContent === 'look with the phone');
+  ok('phone: and it is off until pressed: pressed=false, nothing listening',
+    gz.getAttribute('aria-pressed') === 'false' && !(winListeners.deviceorientation || []).length);
+  orient(0, 90, 0); orient(40, 90, 0); await tick();
+  ok('phone: while off, the phone turning moves nothing', h.view.yaw === 0 && gl.count('drawArrays') === 1);
+  gz.click();
+  ok('phone: a press turns it on', gz.getAttribute('aria-pressed') === 'true' && (winListeners.deviceorientation || []).length === 1
+    && gz.classList.contains('on'));
+  orient(10, 90, 0); await tick();
+  ok('phone: the first reading only sets where the phone is: the view does not jump', h.view.yaw === 0 && h.view.pitch === 0);
+  orient(40, 90, 0); await tick();
+  ok('phone: turning the upright phone 30 degrees left turns the view 30 degrees left',
+    near(h.view.yaw, 30 * RAD, 1e-9) && near(gl.uni.y, 30 * RAD, 1e-9));
+  ok('phone: and the people move across the view as you turn',
+    near(px(tag(box, 'dot').style.left), (Math.tan(30 * RAD) / (f * asp) + 1) / 2 * 400));
+  orient(40, 110, 0); await tick();
+  ok('phone: tipping the top back 20 degrees looks 20 degrees up', near(h.view.pitch, 20 * RAD, 1e-9) && near(gl.uni.p, 20 * RAD, 1e-9));
+  orient(40, 90, 0); await tick();
+  const cvG = box.querySelector('canvas');
+  cvG.dispatch('pointerdown', { clientX: 100, clientY: 50, pointerId: 1 });
+  cvG.dispatch('pointermove', { clientX: 150, clientY: 50, pointerId: 1 });
+  cvG.dispatch('pointerup', {});
+  const dragged = 50 * h.view.fov / 200;
+  orient(20, 90, 0); await tick();
+  ok('phone: a drag still turns the view, and the phone adds its turn on top',
+    near(h.view.yaw, 30 * RAD + dragged - 20 * RAD, 1e-9));
+  orient(350, 90, 0); orient(10, 90, 0); await tick();
+  const before = h.view.yaw;
+  orient(350, 90, 0); await tick();
+  ok('phone: across north (10 to 350) is 20 degrees right, not 340 left', near(h.view.yaw, before - 20 * RAD, 1e-9));
+  document.hidden = true;
+  (docListeners.visibilitychange || []).slice().forEach((fn) => fn({ type: 'visibilitychange' }));
+  ok('phone: a hidden tab turns it off', gz.getAttribute('aria-pressed') === 'false' && !(winListeners.deviceorientation || []).length);
+  document.hidden = false;
+  const held = h.view.yaw; orient(90, 90, 0); await tick();
+  ok('phone: and off stays off', h.view.yaw === held);
+  gz.click(); orient(0, 90, 0); gz.click();
+  ok('phone: a second press turns it off again', gz.getAttribute('aria-pressed') === 'false' && !(winListeners.deviceorientation || []).length);
+  gz.click();
+  h.destroy();
+  ok('phone: destroy takes the listeners and the toggle with it', !(winListeners.deviceorientation || []).length
+    && !(docListeners.visibilitychange || []).length && !box.querySelector('.lookgaze'));
+
+  // held sideways: the screen's own rotation is compensated
+  reset(); fakeOrientation(); window.screen = { orientation: { angle: 90 } };
+  box = makeBox([]); h = pano(box); await tick(); await tick();
+  box.querySelector('.lookgaze').click();
+  orient(90, 0, -90); orient(120, 0, -90); await tick();
+  ok('phone: held sideways, turning 30 degrees left still turns the view 30 degrees left', near(h.view.yaw, 30 * RAD, 1e-9)
+    && near(h.view.pitch, 0, 1e-9));
+  h.destroy();
+  ok('phone: phoneGaze, upright and level, faces the room straight on', (() => {
+    const g = phoneGaze(0, 90, 0, 0); return near(g.yaw, 0, 1e-9) && near(g.pitch, 0, 1e-9); })());
+  ok('phone: and flat on its back it looks straight down, still with a heading', (() => {
+    const g = phoneGaze(30, 0, 0, 0); return near(g.pitch, -Math.PI / 2, 1e-9) && near(g.yaw, 30 * RAD, 1e-9); })());
+
+  // iOS: permission, asked for in the press, and a no is quiet
+  reset(); const ios = fakeOrientation('granted');
+  box = makeBox([]); h = pano(box); await tick(); await tick();
+  gz = box.querySelector('.lookgaze');
+  ok('phone (iOS): the toggle is offered, and nothing is asked before a press', !!gz && ios.asked === 0);
+  gz.click(); await tick();
+  ok('phone (iOS): the press asks, and a yes turns it on', ios.asked === 1 && gz.getAttribute('aria-pressed') === 'true'
+    && (winListeners.deviceorientation || []).length === 1);
+  h.destroy();
+  reset(); fakeOrientation('denied');
+  box = makeBox([]); h = pano(box); await tick(); await tick();
+  box.querySelector('.lookgaze').click(); await tick();
+  ok('phone (iOS): a no takes the toggle away, quietly', !box.querySelector('.lookgaze') && !(winListeners.deviceorientation || []).length);
+  h.destroy();
+  reset(); fakeOrientation('throws');
+  box = makeBox([]); h = pano(box); await tick(); await tick();
+  box.querySelector('.lookgaze').click(); await tick();
+  ok('phone (iOS): and so does a refusal that throws', !box.querySelector('.lookgaze'));
+  h.destroy();
 
   // == the speaker =================================================================
   reset();
@@ -530,19 +650,19 @@ async function main() {
   ok('speak: a press shows the line loading at once', b1.classList.contains('loading') && !b1.classList.contains('on'));
   await tick();
   ok('speak: it asks speak.php for that line in this world', FETCH[0] === 'speak.php?w=viewer-town&m=41');
-  ok('speak: one <audio> is handed the same address and played', AUDIO.length === 1 && voiceAu.src === FETCH[0] && voiceAu.plays === 1);
-  voiceAu.dispatch('playing');
+  ok('speak: one <audio> is handed the same address and played', AUDIO.length === 1 && V.voiceAu.src === FETCH[0] && V.voiceAu.plays === 1);
+  V.voiceAu.dispatch('playing');
   ok('speak: playing lights the button and says pressed', b1.classList.contains('on') && !b1.classList.contains('loading')
     && b1.getAttribute('aria-pressed') === 'true');
   speak(b1);
   ok('speak: a second press on the same line is stop', !b1.classList.contains('on') && b1.getAttribute('aria-pressed') === 'false'
-    && voiceAu.paused && FETCH.length === 1);
-  speak(b1); await tick(); voiceAu.dispatch('playing');
+    && V.voiceAu.paused && FETCH.length === 1);
+  speak(b1); await tick(); V.voiceAu.dispatch('playing');
   ok('speak: and a third press plays it again', b1.classList.contains('on') && FETCH.length === 2);
   speak(b2); await tick();
   ok('speak: another line is a change of mind, not a duet', !b1.classList.contains('on') && b1.getAttribute('aria-pressed') === 'false'
-    && b2.classList.contains('loading') && AUDIO.length === 1 && voiceAu.forBtn === b2);
-  voiceAu.dispatch('playing'); voiceAu.dispatch('ended');
+    && b2.classList.contains('loading') && AUDIO.length === 1 && V.voiceAu.forBtn === b2);
+  V.voiceAu.dispatch('playing'); V.voiceAu.dispatch('ended');
   ok('speak: when the line ends the button goes dark', !b2.classList.contains('on') && b2.getAttribute('aria-pressed') === 'false');
 
   fetchAnswer = () => Promise.resolve({ ok: false, status: 404 });

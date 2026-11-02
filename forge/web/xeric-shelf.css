@@ -1,0 +1,352 @@
+/* WHITE NOTHINGNESS, and it has to be nothingness — no header, no rule, no
+   footer, no chrome of any kind. The ground carries a gradient so faint it
+   reads as light rather than as a colour, which is the one thing the Wii menu
+   did that a flat fill cannot: it makes the tiles sit ON something. */
+/* THE TOKEN, NOT A HEX. This was #fbfaf8 — a shade of the ground picked by eye
+   and typed straight in, which meant the shelf stayed white when the rest of the
+   app went dark. It is the one line that made "the room can be relit by editing
+   nine lines" untrue. */
+body.shelf{background:var(--bg);min-height:var(--app-h,100dvh);display:flex;flex-direction:column}
+.shelfwrap{width:100%;max-width:62rem;margin:auto;padding:clamp(2.5rem,9vh,5rem) clamp(1rem,4vw,2rem);
+  display:flex;flex-direction:column;gap:clamp(1.8rem,6vh,3rem)}
+
+/* The wordmark arrives first and alone. Everything else is timed off it. */
+.mark{margin:0;text-align:center;font-size:clamp(1.6rem,7vw,2.4rem);font-weight:300;
+  letter-spacing:.42em;text-indent:.42em;color:var(--fg);
+  animation:fadein .55s ease-out both}
+
+/* Four across on a laptop, two on a phone — the Wii's own count, and the
+   number at which a name is readable at a glance without the tile becoming a
+   poster. */
+.grid{display:grid;gap:clamp(.7rem,2vw,1.1rem);
+  grid-template-columns:repeat(auto-fill,minmax(12.5rem,1fr))}
+@media (max-width:26rem){.grid{grid-template-columns:repeat(2,1fr)}}
+/* A FRESH INSTALL IS ONE TILE, and auto-fill puts it hard left under a centred
+   wordmark — the first thing anybody ever sees. One or two centre instead of
+   stretching; three or more fill the row as before. */
+.grid:has(.tile:nth-child(-n+2):last-child){justify-content:center;
+  grid-template-columns:repeat(auto-fit,minmax(12.5rem,15rem))}
+
+/* A CHANNEL. White, hairline, soft shadow, 4:3 — and it lifts when you reach
+   for it, which is the entire interaction language of the thing this borrows
+   from. The lift is the affordance; there is no other one on this screen. */
+.tile{position:relative;display:block;aspect-ratio:4/3;border-radius:.85rem;overflow:hidden;
+  background:var(--bg-2);border:1px solid var(--line);box-shadow:var(--shadow);
+  text-decoration:none;color:var(--fg);
+  transition:transform .16s ease-out,box-shadow .16s ease-out,border-color .16s ease-out;
+  animation:tilein .5s cubic-bezier(.16,.84,.3,1) both;animation-delay:var(--d,.3s)}
+.tile:hover,.tile:focus-visible{transform:translateY(-3px);box-shadow:var(--shadow-lift);
+  border-color:var(--accent-dim);outline:none}
+.tile:active{transform:translateY(0);box-shadow:var(--shadow)}
+
+.tface{position:absolute;inset:0}
+
+/* The name sits IN FRONT of the picture, on a scrim rather than a bar, so it
+   stays legible over art nobody has seen yet without boxing it in. */
+.tname{position:absolute;left:0;right:0;bottom:0;padding:2rem 5.2rem .6rem .75rem;
+  font-size:.95rem;font-weight:600;line-height:1.25;color:#fffdf9;
+  background:linear-gradient(to top,rgba(18,16,12,.62) 34%,rgba(18,16,12,0));
+  text-shadow:0 1px 3px rgba(18,16,12,.45)}
+
+/* IS TIME PASSING IN THERE. Top left, opposite the permanent-death mark, over
+   the art rather than beside it — the tile is the object and the lamp is a fact
+   about the object, not a caption under it. The ring is what keeps it legible on
+   a bright picture and a dark one alike. */
+.tlamp{position:absolute;top:.45rem;left:.5rem;width:.6rem;height:.6rem;border-radius:50%;
+  background:var(--bad);box-shadow:0 0 0 2px rgba(255,255,255,.85),0 1px 2px rgba(18,16,12,.5)}
+.tlamp.on{background:var(--good)}
+/* THE FLICKER. White for a moment and back to green, with the ring blooming out
+   with it — a pulse rather than a blink, which is the difference between a thing
+   that is alive and a thing that is faulty.
+   Fast on the way up and slow on the way down, because that is what a real one
+   looks like: the light arrives all at once and fades. */
+/* THE BEAT: a circle that becomes a play triangle and comes back the same way
+   it went. Out and back through the same shapes is what makes it read as one
+   pulse rather than two events — and a triangle is the one shape that says
+   "running" without a word on it.
+
+   BOTH SHAPES ARE EIGHT-POINT POLYGONS, which is the whole trick: clip-path only
+   interpolates between polygons with the same number of points, so the circle is
+   an octagon (indistinguishable at ten pixels) and the triangle repeats vertices
+   to match. Anything else snaps instead of morphing.
+
+   The ring goes to a glow on the way through, because clip-path crops a
+   box-shadow and a half-cropped ring around a triangle looks like a rendering
+   fault. */
+.tlamp.beat{animation:tbeat 1s cubic-bezier(.4,0,.2,1) 1}
+@keyframes tbeat{
+  0%, 100% {
+    background:var(--good);
+    clip-path:polygon(50% 0,85% 15%,100% 50%,85% 85%,50% 100%,15% 85%,0 50%,15% 15%);
+    box-shadow:0 0 0 2px rgba(255,255,255,.85),0 1px 2px rgba(18,16,12,.5);
+  }
+  50% {
+    background:#ffffff;
+    clip-path:polygon(4% 2%,52% 26%,100% 50%,52% 74%,4% 98%,4% 98%,4% 50%,4% 2%);
+    box-shadow:0 0 12px 4px rgba(255,255,255,.75);
+  }
+}
+/* Somebody who asked not to be moved still gets the news, just not the motion. */
+@media (prefers-reduced-motion: reduce){ .tlamp.beat{animation:none} }
+/* A stopped tile is greyed, and its lamp must not be: the lamp is the one thing
+   on it that still has to be readable. */
+.tile.stopped .tlamp{filter:none}
+
+/* WHEN THE NEXT HOUR LANDS. Bottom left, under the lamp it explains, small and
+   in the scrim that already carries the name — the shelf is deliberately
+   wordless and this is the one word it earns: without it, a healthy xeric that
+   is between hours is indistinguishable from a broken one. */
+/* BOTTOM RIGHT, because bottom left is where the name is. Put here first, it
+   was drawn straight over the title — text that is present, positioned, and
+   unreadable, which is worse than absent. The name gets room reserved for it
+   rather than the two of them fighting over the same corner. */
+.tdue{position:absolute;right:.6rem;bottom:.55rem;z-index:2;
+  font-size:.66rem;letter-spacing:.02em;color:#fffdf9;opacity:.8;
+  text-shadow:0 1px 3px rgba(18,16,12,.8)}
+.tile.stopped .tdue{display:none}
+
+.tmark{position:absolute;top:.35rem;right:.55rem;font-size:1.05rem;line-height:1;color:#fffdf9;
+  text-shadow:0 1px 3px rgba(18,16,12,.6)}
+
+/* The plus is the same tile with nothing in it. Dashed, because an empty solid
+   square reads as a world that failed to load. */
+.tile.new{border-style:dashed;border-color:var(--line);box-shadow:none;background:transparent}
+.tile.new:hover,.tile.new:focus-visible{border-color:var(--accent);background:var(--bg-2);
+  box-shadow:var(--shadow)}
+.plus{position:absolute;inset:0;display:block}
+.plus::before,.plus::after{content:"";position:absolute;top:50%;left:50%;background:var(--fg-far);
+  transition:background .16s ease-out}
+.plus::before{width:1.5rem;height:1px;transform:translate(-50%,-50%)}
+.plus::after{width:1px;height:1.5rem;transform:translate(-50%,-50%)}
+.tile.new:hover .plus::before,.tile.new:hover .plus::after,
+.tile.new:focus-visible .plus::before,.tile.new:focus-visible .plus::after{background:var(--accent)}
+
+/* The one link on the screen, for the one thing clicking a tile cannot reach. */
+.corner{text-align:center;animation:fadein .5s ease-out both;animation-delay:.55s}
+.corner a{font-size:.82rem;color:var(--accent);text-decoration:none;
+  border-bottom:1px solid var(--accent-dim);padding-bottom:1px}
+.corner a:hover,.corner a:focus-visible{border-bottom-color:var(--accent)}
+.corner a.off{color:var(--bad);border-bottom-color:var(--bad)}
+/* The machine, named, with a light on it — the same two things the machines
+   screen says, in the one line the shelf allows itself. */
+.cmodel{display:inline-flex;align-items:center;gap:.4rem}
+.corner .lamp{width:.5rem;height:.5rem;border-radius:50%;background:var(--dot);
+  border:1px solid var(--line);flex:0 0 auto}
+.corner .lamp.up{background:#3f9142;border-color:#2f6e32}
+.corner .lamp.down{background:var(--bad);border-color:var(--bad)}
+
+/* A STOPPED WORLD LOOKS STOPPED, without a word being added to a screen that
+   has none. Colour draining out of a picture is the oldest signal there is for
+   "this is not live", and it survives being two hundred pixels wide. */
+.tile.stopped .tface{filter:grayscale(.86) contrast(.92)}
+.tile.stopped{opacity:.82}
+.tile.stopped:hover,.tile.stopped:focus-visible{opacity:1}
+
+/* the machines — the same card the forge has always used for a choice, one per
+   machine, so this screen and the forge's model step are visibly one thing. */
+.mlist{list-style:none;margin:0 auto;padding:0;width:100%;max-width:30rem;
+  display:flex;flex-direction:column;gap:.55rem;
+  animation:fadein .5s ease-out both;animation-delay:.24s}
+.mlist li{display:flex;gap:.4rem;align-items:stretch}
+.mrow{flex:1;min-width:0;display:flex}
+.mlist .opt{position:relative;flex:1;min-width:0;margin:0;font:inherit;text-align:left;
+  color:var(--fg);box-shadow:var(--shadow);
+  transition:border-color .15s ease-out,box-shadow .15s ease-out}
+/* Only a card you can attach reacts to being reached for. The active one is not
+   a target — its one action is the button inside it. */
+.mlist .opt:has(.mpick){cursor:pointer}
+.mlist .opt:has(.mpick:hover),.mlist .opt:has(.mpick:focus-visible){
+  border-color:var(--accent-dim);box-shadow:var(--shadow-lift)}
+/* The stretched hit area. Invisible, covers the card, sits UNDER the meter and
+   the disconnect button so both stay clickable. */
+.mpick{position:absolute;inset:0;z-index:1;appearance:none;border:0;background:none;
+  cursor:pointer;padding:0}
+.mpick:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
+.mact{position:relative;z-index:2;margin:0}
+
+/* Per machine, on the address's own line. The question a meter answers is "is
+   the free one carrying this or am I paying for it", and one number for
+   everything cannot answer it.
+   In the flow rather than absolutely placed: parked in the corner it needed a
+   7.5rem right padding on the card, which wrapped every description two words
+   early to make room for a number that is usually four characters long. */
+.thead{display:flex;align-items:baseline;gap:.75rem;position:relative;z-index:2}
+.thead .t{flex:1;min-width:0}
+.thead .meter{flex:0 0 auto;margin:0}
+/* AN ADDRESS IS TEXT UNTIL SOMEBODY REACHES FOR IT, and then it is plainly a
+   field with a Save beside it. A list of machines that showed seven input boxes
+   would read as a form to be filled in rather than as things that exist. */
+.tedit{flex:1;min-width:0;display:flex;align-items:center;gap:.4rem}
+.tshow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  text-align:left;font:inherit;font-weight:600;font-size:1rem;color:var(--fg);cursor:text;
+  background:none;border:0;border-bottom:1px dashed transparent;padding:0}
+.tshow:hover,.tshow:focus-visible{border-bottom-color:var(--accent-dim);outline:none}
+/* Open: a real field, lifted off the card so it reads as something being edited
+   rather than something being displayed. */
+input.t{flex:1;min-width:0;font:inherit;font-weight:600;font-size:1rem;color:var(--fg);
+  background:var(--bg-2);border:1px solid var(--accent);border-radius:.4rem;
+  padding:.25rem .45rem;box-shadow:var(--shadow-lift)}
+input.t:focus{outline:none}
+.tsave{flex:0 0 auto;cursor:pointer;font:inherit;font-size:.82rem;font-weight:600;
+  color:var(--on-accent);background:var(--accent);border:1px solid var(--accent);
+  border-radius:.4rem;padding:.25rem .6rem}
+.tsave[disabled]{opacity:.5;cursor:default}
+/* Taken. A tick, then nothing. */
+.tok{flex:0 0 auto;color:var(--good);font-size:1.05rem;line-height:1;opacity:0;
+  transition:opacity .25s ease-out}
+.tok.go{opacity:1}
+.tnote{display:block;margin:.35rem 0 0;font-size:.8rem;color:var(--bad)}
+/* The way out, offered rather than guessed at. */
+.tfound{position:relative;z-index:2;margin:.5rem 0 0}
+.tfound .btn{border-color:var(--accent-dim);color:var(--accent)}
+/* THREE STATES, THREE WEIGHTS. The engine gets the accent ring — it is the one
+   running every world and there is only one. A connected machine gets a quiet
+   ring in the same family: set up and available, not in charge. Everything else
+   is a plain card. */
+.mlist .opt.on{box-shadow:0 0 0 1px var(--accent),var(--shadow)}
+.mlist .opt.lit{box-shadow:0 0 0 1px var(--accent-dim),var(--shadow)}
+.mlist .opt .t{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mlist .opt .d{display:block;margin:.1rem 0 0}
+/* WHO IS ANSWERING. Two glyphs and no logos: a filled square is a machine you
+   can walk over to, a hollow ring is somebody else's. The name is ours; the
+   model id is whatever the server volunteered, which is why it is quieter than
+   the name — it is a fact being reported, not a claim being made. */
+/* PURE TEXT, AND IT SITS OVER THE CARD'S STRETCHED PICKER. Without this it
+   swallows every click that lands on the badge, which is the widest thing
+   on the card. */
+.whois{pointer-events:none;display:flex;align-items:center;gap:.4rem;margin:.35rem 0 0;
+  font-size:.78rem;color:var(--fg-dim);min-width:0}
+.wsig{flex:0 0 auto;width:.55rem;height:.55rem;border:1px solid var(--fg-far)}
+.wsig.here{background:var(--fg-far);border-radius:.1rem}
+.wsig.away{background:transparent;border-radius:50%}
+.wname{flex:0 0 auto;font-weight:600;color:var(--fg)}
+.wmodel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.72rem}
+.wmodel:has(.wmodels){overflow:visible;white-space:normal}
+.wmodels{pointer-events:auto;position:relative;z-index:3;max-width:100%;
+  font:inherit;color:var(--fg);background:var(--bg-2);border:1px solid var(--line);
+  border-radius:.35rem;padding:.2rem .4rem}
+/* The status row reserves the button's height on EVERY card, so choosing one
+   does not make it taller than the rest. `.btn` carries min-height:3rem for
+   finger-sized targets on a form; `.small` set padding and font size and never
+   overrode it, which is where the extra fourteen pixels came from. */
+.mlist .opt .status{display:flex;align-items:center;gap:.35rem;margin:.5rem 0 0;min-height:2.15rem}
+/* The action sits under the meter, hard right, away from the row of things that
+   only report. */
+.mlist .mact{display:flex;justify-content:flex-end;gap:.45rem;margin:.5rem 0 0;position:relative;z-index:2;
+  /* THE ROW IS FULL WIDTH; THE BUTTON IS NOT. Sitting above the stretched picker
+     at z-index 2, the row swallowed every click in the empty space to the LEFT
+     of the button — a dead band straight across a card whose whole point is that
+     you can click it anywhere. The button takes its own clicks back. */
+  pointer-events:none}
+.mlist .mact .btn{pointer-events:auto}
+.mlist .btn.small{min-height:2.15rem;padding:.3rem .75rem}
+/* The right-hand lamp: not "can this be reached" but "is it the one in use".
+   Right-aligned in the card, so the two facts sit at opposite ends and neither
+   has to be read as a qualifier of the other. */
+.wired{margin-left:auto;display:inline-flex;align-items:center;gap:.35rem;
+  font-size:.78rem;color:var(--fg-dim);white-space:nowrap}
+/* Both ways round, and never grey: grey is this screen's colour for "not asked
+   yet", and whether something is connected is a thing the app is certain of. */
+.wired .dot{width:.5rem;height:.5rem;margin:0;background:var(--bad);border-color:var(--bad)}
+.wired{color:var(--bad)}
+.wired.on{color:var(--good)}
+.wired.on .dot{background:var(--good);border-color:var(--good)}
+/* The engine says so in the app's own accent rather than in the green every
+   connected machine wears — the difference between "reachable" and "in charge"
+   should not be a shade of the same colour. */
+.wired.engine{color:var(--accent);font-weight:600}
+.wired.engine .dot{background:var(--accent);border-color:var(--accent)}
+/* RED, because it is the one control on this screen that stops every world the
+   visitor has. Outlined rather than filled: it is a thing to be found when
+   wanted, not a thing the eye lands on first. */
+.btn.cut{background:transparent;color:var(--bad);border-color:var(--bad);
+  min-height:2.15rem;padding:.3rem .75rem;font-size:.85rem}
+.btn.cut:hover,.btn.cut:focus-visible{background:var(--bad);color:var(--on-accent)}
+/* Its opposite, in the same place and the same shape: green, outlined, one word.
+   Same size as the cut so a list of machines has one button edge down the right
+   rather than two — which is also what stops a card changing height when it
+   becomes the chosen one. */
+.btn.join{background:transparent;color:var(--good);border-color:var(--good);
+  min-height:2.15rem;padding:.3rem .75rem;font-size:.85rem}
+.btn.join:hover,.btn.join:focus-visible{background:var(--good);color:var(--on-accent)}
+
+/* ------------------------------------------------- what else is running */
+/* Quieter than the list above it, because everything here is a suggestion and
+   nothing here is in use. Dashed, like the plus on an empty shelf: the shape of
+   a thing that could exist rather than one that does. */
+.found{width:100%;max-width:34rem;margin:0 auto}
+.fh{margin:0 0 .5rem;font-size:.78rem;font-weight:600;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--fg-far)}
+.found .mlist{margin:0}
+.fopt{border-style:dashed;background:transparent;box-shadow:none!important;
+  display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.fopt .thead{flex:1;min-width:9rem}
+.fopt .whois{flex:2;min-width:11rem;margin:0}
+.fopt .mact{flex:0 0 auto;margin:0}
+/* The answer to a question somebody just asked, in the place they asked it. */
+.soon{align-self:center;font-size:.82rem;color:var(--fg-dim);white-space:nowrap}
+/* Said once, where the choice is made, and only when it applies. */
+.mnote{width:100%;max-width:34rem;margin:-.4rem auto 0;font-size:.82rem;line-height:1.5;
+  color:var(--fg-dim);border-left:2px solid var(--warn);padding-left:.8rem}
+
+/* The way on, beside the line that says there is one. Sized to sit against a
+   sentence rather than to anchor a page — it is a door, not a call to action. */
+.mstops.row{display:flex;align-items:center;justify-content:center;gap:.9rem;flex-wrap:wrap}
+.mstops.row .mstop{margin:0}
+.btn.go{display:inline-flex;align-items:center;justify-content:center;
+  text-decoration:none;background:var(--accent);color:var(--on-accent);
+  border-color:var(--accent);min-height:2.15rem;padding:.25rem 1rem;font-size:.85rem}
+.btn.go:hover,.btn.go:focus-visible{filter:brightness(1.08)}
+
+/* The forget button, and — on rows that have none — the space one would take.
+   Without the spacer the fixed row is wider than the rest and the right edge of
+   the list zigzags. */
+.mx,.mgap{flex:0 0 auto;width:2.2rem}
+.mx{cursor:pointer;font:inherit;font-size:1.1rem;line-height:1;color:var(--fg-far);
+  background:none;border:1px solid transparent;border-radius:.6rem;padding:0}
+.mx:hover,.mx:focus-visible{color:var(--bad);border-color:var(--line);outline:none}
+
+.madd{border-style:dashed;background:transparent;box-shadow:none!important}
+.madd:hover,.madd:focus-within{border-color:var(--accent);background:var(--bg-2)}
+.madd input{width:100%;margin:.55rem 0 0;font:inherit;font-size:1rem;color:var(--fg);
+  background:var(--bg-2);border:1px solid var(--accent);border-radius:.5rem;padding:.6rem .7rem}
+.madd input:focus{outline:none}
+
+/* Directly under the wordmark, because it is the one thing on this screen that
+   is about the whole app rather than about a row in a list. */
+/* what is worth a buzz */
+.nform{width:100%;max-width:30rem;margin:0 auto;display:flex;flex-direction:column;gap:.8rem;
+  animation:fadein .5s ease-out both;animation-delay:.24s}
+#nurl{width:100%;font:inherit;font-size:1rem;color:var(--fg);background:var(--bg-2);
+  border:1px solid var(--line);border-radius:.6rem;padding:.75rem .85rem;box-shadow:var(--shadow)}
+#nurl:focus{outline:none;border-color:var(--accent)}
+.nlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.45rem}
+.nlist .opt{margin:0;cursor:pointer;box-shadow:var(--shadow);position:relative;padding-left:2.3rem}
+.nlist .opt input[type=checkbox]{position:absolute;left:.85rem;top:.95rem}
+.nlist .opt .t{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.86rem;letter-spacing:.04em}
+.nlist .opt .d{display:block}
+.nlist .opt input[type=number]{width:6.5rem;font:inherit;font-size:.86rem;color:var(--fg);
+  background:var(--bg-2);border:1px solid var(--line);border-radius:.35rem;padding:.1rem .35rem}
+.nrow{display:flex;gap:.5rem;flex-wrap:wrap}
+
+.mstops{margin:-1rem 0 0}
+.mstops .mstop{margin:0}
+.mstops .mstop + .mstop{margin-top:.4rem}
+.mstop{margin:-1rem 0 0;text-align:center;font-size:.88rem;color:var(--fg-dim);
+  animation:fadein .5s ease-out both;animation-delay:.18s}
+.mstop.bad{max-width:34rem;margin-left:auto;margin-right:auto;color:var(--bad)}
+/* The engine's own accent, the same one its card wears, so the line under the
+   wordmark and the ring six inches below are visibly the same fact. */
+.mstop.on{color:var(--accent);font-weight:600;letter-spacing:.02em}
+
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+@keyframes tilein{from{opacity:0;transform:translateY(10px) scale(.985)}
+                  to{opacity:1;transform:none}}
+
+/* Somebody who has asked not to be moved gets the same screen, instantly. */
+@media (prefers-reduced-motion: reduce){
+  .mark,.tile,.corner{animation:none}
+  .tile{transition:none}
+}

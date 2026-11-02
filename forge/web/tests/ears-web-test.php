@@ -143,19 +143,26 @@ $js = '';
 if (preg_match_all('#<script nonce="[^"]+">(.*?)</script>#s', $h1, $m)) {
     foreach ($m[1] as $block) if (str_contains($block, "getElementById('hear')")) $js = $block;
 }
-ok('the hold-to-talk code is in a nonce\'d inline script', $js !== '');
+ok('the hold-to-talk button is bound in a nonce\'d inline script', $js !== ''
+    && str_contains($js, "if (hb) XV.hold(hb, { handle: function () { return openHandle; }, fail: sayfail });"));
 $jsf = $tmp . '/play-inline.js';
 file_put_contents($jsf, $js);
 $out = []; $rc = 1;
 exec('node --check ' . escapeshellarg($jsf) . ' 2>&1', $out, $rc);
 ok('and node --check accepts it', $rc === 0, implode("\n", $out));
+// The recorder itself is the viewer file's hold(), which every page with a
+// room loads; the checks below are on that function, as served.
+$vj = (string)file_get_contents(dirname(__DIR__) . '/xeric-view.js');
+$js = preg_match('/\n  function hold\(hb, env\) \{.*?\n  \}\n/s', $vj, $hm) === 1 ? $hm[0] : '';
+ok('and the recorder is one function in xeric-view.js, which play.php loads with its nonce', $js !== ''
+    && preg_match('#<script nonce="[^"]+" src="xeric-view\.js\?v=[0-9a-f]{16}"></script>#', $h1) === 1);
 ok('the microphone is asked for on a press, never on load',
     preg_match('/function start\(\) \{.*?getUserMedia/s', $js) === 1 && substr_count($js, 'getUserMedia(') === 1);
 ok('it stops at thirty seconds, and the keyboard can hold it',
     str_contains($js, 'MAX_MS = 30000') && str_contains($js, "e.key !== ' '") && str_contains($js, "'keyup'"));
 ok('the words go into the composer, and nothing posts to say.php from here',
     preg_match("/fetch\('hear\.php'.*?box\.value = .*?box\.focus\(\)/s", $js) === 1
-    && preg_match("/\(function \(\) \{\s*var hb = document\.getElementById\('hear'\);(?:(?!fetch\('say\.php').)*\}\)\(\);/s", $js) === 1);
+    && !str_contains($js, "fetch('say.php'"));
 ok('a refusal is shown once and the button stands down', str_contains($js, 'hb.disabled = true;'));
 
 echo "\n# the stub machine, through the resolver\n";
