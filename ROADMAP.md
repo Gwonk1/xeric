@@ -3,6 +3,13 @@
 What is built, what is next, and what is honestly still missing. This is a
 working document, not a promise — dates are absent on purpose.
 
+The long view — where this goes over about two years, the bets it rests on,
+the milestones, and what the code actually is today as against what this file
+says — is [docs/FUTURE.md](docs/FUTURE.md). Its truth table corrects several
+headings below (the player's body and death are built; the Narrator's powers
+exist and reach nothing a player can see); this file is updated as those
+items are worked, not all at once.
+
 ---
 
 ## The heart — the world running when nobody is looking

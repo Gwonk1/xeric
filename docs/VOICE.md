@@ -181,9 +181,8 @@ plus its character count, because that is what a hosted voice bills by.
 
 ---
 
-## In the play view — the intended surface
+## In the play view
 
-*Being built as this is written; described here as intended, not as shipped.*
 `forge/web/speak.php` renders and serves a clip for one message; a **Voice
 machine** card on the machines screen takes the address (the key stays in
 `XERIC_VOICE_KEY`, in the environment only, as it is everywhere else); and each
