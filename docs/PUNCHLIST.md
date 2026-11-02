@@ -10,28 +10,56 @@ When you fix one, delete its line in the same commit. When you find one and
 do not fix it, add a line here in the same commit — "filed, not fixed" means
 filed *here*.
 
-## In progress — the ninety-day bugs
+## Open — found since the plan
 
-From [`FUTURE.md`](FUTURE.md), "The next ninety days", items 1–3; the four the
-continuity benchmark (Appendix B) finds on day one are marked ★. Being worked
-on now; check `git log` before starting on one.
+Filed by the commits since the plan landed, not yet fixed.
 
-- ★ **Milldale's special role has no `must_not_know`** — `engine/sweeps.php:359`
-  `xeric_sweep_protected()` returns empty, so [pastor_dale, janelle] is a legal
-  visit group at First Lutheran on table night.
-- ★ **Promises have no `kept` state** — `engine/constructs.php`; Ruth is logged as
-  waiting after her dish comes back.
-- ★ **The Bluebird's Saturday hours** — `engine/fixtures/milldale.json`: the hours set
-  only `close_weekday`, so Saturday read as open all day. (The fixture note says
-  the sweep's drop-in group still does not check a workplace's hours.)
-- ★ **The heart never runs the learn pass** — `forge/web/heart.php`; a week lived
-  unattended never turns friendly replies into trust.
-- **Four gendered-prose sites** — panel.php:358 (player-visible), learn.php:1005–1054,
-  prompt.php:469, table.php:496 and 713; plus the negative assertion that keeps them out.
-- **`xeric_room_messages` drops narrator-set weather** — `engine/room.php:803` passes a
-  database to a function with no such parameter (the duet fixed its copy).
-- **The fork scrub leaves duet and room diaries** — `forge/web/session.php:594`
-  `xeric_session_fork_clear` scrubs only `auto` memories.
+- **A bare-day promise misses at 04:00** — `engine/constructs.php` `xeric_promise_when()`
+  resolves "Thursday" to its midnight; with the four-hour grace it misses before the day
+  begins (`docs/CONSTRUCTS.md`, "Still open"; e5a73b4).
+- **Drop-in visits ignore a workplace's hours** — `engine/sweeps.php` the drop-in group
+  checks walls (`$barred`) and never `xeric_sweep_open_places()` (fixture note
+  `bluebird_hours`; e5a73b4).
+- **Theo can be dealt into the Thursday game** — `engine/table.php` `xeric_table_barred()`
+  bars by walls only, and Theo is not walled from the pot (e5a73b4).
+- **The casserole-ledger board re-ranks inside two static prompts** — a cache break the
+  benchmark's soft probe `cost.cache` reports (`engine/continuity/probes.php`; 4dd1c46).
+- **One narrator-audit contradiction in the leaky run** — soft probe `presence.audit`
+  (`engine/continuity/probes.php`; 4dd1c46).
+- **The room's idle-beat offer is covered by source checks only** — `forge/web/play.php`
+  `roomIdleArm()`; `room-web-test.php` greps the page, nothing runs the JS (0b75ac0).
+- **room-web-test needs `XERIC_SOLO=0` and a machine per session** —
+  `forge/web/tests/room-web-test.php` sets it itself; a solo run makes owner and guest one
+  person (0b75ac0).
+- **Apache + PHP-FPM drops `Authorization`** unless the vhost says `CGIPassAuth On`, so a
+  Bearer token never arrives — `docs/API.md`, "Behind Apache with PHP-FPM" (c74f580).
+- **`xeric_play_thread()` marks the thread read** — `forge/web/play-lib.php`, called by
+  `api-lib.php`'s thread route, so a GET has a side effect; a `$markRead` flag would make
+  the API's read half side-effect free (c74f580).
+- **The vendor fields in `tools/proxies/` are unverified** — each mapping says *verify*;
+  `tools/proxies/README.md` (0d3208c).
+- **The smoke test cannot run under full Chrome in a sandbox without D-Bus** —
+  `forge/web/tests/smoke-test.php` fails in 20 s and says so; `chrome-headless-shell` via
+  `XERIC_CHROME` works (42a3bd4).
+
+## Closed
+
+From [`FUTURE.md`](FUTURE.md), "The next ninety days", items 1–3; ★ are the four the
+continuity benchmark (Appendix B) found on day one, all failing on the commit before
+the fix and passing since.
+
+- ★ **Milldale's special role had no `must_not_know`** — fixed in the engine instead:
+  `engine/table.php` `xeric_table_barred()` keeps anyone walled from a table's economy
+  out of every group at that table on its night (e5a73b4).
+- ★ **Promises had no `kept` state** — `engine/constructs.php` `xeric_expect_keep()` (e5a73b4).
+- ★ **The Bluebird's Saturday hours** — `engine/fixtures/milldale.json` says `close` (e5a73b4).
+- ★ **The heart never ran the learn pass** — `forge/web/heart.php` calls
+  `xeric_learn_pass()` at the end of its hold (e5a73b4).
+- **The gendered-prose sites** — the audit's four and four more; render-test scans every
+  engine string literal (e5a73b4).
+- **`xeric_room_messages` dropped narrator-set weather** — `engine/room.php` (e5a73b4).
+- **The fork scrub left duet and room diaries** — `forge/web/session.php` (e5a73b4).
+- **dayView's "earlier:" never cleared** — play-lib writes `data-now` now (0b75ac0).
 
 ## Deferred by decision
 
@@ -74,15 +102,14 @@ Built, or offered, and not connected to anything that runs.
 
 ## Deferred from the room on the web
 
-- **No `id_slot` per speaker** — `engine/room.php` `xeric_room_step()`; several speakers
-  on one llama.cpp slot re-read each system prompt per beat (each speaker's system is
-  byte-stable across the session, so the cost is the slot swap, not the prompt).
-  Measure first; then either `--parallel` ≥ roster, or pin a slot per speaker. Not sent.
+- **`id_slot` is not sent per speaker** — `engine/room.php` `xeric_room_step()`; several
+  speakers on one llama.cpp slot swap the slot per beat. Measure, then `--parallel` ≥
+  roster or a slot per speaker (0b75ac0).
 
 ## Stale text
 
-- **`docs/CONSTRUCTS.md` "Still open"** — being rewritten alongside the `kept` work.
-- **`ROADMAP.md`** — to be corrected against FUTURE.md's truth table ("Where we stand").
+- **`ROADMAP.md`** — the Narrator, social constructs and story overlays still read as
+  less built than they are against FUTURE.md's truth table ("Where we stand").
 - **Docblocks say PHP 8.2+** (`engine/narrator.php:93`, `confide.php:39`, `table.php:41`);
   `bootstrap.php` enforces 8.1, CI runs 8.1 and 8.3.
 - **QUICKSTART lists `curl`**, which nothing uses.
@@ -99,9 +126,6 @@ Built, or offered, and not connected to anything that runs.
 - **The suites need a POSIX shell** (`shell_exec`, `command -v`, `timeout`).
 - **Extensions**: `sqlite3` is checked and unused (PDO only); `ctype` and `openssl`
   are needed and not checked by `bootstrap.php`.
-- **Headless Chrome without a session bus hangs** — in some sandboxes full Chrome
-  never dumps a page whatever flags it is given; `smoke-test.php` fails in 20 s and
-  says so. `chrome-headless-shell` (via `XERIC_CHROME`) works there.
 - **`worlds.pre-blank-20260803-082606/` is tracked against the stated policy** — 20
   files of forged worlds in the repository, which `.gitignore` says never belong
   there. Not deleted: it is the owner's call whether to remove it from history.

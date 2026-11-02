@@ -53,6 +53,12 @@ you will notice.
 - **The undo is one step deep.** Deliberate — a deep undo stack in a
   single-user tool is a way to lose track of which world you are in — but a
   reroll spree past two steps is unrecoverable.
+- **Three promises the constructs still break**, written down in
+  [docs/CONSTRUCTS.md](docs/CONSTRUCTS.md) and filed in
+  [docs/PUNCHLIST.md](docs/PUNCHLIST.md): a promise for a bare day ("I'll be
+  there Thursday") is due at that day's midnight and misses at 04:00; a
+  drop-in visit ignores the hours of the workplace it drops in on; and Theo
+  can still be dealt into the Thursday game.
 
 ---
 
@@ -92,19 +98,48 @@ off shift is.
 
 ### The room — three-way conversation
 
-**The one-call shortcut is fatal and will look right.** The obvious build asks
-the model for the whole exchange at once: everybody's lines, one call, perfect
-pacing, cheap. It cannot be done. Each character's prompt is *their* bible,
-through *their* walls, with *their* memories; one call means one point of view,
-and every wall in the world collapses into it silently. The output would read
-beautifully. **N people is N calls, and that is not an optimisation to revisit.**
+**Shipped.** Stand where two or more of the cast are and you can talk to the
+room: `forge/web/room.php` takes the line, `room-worker.php` runs the beats,
+and `engine/room.php`'s `xeric_room_step` decides who answers. **N people is
+still N calls** — every line is its own model call from that speaker's own
+assembly through that speaker's own walls, and what crosses between heads is
+what was said, as labelled turns, and nothing else. A name in the line answers
+first; otherwise reach times heat, where heat is what each person is holding
+about you. Who stays silent is recorded, because silence is information, and
+the inspector shows every beat's weights, roll and dropped lines. Pacing is a
+floor, never added on top of slow generation: the worker takes the model for
+one call and gives it back before each line's pause, a line written after you
+spoke again is dropped and noted, and a person waiting on a reply outranks a
+room talking to itself. The people in the view light up as they talk, and who
+came and went is a sentence in the view — inside a live room, the narrator's
+row, so the two never double up.
 
-So the open questions are all about who and when: who answers (not everybody —
-and who stays silent is information), whether the room talks without you (in a
-real bar, yes, and that is the single thing that would make a room feel unlike a
-chat window), and timing, since two replies landing at once is wrong.
+The open questions were settled like this. **Lines land one at a time, as
+message rows** in a conversation of kind `room`, so the thread, the book, the
+speaker button and the inspector work on them unchanged (the CLI's
+`xeric_room()` keeps watch's nothing-until-close rule, and a test pins it).
+**The room carries on without you by default, with caps**: two beats in a run,
+six in a session, a halving roll after each, never on a hosted key unless
+`cast.room.carry_remote` says so, and `cast.room.carry: false` turns it off.
+**A player line costs one message** of the hour's cap, however many answer.
+**The heart may seal** an idle room before it sweeps — spending the diary
+calls a close needs — and leaves your table out of the sweep. **Adults who
+arrive mid-scene are seated**, hearing from the row that saw them come in; a
+child walking in seals the room, because the ceiling cannot be re-folded
+mid-scene. **Six or more present: the five with most reach and heat are
+seated** and the rest are at the far table, still counted for the walls and
+the age floor. **Guests may read and may not speak into it.** **The book gets
+a line** for each room you stood in. **No `id_slot`** per speaker is sent; the
+cost of several speakers on one llama.cpp slot is to be measured first
+([punchlist](docs/PUNCHLIST.md)). Next for the room is a second human in it —
+two people at the same table, each through their own walls — which is M4,
+"Together", in [docs/FUTURE.md](docs/FUTURE.md).
 
 ### Death, revival, and permadeath
+
+**Shipped.** Revivable and permanent deaths, a catastrophe that ends a world
+and the restore that undoes it, and stories that may kill — `forge/web/fate.php`
+over the engine's death state.
 
 **Death is a state, not a deletion.** A dead person stays in the template, stays
 resolvable by handle, stays in every memory that names them and every wall they
@@ -223,10 +258,8 @@ they sound like; the key is never stored. See [docs/VOICE.md](docs/VOICE.md).
 
 Next:
 
-- **The room conversation, in the view.** The viewport knows who is standing
-  together, and `engine/room.php` can already run three to five of them
-  talking, but only from the CLI. It has no web surface yet, and it is the
-  obvious next thing for the view to link to.
+- ~~**The room conversation, in the view.**~~ Shipped — the view's door is
+  *talk to the room* ([above](#the-room--three-way-conversation)).
 - **Streaming**, when a world model that streams can hold a room still — today
   they reinvent the booths when you turn your head.
 - **Walking inside a splat.** The envelope already accepts splats and meshes;
@@ -240,7 +273,8 @@ Next:
 - **The engine is world-agnostic.** Anything that exists only because strangers
   share a GPU lives in `forge/web/`, never in `engine/`.
 - **Never write gendered prose engine-side.** Pronouns are template data. This
-  has been fixed twice.
+  has been fixed three times; the third time added a scan in render-test that
+  fails on a gendered pronoun in any engine string literal.
 - **A hallucinated wall is a real secret told to the wrong person.** Every wall
   carries a plain-English explanation because only the person who built the
   world can catch it.

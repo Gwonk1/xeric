@@ -123,6 +123,22 @@ XERIC_VOICE_KEY=...                      # environment only, never stored
 Each person is dealt a voice from their name and keeps it. Pick one yourself
 with `speech.voice` on the character ([`docs/VOICE.md`](docs/VOICE.md)).
 
+**The ears.** Any speech-to-text server that answers
+`POST /v1/audio/transcriptions` (a local Whisper server, or a hosted one)
+puts a **hold to talk** button beside the composer. What you said lands in
+the box for you to read and send; the recording is never stored.
+
+```bash
+XERIC_EARS_BASE=http://127.0.0.1:8090    # the transcription server; unset is no button
+XERIC_EARS_MODEL=whisper-1               # the default
+XERIC_EARS_LANGUAGE=en                   # optional; empty lets the machine tell
+XERIC_EARS_KEY=...                       # environment only, never stored
+```
+
+**Talk to the room.** Where two or more of the cast are standing with you, the
+view offers *talk to the room*: say something, and the people there answer one
+at a time — or don't, and the room may carry on a line or two without you.
+
 ## Reading the inspector — the tuning tool
 
 `why.php?w=<slug>` is the index, and it is the thing to reach for whenever the

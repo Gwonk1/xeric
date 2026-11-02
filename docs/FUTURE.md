@@ -84,20 +84,20 @@ shipped; some of what it calls built is wired to nothing.
 
 | Roadmap heading | Truth | Evidence |
 |---|---|---|
-| The heart | Built | `heart.php`; all four refusals coded, the fourth this week |
+| The heart | Built, and it learns | `heart.php`; all four refusals coded; it now runs `xeric_learn_pass` at the end of its hold, so a week lived unattended turns friendly replies into trust [e5a73b4]; it seals idle rooms before it sweeps [0b75ac0] |
 | The undo is one step deep | Still true | rewind is the last skip; one `world-template.prev.json` |
 | The Narrator | Partly | ask, investigate and write-ahead exist (`xeric_narrator_ask`, `_investigate`, `_intend`) but are **CLI only**; `xeric_sweep_choose` accepts intents and nothing calls `xeric_narrator_leans`, so write-ahead changes nothing; the web "ask the narrator" is a separate 30-word hint; author is not built |
 | The Director | Not built | only a ×2 casting lean |
 | Giving the player a body | Built | `xeric_player_where`, `xeric_travel_go`, `xeric_travel_map`; the roadmap says so and still files it under Next |
-| The room | Engine only | `xeric_room` decides who answers, who is silent, who leaves; no play-view surface; the player only watches |
+| The room | Built, on the web | `forge/web/room.php` and `room-worker.php` over `xeric_room_step`: talk to the room where two or more are present, lines land one at a time as message rows, the room may carry on a beat or two without you; `xeric_room` keeps watch's CLI rule [0b75ac0] |
 | Death | Built | revivable and permanent, catastrophe and restore, stories can kill; fate.php; not marked shipped |
-| Social constructs | Partly | expectations with repair, debts, gossip, guest vouching are built; confidences exist but `xeric_confide_form`/`_block` are never called; anticipation, news, worry, grudges, rituals, milestones and cast-to-cast are not built |
+| Social constructs | Partly | expectations with repair and a `kept` state (`xeric_expect_keep`, [e5a73b4]), debts, gossip, guest vouching are built; confidences exist but `xeric_confide_form`/`_block` are never called; anticipation, news, worry, grudges, rituals, milestones and cast-to-cast are not built |
 | Story overlays | Built, filed under Later | multiple overlays, red herrings, a six-stage curve |
 | A world can start in 1873 | Built | tested |
 | More than one model | Beyond the roadmap | a per-character pin exists for say and watch; not for sweeps |
 | The viewport | Built this week | streaming, splat-walking and the room-in-view are not |
 | Voices | Built this week | VOICE.md still has one "not shipped" line to fix |
-| Design rules | Mostly held | **gendered prose engine-side survives** in four places: panel.php:358 (player-visible), learn.php:1005–1054 (the user is he/him), prompt.php:469, table.php:496 and 713 — the rule the roadmap says has been fixed twice |
+| Design rules | Held | the four gendered-prose sites and four more were fixed, and render-test now tokenises every engine file and fails on a gendered pronoun in a string literal, file:line, with a planted pronoun to prove the scan sees [e5a73b4] |
 
 Other facts the plan has to respect:
 
@@ -107,20 +107,31 @@ Other facts the plan has to respect:
   position (`player.where`) and the thread per character are shared, and
   messages carry no player id. Guests see each other only as a sidebar roster.
   Walking, looking, rewind, fate, photos and power are owner-only.
-- **There is no CI, no lint and no token budget.** The 24 suites run in about
-  ten seconds and nothing runs them but a person. The limits are message, skip,
-  reroll and forge counts per hour and per IP, off unless caps are set. The
-  meter is a receipt. The Node harness that exercised the viewer's JavaScript
-  (43 assertions) was never committed. heart.php and the eight detached
-  workers are tested only by source grep.
+- **CI exists; there is still no lint and no token budget.**
+  `.github/workflows/tests.yml` runs every suite on PHP 8.1 and 8.3 on every
+  push and pull request, with Chrome and Node installed so the smoke and
+  viewer suites really run, and `XERIC_REQUIRE_BROWSER` /
+  `XERIC_REQUIRE_NODE` turning a missing tool into a failure there [42a3bd4].
+  The suite is 32 suites and about 3,700 assertions: 3,678 `ok` lines from
+  the 31 suites that ran in this sandbox, counted by running the CONTRIBUTING
+  loop with `XERIC_SOLO=0` and summing lines that start `ok`; the smoke
+  test is excluded because full Chrome hangs here without D-Bus and no
+  headless shell is installed, and demo-test's one DNS check printed SKIP.
+  The limits are message, skip, reroll and forge counts per hour and per IP,
+  off unless caps are set. The meter is a receipt. The Node harness for the
+  viewer's JavaScript is committed (`viewer-test.php` + `viewer-test.js`, 84
+  assertions). heart.php is still checked only for HTTP denial and the
+  detached workers only by source grep.
 - **The big files.** play-lib.php 6,762 lines with 139 functions (24 of them
   machine discovery that belongs in model.php, and about 1,140 lines of CSS);
   forge.php 5,974; play.php 4,366 of which about 3,070 are inline JavaScript
   including the WebGL and WebXR viewer; review.php about 1,140 lines of inline
   JavaScript.
-- **Deferred work is tracked in a punchlist that is not in the repo.** History
-  starts at a 76k-line import. Commits refer to U-numbered review items nobody
-  outside can read. No TODO, FIXME or XXX exists anywhere in the code.
+- **Deferred work is tracked in [`docs/PUNCHLIST.md`](PUNCHLIST.md)** [42a3bd4],
+  each line with a commit or file. History starts at a 76k-line import, and
+  older commits refer to U-numbered review items nobody outside can read. No
+  TODO, FIXME or XXX exists anywhere in the code; the punchlist is where they
+  go.
 - **Unwired things offered in the UI**: the `death` and `story` notify kinds
   are offered and never sent; guest `stranger` and `written_in` modes are
   unreachable because the UI always posts `{}`.
@@ -463,36 +474,59 @@ A number per promise, tracked in the repo.
 | Local-first | cloud calls at runtime: zero; a room drawn on a loopback machine: possible |
 | Cheap surface | lines of code for a new client against the API; the stand page is the first datum |
 | Cost | tokens, renders and clips per simulated world-day, from the benchmark's cost class |
-| Health | assertions in the suite; files over 2,000 lines (today: six) |
+| Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six: `wc -l forge/web/*.php engine/*.php` finds play-lib.php 7,269, play.php 4,760, review-lib.php 2,386, sweeps.php 2,162 and review.php 2,094, and `forge/forge.php`, outside that glob, is 5,974) |
 | Time to a world | minutes from install to a forged, reviewed world on a 12B |
-| Honesty | roadmap headings whose state matches the code (today: 9 of 14) |
+| Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After this pass: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are) |
 
 ---
 
 ## The next ninety days, concretely
 
 In order. Each item is small enough to be one commit with its own tests.
+State as of the end of the room's commit; the short sha is the commit that
+shipped it.
 
-1. Fix the four gendered-prose sites and add the negative assertion.
-2. Fix `xeric_room_messages`'s weather argument; scrub duet and room diaries
-   on fork.
-3. Give promises a `kept` state; fix the Bluebird's Saturday hours in the
+1. ~~Fix the four gendered-prose sites and add the negative assertion.~~
+   **Shipped** [e5a73b4] — the four sites and four more the scan found;
+   render-test now tokenises every engine file and fails on a gendered
+   pronoun in a string literal.
+2. ~~Fix `xeric_room_messages`'s weather argument; scrub duet and room diaries
+   on fork.~~ **Shipped** [e5a73b4].
+3. ~~Give promises a `kept` state; fix the Bluebird's Saturday hours in the
    fixture; make the heart run the learn pass; give Milldale's special role a
-   `must_not_know`, or make the protected-group check not depend on one.
-4. CI: a workflow that runs every suite; commit the viewer's Node harness;
-   make demo-test's DNS probe skippable.
-5. The punchlist into the repo; ROADMAP.md corrected against the truth table
-   above; the "Nine test suites" line in the README.
+   `must_not_know`, or make the protected-group check not depend on one.~~
+   **Shipped** [e5a73b4] — `xeric_expect_keep`, `close` for the Bluebird,
+   `xeric_learn_pass` from the heart, and `xeric_table_barred`, which reads
+   the walls and needs no `must_not_know`.
+4. ~~CI: a workflow that runs every suite; commit the viewer's Node harness;
+   make demo-test's DNS probe skippable.~~ **Shipped** [42a3bd4] —
+   `.github/workflows/tests.yml` on PHP 8.1 and 8.3; `viewer-test.php` and
+   `viewer-test.js`; a marked SKIP where there is no DNS.
+5. ~~The punchlist into the repo; ROADMAP.md corrected against the truth table
+   above; the "Nine test suites" line in the README.~~ **Shipped** [42a3bd4]
+   — `docs/PUNCHLIST.md` and the README; ROADMAP.md's headings corrected in
+   the docs pass after 0b75ac0.
 6. Split play-lib.php: machine discovery to model.php, CSS to a file, the
-   readers to their own files. Lift the viewer JavaScript.
-7. The continuity benchmark's CI-sized version with the first three probes:
-   W3 for Janelle at table night, Ruth's kept promise, the diner's Saturday.
-8. `engine/ears.php` and push to talk in the play view.
-9. The room on the web, in the order Appendix A gives.
-10. Arrivals and departures in view; look-around with the phone.
-11. `tools/proxies/` with a panorama service, a world service and a local
-    image server.
-12. The client API's read half and the pulse, with its contract test.
+   readers to their own files. Lift the viewer JavaScript. **In progress** —
+   play-lib.php has grown to 7,269 lines in the meantime.
+7. ~~The continuity benchmark's CI-sized version with the first three probes:
+   W3 for Janelle at table night, Ruth's kept promise, the diner's Saturday.~~
+   **Shipped** [4dd1c46] — 29 probes in seven classes, with a baseline;
+   `docs/CONTINUITY.md`.
+8. ~~`engine/ears.php` and push to talk in the play view.~~ **Shipped**
+   [1e63053] — hold to talk; `hear.php` fills the composer and posts nothing.
+9. ~~The room on the web, in the order Appendix A gives.~~ **Shipped**
+   [0b75ac0] — `forge/web/room.php`, `room-worker.php`; ROADMAP.md says how
+   Appendix A's open questions were settled.
+10. Arrivals and departures in view; look-around with the phone. **First half
+    shipped** [0b75ac0] (`xeric_travel_comings`, the line in the view and the
+    narrator row inside a live room); **phone look-around in progress**.
+11. ~~`tools/proxies/` with a panorama service, a world service and a local
+    image server.~~ **Shipped** [0d3208c] — every vendor field marked
+    unverified.
+12. ~~The client API's read half and the pulse, with its contract test.~~
+    **Shipped** [c74f580] — `forge/web/api.php`, `docs/API.md`. **The write
+    half is in progress.**
 
 Everything after that is M2.
 

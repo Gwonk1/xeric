@@ -612,6 +612,20 @@ has better tools: **Pannellum** is the standard drop-in equirect viewer,
 **Spark** renders gaussian splats in three.js. None of them ship here, and
 nothing in the engine assumes any of them.
 
+#### The room
+
+With two or more of the cast present, the view offers **talk to the room**:
+a strip beside the view (not inside it, because a repaint replaces the view
+wholesale) with the latest lines and a composer of its own. Whoever is about
+to speak has their name tag lit as `.typing`, and whoever just spoke as
+`.speaking`, so the panorama and the conversation agree about who is talking.
+Who came and who went in the last ten world-minutes is a beat in the view —
+"Dot Vance comes in, shaking the rain off" (`xeric_travel_comings`, keeping no
+state) — and inside a live room the same sentence is the narrator's row, so
+it never appears twice. A guest reads the room and gets no composer. How it
+decides who answers, and what it settled, is
+[ROADMAP.md's room entry](../ROADMAP.md#the-room--three-way-conversation).
+
 ---
 
 ## What is deliberately not built
@@ -644,9 +658,10 @@ MODEL PROPOSES, CODE DISPOSES, for rooms too.
 words. A character's actual lines are spoken by a different machine, line by
 line, in the thread — [VOICE.md](VOICE.md).
 
-**No way into the room's conversation from here yet.** Three to five people
-talking is `engine/room.php`, and only the CLI can start one today. The view
-knows who is standing together; it offers nothing it cannot deliver.
+**No second human in the room's conversation.** The view's door into the room
+([above](#the-room)) is the owner's; a guest may read it and not speak into it.
+Two people at one table, each through their own walls, is M4 in
+[FUTURE.md](FUTURE.md).
 
 ---
 

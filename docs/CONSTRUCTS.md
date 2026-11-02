@@ -165,6 +165,16 @@ grudge reads as the model being moody.
   here because the miss tests and the benchmark's scenario both pin the
   current resolution.
 
+- **A drop-in ignores the workplace's hours.** The sweep's drop-in group in
+  `engine/sweeps.php` checks walls and not `xeric_sweep_open_places()`, so a
+  visitor can be seated with Theo in the Bluebird's after-close booth. An
+  engine finding, recorded in the fixture's `bluebird_hours` note.
+
+- **Theo can be dealt into the Thursday game.** `xeric_table_barred()` bars
+  by walls, and the wall that hides the pot is the child role's; Theo is
+  twelve and not that role, so nothing keeps him out of the sweep's groups
+  at First Lutheran on table night.
+
 - **Which sibling second.** Gossip ripple is now cheap (observables-only
   makes it walls-safe); confidences (a user-created wall; betrayal as the
   highest-stakes event) is the deep one. Sequence to owner's taste.
