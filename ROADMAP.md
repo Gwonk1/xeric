@@ -317,6 +317,15 @@ inherits that model's habits wholesale. The trap is the prefix cache: it is
 per-model, so spreading one world's turns across machines multiplies its cold
 starts.
 
+**Shipped, the second half.** A character can be pinned to a machine, and the
+pin now reaches everything they say: a thread, a duet, both rooms, and the hours
+the heart and the skip live without you — each hour written by the machine
+pinned to its centre. The cold-start trap is met with llama.cpp's slots: every
+speaker gets a stable slot on a machine that has more than one, so their
+system prompt stays warm however their hours interleave with other people's,
+and nothing else is ever sent one. A pinned machine that is down falls back to
+the world's default for that hour, and the trail says whose was not answering.
+
 ### A viewport onto the world
 
 **Shipped: the room you are standing in, rendered by a machine you choose.**
