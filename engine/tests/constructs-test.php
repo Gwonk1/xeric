@@ -791,6 +791,34 @@ $reads0 = xeric_constructs_presence_reads();
 xeric_expect_keep_present($T, $dbK, 'janelle', $friEarly);
 ok('kept: and a caller with nothing in hand still gets it read for them', xeric_constructs_presence_reads() - $reads0 === 1);
 
+// THE BODY OF WHOEVER PROMISED (M4, a body each). Ann promised Ruth the dish;
+// the tick runs as the first player, whose body is the one the keep used to
+// read. Walt walking in keeps nothing of Ann's; Ann walking in keeps it, and
+// the trust it earns is Ann's.
+$dbK2Path = sys_get_temp_dir() . '/xeric-constructs-kept2-' . getmypid() . '.db';
+foreach ([$dbK2Path, $dbK2Path . '-wal', $dbK2Path . '-shm'] as $f) @unlink($f);
+$dbK2 = xeric_state_open($dbK2Path);
+$annId = xeric_player_add($dbK2, $T, 'Ann');
+$kAnn = xeric_expect_form($T, $dbK2, 'ruth', $dish, $wedAm, null, null, $annId);
+ok('kept, two: Ann\'s promise is filed as hers', $kAnn !== null
+    && (int)(array_values(array_filter(xeric_expects_for($dbK2, 'ruth'), fn($e) => $e['key'] === $kAnn))[0]['p'] ?? 0) === $annId);
+xeric_player_move($dbK2, 'beck_hardware', (int)$wedAm['epoch'] - 60, $annId);
+xeric_player_move($dbK2, 'bluebird', ep('2026-07-31 07:15'), 1);
+xeric_player_current(fn() => 1);
+xeric_constructs_tick($T, $dbK2, $friEarly);
+ok('kept, two: Walt walking into the diner does not keep the promise Ann made',
+    $stateOf($dbK2, 'ruth', (string)$kAnn) === 'open' && xeric_trust_of($dbK2, 'ruth') === 0);
+xeric_player_move($dbK2, 'bluebird', ep('2026-07-31 07:20'), $annId);
+xeric_player_move($dbK2, 'beck_hardware', ep('2026-07-31 07:21'), 1);
+xeric_constructs_tick($T, $dbK2, $friEarly);
+ok('kept, two: Ann\'s own body walking in keeps it — read off her position, not the current player\'s',
+    $stateOf($dbK2, 'ruth', (string)$kAnn) === 'kept'
+    && xeric_trust_of($dbK2, 'ruth', null, $annId) === 1 && xeric_trust_of($dbK2, 'ruth') === 0,
+    json_encode(xeric_expects_for($dbK2, 'ruth')));
+xeric_player_current(fn() => 1);
+$dbK2 = null;
+foreach ([$dbK2Path, $dbK2Path . '-wal', $dbK2Path . '-shm'] as $f) @unlink($f);
+
 $dbK = null;
 foreach ([$dbKPath, $dbKPath . '-wal', $dbKPath . '-shm'] as $f) @unlink($f);
 

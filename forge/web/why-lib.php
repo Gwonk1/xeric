@@ -171,7 +171,13 @@ CSS;
 function xeric_why_room_html(array $t, array $why): string
 {
     $you  = (string)($why['player'] ?? '');
-    $name = function (string $h) use ($t, $you): string {
+    // Two or more at the centre: each seat's handle by its own name.
+    $seats = [];
+    foreach ((array)($why['players'] ?? []) as $p) {
+        $seats[xeric_room_player_handle((int)($p['id'] ?? XERIC_PLAYER_FIRST))] = (string)($p['name'] ?? '');
+    }
+    $name = function (string $h) use ($t, $you, $seats): string {
+        if (isset($seats[$h]) && $seats[$h] !== '') return $seats[$h];
         if ($h === XERIC_ROOM_YOU) return $you !== '' ? $you : 'you';
         $n = xeric_world_name($t, $h);
         return $n !== '' ? $n : $h;
@@ -206,6 +212,12 @@ function xeric_why_room_html(array $t, array $why): string
                   . ($went !== [] ? '<br><span class="quiet">' . h(implode('; ', $went)) . ' (the room never says where)</span>' : '')
                   . (!empty($b['minor']) ? '<br><span class="quiet">a child came in, so the conversation was sealed</span>' : '')
                   . $mid . '</span></li>';
+            continue;
+        }
+        if (isset($b['ceiling'])) {
+            $out .= '<li><span class="k">the ceiling</span><span class="v">' . h($name((string)($b['by'] ?? ''))
+                  . ' sat down reading at ' . (string)$b['ceiling'] . ', so the room came down from '
+                  . (string)($b['was'] ?? '') . ' for everybody at the table') . $mid . '</span></li>';
             continue;
         }
         if (isset($b['refused'])) {

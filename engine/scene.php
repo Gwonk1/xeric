@@ -529,6 +529,11 @@ function xeric_sound_brief(array $t, PDO $db, ?string $key = null, ?array $now =
         $minor = $minor || $id['minor'];
         $doing = trim(xeric_text($presence[$h]['doing'] ?? ''));
     }
+    // AND ANOTHER PERSON AT THE CENTRE standing in it is somebody a doorway
+    // hears too (the look counts them the same way). Never the listener
+    // themselves, and nobody at all in a world of one — whose sound, and so
+    // whose fingerprint, is exactly what it was.
+    $count += count(xeric_travel_others_at($t, $db, $key));
     $heard = min(2, $count);   // nobody, one, several: all a doorway counts by ear
 
     $b = [
@@ -1419,15 +1424,23 @@ const XERIC_SCENE_REFERENCE_CAP = 8 * 1024 * 1024;
  *
  * @return ?array{bytes:string,mime:string,fingerprint:string}
  */
-function xeric_scene_reference(PDO $db, string $key, string $scenesDir, int $cap = XERIC_SCENE_REFERENCE_CAP): ?array
+function xeric_scene_reference(PDO $db, string $key, string $scenesDir, int $cap = XERIC_SCENE_REFERENCE_CAP,
+                               ?string $rating = null): ?array
 {
-    $st = $db->prepare("SELECT fingerprint, file, mime FROM scene_jobs
+    $st = $db->prepare("SELECT fingerprint, file, mime, rating FROM scene_jobs
                         WHERE key = ? AND channel = 'look' AND status = 'done' AND file != ''
-                          AND mime LIKE 'image/%' ORDER BY done_at DESC, id DESC LIMIT 5");
+                          AND mime LIKE 'image/%' ORDER BY done_at DESC, id DESC LIMIT 50");
     $st->execute([$key]);
     $rows = $st->fetchAll();
     $st->closeCursor();
-    foreach ($rows as $row) {
+    // NEVER CONDITIONED ON A PICTURE ITS OWN VIEWER COULD NOT BE SHOWN: a view
+    // stamped above the rating this render runs at is passed over, before the
+    // five-deep walk counts it — a kids' headset's room is never drawn from an
+    // adult one. No rating (an unclamped process) filters nothing.
+    if ($rating !== null && $rating !== '') {
+        $rows = array_values(array_filter($rows, fn($r) => xeric_state_shown((string)($r['rating'] ?? ''), $rating)));
+    }
+    foreach (array_slice($rows, 0, 5) as $row) {
         $path = rtrim($scenesDir, '/') . '/' . basename((string)$row['file']);
         // A worker lives for minutes and the same file can be rewritten under
         // it; PHP's stat cache would weigh the bytes that used to be there.
@@ -1439,6 +1452,22 @@ function xeric_scene_reference(PDO $db, string $key, string $scenesDir, int $cap
         return ['bytes' => $bytes, 'mime' => (string)$row['mime'], 'fingerprint' => (string)$row['fingerprint']];
     }
     return null;
+}
+
+/**
+ * The rating a render runs at, for the reference walk: the lowest of the ones
+ * that are set — the row's stamp (whose request it was) and what it is drawn
+ * at. '' when neither is.
+ */
+function xeric_scene_render_rating(string ...$ratings): string
+{
+    $low = '';
+    foreach ($ratings as $r) {
+        $r = strtolower(trim($r));
+        if ($r === '') continue;
+        if ($low === '' || xeric_rating_rank($r) < xeric_rating_rank($low)) $low = $r;
+    }
+    return $low;
 }
 
 /** The scene spend's sink — xeric_photo_meter's discipline, for rooms. */
@@ -1622,7 +1651,9 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
             $opts = $optsFor($channel);
             $ours = [];
             if ($channel === 'look' && xeric_scene_takes_reference($endpoint)) {
-                $ref = xeric_scene_reference($db, $key, $scenesDir);
+                // At the lower of who asked for it and what it is drawn at.
+                $ref = xeric_scene_reference($db, $key, $scenesDir, XERIC_SCENE_REFERENCE_CAP,
+                    xeric_scene_render_rating((string)($job['rating'] ?? ''), (string)($brief['rating'] ?? '')));
                 if ($ref !== null) {
                     $opts['reference']            = $ref;
                     $ours['reference_fingerprint'] = $ref['fingerprint'];

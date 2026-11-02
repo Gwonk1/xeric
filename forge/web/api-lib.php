@@ -835,8 +835,9 @@ function xeric_api_heart_beat(): int
  *
  * THE CURSOR IS A HASH OF EVERYTHING A CLIENT WOULD REPAINT FOR: the clock's
  * offset (a skip, a trip, a rewind) and whether it is paused, where the player
- * is, who is where right now (a schedule turning over moves people with no row
- * written), the newest message and event, the unread dots, the room renders'
+ * is (and, with company, where every player is), who is where right now (a
+ * schedule turning over moves people with no row written), the newest message
+ * and event, the unread dots, the room renders'
  * queue, and the heart's beat. NOT the epoch: a running clock changes every
  * second, and the client runs it from `offset`. Same cursor, same ETag, and a
  * conditional GET is a 304 with no body.
@@ -885,6 +886,15 @@ function xeric_api_pulse(array $w): array
         // the room closes (null again). Rides in $body, so it is hashed.
         'room'     => xeric_api_room_summary($t, $db),
     ];
+    // EVERY BODY, once there is more than one: a friend's walk is something the
+    // owner's screen repaints for (their tag in the look, their ring on the
+    // map), and their position is no part of `where`, which is the asker's own.
+    // A world of one carries no such key, so its cursor is the one it was.
+    if (xeric_players_many($db)) {
+        $bodies = [];
+        foreach (xeric_travel_players($t, $db) as $id => $p) $bodies[(string)$id] = $p['where'];
+        $body['players'] = $bodies;
+    }
     $cursor = substr(hash('sha256', json_encode([$body, $present], JSON_UNESCAPED_SLASHES)), 0, 32);
     // Not hashed: they change every second, or are only for a client's clock.
     return $body + ['cursor' => $cursor, 'epoch' => (int)$now['epoch'], 'server' => time()];

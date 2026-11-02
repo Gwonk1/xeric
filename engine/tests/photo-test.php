@@ -83,6 +83,18 @@ ok('reference: the done portrait, read off the disk, is the likeness',
     && $ref['bytes'] === (string)file_get_contents($photos . '/' . $job('portrait', 'ruth')['file'])
     && $ref['fingerprint'] !== '');
 ok('reference: a cap smaller than the file passes it over', xeric_photo_reference($db, 'ruth', $photos, 8) === null);
+// A kids' headset's photo is never conditioned on an adult portrait.
+$db->prepare('UPDATE photo_jobs SET rating = ? WHERE id = ?')->execute(['mature', $ruthId]);
+ok('reference: a portrait stamped above the render\'s rating is no likeness for it',
+    xeric_photo_reference($db, 'ruth', $photos, XERIC_PHOTO_REFERENCE_CAP, 'sfw') === null
+    && xeric_photo_reference($db, 'ruth', $photos, XERIC_PHOTO_REFERENCE_CAP, 'mature') !== null
+    && xeric_photo_reference($db, 'ruth', $photos) !== null);
+xeric_state_rating('sfw');
+ok('reference: the render runs at the lower of the row\'s stamp and the process\'s',
+    xeric_photo_render_rating('mature') === 'sfw' && xeric_photo_render_rating('') === 'sfw');
+xeric_state_rating('');
+ok('reference: and with neither set, nothing is filtered', xeric_photo_render_rating('') === '');
+$db->prepare('UPDATE photo_jobs SET rating = ? WHERE id = ?')->execute(['', $ruthId]);
 
 // Walk-back: a missing file is no likeness; the row stays, the file does not.
 $f = $photos . '/' . $job('portrait', 'ruth')['file'];

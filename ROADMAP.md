@@ -63,24 +63,27 @@ you will notice.
 
 ## Next
 
-### Together — what is next
+### When the world models hold still — what is next
 
-M4 in [docs/FUTURE.md](docs/FUTURE.md#m4--together): two humans in the same
-room with the cast. Milestone three, "A world with intent", shipped
-([docs/FUTURE.md](docs/FUTURE.md#m3--a-world-with-intent)) apart from more
-than one voice of weights, which is in progress. In order:
+M5 in [docs/FUTURE.md](docs/FUTURE.md#m5--when-the-world-models-hold-still):
+a `layout` beside `reference_image` (the blockout or depth map the models that
+hold still are conditioned on), a `stream` kind in the scene envelope, and
+local world models at a loopback address — contingent on the outside world,
+and the test of bet 1: the same room, from the same brief, drawn by a stored
+panorama, a splat and a stream, and nobody in the diner able to tell which.
 
-- **A body each.** Today there is one `player.where`; a position per player,
-  and the other players in `who` with a flag, so the map, the view and the
-  tags show them without learning anything new.
-- **The room with two humans in it.** The who-answers draw treats a human
-  like anyone else who just spoke; the floor can return to either; silence
-  is noticed for both.
-- **Threads that know who said what.** A player id on messages, so a
-  character remembers which of you promised the dish — and so news, worry,
-  ritual and milestone stop reading only the first player.
-- **Rating per viewer.** Messages, events and scene rows stamped with a
-  rating and filtered per viewer, not only clamped when generated.
+### Together
+
+**Shipped** — M4 in [docs/FUTURE.md](docs/FUTURE.md#m4--together), the whole
+of it in [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md). A body each (a position
+per player; the others in the map, the look and the sound, never in the
+cast's presence); threads that know who said what (a player on every user
+row, a promise kept or missed by whoever made it); rating per viewer (every
+row stamped, a kids' headset reads gaps); and the room with two humans in it.
+**Untested on two real phones**: two sessions on one world are exercised
+in-process and through real page requests, never two devices in a browser.
+What it leaves open is in [docs/PUNCHLIST.md](docs/PUNCHLIST.md), "Open — left
+by M4".
 
 ### The Narrator
 
@@ -173,12 +176,16 @@ arrive mid-scene are seated**, hearing from the row that saw them come in; a
 child walking in seals the room, because the ceiling cannot be re-folded
 mid-scene. **Six or more present: the five with most reach and heat are
 seated** and the rest are at the far table, still counted for the walls and
-the age floor. **Guests may read and may not speak into it.** **The book gets
+the age floor. **Guests with a seat in the roster sit and speak; a guest
+without one may read and may not speak into it.** **The book gets
 a line** for each room you stood in. **No `id_slot`** per speaker is sent; the
 cost of several speakers on one llama.cpp slot is to be measured first
-([punchlist](docs/PUNCHLIST.md)). Next for the room is a second human in it —
-two people at the same table, each through their own walls — which is M4,
-"Together", in [docs/FUTURE.md](docs/FUTURE.md).
+([punchlist](docs/PUNCHLIST.md)). **Two humans at one table** (M4): either
+sits by speaking, the floor goes to whichever was named or spoke last, each
+one's silence is noticed once, one walking out ("Ann heads out.") leaves the
+other at the table and the last one out ends it, a lower-rated seat folds the
+ceiling down for everybody, and each line and each turn is charged to the
+session that caused it ([docs/MULTIPLAYER.md](docs/MULTIPLAYER.md)).
 
 ### Stand in it
 

@@ -1003,12 +1003,14 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             . "return {\"quote\": their exact words, \"what\": it in 5 words, \"when\": their words for when}. "
             . "Else null. Report their words exactly; do not judge whether it was firm.\n"
             . "- \"explained\": true only if {$userName} gave a reason or apology for having missed "
-            . "something they were expected at. Else false.\n"
+            . "something they were expected at. Else false."
+            . ($many ? ' With more than one of them in this conversation, give the name of whoever it was instead of true.' : '') . "\n"
             // The third watch, and the only good ending a promise had been
             // missing (constructs.php, KEEPING IT). Same split: the model says
             // it happened, code decides whether there was anything to keep.
             . "- \"kept\": true only if, in this conversation, {$userName} actually DID something they had "
-            . "earlier promised {$name} (brought the thing, turned up, called). Not a new promise. Else false.\n"
+            . "earlier promised {$name} (brought the thing, turned up, called). Not a new promise. Else false."
+            . ($many ? ' With more than one of them in this conversation, give the name of whoever it was instead of true.' : '') . "\n"
             // The fourth watch, and the one with the most riding on it: a
             // confidence (confide.php). Same split again — the model reports
             // her exact words, code checks they carry an explicit ask and are
@@ -1069,7 +1071,31 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // Kept BEFORE formed: a harvest that both keeps an old promise and makes a
     // new one must not let the new row be the one it closes (and keep refuses a
     // row formed this very moment anyway).
-    if (!empty($raw['kept'])) xeric_expect_keep($template, $db, $speaker, $now, null, $player, 'said');
+    // WHOSE KEEPING, WHOSE APOLOGY. With one person at the centre in this
+    // window it is theirs, as it always was. With two, it is whoever's line it
+    // was — the name the model gave, else the newest line this harvest is the
+    // first to read — and never simply whoever's turn ran the harvest: Ann
+    // bringing the dish must not credit Walt.
+    $actor = static function ($v) use ($many, $voices, $nameOf, $turns, $readTo, $player): int {
+        if (!$many) return $player;
+        if (is_string($v) && trim($v) !== '') {
+            $want = mb_strtolower(trim($v));
+            foreach (array_keys($voices) as $p) {
+                $n = mb_strtolower(trim($nameOf((int)$p)));
+                $first = (string)(preg_split('/\s+/u', $n) ?: [$n])[0];
+                if ($n !== '' && ($want === $n || $want === $first || str_contains($want, $n))) return (int)$p;
+            }
+        }
+        foreach ([true, false] as $fresh) {
+            foreach (array_reverse($turns) as $tn) {
+                if ((string)($tn['role'] ?? '') !== 'user') continue;
+                if ($fresh && (int)($tn['id'] ?? 0) <= $readTo) continue;
+                return max(XERIC_PLAYER_FIRST, (int)($tn['player'] ?? 0));
+            }
+        }
+        return $player;
+    };
+    if (!empty($raw['kept'])) xeric_expect_keep($template, $db, $speaker, $now, null, $actor($raw['kept']), 'said');
     // THE PROMISE IS WHOEVER SAID IT'S, not whoever's turn happened to pay for
     // the harvest: the words are matched back to the line that carries them.
     $promise = is_array($raw['promise'] ?? null) ? $raw['promise'] : null;
@@ -1078,10 +1104,12 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // An explanation repairs the freshest miss; with none to repair it owns up
     // to a confidence let out; with neither, it thaws a grudge that hardened
     // past both windows. One explanation, one thing mended.
-    if (!empty($raw['explained'])
-        && xeric_expect_repair($template, $db, $speaker, $now, null, $player) === null
-        && xeric_confide_mend($template, $db, $speaker, $now, $player) === null) {
-        xeric_grudge_thaw($template, $db, $speaker, '', $player, $now);
+    if (!empty($raw['explained'])) {
+        $by = $actor($raw['explained']);
+        if (xeric_expect_repair($template, $db, $speaker, $now, null, $by) === null
+            && xeric_confide_mend($template, $db, $speaker, $now, $by) === null) {
+            xeric_grudge_thaw($template, $db, $speaker, '', $by, $now);
+        }
     }
 
     // THE CONFIDENCE, both directions, on the lines this harvest is the first

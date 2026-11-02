@@ -783,6 +783,22 @@ ok('and go walks the guest\'s own body, never the owner\'s', $st === 200
     && xeric_player_where($vT, $vdb, 1) === 'bluebird'
     && xeric_player_where($vT, $vdb, (int)xeric_session_player($vslug, (string)($gres['sid'] ?? ''))) === 'beck_hardware',
     "$st " . mb_substr(json_encode($d), 0, 300));
+// THE PULSE MOVES WHEN THE OTHER PLAYER WALKS. The owner's cursor hashes
+// every body once there is more than one, so a friend's walk repaints the
+// owner's screen (their tag, their ring) — moved here with no clock spent, so
+// the body is the only thing that changed.
+$gidW = (int)xeric_session_player($vslug, (string)($gres['sid'] ?? ''));
+[, $hw0] = req($port, $V . '/pulse', $B);
+[$stW0] = req($port, $V . '/pulse', array_merge($B, ['If-None-Match: ' . ($hw0['etag'] ?? '')]));
+xeric_player_move($vdb, 'first_lutheran', null, $gidW);
+[$stW1, $hw1, , $pw1] = req($port, $V . '/pulse', array_merge($B, ['If-None-Match: ' . ($hw0['etag'] ?? '')]));
+ok('the pulse moves when the other player walks: the owner\'s old ETag is a 200, the friend\'s body in it',
+    $stW0 === 304 && $stW1 === 200 && ($hw1['etag'] ?? '') !== ($hw0['etag'] ?? '')
+    && (($pw1['players'] ?? [])[(string)$gidW] ?? '') === 'first_lutheran' && ($pw1['where'] ?? '') === 'bluebird',
+    "$stW0 $stW1 " . json_encode($pw1['players'] ?? null));
+ok('and a world of one carries no bodies key, so its cursor is the one it always was',
+    !array_key_exists('players', $bodies['pulse']));
+xeric_player_move($vdb, 'beck_hardware', null, $gidW);
 [$st, , , $d] = req($port, $V . '/hear', array_merge($G, ['Content-Type: multipart/form-data; boundary=' . $bnd]), 'POST', $mp);
 ok('and on hear: the ears are the owner\'s', $st === 403 && ($d['kind'] ?? '') === 'guest');
 [$st, , , $d] = req($port, $V, $G);

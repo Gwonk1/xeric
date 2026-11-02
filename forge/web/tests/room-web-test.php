@@ -144,7 +144,10 @@ ok('nor may a guest ask the room to talk on its own', $gc['status'] === 403, (st
 $gl = page('room.php', $G, ['w' => $slug, 'a' => 'leave']);
 ok('nor end somebody else\'s conversation', $gl['status'] === 403, (string)$gl['status']);
 $rp = (string)file_get_contents(dirname(__DIR__) . '/room.php');
-ok('room.php asks before every write — three doors, three owner checks', substr_count($rp, 'xeric_play_owner_only(') === 3);
+ok('room.php asks before every write — three doors, three seat checks, each the owner door for a guest with no seat',
+    substr_count($rp, 'xeric_play_room_door(') === 3
+    && str_contains((string)file_get_contents(dirname(__DIR__) . '/play-view.php'),
+        "if (!xeric_play_room_may_sit(\$w)) xeric_play_owner_only(\$w, \$what);"));
 
 // ---------------------------------------------------------------------------
 echo "\n# a line, and the turn it buys\n";
@@ -728,6 +731,114 @@ ok('together: the page labels a player bubble with its speaker only when the row
     str_contains($pp2, "m.player ? m.who : ''") && str_contains($pp2, "(by ? '<span class=\"rwho\">' + esc(by) + '</span>' : '')"));
 ok('together: and draws a redacted line as a gap with no speaker', str_contains($pp2, "who + (redacted ? ' redacted' : '')")
     && str_contains($pp2, "!photo && !redacted"));
+
+// ---------------------------------------------------------------------------
+echo "\n# the room with two humans in it\n";
+
+// A third world: the owner, and a friend who came in on a code and has a seat
+// in the roster — two sessions on one world.db, both standing at the Bluebird.
+$wslug = 'two-town';
+$wtdir = xeric_web_worlds_dir() . '/' . $wslug;
+@mkdir($wtdir, 0775, true);
+file_put_contents($wtdir . '/world-template.json', json_encode($fixT, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+file_put_contents($wtdir . '/seed.json', json_encode(xeric_forge_default_seed($fixT), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+$O2 = bin2hex(random_bytes(16));
+xeric_session_use($O2);
+xeric_session_claim($wslug, $O2);
+xeric_web_session_edit(function (array &$s): void {
+    $s['model'] = ['kind' => 'local', 'local' => 'http://127.0.0.1:1', 'base' => '', 'model' => ''];
+}, $O2);
+$w2  = xeric_play_open($wslug);
+$db2 = $w2['db'];
+if (xeric_clock_is_paused($db2)) xeric_clock_resume($db2);
+$ann = xeric_player_add($db2, $w2['template'], 'Ann');
+$G2  = bin2hex(random_bytes(16));
+xeric_session_join($wslug, $ann, $G2);
+$n2 = xeric_clock_now($db2, $w2['template']);
+xeric_player_move($db2, 'bluebird', (int)$n2['epoch'], 1);
+xeric_player_move($db2, 'bluebird', (int)$n2['epoch'], $ann);
+
+// The owner opens the room in-process (the worker is driven below, by hand).
+$o1 = xeric_play_room_say($w2, 'Morning, Ruth. Pie any good?');
+// Hold the floor with a lease of our own so the friend's line, said through the
+// real page, books itself into this turn and starts no worker of its own.
+$held = 'abcdef0123456789';
+xeric_room_live_edit($db2, function (?array &$l) use ($held): void { $l['lease'] = ['id' => $held, 'until' => microtime(true) + 60]; });
+$msgO = (int)xeric_limit_hits('msg-' . $O2, XERIC_LIMIT_HOUR, time())['count'];
+$msgG = (int)xeric_limit_hits('msg-' . $G2, XERIC_LIMIT_HOUR, time())['count'];
+$gsay = page('room.php', $G2, ['w' => $wslug, 'a' => 'say'], ['text' => 'Dot, is there coffee?']);
+ok('two: a guest with a seat in the roster may speak into the room — 200, and seated at the table',
+    $gsay['status'] !== 403 && !empty($gsay['json']['ok']), $gsay['status'] . ' ' . mb_substr($gsay['raw'], 0, 200));
+$l2 = xeric_room_live_get($db2);
+ok('two: both of them are seated now, each under their own handle', count($l2['players']) === 2
+    && $l2['players'][0]['id'] === 1 && $l2['players'][1]['id'] === $ann && $l2['players'][1]['handle'] === '__you.p' . $ann
+    && (int)$l2['players'][1]['joined_at_row'] === (int)$gsay['json']['mid'], json_encode($l2['players']));
+ok('two: the friend\'s line cost one message on THEIR hour and none of the owner\'s',
+    (int)xeric_limit_hits('msg-' . $G2, XERIC_LIMIT_HOUR, time())['count'] === $msgG + 1
+    && (int)xeric_limit_hits('msg-' . $O2, XERIC_LIMIT_HOUR, time())['count'] === $msgO);
+
+// Both polls show both people's lines, each named, each screen's own marked.
+$pO = page('room.php', $O2, ['w' => $wslug, 'after' => '0'], [], 'GET');
+$pG = page('room.php', $G2, ['w' => $wslug, 'after' => '0'], [], 'GET');
+$says = fn(array $p): array => array_values(array_filter((array)($p['json']['rows'] ?? []), fn($r) => ($r['who'] ?? '') === 'me'));
+$sO = $says($pO); $sG = $says($pG);
+ok('two: the owner\'s poll has the friend\'s line, under her name, marked as not the owner\'s own',
+    count($sO) === 2 && $sO[0]['own'] === true && $sO[1]['name'] === 'Ann' && $sO[1]['own'] === false
+    && $sO[1]['text'] === 'Dot, is there coffee?', json_encode($sO));
+ok('two: and the friend\'s poll has the owner\'s, the other way round',
+    count($sG) === 2 && $sG[0]['own'] === false && $sG[0]['text'] === 'Morning, Ruth. Pie any good?' && $sG[1]['own'] === true
+    && ($pG['json']['live']['mine'] ?? false) === true && ($pG['json']['guest'] ?? true) === false, json_encode($sG));
+ok('two: the summary names both at the table, and says whether this viewer is seated',
+    count((array)($pG['json']['live']['players'] ?? [])) === 2 && ($pG['json']['live']['seated'] ?? false) === true);
+
+// THE TURN IS THE SPEAKER'S TO PAY FOR: the worker is the owner's, the line
+// that started this turn was Ann's, so the cast's beats are on Ann's hour.
+$rrO = (int)xeric_limit_hits('reroll-' . $O2, XERIC_LIMIT_HOUR, time())['count'];
+$rrG = (int)xeric_limit_hits('reroll-' . $G2, XERIC_LIMIT_HOUR, time())['count'];
+$c2 = [];
+$run2 = xeric_play_room_run($w2, $O2, $held, ['endpoint' => fn(string $h): array => stub($c2, fn(int $n) => 'Fresh pot, Ann.'),
+    'up' => false, 'wait' => 2.0, 'seed' => 'two', 'sleep' => fn(float $s) => null]);
+ok('two: each cast beat of the turn Ann\'s line started is charged to Ann\'s session, not the worker\'s',
+    $run2['beats'] >= 1 && (int)xeric_limit_hits('reroll-' . $G2, XERIC_LIMIT_HOUR, time())['count'] - $rrG === $run2['beats']
+    && (int)xeric_limit_hits('reroll-' . $O2, XERIC_LIMIT_HOUR, time())['count'] === $rrO, json_encode($run2));
+$l2 = xeric_room_live_get($db2);
+ok('two: a cast line naming Ann hands the floor to Ann', ($l2['floor'] ?? '') === '__you.p' . $ann
+    && xeric_play_room_public($w2['template'], $l2, true, 1)['floor'] === 'Ann', json_encode($l2['floor'] ?? null));
+
+// ONE LEAVING KEEPS THE ROOM: Ann walks out through the real page.
+$conv2 = (int)$l2['conv'];
+$wk2 = page('where.php', $G2, ['w' => $wslug], ['w' => $wslug, 'to' => 'beck_hardware']);
+$l2 = xeric_room_live_get($db2);
+$rows2 = xeric_room_rows($db2, $conv2);
+ok('two: one of two walking out keeps the room — a narrator row, "Ann heads out.", and the owner still at the table',
+    $wk2['status'] === 200 && $l2 !== null && count($l2['players']) === 1 && $l2['players'][0]['id'] === 1
+    && (string)end($rows2)['content'] === 'Ann heads out.' && (string)end($rows2)['role'] === 'narrator',
+    $wk2['status'] . ' ' . json_encode(end($rows2)));
+xeric_session_use($O2);
+$w2 = xeric_play_open($wslug);
+$wkO = page('where.php', $O2, ['w' => $wslug], ['w' => $wslug, 'to' => 'beck_hardware']);
+ok('two: and the last one out ends it — sealed, for the reason that everyone left',
+    $wkO['status'] === 200 && xeric_room_live_get($db2) === null
+    && (($seal2 = xeric_room_seals($db2)[$conv2] ?? null) === null || $seal2['ended'] === 'everyone left'),
+    json_encode(xeric_room_seals($db2)[$conv2]['ended'] ?? null));
+
+// A STRANGER ON A SHARED HOST, in their own fork, sees none of it.
+xeric_player_move($db2, 'bluebird', (int)$n2['epoch'], 1);
+xeric_play_room_say($w2, 'Back for more pie.');
+xeric_room_live_edit($db2, function (?array &$l): void { $l['lease'] = null; $l['budget'] = 0; });
+$S2 = bin2hex(random_bytes(16));
+xeric_session_use($S2);
+$sw2 = xeric_play_open($wslug);
+$ps  = page('room.php', $S2, ['w' => $wslug, 'after' => '0'], [], 'GET');
+ok('two: a stranger opening the world gets a fork — another database, no live room, no room thread',
+    !$sw2['mine'] && !xeric_play_is_guest($sw2) && (string)$sw2['db_path'] !== (string)$w2['db_path']
+    && xeric_room_live_get($sw2['db']) === null
+    && (int)$sw2['db']->query("SELECT COUNT(*) FROM conversations WHERE kind = 'room'")->fetchColumn() === 0);
+ok('two: and their poll of the room answers nothing of the owner\'s table',
+    is_array($ps['json']) && array_key_exists('live', $ps['json']) && $ps['json']['live'] === null && ($ps['json']['rows'] ?? ['x']) === []
+    && !str_contains($ps['raw'], 'pie') && xeric_room_live_get($db2) !== null, mb_substr($ps['raw'], 0, 200));
+$sw2 = null;
+xeric_session_use($O2);
 
 xeric_state_rating('');
 xeric_session_use($A);

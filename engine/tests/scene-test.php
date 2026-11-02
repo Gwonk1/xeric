@@ -555,6 +555,20 @@ ok('and when every picture is too heavy, none rides', xeric_scene_reference($db,
 ok('a picture missing from this disk is passed over too',
     (xeric_scene_reference($db, 'beck_hardware', $dir)['fingerprint'] ?? '') === $h1['fingerprint']);
 ok('a place never drawn has nothing to send', xeric_scene_reference($db, 'first_lutheran', $dir) === null);
+// A KIDS' HEADSET'S RENDER IS NEVER CONDITIONED ON AN ADULT ONE: a view stamped
+// above the rating the new render runs at is passed over, an unstamped one is not.
+$db->prepare('UPDATE scene_jobs SET rating = ? WHERE id = ?')->execute(['mature', (int)$row1['id']]);
+ok('reference: a view stamped above the render\'s rating is passed over',
+    xeric_scene_reference($db, 'beck_hardware', $dir, XERIC_SCENE_REFERENCE_CAP, 'sfw') === null);
+ok('reference: one at or under it still rides, and no rating filters nothing',
+    (xeric_scene_reference($db, 'beck_hardware', $dir, XERIC_SCENE_REFERENCE_CAP, 'mature')['fingerprint'] ?? '') === $h1['fingerprint']
+    && (xeric_scene_reference($db, 'beck_hardware', $dir)['fingerprint'] ?? '') === $h1['fingerprint']);
+$db->prepare('UPDATE scene_jobs SET rating = ? WHERE id = ?')->execute(['', (int)$row1['id']]);
+ok('reference: and a view from before stamps reads as it always did',
+    (xeric_scene_reference($db, 'beck_hardware', $dir, XERIC_SCENE_REFERENCE_CAP, 'sfw')['fingerprint'] ?? '') === $h1['fingerprint']);
+ok('reference: a render runs at the lowest of who asked and what it is drawn at',
+    xeric_scene_render_rating('mature', 'sfw') === 'sfw' && xeric_scene_render_rating('', 'mature') === 'mature'
+    && xeric_scene_render_rating('', '') === '');
 
 ok('an images call takes no reference; any other machine may',
     !xeric_scene_takes_reference(['kind' => 'image', 'base' => 'x'])

@@ -363,7 +363,10 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
         // holds; '__you' (the room's and the watch's handle for the person at
         // the table) holds nothing. A promise the player made, on the other
         // hand, is exactly the v1 row — of nobody, which means the user.
-        $others = array_values(array_diff(array_keys($present), [$speaker, '__you']));
+        // Every person at the centre wears a '__you' handle ('__you' for the
+        // first, '__you.p<n>' after — room.php); none of them is a listener.
+        $isYou  = static fn(string $h): bool => $h === '__you' || str_starts_with($h, '__you.p');
+        $others = array_values(array_filter(array_keys($present), fn($h) => $h !== $speaker && !$isYou((string)$h)));
         if ($others === []) continue;
         $listener = '';
         if (count($others) === 1) {
@@ -398,7 +401,9 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
             'quote' => $text,
             'what'  => mb_substr($text, 0, 60),
             'when'  => xeric_promise_when_phrase($text),
-        ] + ($notBefore > 0 ? ['not_before' => $notBefore] : []), $now, $onNote, $speaker === '__you' ? null : $speaker);
+        ] + ($notBefore > 0 ? ['not_before' => $notBefore] : []), $now, $onNote, $isYou($speaker) ? null : $speaker,
+            // WHICH person at the centre promised: the line's own player.
+            $isYou($speaker) ? max(XERIC_PLAYER_FIRST, (int)($l['player'] ?? XERIC_PLAYER_FIRST)) : XERIC_PLAYER_FIRST);
         if ($key !== null) $formed[] = $key;
     }
     return $formed;
@@ -996,23 +1001,32 @@ function xeric_constructs_presence_reads(int $n = 0): int
     return $reads += $n;
 }
 
-/** The player's body, for the keep: where it stands and since when. */
+/**
+ * The bodies, for the keep: where the current player stands and since when
+ * (the ritual pass's one body), and — under `by` — every person at the
+ * centre's own, keyed by player id, so a promise is kept by the body of the
+ * person who made it rather than whoever's request ran the tick.
+ */
 function xeric_constructs_body(array $t, PDO $db): array
 {
     // Read lazily: travel.php sits above this file in the require graph (it
     // pulls the sweeps, which pull chat, which pulls this).
     require_once __DIR__ . '/travel.php';
-    return ['where' => xeric_player_where($t, $db), 'since' => xeric_player_since($db)];
+    $by = [];
+    foreach (array_keys(xeric_players($db, $t)) as $id) {
+        $by[(int)$id] = ['where' => xeric_player_where($t, $db, (int)$id), 'since' => xeric_player_since($db, (int)$id)];
+    }
+    return ['where' => xeric_player_where($t, $db), 'since' => xeric_player_since($db), 'by' => $by];
 }
 
 /**
  * The 'there' half: is whoever promised this listener something standing in
  * the listener's room right now? Read off position and the week, no model.
  *
- * The player's body counts only for the first player — there is one body
- * (`player.where`), the owner walks it — and only if it ARRIVED after the
- * promise was formed (`player.where_since`): a promise made in person is
- * otherwise kept by the act of making it. A townsperson's promise is kept when
+ * A person at the centre's promise is kept by THEIR OWN body (`player.where`,
+ * `player.where.p<n>` — a body each since M4), and only if it ARRIVED after
+ * the promise was formed (`player.where_since[.p<n>]`): a promise made in
+ * person is otherwise kept by the act of making it. A townsperson's promise is kept when
  * their own week seats them where the listener is. A listener at no place, a
  * position that names no place, nothing to keep: nothing happens.
  *
@@ -1033,13 +1047,25 @@ function xeric_expect_keep_present(array $t, PDO $db, string $handle, array $now
     if ($here === null || $here === '') return [];
 
     $kept = [];
-    // The player's body.
-    $body  ??= xeric_constructs_body($t, $db);
-    $since = (int)$body['since'];
-    $body  = $body['where'];
-    if ($body !== null && $body === (string)$here && $since > 0) {
+    // THE BODY OF WHOEVER PROMISED. A promise from a person at the centre names
+    // them in `p` (absent: the first); it is kept by THEIR body arriving, read
+    // off their own position — never the position of whoever's request ran
+    // this tick, which in a world with company is somebody else's.
+    $body ??= xeric_constructs_body($t, $db);
+    $owers = [];
+    foreach ($open as $e) {
+        if (trim((string)($e['of'] ?? '')) === '') $owers[max(XERIC_PLAYER_FIRST, (int)($e['p'] ?? XERIC_PLAYER_FIRST))] = true;
+    }
+    ksort($owers);
+    foreach (array_keys($owers) as $pid) {
+        $b = $body['by'][$pid] ?? ($pid === XERIC_PLAYER_FIRST && !isset($body['by'])
+            ? ['where' => $body['where'] ?? null, 'since' => $body['since'] ?? 0]
+            : ['where' => xeric_player_where($t, $db, $pid), 'since' => xeric_player_since($db, $pid)]);
+        $since = (int)($b['since'] ?? 0);
+        $at    = $b['where'] ?? null;
+        if ($at === null || $at !== (string)$here || $since <= 0) continue;
         // One arrival keeps one promise, the soonest made before it.
-        $k = xeric_expect_keep($t, $db, $handle, $now, $onNote, XERIC_PLAYER_FIRST, 'there', null, $since);
+        $k = xeric_expect_keep($t, $db, $handle, $now, $onNote, $pid, 'there', null, $since);
         if ($k !== null) $kept[] = $k;
     }
     // The town's own promises, kept by the week.

@@ -496,6 +496,31 @@ xeric_player_move($two, 'beck_hardware', (int)$m0710['epoch'] - 300, 2);
 ok('look: and when she goes it is the room it was',
     xeric_scene_brief($M, $two, null, $m0710)['fingerprint'] === ONE_BODY_FPRINT);
 
+// -- the sound: another person standing in it is somebody a doorway hears ------
+// The one-body engine's sound of the Bluebird at 07:10 (Dot alone at the
+// counter), brief and fingerprint, pinned: a world of one still makes it.
+const ONE_BODY_SOUND_FPRINT = 'sound:2794a047d77b9924bfdc352bee5b8c8ab131bc87';
+const ONE_BODY_SOUND_SHA1   = '03fc502517dccfcf3e25e44ded0fb58e7a3bd731';
+$soloSound = xeric_sound_brief($M, $solo, null, $m0710);
+ok('sound: a world of one sounds exactly as it did — the same headcount, the same fingerprint',
+    $soloSound['fingerprint'] === ONE_BODY_SOUND_FPRINT && sha1($enc($soloSound)) === ONE_BODY_SOUND_SHA1
+    && $soloSound['heard'] === 1, $soloSound['fingerprint']);
+ok('sound: with Ann across town, Walt\'s diner is the sound it was', xeric_sound_brief($M, $two, null, $m0710)['fingerprint'] === ONE_BODY_SOUND_FPRINT);
+xeric_player_move($two, 'bluebird', (int)$m0710['epoch'] - 300, 2);
+$s2 = xeric_sound_brief($M, $two, null, $m0710);
+ok('sound: Ann walking in counts in the headcount bucket — one at the counter becomes several, and voiced',
+    $s2['heard'] === 2 && $s2['voiced'] === true && $s2['fingerprint'] !== ONE_BODY_SOUND_FPRINT, json_encode([$s2['heard'], $s2['voiced']]));
+xeric_player_move($two, 'beck_hardware', (int)$m0710['epoch'] - 300, 2);
+ok('sound: and she is never counted in her own hearing — from the hardware store, the cast there is all there is',
+    (function () use ($M, $two, $m0710): bool {
+        xeric_player_current(fn() => 2);
+        $b = xeric_sound_brief($M, $two, null, $m0710);
+        xeric_player_current(fn() => 1);
+        $solo2 = fresh('sound-solo-hw');
+        xeric_player_move($solo2, 'beck_hardware', (int)$m0710['epoch'] - 300);
+        return $b['heard'] === xeric_sound_brief($M, $solo2, null, $m0710)['heard'];
+    })());
+
 // -- comings and goings ----------------------------------------------------------
 // Walt at the diner since 06:00; Ann arrives at 07:05; at 07:10 the doorway
 // says so, and when she leaves at 07:12 it says that too.

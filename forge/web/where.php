@@ -93,21 +93,26 @@ if (!$trip['ok']) {
     xeric_web_json(['error' => (string)$trip['error'], 'kind' => 'travel'], 400);
 }
 
-// WALKING OUT ENDS THE CONVERSATION (engine/room.php). Sealed the moment the
-// body moves, so the room cannot answer somebody who has left; its close (the
-// diaries, one event) lands in a worker, never in this request.
+// WALKING OUT OF THE ROOM (engine/room.php). Only the walker's own seat: a
+// person who never sat at the table walking anywhere touches nothing. With
+// somebody else still standing at it, the walker "heads out" — a narrator row,
+// their seat given up, the conversation going on without them. The last one
+// out seals it, the moment the body moves, so the room cannot answer somebody
+// who has left; its close (the diaries, one event) lands in a worker, never in
+// this request.
 if (($trip['to'] ?? null) !== null || ($trip['from'] ?? null) !== null) {
     try {
-        $live = xeric_room_live_get($w['db']);
-        // Only the walker's own room: a guest stepping out of the diner does
-        // not end a conversation the owner is still standing in.
-        $ours = $live !== null
-             && (int)($live['player']['id'] ?? XERIC_PLAYER_FIRST) === xeric_player_current(null, $w['db']);
-        if ($live !== null && $ours && (string)$live['place'] !== (string)($trip['to'] ?? '')) {
-            if (xeric_room_seal($w['db'], 'you left', xeric_clock_now($w['db'], $w['template'])) !== null) {
-                xeric_web_spawn(xeric_web_job_new(), ['slug' => (string)$w['slug'], 'sid' => xeric_session_id(),
-                    'db' => (string)$w['db_path'], 'adult' => xeric_session_adult(), 'lease' => ''], 'room-worker.php');
-            }
+        $walker = xeric_player_current(null, $w['db']);
+        $nowW   = xeric_clock_now($w['db'], $w['template']);
+        $sealed = xeric_room_live_edit($w['db'], function (?array &$live) use ($w, $walker, $nowW, $trip): ?int {
+            if ($live === null || xeric_room_player_of($live, $walker) === null) return null;
+            if ((string)$live['place'] === (string)($trip['to'] ?? '')) return null;
+            return xeric_play_room_unseat($w['template'], $w['db'], $live, $walker, $nowW, 'heads out',
+                count(xeric_room_players_ever($live)) > 1 ? 'everyone left' : 'you left');
+        });
+        if ($sealed !== null) {
+            xeric_web_spawn(xeric_web_job_new(), ['slug' => (string)$w['slug'], 'sid' => xeric_session_id(),
+                'db' => (string)$w['db_path'], 'adult' => xeric_session_adult(), 'lease' => ''], 'room-worker.php');
         }
     } catch (Throwable $e) { /* the heart lands what this could not */ }
 }

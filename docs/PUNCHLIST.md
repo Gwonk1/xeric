@@ -98,7 +98,44 @@ Filed by fc576e6, not yet fixed.
   `xeric_play_narrator_audit_path()` writes `<data_dir>/audits/<sha1>.json`, outside the
   world's database, and nothing that deletes or forks a world clears it (fc576e6).
 
+## Open — left by M4
+
+Filed by the room with two humans in it, not yet fixed.
+
+- **Two phones in a real browser have never been tried** — `forge/web/tests/room-web-test.php`
+  seats two sessions on one world in-process and through child-process page requests; the
+  strip's peer lane, "the floor is Ann's" and the ceiling note in `forge/web/play.php`
+  `roomPaint()` are covered by nothing that runs the JS.
+- **One table talks at a time in a world** — `forge/web/play-view.php` `xeric_play_room_say()`
+  refuses a line from somebody standing elsewhere while a room is live; two rooms at once would
+  need `room:live` keyed by place.
+- **A kids' headset reads an adult player's own room lines as gaps** — a player line keeps its
+  request's stamp (`xeric_message_append`); only the cast lines after the fold are stamped at
+  the room's ceiling (`xeric_play_room_run`). Stamping player text lower would want a content
+  check at that ceiling, which nothing has.
+- **The ceiling never comes back up** after the lower-rated player leaves —
+  `engine/room.php` `xeric_room_player_join()` folds down only, by design (the hour is one
+  record), so the rest of that session stays at the floor.
+- **The payer files are never swept** — `forge/web/play-view.php`
+  `xeric_play_room_payer_set()` writes `<jobs>/room-pay-<lease>.json`, one small file per turn
+  another person spoke into; nothing deletes them.
+- **Kept and explained without a name are a heuristic** — `engine/chat.php`
+  `xeric_chat_extract()` falls back to the newest user line the harvest is the first to read
+  when the model answers `true` rather than a name, which is right for a reply and wrong for an
+  aside.
+- **Sitting down has no narrator row** — a second person's first line is their arrival; the
+  far table is still ranked by heat about the opener only (`xeric_room_open()`).
+- **A late joiner's poll shows the whole thread** — `forge/web/room.php` answers rows from the
+  cursor, not from `joined_at_row`; harmless while guests may read the room anyway.
+
 ## Closed
+
+- **The live room seated one player** — `engine/room.php` seats `players`; the floor, silence,
+  the ceiling and the close are per person; a guest with a roster seat may speak (M4).
+- **constructs.php read the current player's body for every promise** —
+  `xeric_expect_keep_present()` reads each promiser's own (M4).
+- **The pulse, the sound brief, kept/explained and reference images read one person** — each
+  reads every player, or the right one (M4; `docs/MULTIPLAYER.md`).
 
 - **A cast member's confidence is formed by nothing** — `xeric_confide_form()` is called
   from the cast-to-cast pass via `xeric_confide_from_line()` (a287e01).

@@ -2046,11 +2046,13 @@ function xeric_play_state(array $w, ?string $sid = null): array
         // payload is what refreshState repaints from — so travelling repaints
         // the view for free. Owner-or-own-copy may press look (the same door
         // scene.php's POST keeps); a guest in the owner's real world may not.
-        'look_html'  => xeric_play_look_html($t, $db, $now, (string)$w['slug'], !xeric_play_is_guest($w)),
+        'look_html'  => xeric_play_look_html($t, $db, $now, (string)$w['slug'], !xeric_play_is_guest($w),
+                                             xeric_play_room_may_sit($w)),
         // The room you are in, when you are in one (engine/room.php): a small
         // summary so the page knows to open the strip and start polling. The
         // lines themselves come from room.php's own cursor, never from here.
-        'room'       => xeric_play_room_public($t, xeric_room_live_get($db), !xeric_play_is_guest($w)),
+        'room'       => xeric_play_room_public($t, xeric_room_live_get($db), xeric_play_room_may_sit($w),
+                                               xeric_session_player((string)$w['slug'], $sid) ?? XERIC_PLAYER_FIRST),
         'fate_html'  => xeric_play_fate_html($t, $db, $cast),
         // The meter is server-rendered chrome, so without this it holds whatever
         // it said when the page loaded — which for a counter somebody is reading

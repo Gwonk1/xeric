@@ -15,18 +15,23 @@
  *    tab is hidden. A line is a row only from its due time on, so no client
  *    can show one early: there is nothing to show.
  *
- *  • a=say — the owner's door (a guest reads the thread and never speaks
- *    into it), the player's position, one of the hour's thirty messages; the
- *    line is heard (floor, wall) and lands as its row at once; the worker is
- *    started unless one already holds the floor.
+ *  • a=say — the door for anybody with a seat: the owner, and a guest who is
+ *    a person in the roster (a guest with no seat reads the thread and never
+ *    speaks into it). Their position, one of THEIR hour's thirty messages; the
+ *    line is heard (floor, wall) and lands as its row at once, seating them
+ *    at the table if they were not; the worker is started unless one already
+ *    holds the floor — and the turn this line buys is charged to whoever
+ *    said it, whichever worker carries it.
  *
  *  • a=carry — TALKING WITHOUT YOU, asked by a page that has sat idle with
  *    the tab visible. The engine's gate answers (two in a row, six a
  *    session, an idle queue, a local machine unless the template opts in).
  *    A 409 is not an error, it is the room keeping quiet.
  *
- *  • a=leave — stepping back from the table. The session seals; its close
- *    (the diaries, one event, the trail) lands in the worker.
+ *  • a=leave — stepping back from the table. With somebody else still at it,
+ *    only this person's seat goes; the last one to step back seals the
+ *    session, and its close (the diaries, one event, the trail) lands in the
+ *    worker.
  */
 
 declare(strict_types=1);
@@ -52,7 +57,9 @@ try {
 }
 $T     = $w['template'];
 $db    = $w['db'];
-$guest = xeric_play_is_guest($w);
+// A GUEST WITH NO SEAT is the one who only reads; a guest in the roster sits.
+$guest = !xeric_play_room_may_sit($w);
+$me    = xeric_session_player((string)$w['slug'], $sid) ?? XERIC_PLAYER_FIRST;
 
 /** The worker, told everything a process without a cookie needs. */
 $spawn = function (string $lease) use ($w, $sid): void {
@@ -101,12 +108,12 @@ if ($action === '') {
         }
     }
     $rows = $conv > 0 ? xeric_room_rows($db, $conv, $after) : [];
-    $pub  = xeric_play_room_public($T, $live, !$guest);
+    $pub  = xeric_play_room_public($T, $live, !$guest, $me);
     xeric_web_json([
         'ok'    => true,
         'live'  => $pub,
         'conv'  => $conv,
-        'rows'  => $names !== null ? xeric_play_room_rows($T, $names, $rows, $db) : [],
+        'rows'  => $names !== null ? xeric_play_room_rows($T, $names, $rows, $db, $me) : [],
         'last'  => $rows !== [] ? (int)$rows[count($rows) - 1]['id'] : $after,
         'poll'  => $pub !== null && $pub['turn'] ? 700 : 4000,
         'guest' => $guest,
@@ -117,7 +124,7 @@ if ($action === '') {
 // The doors
 // ---------------------------------------------------------------------------
 if ($action === 'say') {
-    xeric_play_owner_only($w, 'speaking into the room');
+    xeric_play_room_door($w, 'speaking into the room');
     $text = trim((string)($in['text'] ?? ''));
     if ($text === '') xeric_web_json(['error' => 'there is nothing to say'], 400);
     if (mb_strlen($text) > 2000) $text = mb_substr($text, 0, 2000);
@@ -136,6 +143,9 @@ if ($action === 'say') {
                         'kind' => $rule ? 'refused' : 'bad'], $rule ? 409 : 400);
     }
     xeric_limit_note('message', ['sid' => $sid]);
+    // The turn this line bought is this session's to pay for, whichever worker
+    // carries it — a fresh one of its own, or the one already at the table.
+    if (($r['turn'] ?? null) !== null) xeric_play_room_payer_set((string)$r['turn'], $sid);
 
     if ($r['lease'] !== null) {
         try {
@@ -154,11 +164,11 @@ if ($action === 'say') {
     }
     xeric_web_json(['ok' => true, 'mid' => (int)$r['mid'], 'text' => (string)$r['text'],
                     'opened' => (bool)$r['opened'], 'conv' => (int)$r['conv'],
-                    'live' => xeric_play_room_public($T, xeric_room_live_get($db), true)]);
+                    'live' => xeric_play_room_public($T, xeric_room_live_get($db), true, $me)]);
 }
 
 if ($action === 'carry') {
-    xeric_play_owner_only($w, 'letting the room talk');
+    xeric_play_room_door($w, 'letting the room talk');
     $affords();
     $r = xeric_play_room_carry($w, $sid);
     if (!$r['ok']) xeric_web_json(['ok' => false, 'why' => $r['why'], 'kind' => 'quiet'], 409);
@@ -176,8 +186,14 @@ if ($action === 'carry') {
 }
 
 if ($action === 'leave') {
-    xeric_play_owner_only($w, 'ending the conversation');
-    $conv = xeric_room_seal($db, 'stepped back', xeric_clock_now($db, $T));
+    xeric_play_room_door($w, 'ending the conversation');
+    $nowL = xeric_clock_now($db, $T);
+    $conv = xeric_room_live_edit($db, function (?array &$live) use ($T, $db, $me, $nowL): ?int {
+        if ($live === null) return null;
+        // Somebody who never sat at this table cannot end it for those who did.
+        if (xeric_room_player_of($live, $me) === null) return null;
+        return xeric_play_room_unseat($T, $db, $live, $me, $nowL, 'steps back', 'stepped back');
+    });
     if ($conv !== null) {
         try { $spawn(''); } catch (Throwable $e) { /* the heart lands it */ }
     }

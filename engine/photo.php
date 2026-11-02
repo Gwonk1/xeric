@@ -467,6 +467,23 @@ function xeric_photo_reference_read(string $path, int $cap = XERIC_PHOTO_REFEREN
     return ['bytes' => $bytes, 'mime' => $mime, 'fingerprint' => substr(sha1($bytes), 0, 16)];
 }
 
+/**
+ * The rating a photo render runs at, for the likeness walk: the lower of the
+ * row's stamp (whose request it was) and this process's (what the prompt is
+ * composed under). '' when neither is set.
+ */
+function xeric_photo_render_rating(string $stamp): string
+{
+    $low = '';
+    foreach ([$stamp, xeric_state_rating()] as $r) {
+        $r = strtolower(trim($r));
+        if ($r === '') continue;
+        if (!function_exists('xeric_rating_rank')) require_once __DIR__ . '/walls.php';
+        if ($low === '' || xeric_rating_rank($r) < xeric_rating_rank($low)) $low = $r;
+    }
+    return $low;
+}
+
 /** image/png, image/jpeg or image/webp when these bytes are a whole one of those, else null. */
 function xeric_photo_sniff(string $bytes): ?string
 {
@@ -496,16 +513,23 @@ function xeric_photo_sniff(string $bytes): ?string
  *
  * @return ?array{bytes:string,mime:string,fingerprint:string,id:int}
  */
-function xeric_photo_reference(PDO $db, string $handle, string $photosDir, int $cap = XERIC_PHOTO_REFERENCE_CAP): ?array
+function xeric_photo_reference(PDO $db, string $handle, string $photosDir, int $cap = XERIC_PHOTO_REFERENCE_CAP,
+                               ?string $rating = null): ?array
 {
     if ($handle === '') return null;
-    $st = $db->prepare("SELECT id, file FROM photo_jobs
+    $st = $db->prepare("SELECT id, file, rating FROM photo_jobs
                         WHERE kind = 'portrait' AND subject = ? AND status = 'done' AND file != ''
-                        ORDER BY done_at DESC, id DESC LIMIT 5");
+                        ORDER BY done_at DESC, id DESC LIMIT 50");
     $st->execute([$handle]);
     $rows = $st->fetchAll();
     $st->closeCursor();
-    foreach ($rows as $row) {
+    // A likeness stamped above the rating this render runs at is no likeness
+    // for it (xeric_scene_reference's rule): a kids' headset's photo is never
+    // conditioned on an adult portrait. No rating filters nothing.
+    if ($rating !== null && $rating !== '') {
+        $rows = array_values(array_filter($rows, fn($r) => xeric_state_shown((string)($r['rating'] ?? ''), $rating)));
+    }
+    foreach (array_slice($rows, 0, 5) as $row) {
         $ref = xeric_photo_reference_read(rtrim($photosDir, '/') . '/' . basename((string)$row['file']), $cap);
         if ($ref !== null) return $ref + ['id' => (int)$row['id']];
     }
@@ -809,7 +833,8 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                     $ref = $own !== '' ? xeric_photo_reference_read($photosDir . '/' . basename($own)) : null;
                     if ($ref !== null) $ref['id'] = (int)$job['id'];
                 } else {
-                    $ref = xeric_photo_reference($db, (string)($composed['handle'] ?? ''), $photosDir);
+                    $ref = xeric_photo_reference($db, (string)($composed['handle'] ?? ''), $photosDir,
+                        XERIC_PHOTO_REFERENCE_CAP, xeric_photo_render_rating((string)($job['rating'] ?? '')));
                 }
                 if ($ref !== null) $rOpts['reference'] = $ref;
             }

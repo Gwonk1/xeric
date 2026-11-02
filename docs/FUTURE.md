@@ -433,6 +433,19 @@ Done when: two people on two phones stand in the same rendered room, see
 each other's tags, and hear the same cast answer them both — and a third
 person on a shared host, in their own fork, sees none of it.
 
+**Shipped** ([MULTIPLAYER.md](MULTIPLAYER.md)): a body each, threads that know
+who said what, rating per viewer, and the room with two humans in it — either
+person sits by speaking, the floor goes to whichever was named or spoke last,
+each one's silence is noticed once, one walking out leaves the other at the
+table, a lower-rated seat folds the ceiling down for everyone, and each line
+and each turn is charged to the session that caused it. Done-when, honestly:
+two sessions on one world stand in the same room, see each other in the look
+and the map, and are answered by the same cast in one transcript, in tests —
+in-process and through real page requests — and a stranger's fork has no
+table at all. Two phones in a real browser have not been tried; the rendered
+room and the hearing are as tested as M2's were, which is to say against
+stubs and headless Chrome, never on a device.
+
 ### M5 — "When the world models hold still"
 
 Contingent on the outside world, and the test of bet 1.

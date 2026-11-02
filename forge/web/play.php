@@ -437,11 +437,11 @@ if ($action !== '') {
             // between your own presses. A read of canon and the queue, never
             // of the machine, so it costs what the cast row costs.
             'look_html' => xeric_play_look_html($w['template'], $w['db'], $nowW,
-                (string)$w['slug'], !xeric_play_is_guest($w)),
+                (string)$w['slug'], !xeric_play_is_guest($w), xeric_play_room_may_sit($w)),
             // A room somebody is talking in, so the strip opens on a second
             // device too — the summary only; the lines ride room.php's cursor.
             'room'      => xeric_play_room_public($w['template'], xeric_room_live_get($w['db']),
-                !xeric_play_is_guest($w)),
+                xeric_play_room_may_sit($w), xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST),
         ]);
     }
 
@@ -1083,6 +1083,8 @@ echo xeric_play_css_link() . '<style>
 #room .rhead { font-size:.8rem; color:var(--fg-dim); margin:0 0 .4rem; }
 #room .rmsgs { max-height:22rem; overflow-y:auto; margin:0 0 .4rem; padding:0; }
 #room .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
+/* a line from another person at the centre, on this screen: theirs, not yours */
+#rmsgs li.me.peer .b { opacity:.85; border-style:dashed; }
 /* whose line, in a thread more than one person at the centre has spoken in; and a line this viewer is not shown */
 #msgs .rwho { display:block; font-size:.7rem; font-weight:600; opacity:.8; margin:0 0 .1rem; }
 #msgs li.redacted .b, #rmsgs li.redacted .b { font-style:italic; opacity:.65; }
@@ -4142,7 +4144,7 @@ echo xeric_play_css_link() . '<style>
   // idle seconds with the tab visible and nothing typed, the page asks once;
   // a 409 is the room keeping quiet, and the page simply waits for you.
   var ROOM = { on: false, after: 0, conv: 0, timer: null, idle: null, seen: {}, live: null,
-               guest: <?= js(xeric_play_is_guest($w)) ?>, busy: false, lastSpeaker: '', speakT: null };
+               guest: <?= js(!xeric_play_room_may_sit($w)) ?>, busy: false, lastSpeaker: '', speakT: null };
 
   function roomOpen(focus) {
     if (!$('#room')) return;
@@ -4165,7 +4167,7 @@ echo xeric_play_css_link() . '<style>
     if (ROOM.seen[r.id]) return;
     ROOM.seen[r.id] = true;
     var li = document.createElement('li');
-    li.className = r.who + (r.redacted ? ' redacted' : '');
+    li.className = r.who + (r.redacted ? ' redacted' : '') + (r.own === false ? ' peer' : '');
     if (r.who === 'narr') {
       li.innerHTML = '<span class="b">' + esc(r.text) + '</span>';
     } else {
@@ -4211,14 +4213,20 @@ echo xeric_play_css_link() . '<style>
     var live = ROOM.live;
     if (live) {
       var who = live.present.map(function (p) { return p.name; });
-      $('#rhead').textContent = (live.place_name ? 'At ' + live.place_name + ': ' : '') + 'you, ' + who.join(', ')
+      // Two people at the centre: the others at the table are named too.
+      var mates = (live.players || []).map(function (p) { return p.name; }).filter(function (n) { return n !== live.you; });
+      if (live.players && live.seated === false) mates = live.players.map(function (p) { return p.name; });
+      $('#rhead').textContent = (live.place_name ? 'At ' + live.place_name + ': ' : '')
+        + (live.seated === false ? '' : 'you, ') + mates.concat(who).join(', ')
         + (live.far && live.far.length ? ' · at the far table: ' + live.far.join(', ') : '');
       if (live.typing) {
         $('#rthinkwho').textContent = live.typing.queue || (live.typing.name + ' is about to say something');
         $('#rthinking').hidden = false;
       } else $('#rthinking').hidden = true;
       if (live.error) { $('#rerr').textContent = live.error; $('#rerr').hidden = false; }
-      $('#rnote').textContent = live.turn ? '' : (live.said ? 'the floor is yours' : '');
+      $('#rnote').textContent = live.turn ? (live.ceiling_note || '')
+        : (live.floor && live.floor !== live.you ? 'the floor is ' + live.floor + '\'s'
+        : (live.said ? 'the floor is yours' : '')) + (live.ceiling_note && !live.turn ? ' · ' + live.ceiling_note : '');
       $('#rleave').disabled = false;
     } else {
       $('#rthinking').hidden = true;

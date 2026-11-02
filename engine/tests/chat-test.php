@@ -986,6 +986,37 @@ ok('who: a quote that matches no line falls back to whoever ran the harvest',
     && xeric_chat_promiser([['role' => 'user', 'content' => 'OK — see you, Monday!', 'player' => 3]],
                            ['quote' => 'see you Monday'], 2) === 3);
 
+// KEPT AND EXPLAINED ARE THE SPEAKER'S TOO. Corey owns up to the missed dish,
+// and the harvest that hears it runs on Walt's turn: the repair is Corey's.
+$trC0 = xeric_trust_of($dW, 'ruth', null, $cid);
+$cW2 = xeric_conversation_for($dW, 'ruth', 'chat');
+xeric_message_append($dW, $cW2, 'user', null, 'Sorry I never came Saturday, Ruth. My truck died.', $NOW['epoch'], null, $cid);
+xeric_message_append($dW, $cW2, 'character', 'ruth', 'Well. These things happen.', $NOW['epoch']);
+$askedX = null;
+xeric_chat_extract($TW, $dW, 'ruth', $convW, stub_says(function (string $tag, array $msgs) use (&$askedX): array {
+    $askedX = $msgs;
+    return ['memories' => [], 'promise' => null, 'explained' => true, 'kept' => false];
+}), $NOW, 1);
+$exX = array_values(array_filter(xeric_expects_for($dW, 'ruth'), fn($e) => (int)($e['p'] ?? 1) === $cid));
+ok('who: an explanation heard on Walt\'s turn repairs the miss Corey owned up to, and Corey\'s trust takes the notch back',
+    ($exX[0]['state'] ?? '') === 'repaired' && xeric_trust_of($dW, 'ruth', null, $cid) === $trC0 + 1
+    && xeric_trust_of($dW, 'ruth', null, 1) === 0, json_encode($exX));
+ok('who: with two in the thread the harvest is asked whose it was; a thread of one is asked exactly as before',
+    str_contains(implode("\n", array_column((array)$askedX, 'content')), 'give the name of whoever it was')
+    && $askedWith !== null && !str_contains((string)json_encode($askedWith), 'give the name of whoever it was'));
+// Kept, by name: Corey brought the pie plate, then Walt spoke last.
+$kPlate = xeric_expect_form($TW, $dW, 'ruth', ['quote' => 'I will have your pie plate back Saturday',
+    'what' => 'the pie plate', 'when' => 'Saturday'], xeric_world_now($TW, (int)$NOW['epoch'] - 86400), null, null, $cid);
+xeric_message_append($dW, $cW2, 'user', null, 'Here is your pie plate, Ruth.', $NOW['epoch'] + 60, null, $cid);
+xeric_message_append($dW, $cW2, 'user', null, 'He even washed it.', $NOW['epoch'] + 61, null, 1);
+xeric_message_append($dW, $cW2, 'character', 'ruth', 'So he did.', $NOW['epoch'] + 62);
+xeric_chat_extract($TW, $dW, 'ruth', $convW, stub_says(['memories' => [], 'promise' => null, 'explained' => false, 'kept' => 'Corey']),
+    xeric_world_now($TW, (int)$NOW['epoch'] + 120), 1);
+$plate = array_values(array_filter(xeric_expects_for($dW, 'ruth'), fn($e) => $e['key'] === $kPlate))[0] ?? [];
+ok('who: a promise kept goes to the one the harvest names — Corey — not to the newest line\'s speaker or the harvest-payer',
+    $kPlate !== null && ($plate['state'] ?? '') === 'kept' && xeric_trust_of($dW, 'ruth', null, 1) === 0,
+    json_encode($plate));
+
 // ---------------------------------------------------------------------------
 // RATING PER VIEWER. A row carries the rating its request ran at; a viewer
 // below it reads the row emptied; an unstamped row is read as it always was.
