@@ -78,9 +78,6 @@ Filed by fc576e6, not yet fixed.
 - **The siblings are not in the forge's vocabulary** — `forge/forge.php` `XERIC_SYSTEMS` has
   no `anticipation`, `news`, `worry`, `grudge`, `ritual` or `milestone`, so the forge never
   proposes them; they arm by hand or through the preset systems (fc576e6).
-- **A cast member's confidence is formed by nothing** — `engine/confide.php`
-  `xeric_confide_form()` (the `told.*` rows the gossip sweep breaks) still has no caller
-  outside its tests; the player's side is formed by `xeric_confide_to_player()` (fc576e6).
 - **A skip's rewind does not cover the sleep tables** — `engine/sleep.php` writes
   `sleep_facts` and `sleep_links` outside the rewind's diff; safe while the heart, never a
   skip, runs `xeric_sleep_pass()` and only memories older than any skip's mark are taken
@@ -102,6 +99,11 @@ Filed by fc576e6, not yet fixed.
   world's database, and nothing that deletes or forks a world clears it (fc576e6).
 
 ## Closed
+
+- **A cast member's confidence is formed by nothing** — `xeric_confide_form()` is called
+  from the cast-to-cast pass via `xeric_confide_from_line()` (a287e01).
+- **`id_slot` is not sent per speaker** — `xeric_llm_slot()` sends a stable slot per
+  handle to llama.cpp machines with more than one slot, in sweeps and both rooms (9bbecf5).
 
 From [`FUTURE.md`](FUTURE.md), "The next ninety days", items 1–3; ★ are the four the
 continuity benchmark (Appendix B) found on day one, all failing on the commit before
@@ -169,9 +171,7 @@ Built, or offered, and not connected to anything that runs.
 
 ## Deferred from the room on the web
 
-- **`id_slot` is not sent per speaker** — `engine/room.php` `xeric_room_step()`; several
-  speakers on one llama.cpp slot swap the slot per beat. Measure, then `--parallel` ≥
-  roster or a slot per speaker (0b75ac0).
+- *(none open)*
 
 ## Stale text
 

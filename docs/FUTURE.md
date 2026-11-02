@@ -91,11 +91,11 @@ shipped; some of what it calls built is wired to nothing.
 | Giving the player a body | Built | `xeric_player_where`, `xeric_travel_go`, `xeric_travel_map`; the roadmap says so and still files it under Next |
 | The room | Built, on the web | `forge/web/room.php` and `room-worker.php` over `xeric_room_step`: talk to the room where two or more are present, lines land one at a time as message rows, the room may carry on a beat or two without you; `xeric_room` keeps watch's CLI rule [0b75ac0] |
 | Death | Built | revivable and permanent, catastrophe and restore, stories can kill; fate.php; not marked shipped |
-| Social constructs | Built | expectations with repair and a `kept` state (`xeric_expect_keep`, [e5a73b4]), debts, gossip, guest vouching; confidences formed from the chat harvest (`xeric_confide_to_player`), broken by repeating them (`xeric_confide_repeat`), mended or hardened into a grudge, rendered by `xeric_confide_block`; the six siblings — anticipation, news, worry, grudge, ritual, milestone — stepped by `xeric_siblings_tick`; cast-to-cast promises from the sweep's quoted speech (`xeric_constructs_cast_tick`, from the heart) [fc576e6]. `xeric_confide_form`, a confidence one of the cast carries, still has no caller outside its tests |
+| Social constructs | Built | expectations with repair and a `kept` state (`xeric_expect_keep`, [e5a73b4]), debts, gossip, guest vouching; confidences formed from the chat harvest (`xeric_confide_to_player`), broken by repeating them (`xeric_confide_repeat`), mended or hardened into a grudge, rendered by `xeric_confide_block`; the six siblings — anticipation, news, worry, grudge, ritual, milestone — stepped by `xeric_siblings_tick`; cast-to-cast promises from the sweep's quoted speech (`xeric_constructs_cast_tick`, from the heart) [fc576e6]. a confidence one of the cast carries is formed from quoted speech in a two-person hour (`xeric_confide_from_line`, [a287e01]) |
 | Sleep | Built | `engine/sleep.php`: once a world-night per person, old memories become facts with provenance, walls inherited, nothing deleted; the heart runs `xeric_sleep_pass`; five `sleep` probes; [`docs/SLEEP.md`](SLEEP.md) [fc576e6] |
 | Story overlays | Built, filed under Later | multiple overlays, red herrings, a six-stage curve |
 | A world can start in 1873 | Built | tested |
-| More than one model | Beyond the roadmap | a per-character pin exists for say and watch; not for sweeps — M3's last item, in progress |
+| More than one model | Built | the per-character pin reaches say, watch, both rooms and the sweeps; each hour in its centre's machine and llama.cpp slot, falling back to the default when the pin is down [9bbecf5] |
 | The viewport | Built | the room in the view [0b75ac0] and walking inside a splat, in our own WebGL renderer [934bbe6]; streaming is not |
 | Voices | Built this week | VOICE.md still has one "not shipped" line to fix |
 | Design rules | Held | the four gendered-prose sites and four more were fixed, and render-test now tokenises every engine file and fails on a gendered pronoun in a string literal, file:line, with a planted pronoun to prove the scan sees [e5a73b4]; the scan's glob takes M3's new files (`director.php`, `sleep.php`) with no change, a staged person's `doing` carries no name, pronoun or reason, and the narrator's lean crosses as handles and a kind key, never words [fc576e6] |
@@ -385,8 +385,9 @@ deleted, the bible untouched, with five `sleep` probes. Portrait chaining
 (`xeric_photo_reference` in `engine/photo.php`) draws every later frame of a
 person as an edit of their first portrait, on machines that answer
 `/v1/images/edits` ([`docs/VIEWPORT.md`](VIEWPORT.md)). **More than one voice
-of weights is in progress**: the per-character pin still stops short of the
-sweeps.
+of weights shipped** [9bbecf5]: each hour is written by the machine pinned to
+its centre, in that speaker's own llama.cpp slot, falling back to the default
+when the pin is down.
 
 **Done when is not yet met, and two of its four parts have not been tried.**
 The benchmark is a three-day run, not a month, and it runs with the Director
