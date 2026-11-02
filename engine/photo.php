@@ -45,6 +45,7 @@ require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/weather.php';
 require_once __DIR__ . '/state.php';    // the queue is rows; clock.php rides in with it
 require_once __DIR__ . '/clock.php';    // render-time prompts read the world's own now
+require_once __DIR__ . '/llm.php';      // xeric_llm_header_safe: a key is a header value, never a header
 
 /**
  * The floor's framing, in words. One constant because two composers say it —
@@ -104,7 +105,7 @@ function xeric_image_up(?array $endpoint = null, int $timeout = 3): bool
     if ($base === '') return false;
     $headers = ['Accept: application/json'];
     if ((string)($endpoint['key'] ?? '') !== '') {
-        $headers[] = 'Authorization: Bearer ' . (string)$endpoint['key'];
+        $headers[] = 'Authorization: Bearer ' . xeric_llm_header_safe((string)$endpoint['key']);
     }
     $ctx = stream_context_create(['http' => [
         'method' => 'GET', 'header' => implode("\r\n", $headers),
@@ -453,7 +454,7 @@ function xeric_image_render(array $endpoint, array $composed, array $opts = []):
         'response_format' => 'b64_json',
     ], JSON_UNESCAPED_UNICODE);
     $headers = ['Content-Type: application/json'];
-    if ((string)($endpoint['key'] ?? '') !== '') $headers[] = 'Authorization: Bearer ' . $endpoint['key'];
+    if ((string)($endpoint['key'] ?? '') !== '') $headers[] = 'Authorization: Bearer ' . xeric_llm_header_safe((string)$endpoint['key']);
     $ctx = stream_context_create(['http' => [
         'method' => 'POST', 'header' => implode("\r\n", $headers), 'content' => $body,
         'timeout' => (int)($opts['timeout'] ?? 120), 'ignore_errors' => true,
