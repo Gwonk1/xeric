@@ -78,6 +78,13 @@ if ($a === 'start') {
     xeric_web_json(['ok' => 1, 'stream' => xeric_play_stream_public($r['row'])]);
 }
 
+// THE DELETES A READ PATH OWED (xeric_stream_sweep marks, never sends): this
+// request is the owner's own page beating or ending, which may afford a short
+// wait. Two at most, after the answer this request is for is decided.
+$owed = function () use ($db, $ep): void {
+    try { xeric_stream_tell_owed($db, $ep, 2); } catch (Throwable $e) { /* the heart sends it next */ }
+};
+
 $id = (int)($in['id'] ?? 0);
 $row = $id > 0 ? xeric_stream_get($db, $id) : null;
 if ($row === null) xeric_web_json(['error' => 'there is no such live view'], 404);
@@ -88,6 +95,7 @@ if ($a === 'end') {
     xeric_stream_end($db, $ep, $id, xeric_stream_why((string)($in['why'] ?? '')), null,
                      ['meter' => xeric_stream_ledger($db, xeric_clock_now($db, $t))]);
     $row = xeric_stream_get($db, $id);
+    $owed();
     xeric_web_json(['ok' => 1, 'live' => false, 'reason' => (string)$row['reason']]);
 }
 
@@ -98,5 +106,6 @@ $r = xeric_stream_beat($t, $db, $ep, $id, [
     'hidden_for' => max(0, (int)($in['hidden_for'] ?? 0)),
     'meter'      => xeric_stream_ledger($db, $now),
 ]);
+$owed();
 xeric_web_json(['ok' => 1, 'live' => $r['live'], 'reason' => $r['reason'], 'counted' => $r['counted'],
                 'seconds' => $r['seconds'], 'events' => count($r['events']), 'ends_at' => $r['ends_at']]);

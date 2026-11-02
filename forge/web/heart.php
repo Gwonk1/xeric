@@ -150,12 +150,34 @@ function xeric_heart_rooms(string $slug, array $w, callable $say, array &$up): i
     return $r['done'];
 }
 
+/**
+ * One world's live views, on the heart's pass (xeric_stream_pass): the
+ * abandoned ones ended and metered with no network, then up to $left of the
+ * DELETEs owed sent, short. Returns how many were sent.
+ */
+function xeric_heart_streams(string $slug, array $w, callable $say, int $left): int
+{
+    try {
+        $ep = null;
+        try { $ep = xeric_scene_endpoint(); } catch (Throwable $e) { $ep = null; }
+        $r = xeric_stream_pass($w['template'], $w['db'], $ep, $left);
+        if ($r['told'] > 0) {
+            $say($slug . ': told ' . $r['told'] . ' scene ' . ($r['told'] === 1 ? 'machine' : 'machines') . ' a live view had ended');
+        }
+        return $r['told'];
+    } catch (Throwable $e) {
+        $say($slug . ': live views, ' . $e->getMessage());
+        return 0;
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 $ticked  = 0;
 $lived   = 0;
 $drawn   = 0;
 $sceneUp = [];   // which scene machines answered, asked once per machine per pass
+$tellLeft = XERIC_STREAM_TELL_PER_TICK;   // owed stream DELETEs this pass may still send, every world together
 
 foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
     $sid = basename($file, '.json');
@@ -168,10 +190,15 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
     if (xeric_session_use($sid) === '') continue;
 
     $model = xeric_web_model($sid);
-    if (!xeric_web_connected($model)) continue;          // nothing to think with
-
-    try { $endpoint = xeric_play_endpoint($sid); }
-    catch (Throwable $e) { continue; }
+    // NOTHING TO THINK WITH is not nothing to do: a live view needs no model,
+    // and one left running bills whether or not anybody can talk. Such a
+    // session's worlds get their live views seen to and nothing else.
+    $thinks = xeric_web_connected($model);
+    $endpoint = null;
+    if ($thinks) {
+        try { $endpoint = xeric_play_endpoint($sid); }
+        catch (Throwable $e) { $thinks = false; }
+    }
 
     $notify = xeric_web_notify($sid);
 
@@ -183,6 +210,13 @@ foreach (glob(xeric_web_sessions_dir() . '/*.json') ?: [] as $file) {
         }
         $T  = $w['template'];
         $db = $w['db'];
+
+        // LIVE VIEWS NOBODY IS WATCHING: ended here too (a world nobody opens
+        // still has its abandoned sessions closed), and the DELETEs the read
+        // path owed sent — bounded across the whole pass, short each, because
+        // a dead machine must not hold up every other world's tick.
+        $tellLeft -= xeric_heart_streams($slug, $w, $say, $tellLeft);
+        if (!$thinks) continue;
 
         // Fuses next to reminders, and for the same reason: no model, cheap,
         // and a promise must miss on time whether or not the queue is busy.

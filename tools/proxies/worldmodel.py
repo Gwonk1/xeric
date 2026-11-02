@@ -628,6 +628,9 @@ class Session:
                          "reference_used": bool(self.reference and ARGS.upstream_frames and not ARGS.dry_run),
                          "layout_used": "derived" if self.scene["derived"] else True,
                          "frame": [ARGS.width, ARGS.height], "fps": ARGS.fps,
+                         # Each frame is the whole way round (render: one column a
+                         # bearing), so the page lays the tags on it linearly.
+                         "fov": 360, "projection": "equirectangular",
                          "events": "/v1/scenes/%s/events" % self.id}}
 
     def live(self):

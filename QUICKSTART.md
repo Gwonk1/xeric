@@ -109,6 +109,35 @@ with `media.scene.sound.enabled: false`. On a local machine the heart also draws
 the room you are in ahead of time; on a metered one it draws nothing unless the
 template sets `media.scene.prerender`.
 
+**Go live.** A scene machine that streams can show the room moving instead of
+a stored picture. It is off until the world's template says
+`media.scene.stream.enabled: true`; then the owner — never a guest — sees
+**go live** under a still or a panorama, and nothing else ever starts one. A
+machine that bills is refused unless the template also says
+`media.scene.stream.remote: true`, because a streamed hour costs about **$72**
+where drawing the room once costs a dollar or less. A live view is metered by
+the second (`budget.stream_seconds_per_day` caps it), lasts at most
+`media.scene.stream.max_seconds` (300 by default), and ends when you leave,
+the light moves on, the room shuts or the tab goes quiet — the stored
+panorama comes back with a line saying why. While live, the machine is told
+the engine's own events (the weather turning, someone arriving), never what
+you typed. See [`docs/VIEWPORT.md`](docs/VIEWPORT.md#streams).
+
+**Try the world-model scaffold.** `tools/proxies/worldmodel.py` is a scene
+machine on your own desk that streams: it draws the room's layout as a
+low-poly blockout all the way round, applies the engine's events as they come
+and serves the frames as MJPEG — no GPU, no account, no key:
+
+```bash
+python3 tools/proxies/worldmodel.py --port 9100
+XERIC_SCENE_BASE=http://127.0.0.1:9100 XERIC_SCENE_KIND=generic ./xeric
+```
+
+with `media.scene.stream.enabled: true` in the world's template, then **look**
+and **go live**. Loopback is your own electricity, so it is not metered as a
+bill. A real local video model plugs in with `--upstream-frames`; see
+[`tools/proxies/README.md`](tools/proxies/README.md).
+
 **The voices.** Any text-to-speech server that answers `POST /v1/audio/speech`
 (Kokoro-FastAPI on your own machine, or a hosted one) gives every character a
 voice of their own:

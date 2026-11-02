@@ -96,7 +96,7 @@ shipped; some of what it calls built is wired to nothing.
 | Story overlays | Built, filed under Later | multiple overlays, red herrings, a six-stage curve |
 | A world can start in 1873 | Built | tested |
 | More than one model | Built | the per-character pin reaches say, watch, both rooms and the sweeps; each hour in its centre's machine and llama.cpp slot, falling back to the default when the pin is down [9bbecf5] |
-| The viewport | Built | the room in the view [0b75ac0] and walking inside a splat, in our own WebGL renderer [934bbe6]; streaming is not |
+| The viewport | Built | the room in the view [0b75ac0] and walking inside a splat, in our own WebGL renderer [934bbe6]; the live view, the layout and the world-model scaffold [cc381c0]; the people's tags at their bearings over every view, not only the panorama |
 | Voices | Built this week | VOICE.md still has one "not shipped" line to fix |
 | Design rules | Held | the four gendered-prose sites and four more were fixed, and render-test now tokenises every engine file and fails on a gendered pronoun in a string literal, file:line, with a planted pronoun to prove the scan sees [e5a73b4]; the scan's glob takes M3's new files (`director.php`, `sleep.php`) with no change, a staged person's `doing` carries no name, pronoun or reason, and the narrator's lean crosses as handles and a kind key, never words [fc576e6] |
 
@@ -474,6 +474,30 @@ Done when: the same room, described by the same brief, is drawn by a stored
 panorama, a splat and a stream, and a person cannot tell from the diner which
 machine drew it.
 
+**Shipped** ([cc381c0], [a304675], [377bb8a], and the follow-up that closes
+the plan): the layout (`engine/layout.php` — the room as a box, a depth map
+and a segmentation map in pure PHP, never in the fingerprint), the stream
+(`engine/stream.php` — off by default, started only by the owner's "go live",
+refused on a billing machine without `remote: true`, metered by the second,
+told only the engine's own events, ended for one of six reasons with its tail
+metered and the machine told), and the scaffold (`tools/proxies/worldmodel.py`
+— Xeric's state, a blockout drawing it, a real local model at one function).
+The follow-up let a world keep one look **per kind** per room-moment
+(`scene_jobs` keyed by key, fingerprint and `want`, rebuilt once under the
+same rows), put the people's tags over every view at their bearings — a
+still and a stream through their field of view, a splat through its own
+camera each frame — and took the stream sweep's DELETEs off the read path
+onto the heart's pass and the owner's own beats. Done-when, honestly: the
+bet test (`engine/tests/bet-test.php`) passes with real processes on
+loopback — one brief, three machines, the same prompt, layout, seed and
+brief bytes to each, and no branch in Xeric for any of them. **No real world
+model has been run**: the scaffold rasterises a blockout, a real local video
+model plugs in at one function and has not been plugged in, and Genie 4's API
+and the hosted streamers were not exercised. *A person cannot tell which
+machine drew it* is untested by a person: the one way a careful eye could
+tell — tags in a row under the splat, the still and the stream — is closed,
+but nobody has stood in the diner and tried.
+
 ---
 
 ## Cross-cutting work that never gets a milestone
@@ -567,9 +591,9 @@ A number per promise, tracked in the repo.
 | Local-first | cloud calls at runtime: zero; a room drawn on a loopback machine: possible |
 | Cheap surface | lines of code for a new client against the API; the stand page is the first datum |
 | Cost | tokens, renders and clips per simulated world-day, from the benchmark's cost class |
-| Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six. After 934bbe6: about 4,100 assertions — 4,096 `ok` lines over 35 of 36 suites, by the CONTRIBUTING loop with `XERIC_SOLO=0`, smoke excluded — and seven: `wc -l forge/web/*.php engine/*.php forge/forge.php` finds forge.php 5,974, play.php 4,200, play-lib.php 2,920, review-lib.php 2,386, sweeps.php 2,162, review.php 2,094 and room.php 2,041. At fc576e6: about 4,400 — 4,382 `ok` lines over 39 of 40 suites, the same loop, smoke excluded — and eight: the same `wc` finds forge.php 5,974, play.php 4,319, play-lib.php 2,900, constructs.php 2,429, review-lib.php 2,386, sweeps.php 2,226, review.php 2,094 and room.php 2,041) |
+| Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six. After 934bbe6: about 4,100 assertions — 4,096 `ok` lines over 35 of 36 suites, by the CONTRIBUTING loop with `XERIC_SOLO=0`, smoke excluded — and seven: `wc -l forge/web/*.php engine/*.php forge/forge.php` finds forge.php 5,974, play.php 4,200, play-lib.php 2,920, review-lib.php 2,386, sweeps.php 2,162, review.php 2,094 and room.php 2,041. At fc576e6: about 4,400 — 4,382 `ok` lines over 39 of 40 suites, the same loop, smoke excluded — and eight: the same `wc` finds forge.php 5,974, play.php 4,319, play-lib.php 2,900, constructs.php 2,429, review-lib.php 2,386, sweeps.php 2,226, review.php 2,094 and room.php 2,041. With the five milestones shipped: about 4,900 — 4,904 `ok` lines over 43 of 44 suites, the same loop with `XERIC_SOLO=0`, smoke excluded — and nine: forge/forge.php 5,974, forge/web/play.php 4,378, forge/web/play-lib.php 3,032, engine/constructs.php 2,540, engine/room.php 2,422, forge/web/review-lib.php 2,386, engine/sweeps.php 2,347, engine/scene.php 2,176 and forge/web/review.php 2,094; scene.php is the new one, and play.php and play-lib.php the ones to split next) |
 | Time to a world | minutes from install to a forged, reviewed world on a 12B |
-| Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After the docs pass on 0b75ac0: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are. After the M3 docs pass: 14 of 15 — the Narrator, the Director and social constructs now say **Shipped** with what is open, Sleep is a heading of its own, and story overlays alone are still filed under Later though built) |
+| Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After the docs pass on 0b75ac0: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are. After the M3 docs pass: 14 of 15 — the Narrator, the Director and social constructs now say **Shipped** with what is open, Sleep is a heading of its own, and story overlays alone are still filed under Later though built. With M5 shipped: 15 of 16 — "When the world models hold still" says **Shipped**, streaming under the viewport is struck through, the new "What is left" names only what the outside world can supply, and story overlays are still the one out of step) |
 
 ---
 
@@ -627,6 +651,44 @@ shipped it.
     tokens only over a secure context or loopback, the Host pin.
 
 Everything after that is M2.
+
+---
+
+## Where the plan stands
+
+The ninety days are done, and so are the five milestones: the room answers
+back (M1), you can stand in it (M2), the world has intent (M3), two people
+share it (M4), and it does not change shape when a world model draws it (M5).
+Each **Shipped** paragraph above says what its Done-when means honestly, and
+they say the same thing in five ways: **everything a test can reach has been
+reached**, against fakes, stubs, headless Chrome and real processes on
+loopback, and the rest is not code.
+
+What only the outside world can test:
+
+- **A real headset.** The stand page, step inside, the tags as quads, the
+  ray, hold to talk and the voice from where the speaker stands have run in
+  Node and headless Chrome, never on a Quest, an Android XR set or a Vision
+  Pro (M2).
+- **Two real phones.** Two sessions in one room are tested in-process and
+  through real page requests; two devices in a browser have not been tried
+  (M4).
+- **A month with the Director on.** The benchmark lives three days with it
+  off; an encounter it staged, landing in a month left alone, is untested (M3).
+- **A real world model.** The scaffold draws a blockout; a local video model
+  plugs in at one function, and Genie 4's API and the hosted streamers have
+  not been called. The vendor fields in `tools/proxies/` are still marked
+  *verify* (M5).
+- **A person.** "Cannot tell which machine drew it" has had its one visible
+  tell taken away and has never been put to anybody (M5).
+
+The punchlist ([PUNCHLIST.md](PUNCHLIST.md)) holds 45 open lines — 18 found
+since the plan, 9 left by M3, 8 by M4, 10 by M5 — beside 7 deferred by
+decision, 4 unwired, 4 of stale text and 6 about platforms. The roadmap's
+"Next" is now the list above and the punchlist's top: the constructs' three
+broken promises, memories harvested from adult lines that carry no rating,
+one talking table per world, no headset mode inside a splat, SPZ and SOG
+still downloads.
 
 ---
 

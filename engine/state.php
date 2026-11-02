@@ -12,7 +12,9 @@
  *     forever. A world is somebody's months of continuity; there is no schema
  *     change worth a DROP. Every ALTER checks PRAGMA table_info first rather
  *     than trusting a version number that a half-finished migration may have
- *     already bumped.
+ *     already bumped. The one table rebuild (scene_jobs' key, which SQLite
+ *     cannot alter) copies every row before the old table goes, in one
+ *     transaction: a DROP of a shape, never of a row.
  *  2. FETCH IT ALL, THEN LET GO. Every read here uses fetchAll(). A PDO+SQLite
  *     cursor left half-consumed pins the WAL snapshot and turns the next write
  *     into "database is locked" — which shows up an hour later, in a sweep, on
@@ -368,6 +370,51 @@ function xeric_state_migrate(PDO $db): void
     foreach (xeric_state_alters() as [$table, $column, $decl]) {
         xeric_state_add_column($db, $table, $column, $decl);
     }
+    xeric_state_scene_jobs_want($db);
+}
+
+/**
+ * ONE LOOK PER KIND PER ROOM-MOMENT. scene_jobs shipped as UNIQUE(key,
+ * fingerprint), which kept a world from holding a panorama and a splat of
+ * the same moment side by side. SQLite cannot alter a constraint, so the
+ * table is rebuilt ONCE, under the same rows: the new CREATE is the old one
+ * as SQLite stored it (every ALTER since included, so no column is lost to a
+ * list kept by hand) with `want` added to the key; every row is copied by id;
+ * the old table goes only after its copy is in, inside one IMMEDIATE
+ * transaction, so a reader sees either the old table or the new one and a
+ * second process migrating at the same moment finds it already done. This is
+ * the one DROP in this file, and it drops nothing a world remembers: the rows
+ * are the same rows. Guarded by the stored SQL itself, never a version number.
+ */
+function xeric_state_scene_jobs_want(PDO $db): void
+{
+    $sqlOf = function () use ($db): string {
+        $q = $db->query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scene_jobs'");
+        $r = $q->fetchAll();
+        $q->closeCursor();
+        return $r ? (string)$r[0]['sql'] : '';
+    };
+    $old = 'UNIQUE(key, fingerprint)';
+    if (!str_contains($sqlOf(), $old) || !in_array('want', xeric_state_columns($db, 'scene_jobs'), true)) return;
+    if ($db->inTransaction()) return;   // never inside somebody else's; the next open does it
+    $db->exec('BEGIN IMMEDIATE');
+    try {
+        $sql = $sqlOf();
+        if (str_contains($sql, $old)) {
+            $next = (string)preg_replace('/^CREATE TABLE\s+"?scene_jobs"?/i', 'CREATE TABLE scene_jobs_next', $sql, 1);
+            $next = str_replace($old, 'UNIQUE(key, fingerprint, want)', $next);
+            $db->exec('DROP TABLE IF EXISTS scene_jobs_next');   // only ever a half-made copy of this very step
+            $db->exec($next);
+            $db->exec('INSERT INTO scene_jobs_next SELECT * FROM scene_jobs');
+            $db->exec('DROP TABLE scene_jobs');
+            $db->exec('ALTER TABLE scene_jobs_next RENAME TO scene_jobs');
+            $db->exec('CREATE INDEX IF NOT EXISTS idx_scene_jobs_key ON scene_jobs(key, status)');
+        }
+        $db->exec('COMMIT');
+    } catch (Throwable $e) {
+        $db->exec('ROLLBACK');
+        throw $e;
+    }
 }
 
 /**
@@ -482,6 +529,13 @@ function xeric_state_alters(): array
         // a room Mabel has left would be sent with her words and without her
         // body. '' is every row from before, and reads as "no layout kept".
         ['scene_jobs', 'layout', "TEXT NOT NULL DEFAULT ''"],
+        // THE KIND A LOOK WAS ASKED AS, when it was not the template's first:
+        // pano | image | splat | glb | viewer. '' is the template's preferred
+        // kind, whichever that is — every row from before, and every row asked
+        // without one — so nothing on disk changes meaning. Part of the key
+        // (xeric_state_scene_jobs_want): a panorama and a splat of one moment
+        // are two rows, not one.
+        ['scene_jobs', 'want', "TEXT NOT NULL DEFAULT ''"],
     ];
 }
 

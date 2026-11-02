@@ -217,6 +217,21 @@
   }
 
   /**
+   * A point in the splat's frame through a camera: x and y -1..1 across the
+   * viewport (y up), its depth ahead, and hidden when behind you or off the
+   * frame. fx, fy, W, H in the same pixels (the draw's own).
+   */
+  function project(view, p, fx, fy, W, H) {
+    var v = view, x = +p[0] || 0, y = +p[1] || 0, z = +p[2] || 0;
+    var cx = v[0] * x + v[4] * y + v[8] * z + v[12];
+    var cy = v[1] * x + v[5] * y + v[9] * z + v[13];
+    var cz = v[2] * x + v[6] * y + v[10] * z + v[14];
+    if (cz > -0.1) return { x: cx < 0 ? -2 : 2, y: 0, depth: -cz, hidden: true };
+    var nx = fx * cx / -cz / (W / 2), ny = fy * cy / -cz / (H / 2);
+    return { x: nx, y: ny, depth: -cz, hidden: Math.abs(nx) > 1 || Math.abs(ny) > 1 };
+  }
+
+  /**
    * THE THREE-METRE RULE. You came into this room through its door, and you
    * may walk about in it — three metres any way from where you came in — but
    * not out of it: the eye is pulled back onto that sphere. Leaving the room
@@ -494,11 +509,15 @@
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);     // back to front, premultiplied
       gl.useProgram(prog);
-      gl.uniformMatrix4fv(gl.getUniformLocation(prog, 'u_view'), false, viewMatrix(S.eye, S.yaw, S.pitch));
+      var vm = viewMatrix(S.eye, S.yaw, S.pitch);
+      gl.uniformMatrix4fv(gl.getUniformLocation(prog, 'u_view'), false, vm);
       gl.uniform2f(gl.getUniformLocation(prog, 'u_focal'), fx, fy);
       gl.uniform2f(gl.getUniformLocation(prog, 'u_viewport'), W, H);
       C.draw(data.n);
       S.frames = (S.frames || 0) + 1;
+      // THE FRAME HOOK: the camera this frame was drawn with, for whatever
+      // lies over the canvas (xeric-view.js puts the people's tags there).
+      if (opts.onFrame) { try { opts.onFrame({ view: vm, fx: fx, fy: fy, W: W, H: H, eye: S.eye, yaw: S.yaw, pitch: S.pitch }); } catch (e) {} }
     }
     function ask() {
       if (dead || raf) return;
@@ -614,7 +633,7 @@
 
   root.XericSplat = {
     mount: mount, parse: parse, parsePly: parsePly, parseSplat: parseSplat, sniff: sniff,
-    cov3d: cov3d, cov2d: cov2d, forward: forward, viewMatrix: viewMatrix, clampEye: clampEye,
+    cov3d: cov3d, cov2d: cov2d, forward: forward, viewMatrix: viewMatrix, project: project, clampEye: clampEye,
     depthSort: depthSort, context: context, VS: VS, FS: FS,
     CAP: CAP, CAP_LOW_MEMORY: CAP_LOW_MEMORY, CAP_NO_WORKER: CAP_NO_WORKER, RADIUS: RADIUS, MAX_BYTES: MAX_BYTES
   };

@@ -1264,9 +1264,27 @@ function xeric_scene_http(string $method, string $url, array $auth, ?array $body
     return ['_http' => $status] + $j;
 }
 
+/**
+ * THE HTTP SEAM: every network call this file and engine/stream.php make
+ * passes through xeric_scene_get, and a test may watch it. $fn(url, http)
+ * returns [body, status] to answer in the network's place, or null to let the
+ * call through; false clears it. Never set in production.
+ */
+function xeric_scene_http_seam($fn = null): ?callable
+{
+    static $seam = null;
+    if ($fn === false) $seam = null;
+    elseif ($fn !== null) $seam = $fn;
+    return $seam;
+}
+
 /** file_get_contents with the status line read back: [body or false, status or 0]. */
 function xeric_scene_get(string $url, array $http): array
 {
+    if (($seam = xeric_scene_http_seam()) !== null) {
+        $r = $seam($url, $http);
+        if (is_array($r)) return [$r[0] ?? false, (int)($r[1] ?? 0)];
+    }
     $raw  = @file_get_contents($url, false, stream_context_create(['http' => $http]));
     $hdrs = function_exists('http_get_last_response_headers')
           ? (array)(http_get_last_response_headers() ?? [])
@@ -1440,11 +1458,42 @@ function xeric_scene_jobs(PDO $db, ?string $status = null, ?string $channel = nu
     return $rows;
 }
 
-/** The one job for this room looking (or sounding) exactly like this, done or not. */
-function xeric_scene_of(PDO $db, string $key, string $fingerprint, string $channel = 'look'): ?array
+/**
+ * The kind a look is filed under (scene_jobs.want): '' for the template's
+ * first kind — the class every row from before belongs to, and what every
+ * caller that names no kind means — or the other kind itself. A word that is
+ * not a look's kind is the template's first, never an error.
+ */
+function xeric_scene_want(array $t, string $kind): string
 {
-    $st = $db->prepare('SELECT * FROM scene_jobs WHERE key = ? AND fingerprint = ? AND channel = ? LIMIT 1');
-    $st->execute([$key, $fingerprint, $channel]);
+    $kind = strtolower(trim($kind));
+    $cfg  = xeric_scene_config($t);
+    if (!in_array($kind, ['pano', 'image', 'splat', 'glb', 'viewer'], true)) return '';
+    return $kind === ($cfg['kinds'][0] ?? '') ? '' : $kind;
+}
+
+/** What a look filed under $want asks a machine for: that kind first, then the template's. */
+function xeric_scene_kinds_for(array $cfg, string $want): array
+{
+    if ($want === '' || $want === 'audio') return $cfg['kinds'];
+    return array_values(array_unique(array_merge([$want], $cfg['kinds'])));
+}
+
+/** A want as the table keeps it: one of the look kinds, or '' (the template's first). */
+function xeric_scene_want_word(string $want): string
+{
+    $want = strtolower(trim($want));
+    return in_array($want, ['pano', 'image', 'splat', 'glb', 'viewer'], true) ? $want : '';
+}
+
+/**
+ * The one job for this room looking (or sounding) exactly like this, done or
+ * not, asked as $want ('' the template's first kind: xeric_scene_want).
+ */
+function xeric_scene_of(PDO $db, string $key, string $fingerprint, string $channel = 'look', string $want = ''): ?array
+{
+    $st = $db->prepare('SELECT * FROM scene_jobs WHERE key = ? AND fingerprint = ? AND channel = ? AND want = ? LIMIT 1');
+    $st->execute([$key, $fingerprint, $channel, xeric_scene_want_word($want)]);
     $rows = $st->fetchAll();
     $st->closeCursor();
     return $rows ? $rows[0] : null;
@@ -1457,11 +1506,11 @@ function xeric_scene_of(PDO $db, string $key, string $fingerprint, string $chann
  * rides on every row so the viewer can be chosen without sniffing bytes; the
  * channel keeps a sound out of a picture frame.
  */
-function xeric_scene_latest(PDO $db, string $key, string $channel = 'look'): ?array
+function xeric_scene_latest(PDO $db, string $key, string $channel = 'look', string $want = ''): ?array
 {
-    $st = $db->prepare("SELECT * FROM scene_jobs WHERE key = ? AND channel = ? AND status = 'done'
+    $st = $db->prepare("SELECT * FROM scene_jobs WHERE key = ? AND channel = ? AND want = ? AND status = 'done'
                         ORDER BY done_at DESC, id DESC LIMIT 1");
-    $st->execute([$key, $channel]);
+    $st->execute([$key, $channel, xeric_scene_want_word($want)]);
     $rows = $st->fetchAll();
     $st->closeCursor();
     return $rows ? $rows[0] : null;
@@ -1476,11 +1525,11 @@ function xeric_scene_latest(PDO $db, string $key, string $channel = 'look'): ?ar
  *
  * @return array<string,array> light => row
  */
-function xeric_scene_day(PDO $db, string $key): array
+function xeric_scene_day(PDO $db, string $key, string $want = ''): array
 {
-    $st = $db->prepare("SELECT * FROM scene_jobs WHERE key = ? AND channel = 'look' AND status = 'done'
+    $st = $db->prepare("SELECT * FROM scene_jobs WHERE key = ? AND channel = 'look' AND want = ? AND status = 'done'
                         AND light != '' ORDER BY done_at DESC, id DESC");
-    $st->execute([$key]);
+    $st->execute([$key, xeric_scene_want_word($want)]);
     $newest = [];
     foreach ($st->fetchAll() as $row) $newest[(string)$row['light']] ??= $row;   // newest first: first seen wins
     $st->closeCursor();
@@ -1496,9 +1545,12 @@ function xeric_scene_day(PDO $db, string $key): array
  * a look by passing the wrong word. A look also writes down its light, which
  * is what the day strip reads.
  *
+ * $want is the kind it is asked as ('' the template's first: xeric_scene_want);
+ * a sound has none.
+ *
  * @return array{id:int,added:bool}
  */
-function xeric_scene_insert(PDO $db, array $brief): array
+function xeric_scene_insert(PDO $db, array $brief, string $want = ''): array
 {
     $none = ['id' => 0, 'added' => false];
     if (array_key_exists('enabled', $brief) && !$brief['enabled']) return $none;
@@ -1517,25 +1569,26 @@ function xeric_scene_insert(PDO $db, array $brief): array
     // prompt: what is rendered later is what was asked for now.
     $layout = $channel === 'look' && is_array($brief['layout'] ?? null)
             ? (string)json_encode($brief['layout'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
-    $ins = $db->prepare('INSERT OR IGNORE INTO scene_jobs (key, fingerprint, channel, light, prompt, created_at, rating, layout)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    $want = $channel === 'look' ? xeric_scene_want_word($want) : '';
+    $ins = $db->prepare('INSERT OR IGNORE INTO scene_jobs (key, fingerprint, channel, light, prompt, created_at, rating, layout, want)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $ins->execute([$key, $fp, $channel, $light, (string)($brief['prompt'] ?? ''), xeric_state_time(), xeric_state_rating(),
-                   $layout]);
+                   $layout, $want]);
     if ($ins->rowCount() === 1) return ['id' => (int)$db->lastInsertId(), 'added' => true];
-    $row = xeric_scene_of($db, $key, $fp, $channel);
+    $row = xeric_scene_of($db, $key, $fp, $channel, $want);
     return ['id' => $row !== null ? (int)$row['id'] : 0, 'added' => false];
 }
 
 /**
  * Ask for this room to be rendered (or heard). IDEMPOTENT: one row per (key,
- * fingerprint), so a client may ask on every glance and the table keeps one
+ * fingerprint, want) — a panorama and a splat of one moment are two — so a client may ask on every glance and the table keeps one
  * row; the id comes back either way. 0 when the brief cannot be a job — a
  * world that turned scenes (or sound) off, a brief with no key or fingerprint
  * to file it under, or one whose channel and fingerprint disagree.
  */
-function xeric_scene_enqueue(PDO $db, array $brief): int
+function xeric_scene_enqueue(PDO $db, array $brief, string $want = ''): int
 {
-    return xeric_scene_insert($db, $brief)['id'];
+    return xeric_scene_insert($db, $brief, $want)['id'];
 }
 
 /** The most a previous view may weigh and still ride along with the next request. */
@@ -1548,17 +1601,20 @@ const XERIC_SCENE_REFERENCE_CAP = 8 * 1024 * 1024;
  * from the disk is passed over for the one before it, five deep at most,
  * because conditioning on an older view of the same room still beats
  * conditioning on none. A sound, a splat, a viewer link — none of them is a
- * picture, and none rides along.
+ * picture, and none rides along. $want null is a picture of the room asked as
+ * any kind — a splat request is still helped by the panorama before it; a
+ * string narrows to that class (xeric_scene_want).
  *
  * @return ?array{bytes:string,mime:string,fingerprint:string}
  */
 function xeric_scene_reference(PDO $db, string $key, string $scenesDir, int $cap = XERIC_SCENE_REFERENCE_CAP,
-                               ?string $rating = null): ?array
+                               ?string $rating = null, ?string $want = null): ?array
 {
     $st = $db->prepare("SELECT fingerprint, file, mime, rating FROM scene_jobs
                         WHERE key = ? AND channel = 'look' AND status = 'done' AND file != ''
-                          AND mime LIKE 'image/%' ORDER BY done_at DESC, id DESC LIMIT 50");
-    $st->execute([$key]);
+                          AND mime LIKE 'image/%'" . ($want !== null ? ' AND want = ?' : '')
+                     . " ORDER BY done_at DESC, id DESC LIMIT 50");
+    $st->execute($want !== null ? [$key, xeric_scene_want_word($want)] : [$key]);
     $rows = $st->fetchAll();
     $st->closeCursor();
     // NEVER CONDITIONED ON A PICTURE ITS OWN VIEWER COULD NOT BE SHOWN: a view
@@ -1718,9 +1774,11 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
                                                    : 'sound is turned off for this world';
     }
 
-    $optsFor = fn(string $channel): array => $channel === 'sound'
+    // A look asked as another kind than the template's first asks for that
+    // kind first (scene_jobs.want); '' — every row from before — asks as today.
+    $optsFor = fn(string $channel, string $want = ''): array => $channel === 'sound'
         ? ['channel' => 'sound', 'kinds' => ['audio'], 'quality' => $cfg['quality']]
-        : ['channel' => 'look', 'kinds' => $cfg['kinds'], 'quality' => $cfg['quality'],
+        : ['channel' => 'look', 'kinds' => xeric_scene_kinds_for($cfg, $want), 'quality' => $cfg['quality'],
            'negative' => $cfg['negative'], 'layout_images' => xeric_layout_images($t)];
 
     foreach ($waiting as $job) {
@@ -1728,7 +1786,7 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
         try {
             $r = xeric_scene_render($endpoint, ['key' => (string)$job['key'], 'channel' => $channel,
                                                 'fingerprint' => (string)$job['fingerprint']],
-                                    $optsFor($channel) + ['job' => (string)$job['remote_job']]);
+                                    $optsFor($channel, (string)($job['want'] ?? '')) + ['job' => (string)$job['remote_job']]);
             if ($r['pending'] !== null) {
                 // Still making it. A new job id (some machines re-issue) is
                 // kept; the clock on the wait is not reset.
@@ -1783,7 +1841,7 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
                 if (is_array($kept)) $brief['layout'] = $kept;
                 else unset($brief['layout']);
             }
-            $opts = $optsFor($channel);
+            $opts = $optsFor($channel, (string)($job['want'] ?? ''));
             $ours = [];
             if ($channel === 'look' && xeric_scene_takes_reference($endpoint)) {
                 // At the lower of who asked for it and what it is drawn at.
@@ -1866,7 +1924,12 @@ function xeric_scene_file(array $job, array $r): string
     if (str_starts_with($fp, 'sound:')) $fp = substr($fp, 6);
     return (xeric_scene_channel_of($job) === 'sound' ? 'sound-' : 'scene-')
          . preg_replace('/[^a-z0-9_-]+/i', '_', (string)$job['key']) . '-'
-         . substr((string)preg_replace('/[^a-z0-9]+/i', '', $fp), 0, 12) . xeric_scene_ext($r['mime'], $r['kind']);
+         . substr((string)preg_replace('/[^a-z0-9]+/i', '', $fp), 0, 12)
+         // A look asked as a second kind keeps its own file: a still and a
+         // panorama of one moment are both .png. The template's first kind
+         // keeps the name it always had.
+         . (($w = xeric_scene_want_word((string)($job['want'] ?? ''))) !== '' ? '-' . $w : '')
+         . xeric_scene_ext($r['mime'], $r['kind']);
 }
 
 /**

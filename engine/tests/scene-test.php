@@ -921,6 +921,39 @@ ok('an SPZ is kept exactly as it came, under .splat, and the meta says why it wa
     && str_contains((string)(json_decode((string)$spl['meta'], true)['ply'] ?? ''), 'SPZ'), json_encode($spl));
 $db->exec('DELETE FROM scene_jobs');
 
+// ONE LOOK PER KIND PER ROOM-MOMENT: the template's panorama and a splat of
+// the same fingerprint are two rows, each asked for its own kind first, each
+// on its own file; the sidebar's lookups see only the template's.
+$wB  = xeric_scene_brief($T, $db, 'beck_hardware');
+$wP  = xeric_scene_enqueue($db, $wB);
+$wS  = xeric_scene_enqueue($db, $wB, xeric_scene_want($T, 'splat'));
+$wP2 = xeric_scene_enqueue($db, $wB, xeric_scene_want($T, 'pano'));
+ok('want: a panorama and a splat of one fingerprint are two rows; the template\'s first kind is the default class',
+    $wP > 0 && $wS > 0 && $wP !== $wS && $wP2 === $wP && xeric_scene_want($T, 'pano') === ''
+    && xeric_scene_want($T, 'nonsense') === '' && count(xeric_scene_jobs($db)) === 2);
+$wAsked = [];
+$wStub = ['stub' => function ($tag, $b, $o) use (&$wAsked, $three) {
+    $wAsked[] = $o['kinds'] ?? [];
+    return ($o['kinds'][0] ?? '') === 'splat'
+        ? ['kind' => 'splat', 'bytes' => $three, 'mime' => 'application/octet-stream']
+        : ['kind' => 'pano', 'b64' => base64_encode("\x89PNG\r\n\x1a\n" . str_repeat("\0", 16)), 'mime' => 'image/png'];
+}];
+xeric_scene_reap($T, $db, $dir, $wStub, 2);
+$rP = xeric_scene_of($db, 'beck_hardware', $wB['fingerprint']);
+$rS = xeric_scene_of($db, 'beck_hardware', $wB['fingerprint'], 'look', 'splat');
+ok('want: each row asks its own kind first — the template\'s list as today, the splat ahead of it',
+    ($wAsked[0] ?? null) === xeric_scene_config($T)['kinds'] && ($wAsked[1][0] ?? '') === 'splat', json_encode($wAsked));
+ok('want: they coexist, done, on two files',
+    $rP['status'] === 'done' && $rP['kind'] === 'pano' && $rS['status'] === 'done' && $rS['kind'] === 'splat'
+    && $rP['file'] !== $rS['file'] && str_contains((string)$rS['file'], '-splat') && !str_contains((string)$rP['file'], '-pano')
+    && is_file($dir . '/' . $rP['file']) && is_file($dir . '/' . $rS['file']), json_encode([$rP['file'], $rS['file']]));
+ok('want: latest and the day keep to the template\'s kind unless asked for another',
+    (int)xeric_scene_latest($db, 'beck_hardware')['id'] === $wP
+    && (int)xeric_scene_latest($db, 'beck_hardware', 'look', 'splat')['id'] === $wS
+    && array_column(xeric_scene_day($db, 'beck_hardware', 'splat'), 'id') == [$wS]
+    && !in_array($wS, array_map('intval', array_column(xeric_scene_day($db, 'beck_hardware'), 'id')), true));
+$db->exec('DELETE FROM scene_jobs');
+
 // ---------------------------------------------------------------------------
 echo "\n# ahead of being looked at\n";
 // ---------------------------------------------------------------------------
@@ -1074,6 +1107,20 @@ $was  = xeric_scene_latest($mig, 'bluebird');
 ok('a table from before channels grows them, and every old row reads as a look of unrecorded light',
     in_array('channel', $cols, true) && in_array('light', $cols, true)
     && $was !== null && $was['channel'] === 'look' && $was['light'] === '', json_encode($cols));
+$sqlOf = fn(PDO $d) => (string)$d->query("SELECT sql FROM sqlite_master WHERE name = 'scene_jobs'")->fetchColumn();
+ok('want: the old table is rebuilt once under the same rows, keyed (key, fingerprint, want), and its row reads want \'\'',
+    in_array('want', $cols, true) && str_contains($sqlOf($mig), 'UNIQUE(key, fingerprint, want)')
+    && (int)$was['id'] === 1 && $was['want'] === '' && $was['file'] === 'scene-bluebird-f00d.png'
+    && (int)$mig->query('SELECT COUNT(*) FROM scene_jobs')->fetchColumn() === 1, $sqlOf($mig));
+ok('want: an old row still resolves where every caller that names no kind looks',
+    (int)(xeric_scene_of($mig, 'bluebird', 'f00d')['id'] ?? 0) === 1 && xeric_scene_of($mig, 'bluebird', 'f00d', 'look', 'splat') === null);
+$mig->exec("INSERT INTO scene_jobs (key, fingerprint, want, created_at) VALUES ('bluebird', 'f00d', 'splat', 3)");
+$mig = null;
+$mig = xeric_state_open($oldP);
+ok('want: opening again rebuilds nothing, and the index still stands',
+    (int)$mig->query('SELECT COUNT(*) FROM scene_jobs')->fetchColumn() === 2
+    && (int)$mig->query("SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_scene_jobs_key'")->fetchColumn() === 1
+    && (int)$mig->query("SELECT COUNT(*) FROM sqlite_master WHERE name = 'scene_jobs_next'")->fetchColumn() === 0);
 $mig = null;
 foreach ([$oldP, $oldP . '-wal', $oldP . '-shm'] as $f) @unlink($f);
 
@@ -1454,6 +1501,13 @@ $sw = xeric_stream_sweep($dbL, $wall + 640, ['endpoint' => $streamer,
 $r7 = xeric_stream_get($dbL, $id7);
 $m7 = json_decode((string)$r7['meta'], true);
 ok('stream: the sweep ends a live view nobody beats for', $sw === 1 && $r7['reason'] === 'the page went away');
+ok('stream: but tells no machine — it runs on a read path — and writes down the DELETE it owes',
+    array_values(array_filter($heard, fn($h) => $h[0] === 'end')) === [] && ($m7['tell_owed'] ?? null) === true
+    && !isset($m7['end_confirmed']), json_encode([$heard, $m7]));
+$told7 = xeric_stream_pass($Ts, $dbL, $streamer, 4, $wall + 641);
+$m7 = json_decode((string)xeric_stream_get($dbL, $id7)['meta'], true);
+ok('stream: the heart\'s pass sends what was owed, once', $told7 === ['ended' => 0, 'told' => 1]
+    && xeric_stream_tell_owed($dbL, $streamer, 4, $wall + 642) === 0, json_encode($told7));
 ok('stream: and DELETEs it on the machine — a closed tab must not leave a costly session drawing to its own max_seconds',
     array_values(array_filter($heard, fn($h) => $h[0] === 'end' && $h[2]['session'] === 'sess-1')) !== []
     && ($m7['end_confirmed'] ?? null) === true && !isset($m7['unconfirmed_end']), json_encode([$heard, $m7]));
@@ -1469,6 +1523,7 @@ $asked8 = [];
 $elsewhere = ['base' => 'https://another.example', 'key' => 'k-another', 'stub' => function ($tag, $b, $o) use (&$asked8) {
     $asked8[] = $tag; return []; }];
 xeric_stream_sweep($dbL, $wall + 740, ['endpoint' => $elsewhere]);
+xeric_stream_tell_owed($dbL, $elsewhere, 4, $wall + 740);
 $m8 = json_decode((string)xeric_stream_get($dbL, $id8)['meta'], true);
 ok('stream: the sweep tells the machine the session is on, not the one chosen since (whose key goes nowhere else)',
     $id8 > 0 && $asked8 === [] && ($m8['end_confirmed'] ?? null) === false, json_encode([$asked8, $m8]));

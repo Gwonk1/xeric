@@ -30,7 +30,7 @@ putenv('XERIC_DATA_DIR=' . $tmp);
 putenv('XERIC_WORLDS_DIR=' . $tmp . '/worlds');
 putenv('XERIC_LOCAL_BASE=http://127.0.0.1:1');
 foreach (['XERIC_SCENE_BASE', 'XERIC_SCENE_KEY', 'XERIC_SCENE_KIND', 'XERIC_SCENE_AUTH',
-          'XERIC_IMAGE_BASE', 'XERIC_IMAGE_KEY'] as $k) putenv($k);
+          'XERIC_IMAGE_BASE', 'XERIC_IMAGE_KEY', 'XERIC_SOLO'] as $k) putenv($k);   // solo: the server is this machine
 
 require_once __DIR__ . '/../play-lib.php';
 require_once __DIR__ . '/../api-lib.php';
@@ -115,7 +115,8 @@ ok('HLS is an empty slot in the live box: the session in data attributes, the st
     str_contains($h, 'class="lookmain lookstreambox"') && str_contains($h, '<div class="lookstreamslot"></div>')
     && str_contains($h, 'data-url="https://scenes.example:8443/live/s-hls/index.m3u8"') && str_contains($h, 'data-protocol="hls"')
     && str_contains($h, 'data-fallback="https://scenes.example:8443/live/s-hls.mjpg"') && str_contains($h, 'data-poster="scene.php?')
-    && !str_contains($h, "lookpano") && !str_contains($h, "data-golive") && str_contains($h, "data-liveend"), $h);
+    && !str_contains($h, "lookpano") && !str_contains($h, "data-golive") && str_contains($h, "data-liveend")
+    && str_contains($h, 'data-fov="90" data-proj="perspective"'), $h);
 // A repaint while live must not open a second connection before the client
 // moves the one it holds: no <video>, no <img> of the stream, no src to it.
 $noSrc = fn(string $h): bool => !preg_match('#src="https://scenes\.example:8443#', $h) && !str_contains($h, '<video')
@@ -150,6 +151,72 @@ ok('MJPEG too: the picture is the client\'s to make, once', str_contains($h, 'da
 xeric_stream_end($live['db'], xeric_scene_endpoint(), (int)xeric_stream_live($live['db'])['id'], 'you ended it');
 ok('every end told the machine on the session\'s row', $stubCalls === ['stream', 'end', 'stream', 'end'], json_encode($stubCalls));
 xeric_scene_source(fn() => null);
+
+echo "\n# the people over every view\n";
+
+ok('a flat frame says how wide it sees: ninety unless the answer names its own, and a strip says so',
+    xeric_play_look_fov_attrs([]) === ' data-fov="90" data-proj="perspective"'
+    && xeric_play_look_fov_attrs(['fov' => 360, 'projection' => 'equirectangular']) === ' data-fov="360" data-proj="equirectangular"'
+    && xeric_play_look_fov_attrs(['hfov' => '70.5']) === ' data-fov="70.5" data-proj="perspective"'
+    && xeric_play_look_fov_attrs(['fov' => 'wide']) === ' data-fov="90" data-proj="perspective"');
+$pb = xeric_scene_brief($live['template'], $live['db']);
+$pl = json_decode(xeric_play_look_places($pb), true);
+$ok = is_array($pl) && $pb['who'] !== [];
+foreach ($pb['who'] as $p) {
+    $q = $pl[(string)$p['handle']] ?? null;
+    // In the splat's frame (-z ahead, x right): the bearing back out of it is the engine's own.
+    $bear = $q === null ? null : (int)round(fmod(rad2deg(atan2($q[0], -$q[2])) + 360, 360));
+    if ($q === null || abs((($bear - (int)$p['bearing'] + 540) % 360) - 180) > 1 || $q[1] >= 0) $ok = false;
+}
+ok('a splat is handed each person at their bearing from the layout, in its own frame, below the eye', $ok,
+    json_encode([$pl, array_column($pb['who'], 'bearing', 'handle')]));
+
+echo "\n# the sweep, off the read path\n";
+
+// A view abandoned a minute ago on a real address nobody answers at. The
+// sidebar ends it and meters it, and must not wait on that address to do so.
+$net = [];
+xeric_scene_http_seam(function (string $url, array $http) use (&$net) {
+    $net[] = [(string)($http['method'] ?? 'GET'), $url, (int)($http['timeout'] ?? 0)];
+    return ['', 204];
+});
+xeric_stream_schema($live['db']);
+$live['db']->prepare("INSERT INTO scene_streams (key, machine, session, url, protocol, started_at, last_beat, ends_at)
+                      VALUES ('bluebird', 'http://127.0.0.1:9', 'gone-1', 'http://127.0.0.1:9/gone-1.m3u8', 'hls', ?, ?, ?)")
+           ->execute([time() - 70, time() - 60, time() - 60]);   // its end its last beat: no tail to meter into the ledger below
+$goneId = (int)$live['db']->lastInsertId();
+$hg = xeric_play_look_html($live['template'], $live['db'], null, 'live-town', true);
+$gone = xeric_stream_get($live['db'], $goneId);
+ok('the sidebar render ends a view nobody beats for, and makes no network call doing it',
+    $net === [] && $gone['status'] === 'ended' && str_contains($hg, 'the page went away')
+    && (json_decode((string)$gone['meta'], true)['tell_owed'] ?? null) === true, json_encode([$net, $gone]));
+$pass = xeric_stream_pass($live['template'], $live['db'], null, 4);
+ok('the heart\'s pass sends the DELETE it owed, to the address on the row, short',
+    $pass['told'] === 1 && count($net) === 1 && $net[0][0] === 'DELETE' && $net[0][1] === 'http://127.0.0.1:9/v1/scenes/gone-1'
+    && $net[0][2] === XERIC_STREAM_TELL_TIMEOUT
+    && (json_decode((string)xeric_stream_get($live['db'], $goneId)['meta'], true)['end_confirmed'] ?? null) === true,
+    json_encode([$pass, $net]));
+ok('and only once', xeric_stream_pass($live['template'], $live['db'], null, 4)['told'] === 0 && count($net) === 1);
+// Bounded per pass: five owed, four sent, the fifth next time.
+foreach (range(1, 5) as $i) {
+    $live['db']->prepare("INSERT INTO scene_streams (key, machine, session, url, protocol, started_at, last_beat, ends_at, status, ended_at, meta)
+                          VALUES ('bluebird', 'http://127.0.0.1:9', ?, 'u', 'hls', ?, ?, ?, 'ended', ?, '{\"tell_owed\":true}')")
+               ->execute(['owed-' . $i, time() - 99, time() - 99, time() + 600, time() - 90 + $i]);
+}
+$net = [];
+ok('the pass is bounded: XERIC_STREAM_TELL_PER_TICK at most, then the rest next pass',
+    xeric_stream_pass($live['template'], $live['db'], null)['told'] === XERIC_STREAM_TELL_PER_TICK
+    && count($net) === XERIC_STREAM_TELL_PER_TICK && xeric_stream_pass($live['template'], $live['db'], null)['told'] === 1);
+xeric_scene_http_seam(false);
+$live['db']->exec("DELETE FROM scene_streams WHERE session = 'gone-1' OR session LIKE 'owed-%'");
+$heartSrc  = (string)file_get_contents($WEB . '/heart.php');
+$streamSrc = (string)file_get_contents($WEB . '/stream.php');
+ok('the heart runs the pass for every world it opens, with one bound across the pass, before it asks for a model',
+    str_contains($heartSrc, 'xeric_stream_pass(') && str_contains($heartSrc, '$tellLeft -= xeric_heart_streams(')
+    && strpos($heartSrc, 'xeric_heart_streams($slug') < strpos($heartSrc, 'if (!$thinks) continue;'));
+ok('and the owner\'s own beat and end send what is owed; the sidebar sends nothing',
+    substr_count($streamSrc, '$owed();') === 2 && str_contains($streamSrc, 'xeric_stream_tell_owed(')
+    && !str_contains((string)file_get_contents($WEB . '/play-view.php'), 'xeric_stream_tell_owed('));
 
 echo "\n# the policy, as a real server sends it\n";
 
@@ -340,7 +407,8 @@ const made = [];                              // every element document.createEl
 class El {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null; this.attrs = {};
     this.dataset = {}; this.className = ''; this.textContent = ''; this.srcObject = null; this.paused = true;
-    this.on = {}; this.loads = 0; this.naturalWidth = 0;
+    this.on = {}; this.loads = 0; this.naturalWidth = 0; this.hidden = false; this.style = {};
+    this.clientWidth = 640; this.clientHeight = 360; this.offsetLeft = 0; this.offsetTop = 0;
     if (this.tagName === 'VIDEO') this.canPlayType = (t) => HLS && t === 'application/vnd.apple.mpegurl' ? 'maybe' : ''; }
   setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'src') { this._src = String(v); this.everSrc = true; } }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
@@ -357,6 +425,10 @@ class El {
   querySelector(sel) {
     return this.all().find((e) => sel.split(',').some((s) => { s = s.trim();
       const [t, c] = s.split('.'); return (!t || e.tagName === t.toUpperCase()) && (!c || e.className.split(' ').includes(c)); })) || null;
+  }
+  querySelectorAll(sel) {
+    return this.all().filter((e) => sel.split(',').some((s) => { s = s.trim();
+      const [t, c] = s.split('.'); return (!t || e.tagName === t.toUpperCase()) && (!c || e.className.split(' ').includes(c)); }));
   }
   play() { this.paused = false; return Promise.resolve(); }
   pause() { this.paused = true; }
@@ -590,6 +662,34 @@ global.MediaStream = class { constructor() { this.tracks = []; } addTrack(t) { t
   ok('stand: a WHEP that fails ends the session as connect_failed before the pano, never beaten',
     !L4.alive && bodies('beat').length === 0 && bodies('end').length === 1 && bodies('end')[0].why === 'connect_failed'
     && sEnd[2] === 'connect_failed', JSON.stringify(bodies()));
+
+  // -- the people over the live picture, at their bearings --
+  // The row the server sends under the stream becomes the overlay once there
+  // is a picture, through the field of view the machine said (here 90°).
+  XV.unmount(); posts.length = 0;
+  global.fetch = (url, init) => { posts.push([url, init]); return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: 1, live: true }) }); };
+  const bt = mkBox('mjpeg', 'https://m.example/t.mjpg', '', '31');
+  Object.assign(bt.box.dataset, { fov: '90', proj: 'perspective' });
+  const trow = bt.box.appendChild(new El('div')); trow.className = 'looktagrow';
+  [['ruth', 30], ['theo', 60]].forEach(([h, b]) => { const t = trow.appendChild(new El('button')); t.className = 'looktag';
+    t.dataset.h = h; t.dataset.b = String(b); });
+  const st31 = XV.mount({ kind: 'stream', box: bt.box, beatS: 0.02 });
+  const tim = bt.box.querySelector('img.lookstreamimg');
+  tim.naturalWidth = 640; tim.fire('load');
+  await wait(20);
+  const ruthT = trow.children[0], theoT = trow.children[1];
+  ok('stream tags: laid over the live picture, Ruth at 30° right of centre, Theo at 60° past a 90° frame and hidden',
+    trow.className === 'looktags' && !ruthT.hidden && parseFloat(ruthT.style.left) > 320 && theoT.hidden,
+    JSON.stringify([trow.className, ruthT.style, theoT.hidden]));
+  const bt2 = mkBox('mjpeg', 'https://m.example/t.mjpg', '', '31');
+  Object.assign(bt2.box.dataset, { fov: '360', proj: 'equirectangular' });
+  const trow2 = bt2.box.appendChild(new El('div')); trow2.className = 'looktagrow';
+  const t2 = trow2.appendChild(new El('button')); t2.className = 'looktag'; t2.dataset.h = 'theo'; t2.dataset.b = '60';
+  XV.mount({ kind: 'stream', box: bt2.box });
+  ok('stream tags: a repaint moves the picture and re-lays the tags; a strip the machine says is 360° shows Theo at 60°',
+    trow2.className === 'looktags' && !t2.hidden && Math.abs(parseFloat(t2.style.left) - 640 * (1 + 60 / 180) / 2) < 1,
+    JSON.stringify(t2.style));
+  st31.destroy();
   for (const r of out) console.log('R\t' + (r[1] ? 1 : 0) + '\t' + r[0] + '\t' + r[2].replace(/\s+/g, ' '));
   process.exit(0);
 })().catch((e) => { console.log('R\t0\tthe harness ran\t' + e.stack); process.exit(0); });

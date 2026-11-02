@@ -36,7 +36,7 @@ session.
 
 **Beta.** The engine runs end to end: the forge builds a world from an
 interview, the review step lets you edit or reroll any of it, and the play view
-is a world you can talk to and skip time inside. Forty test suites, about 4,400
+is a world you can talk to and skip time inside. Forty-four test suites, about 4,900
 assertions, run on PHP 8.1 and 8.3 on every push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml));
 how to run them yourself is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and what is
 known and not yet fixed is in [`docs/PUNCHLIST.md`](docs/PUNCHLIST.md).
@@ -62,7 +62,11 @@ world-day on tokens, renders, clips and hearings.
 room, the rules a template opts into, and what it refuses.
 [`docs/SLEEP.md`](docs/SLEEP.md) is sleep: how old memories become facts with
 their sources kept, and why the prompt gets shorter, not longer, as a world
-ages.
+ages. [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) is two people in one world.
+[`docs/FUTURE.md`](docs/FUTURE.md) is the plan — the bets, the five milestones,
+all shipped, and what only a device, a person or a real model can still test.
+[`tools/proxies/README.md`](tools/proxies/README.md) is the proxies that put a
+vendor, or the world-model scaffold, behind the scene contract.
 
 ## A model that is not on this machine
 
@@ -90,6 +94,8 @@ A trailing `/v1` is stripped. See [`QUICKSTART.md`](QUICKSTART.md).
 | **director** | Changes the set, never the performance: stages two or three people in one room for up to two hours, so an encounter is there when you walk in. Off until the template opts in, rule by rule, capped per day. See [`docs/DIRECTOR.md`](docs/DIRECTOR.md). |
 | **sleep** | Once a world-night, a character's old memories become a few facts with their sources kept and their walls inherited; nothing is deleted and the bible is never touched. See [`docs/SLEEP.md`](docs/SLEEP.md). |
 | **story overlay** | An optional mystery laid over a finished world as a sidecar file: beats, who is wrong about what, and an ending the world survives. |
+| **layout** | `engine/layout.php`: the room you stand in as a box — the vantage, every piece of furniture and every person at the bearing the engine deals them — and its depth and segmentation maps, in pure PHP. It rides every look for the machines that are conditioned on geometry rather than words, and never enters the fingerprint. See [`docs/VIEWPORT.md`](docs/VIEWPORT.md). |
+| **live view** | `engine/stream.php`: a machine may answer with a live session instead of a picture. Off by default, started only by the owner pressing *go live*, refused on a machine that bills unless the template says so, metered by the second, and told only the engine's own events — never the player's words. `tools/proxies/worldmodel.py` is the engine-driven loop on one desk: Xeric's state, a blockout drawing it, a local world model at one function. |
 | **client API** | `forge/web/api.php`: the world as data and the verbs, versioned (`v1`), with a pulse to poll and per-device tokens. Its first client is the stand page, `forge/web/stand.php` — nothing but the room, for a headset first and any browser second. See [`docs/API.md`](docs/API.md) and [`docs/STAND.md`](docs/STAND.md). |
 | **media** | Photo composition (identity-stable characters via seed + appearance anchoring); the viewport — the room you stand in, as a panorama or a still, with its sound, or a splat you walk inside in our own WebGL viewer; the drawn map, the town from above beside the room from inside; a voice for every character, dealt from a seed; and ears — hold to talk, transcribed into the composer for you to send. All composed in code and dormant until you choose a machine; no machine, no renders, no errors. |
 

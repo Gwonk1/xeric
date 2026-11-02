@@ -6,8 +6,9 @@ working document, not a promise — dates are absent on purpose.
 The long view — where this goes over about two years, the bets it rests on,
 the milestones, and what the code actually is today as against what this file
 says — is [docs/FUTURE.md](docs/FUTURE.md). Its truth table is what the
-headings below are checked against, row by row; after milestone three the one
-heading still out of step is story overlays, built and filed under Later.
+headings below are checked against, row by row; with all five milestones
+shipped, the one heading still out of step is story overlays, built and filed
+under Later.
 
 ---
 
@@ -63,14 +64,45 @@ you will notice.
 
 ## Next
 
-### When the world models hold still — what is next
+### What is left is what only the outside world can supply
 
-M5 in [docs/FUTURE.md](docs/FUTURE.md#m5--when-the-world-models-hold-still):
-a `layout` beside `reference_image` (the blockout or depth map the models that
-hold still are conditioned on), a `stream` kind in the scene envelope, and
-local world models at a loopback address — contingent on the outside world,
-and the test of bet 1: the same room, from the same brief, drawn by a stored
-panorama, a splat and a stream, and nobody in the diner able to tell which.
+The five milestones of [docs/FUTURE.md](docs/FUTURE.md) are built. Every one
+of them has been run against fakes, stubs, headless Chrome and real processes
+on loopback — and none of them against the things a test cannot fake. That is
+what is next, and none of it is code:
+
+- **A device.** A real headset (Quest, Android XR, Vision Pro) worn in the
+  diner; two real phones in the same room at once.
+- **Time.** A world left alone for a month with the Director on, to see an
+  encounter it staged land as an encounter and not as a coincidence.
+- **A model that draws.** A real local world model behind the scaffold's one
+  function, and a hosted one behind the same adapter — Genie 4's API and the
+  hosted streamers have not been exercised, and every vendor field in
+  `tools/proxies/` is still marked *verify*.
+- **A person.** Somebody standing in the diner, shown a panorama, a splat and
+  a stream of the same moment, asked which machine drew it.
+
+And the code that is still owed, from [docs/PUNCHLIST.md](docs/PUNCHLIST.md):
+the constructs' three broken promises (above); memories harvested from adult
+lines carry no rating stamp; one table talks at a time in a world; the walk
+inside a splat has no headset mode; SPZ and SOG splats are still downloads.
+
+### When the world models hold still
+
+**Shipped** — M5 in [docs/FUTURE.md](docs/FUTURE.md#m5--when-the-world-models-hold-still).
+The room as a box (`engine/layout.php`: a blockout, a depth map and a
+segmentation map, in pure PHP, never in the fingerprint), riding every look;
+a live view (`engine/stream.php`: off by default, started only by the owner's
+**go live**, refused on a machine that bills unless the template says
+`remote: true`, metered by the second, told the engine's events and never the
+player's words); and the engine-driven loop as a scaffold
+(`tools/proxies/worldmodel.py`: Xeric's state, a blockout drawing it, a real
+local model at one function). A world keeps one look per kind per moment, so a
+panorama and a splat of the same room sit side by side; the people's tags sit
+at their bearings over every view. The bet test sends one brief to a panorama
+server, a splat machine and the scaffold, live, and the three receive the same
+bytes; Xeric has no branch for any of them. **No real world model has drawn
+it yet**, and nobody has looked at the three and tried to tell them apart.
 
 ### Together
 
@@ -373,8 +405,9 @@ Next:
 
 - ~~**The room conversation, in the view.**~~ Shipped — the view's door is
   *talk to the room* ([above](#the-room--three-way-conversation)).
-- **Streaming**, when a world model that streams can hold a room still — today
-  they reinvent the booths when you turn your head.
+- ~~**Streaming**~~ Shipped, off by default and metered by the second
+  ([above](#when-the-world-models-hold-still)) — the stored panorama is still
+  the room; a live view is a while of watching it move.
 - ~~**Walking inside a splat.**~~ Shipped — our own WebGL viewer, three
   metres from the door ([above](#stand-in-it)); meshes are still downloads.
 

@@ -60,6 +60,8 @@ root.XericView = function (o) {
     } else {
       el.className = 'lookmain lookstill';
       el.dataset.src = src;
+      el.dataset.fov = th.dataset.fov || main.dataset.fov || '90';
+      el.dataset.proj = th.dataset.proj || 'perspective';
       var im = document.createElement('img');
       im.className = 'lookimg'; im.src = src; im.alt = th.dataset.light || '';
       el.appendChild(im);
@@ -69,6 +71,7 @@ root.XericView = function (o) {
     if (lookView) { lookView.destroy(); lookView = null; }
     main.replaceWith(el);
     if (kind === 'pano') lookView = pano(el);
+    else lookView = still(el);
     $$('#look .lookthumb').forEach(function (x) {
       x.classList.toggle('cur', x === th);
       x.setAttribute('aria-pressed', x === th ? 'true' : 'false');
@@ -78,6 +81,107 @@ root.XericView = function (o) {
       lab.hidden = th.dataset.now === '1';
       lab.textContent = th.dataset.now === '1' ? '' : 'earlier: ' + (th.dataset.light || '');
     }
+  }
+
+  // THE PEOPLE OVER EVERY VIEW. A panorama places its tags itself (below);
+  // a still, a live stream and a splat are flat frames, and their tags go
+  // over them at the same bearings by the same rule: placed, faded toward the
+  // edge, hidden past it. The server always sends the row under the view —
+  // what is left when a view cannot place them (no script, a splat that
+  // failed) — and these turn it into the overlay when they can.
+  //
+  // flatAt: where a bearing (degrees clockwise from straight ahead, the
+  // engine's own number) lands across a frame `fov` degrees wide: tan for a
+  // perspective, linear for an equirectangular strip. x is -1..1 across.
+  function flatAt(bearing, fov, proj) {
+    var b = (((+bearing || 0) % 360) + 540) % 360 - 180;
+    var half = Math.max(5, Math.min(180, (+fov || 90) / 2)), x;
+    if (proj === 'equirectangular' || half >= 89.5) x = b / half;
+    else {
+      if (Math.abs(b) >= 90) return { x: b < 0 ? -2 : 2, y: 0, hidden: true, opacity: 0 };
+      x = Math.tan(b * Math.PI / 180) / Math.tan(half * Math.PI / 180);
+    }
+    return fade(x, flatY(half, proj));
+  }
+  // Chest height: a little under the horizon, as on the panorama (-0.12 rad),
+  // in a frame whose height is a 16:9 share of its width.
+  function flatY(half, proj) {
+    var asp = 16 / 9;
+    if (proj === 'equirectangular' || half >= 89.5) return -0.12 / (half * Math.PI / 180 / asp);
+    return Math.tan(-0.12) / (Math.tan(half * Math.PI / 180) / asp);
+  }
+  // The pano's own edge rule: full until three quarters out, then fading, then gone.
+  function fade(x, y) {
+    var ax = Math.abs(x);
+    if (ax > 1 || Math.abs(y) > 1) return { x: x, y: y, hidden: true, opacity: 0 };
+    return { x: x, y: y, hidden: false, opacity: ax > 0.75 ? Math.max(0.15, (1 - ax) / 0.25) : 1 };
+  }
+  // The row inside `box`, laid over `media` (an img, a video, a canvas) by
+  // at(tag) → {x, y, hidden, opacity}; restore() puts the row back.
+  function overlay(box, media) {
+    var row = box && box.querySelector('.looktagrow, .looktags');
+    if (!row || !media) return null;
+    var tags = [].slice.call(row.querySelectorAll('.looktag'));
+    return {
+      row: row,
+      place: function (at) {
+        row.className = 'looktags';
+        var W = media.clientWidth, H = media.clientHeight;
+        tags.forEach(function (t) {
+          var p = at(t);
+          if (!p || p.hidden) { t.hidden = true; return; }
+          t.hidden = false;
+          t.style.left = ((p.x + 1) / 2 * W + media.offsetLeft) + 'px';
+          t.style.top = ((1 - p.y) / 2 * H + media.offsetTop) + 'px';
+          t.style.opacity = String(p.opacity == null ? 1 : p.opacity);
+        });
+      },
+      restore: function () {
+        row.className = 'looktagrow';
+        tags.forEach(function (t) { t.hidden = false; t.style.cssText = ''; });
+      }
+    };
+  }
+  // A frame that never moves (a still; a stream, whose camera is the
+  // machine's): placed once, again when it loads or the window resizes.
+  function flatTags(box, media) {
+    var ov = overlay(box, media), d = box.dataset, on = [];
+    if (!ov) return { destroy: function () {}, place: function () {} };
+    function place() { ov.place(function (t) { return flatAt(t.dataset.b, d.fov, d.proj); }); }
+    function listen(t, ev) { if (t && t.addEventListener) { t.addEventListener(ev, place); on.push([t, ev]); } }
+    place();
+    listen(media, 'load'); listen(media, 'loadedmetadata');
+    if (typeof window !== 'undefined') listen(window, 'resize');
+    return {
+      place: place, overlay: ov,
+      destroy: function () { on.forEach(function (l) { l[0].removeEventListener(l[1], place); }); on = []; }
+    };
+  }
+  function still(box) {
+    var img = box.querySelector('img'), ft = flatTags(box, img);
+    return { kind: 'still', tags: ft, destroy: ft.destroy };
+  }
+  // A splat: each person's place in the splat's own frame (data-places, the
+  // brief's layout as the server turned it) projected through the camera on
+  // every frame the splat draws, so a tag stays on its person as you turn
+  // and walk. Until the first frame, and if the splat fails, the row.
+  function splatTags(box, cv) {
+    var ov = overlay(box, cv), places = {};
+    try { places = JSON.parse(box.dataset.places || '{}') || {}; } catch (e) { places = {}; }
+    if (!ov || !Object.keys(places).length) return null;
+    var XS = root.XericSplat;
+    return {
+      overlay: ov,
+      frame: function (cam) {
+        ov.place(function (t) {
+          var p = places[t.dataset.h || t.dataset.p];
+          if (!p || !XS) return null;
+          var q = XS.project(cam.view, p, cam.fx, cam.fy, cam.W, cam.H);
+          return q.hidden ? q : fade(q.x, q.y);
+        });
+      },
+      restore: function () { ov.restore(); }
+    };
   }
 
   // THE LOOK-AROUND. An equirectangular panorama is a sphere unrolled: every
@@ -616,6 +720,7 @@ root.XericView = function (o) {
       dead = true;
       if (hb) { if (told) hb.stop(); else hb.end(code || 'closed'); }
       quiet();
+      if (ft) ft.destroy();
       var back = document.createElement('div');
       back.className = 'lookmain lookstill';
       if (d.poster) {
@@ -642,7 +747,9 @@ root.XericView = function (o) {
     } else if (pr === 'mjpeg') {
       how = 'mjpeg'; media = asImg(url);
     } else why = 'this live view is in a form this page cannot play';
-    if (media) slotOf(box).appendChild(media);
+    var ft = null;                                      // the people over the picture, once there is one
+    function retag() { if (ft) ft.destroy(); ft = media ? flatTags(box, media) : null; }
+    if (media) { slotOf(box).appendChild(media); retag(); }
     hb = streamBeat({ id: d.stream, beat: d.beat, beatS: opt.beatS, auth: opt.auth, fetch: opt.fetch, wait: true,
                       onEnd: function (reason) { end(reason, true); } });
     var api = {
@@ -658,11 +765,13 @@ root.XericView = function (o) {
         if (media) slotOf(nb).appendChild(media);
         box = nb; d = nb.dataset;
         if (said) line(said);
+        retag();
       },
+      get tags() { return ft; },
       // Thrown away without a repaint to move into (the player walked on, the
       // view changed): the server is told, so the machine stops drawing now
       // rather than when the sweep notices.
-      destroy: function () { if (dead) return; dead = true; if (hb) hb.end('page'); quiet(); }
+      destroy: function () { if (dead) return; dead = true; if (hb) hb.end('page'); quiet(); if (ft) ft.destroy(); }
     };
     if (!how) { liveMark('play', url); end(why, false, 'unplayable'); return api; }
     if (pr === 'webrtc-whep') {
@@ -672,7 +781,7 @@ root.XericView = function (o) {
       var pl = media.play && media.play();
       if (pl && pl.catch) pl.catch(function () {});
     }
-    unwatch = whenPlaying(media, function () { clearTimeout(connT); if (!dead) hb.start(); });
+    unwatch = whenPlaying(media, function () { clearTimeout(connT); if (!dead) { hb.start(); if (ft) ft.place(); } });
     connT = setTimeout(function () { end('the live view never showed a picture', false, 'connect_failed'); },
                        (opt.connectS == null ? LIVE_CONNECT_S : +opt.connectS) * 1000);
     return api;
@@ -1606,6 +1715,8 @@ root.XericView = function (o) {
     whep: whep, playsHls: playsHls, stream: stream, streamBeat: streamBeat,
     standLive: standLive, whenPlaying: whenPlaying, liveCannot: liveCannot, liveMark: liveMark, liveGate: liveGate,
     gaze: gaze, phoneGaze: phoneGaze, dayView: dayView,
+    // The people over a flat frame or a splat: the pure rule and its two mounts.
+    flatAt: flatAt, flatTags: flatTags, still: still, splatTags: splatTags,
     speak: speak, unspeak: unspeak, refuseSpeak: refuseSpeak, hold: hold,
     // The stand page's: the headset's tags, ray and hold, the voice's panner.
     standXR: standXR, tagPos: tagPos, tagQuad: tagQuad, rayDir: rayDir, bearingOf: bearingOf,
@@ -1627,12 +1738,18 @@ root.XericView = function (o) {
       if (lookView) lookView.destroy();
       // A SPLAT is xeric-splat.js's, loaded beside this file and started only
       // here: mount({ kind: 'splat', canvas, url, onReady, onError }).
+      // Its people follow the camera (splatTags), from the splat's frame hook.
       if (box && box.kind === 'splat') {
         var XS = root.XericSplat;
+        var st = box.canvas ? splatTags(box.canvas.parentNode, box.canvas) : null;
         lookView = XS && box.canvas ? XS.mount(box.canvas, box.url || box.canvas.dataset.src,
-                                               { onReady: box.onReady, onError: box.onError }) : null;
+                                               { onReady: box.onReady,
+                                                 onError: function (why) { if (st) st.restore(); if (box.onError) box.onError(why); },
+                                                 onFrame: st ? st.frame : null }) : null;
+        if (lookView) lookView.tags = st;
         return lookView;
       }
+      if (box && box.classList && box.classList.contains('lookstill')) { lookView = still(box); return lookView; }
       lookView = box ? pano(box, opt) : null; return lookView;
     },
     unmount: function () { if (lookView) { lookView.destroy(); lookView = null; } },

@@ -527,9 +527,9 @@ async function main() {
   let main = look.querySelector('.lookmain');
   ok('day: pressing a still\'s light puts the still where the view was', main.classList.contains('lookstill')
     && main.querySelector('img.lookimg').src === tNoon.dataset.src);
-  ok('day: the people come along as the row a still has, shown', main.querySelector('.looktagrow')
-    && main.querySelectorAll('.looktag').length === 6 && main.querySelectorAll('.looktag').every((t) => !t.hidden));
-  ok('day: the old WebGL context is handed back', oldGl.lost === true && V.lookView === null);
+  ok('day: the people come along, laid over the still at their bearings', main.querySelector('.looktags')
+    && main.querySelectorAll('.looktag').length === 6 && main.dataset.fov === '90');
+  ok('day: the old WebGL context is handed back', oldGl.lost === true && V.lookView && V.lookView.kind === 'still');
   ok('day: the pressed light is marked, and only it', tNoon.classList.contains('cur') && tNoon.getAttribute('aria-pressed') === 'true'
     && !tDusk.classList.contains('cur') && tDusk.getAttribute('aria-pressed') === 'false');
   ok('day: and the view says it is earlier', !earlier.hidden && earlier.textContent === 'earlier: noon');
@@ -544,6 +544,39 @@ async function main() {
     && tag(main, 'theo').hidden === true);
   ok('day: the light marked now clears the earlier label', earlier.hidden && earlier.textContent === '');
   V.unmount();
+
+  // == the people over a flat frame ===============================================
+  // A still (and a stream, which is the same flat frame: stream-test runs its
+  // mount) places each tag by bearing through its horizontal field of view.
+  const { flatAt, still: stillTags } = V;
+  ok('flat: a tag at 30° lands right of centre on a still with a 90° field of view',
+    !flatAt(30, 90).hidden && flatAt(30, 90).x > 0.5 && flatAt(30, 90).x < 0.6, JSON.stringify(flatAt(30, 90)));
+  ok('flat: and hides at 60°, past the edge; -30° is as far left', flatAt(60, 90).hidden && flatAt(-60, 90).hidden
+    && near(flatAt(-30, 90).x, -flatAt(30, 90).x, 1e-9), JSON.stringify(flatAt(60, 90)));
+  ok('flat: straight ahead is the centre, and the pano\'s edge fade applies near the edge',
+    near(flatAt(0, 90).x, 0, 1e-9) && flatAt(0, 90).opacity === 1 && flatAt(40, 90).opacity < 1 && flatAt(40, 90).opacity > 0.15);
+  ok('flat: a wider frame the answer named holds 60°, and behind you is never shown', !flatAt(60, 150).hidden
+    && flatAt(180, 150).hidden && flatAt(120, 170).hidden);
+  ok('flat: an equirectangular strip places linearly, 360° wide', near(flatAt(90, 360, 'equirectangular').x, 0.5, 1e-9)
+    && !flatAt(170, 360, 'equirectangular').hidden);
+  const sb = document.createElement('div'); sb.className = 'lookmain lookstill'; sb.dataset.fov = '90';
+  const sim = document.createElement('img'); sim.className = 'lookimg'; sim.clientWidth = 400; sim.clientHeight = 225;
+  sb.appendChild(sim);
+  const srow = document.createElement('div'); srow.className = 'looktagrow';
+  [['ruth', 30], ['theo', 60], ['mabel', 0]].forEach(([h, b]) => {
+    const t = document.createElement('button'); t.className = 'looktag'; t.dataset.h = h; t.dataset.b = String(b); srow.appendChild(t);
+  });
+  sb.appendChild(srow); look.appendChild(sb);
+  const sv = stillTags(sb);
+  const st = (h) => srow.querySelectorAll('.looktag').find((t) => t.dataset.h === h);
+  ok('flat: mounted on a still, the row becomes the overlay', srow.className === 'looktags');
+  ok('flat: Ruth at 30° right of centre, Mabel at 0° in the middle, Theo at 60° hidden',
+    !st('ruth').hidden && px(st('ruth').style.left) > 300 && near(px(st('mabel').style.left), 200) && st('theo').hidden
+    && px(st('ruth').style.top) > 225 / 2, JSON.stringify([st('ruth').style, st('mabel').style]));
+  sv.tags.overlay.restore();
+  ok('flat: and the row comes back, every tag shown, when a view cannot place them', srow.className === 'looktagrow'
+    && srow.querySelectorAll('.looktag').every((t) => !t.hidden));
+  sv.destroy(); sb.remove();
 
   // == look with the phone =========================================================
   const RAD = Math.PI / 180;

@@ -387,8 +387,10 @@ function xeric_play_audio_sniff(string $head): string
  * live in this room, if one is; `stream_ended` the one that ended here in the
  * last ten minutes, for "the live view ended: <reason>"; `stream_offer` whether
  * "go live" may be shown (a read, never a call). Live views nobody has beaten
- * for are swept first (xeric_stream_sweep): the one network call a read path
- * may make, a DELETE that stops a machine billing, once per abandoned view.
+ * for are swept first (xeric_stream_sweep): ended and metered with NO network
+ * call — the DELETE each is owed is sent by the heart's pass, or the owner's
+ * next beat or end (xeric_stream_tell_owed), so a render never waits on a
+ * dead machine.
  *
  * @return array{brief:?array,row:?array,stale:bool,pending:bool,failed:bool,scenes_dir:string,
  *               day:array<string,array>,sound:?array,sound_row:?array,stream:?array,stream_ended:?array,
@@ -455,10 +457,9 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
     try {
         $ep = null;
         try { $ep = xeric_scene_endpoint(); } catch (Throwable $e) { $ep = null; }
-        // A view nobody beats for is ended as every view is: its tail into
-        // the ledger, and the machine on its row told to stop.
-        xeric_stream_sweep($db, null, ['endpoint' => $ep,
-                                       'meter' => xeric_stream_ledger($db, $now ?? xeric_clock_now($db, $t))]);
+        // A view nobody beats for is ended as every view is, its tail into
+        // the ledger; the machine on its row is told later, off this path.
+        xeric_stream_sweep($db, null, ['meter' => xeric_stream_ledger($db, $now ?? xeric_clock_now($db, $t))]);
         $key = (string)$brief['key'];
         $out['stream'] = xeric_stream_live($db, $key);
         // A live view stamped above this viewer is not theirs to watch.
@@ -533,7 +534,9 @@ function xeric_play_stream_public(?array $s): ?array
  */
 function xeric_play_look_back(PDO $db, string $key, string $scenesDir, int $tries = 5): ?array
 {
-    $st = $db->prepare("SELECT * FROM scene_jobs WHERE key = ? AND channel = 'look' AND status = 'done'
+    // The template's preferred kind only (scene_jobs.want ''): a splat asked
+    // for beside the panorama is the engine's to keep, not the sidebar's to show.
+    $st = $db->prepare("SELECT * FROM scene_jobs WHERE key = ? AND channel = 'look' AND want = '' AND status = 'done'
                         ORDER BY done_at DESC, id DESC LIMIT ?");
     $st->execute([$key, max(1, $tries)]);
     $rows = $st->fetchAll();
@@ -806,6 +809,50 @@ function xeric_play_look_tags(array $who, string $class): string
 }
 
 /** A bearing as a signed turn: 350° is ten degrees to your left, not most of the way round. */
+/**
+ * How wide a flat frame sees, for placing the people over it at their
+ * bearings (xeric-view.js flatAt): the answer's own meta when it says
+ * (`hfov` or `fov`, horizontal degrees; `projection`), else a still's
+ * ninety-degree perspective. A frame that says it is equirectangular is a
+ * strip, and a bearing lands on it linearly. As data attributes.
+ */
+function xeric_play_look_fov_attrs(array $meta): string
+{
+    $f = $meta['hfov'] ?? $meta['fov'] ?? null;
+    $fov = (is_int($f) || is_float($f) || (is_string($f) && is_numeric($f))) && (float)$f >= 10 && (float)$f <= 360
+         ? round((float)$f, 2) + 0.0 : 90.0;
+    $proj = strtolower(trim((string)($meta['projection'] ?? ''))) === 'equirectangular' ? 'equirectangular' : 'perspective';
+    return ' data-fov="' . h((string)$fov) . '" data-proj="' . $proj . '"';
+}
+
+/**
+ * Where each person stands in a splat's frame, for the tags to follow the
+ * camera (xeric-splat.js project): the brief's layout (engine/layout.php: x
+ * right, y up, z ahead, from the vantage) turned into the viewer's (eye at
+ * the origin, looking down -z, y from the eye), at chest height. Keyed by
+ * handle; JSON for a data attribute. '' when the brief has no layout.
+ */
+function xeric_play_look_places(array $b): string
+{
+    $lay = $b['layout'] ?? null;
+    if (!is_array($lay) || !is_array($lay['objects'] ?? null)) return '';
+    $v   = (array)($lay['vantage'] ?? []);
+    $vx  = (float)($v['x'] ?? 0); $vz = (float)($v['z'] ?? 0);
+    $eye = (float)($v['y'] ?? 1.6);
+    $psi = deg2rad((float)($v['yaw'] ?? 0));
+    $out = [];
+    foreach ($lay['objects'] as $o) {
+        if (!is_array($o) || ($o['kind'] ?? '') !== 'person') continue;
+        $h  = substr((string)($o['id'] ?? ''), strlen('person:'));
+        $dx = (float)($o['x'] ?? 0) - $vx; $dz = (float)($o['z'] ?? 0) - $vz;
+        $right = $dx * cos($psi) - $dz * sin($psi);
+        $ahead = $dx * sin($psi) + $dz * cos($psi);
+        $chest = (float)($o['y'] ?? 0) + 0.75 * (float)($o['h'] ?? 1.7);
+        if ($h !== '') $out[$h] = [round($right, 3) + 0.0, round($chest - $eye, 3) + 0.0, round(-$ahead, 3) + 0.0];
+    }
+    return $out === [] ? '' : (string)json_encode((object)$out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 function xeric_play_signed_bearing(int $b): int
 {
     $b = (($b % 360) + 360) % 360;
@@ -886,7 +933,11 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
         // before the client could move the element it already holds into
         // place — so the server names the session in data attributes only,
         // and xeric-view.js makes the one live element, once per session.
+        // Its people over it at their bearings once it plays (xeric-view.js),
+        // through the field of view the machine said it draws, else ninety.
+        $smeta = json_decode((string)($stream['meta'] ?? '{}'), true);
         $view .= '<div class="lookmain lookstreambox" data-stream="' . (int)$stream['id'] . '" data-protocol="' . h($pr) . '"'
+               . xeric_play_look_fov_attrs(is_array($smeta) ? $smeta : [])
                . ' data-url="' . h($url) . '" data-fallback="' . h((string)$stream['fallback']) . '"'
                . ' data-beat="stream.php" data-poster="' . h($poster) . '" data-alt="' . h('Live: ' . (string)$b['name']) . '">'
                . '<div class="lookstreamslot"></div><p class="lookstreamstate" role="status">live</p>'
@@ -899,7 +950,11 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
         $src  = xeric_play_look_src($slug, (string)$row['key'], (string)$row['fingerprint']);
         $alt  = (string)$b['name'] . ', ' . (string)$b['light'];
         if ($kind === 'image') {
-            $view .= '<div class="lookmain lookstill" data-src="' . h($src) . '"><img class="lookimg" src="' . h($src) . '" alt="' . h($alt) . '">'
+            // The row under it is the fallback; xeric-view.js lays the same
+            // buttons over the picture at their bearings when it can.
+            $rmeta = json_decode((string)($row['meta'] ?? '{}'), true);
+            $view .= '<div class="lookmain lookstill" data-src="' . h($src) . '"' . xeric_play_look_fov_attrs(is_array($rmeta) ? $rmeta : [])
+                   . '><img class="lookimg" src="' . h($src) . '" alt="' . h($alt) . '">'
                    . xeric_play_look_tags($b['who'], 'looktagrow') . '</div>';
         } elseif ($kind === 'pano') {
             // The bearings of everything, furniture too, on the viewer's
@@ -936,7 +991,9 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
                           && (int)@filesize($fpath) % 32 === 0);
             }
             if ($walk) {
-                $view .= '<div class="lookmain looksplatbox" data-src="' . h($src) . '" data-alt="' . h($alt) . '">'
+                $places = xeric_play_look_places($b);
+                $view .= '<div class="lookmain looksplatbox" data-src="' . h($src) . '" data-alt="' . h($alt) . '"'
+                       . ($places !== '' ? ' data-places="' . h($places) . '"' : '') . '>'
                        . '<canvas class="looksplat" tabindex="0" role="img" data-src="' . h($src) . '"'
                        . ' data-worker="' . h(xeric_play_asset('xeric-splat-worker.js')) . '" aria-label="'
                        . h('Standing in ' . (string)$b['name'] . '. Drag to look; W A S D or the arrow keys, or two fingers, to walk about.')

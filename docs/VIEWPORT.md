@@ -94,7 +94,12 @@ cast can already see.
 ## The fingerprint — what changes a scene, and what does not
 
 A scene is keyed by **what the room looks like**, not by when somebody asked.
-One job per (place, fingerprint), and `xeric_scene_fingerprint` is a sha1 of:
+One job per (place, fingerprint, kind asked for) — `want`, '' for the
+template's first kind, which is every row from before and every caller that
+names none, so a panorama and a splat of one moment can sit side by side
+(`xeric_scene_enqueue($db, $brief, 'splat')`; the view shows the template's
+kind, and asking for another is engine-only today) — and
+`xeric_scene_fingerprint` is a sha1 of:
 
 | In | Out, deliberately |
 |---|---|
@@ -832,8 +837,13 @@ the play view's **what you see** block is built from what it can serve itself:
   bearing the engine dealt them, just under the horizon. Each tag is a real
   button: press it and you are in that character's thread. Furniture is not
   tagged; its bearings ride in a data attribute for the next client.
-- **a still** as a plain `<img>`, the same name-tag buttons in a row beneath it,
-  left to right by bearing.
+- **a still** as a plain `<img>`, the same name-tag buttons laid over it at
+  their bearings through its horizontal field of view — the answer's `hfov` or
+  `fov` (and `projection: "equirectangular"` for a strip) when its meta says,
+  else 90° — faded toward the edge and hidden past it, as on the panorama. A
+  live view's tags go over its picture the same way, from the session's meta.
+  The row beneath, left to right by bearing, is what the server sends and what
+  is left wherever the page cannot place them.
 - **a splat you stand inside** when it is a PLY or a `.splat`
   ([below](#walking-inside)), the download kept under it; an SPZ or SOG
   splat and `.glb` files **offered as downloads**; a `viewer` scene opens in a
@@ -863,8 +873,12 @@ nothing in the engine assumes any of them.
 
 #### Walking inside
 
-A done splat row is a `<canvas class="looksplat">` with the people as the
-still's row of tags under it and the download beside it. The viewer is our
+A done splat row is a `<canvas class="looksplat">` with the people's tags over
+it — each person's place from the brief's layout, in the splat's frame
+(`data-places`), projected through the camera on every frame it draws
+(`XericSplat.project`, from the viewer's `onFrame` hook), so a tag stays on its
+person as you turn and walk; the row until the first frame and if it fails —
+and the download beside it. The viewer is our
 own: `xeric-splat.js`, loaded statically next to `xeric-view.js` with the
 same nonce and content hash (a nonce-only CSP lets no script add another),
 idle until `XericView.mount({kind: 'splat'})` starts it. WebGL 2, else

@@ -1055,8 +1055,8 @@ echo xeric_play_css_link() . '<style>
   border:1px solid var(--line); color:var(--fg-dim); margin-left:.3rem; }
 .lookprose { margin:0 0 .5rem; }
 .lookdev { font-size:.8rem; color:var(--fg-dim); font-style:italic; }
-/* the people in the room: buttons over the panorama at their bearings, a row under a still */
-.lookpanobox { position:relative; }
+/* the people in the room: buttons over every view at their bearings; the row under it is the fallback */
+.lookpanobox, .lookstill, .lookstreambox, .looksplatbox { position:relative; }
 .looktags .looktag { position:absolute; transform:translate(-50%,-50%); }
 .looktag { font:inherit; font-size:.72rem; line-height:1.2; padding:.15rem .5rem; border-radius:999px;
   border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; white-space:nowrap; }
@@ -2329,6 +2329,9 @@ echo xeric_play_css_link() . '<style>
     XV.liveGate($$('#look [data-golive]'), 'play');
     var box = document.querySelector('#look .lookpanobox');
     if (box) XV.mount(box);
+    // A still: the same buttons laid over the picture at their bearings.
+    var stl = !box && !live && document.querySelector('#look .lookstill');
+    if (stl) XV.mount(stl);
     var sc = document.querySelector('#look canvas.looksplat');      // a room to stand inside (xeric-splat.js)
     if (sc && !box) XV.mount({ kind: 'splat', canvas: sc, url: sc.dataset.src });
     var img = document.querySelector('#look .lookimg');

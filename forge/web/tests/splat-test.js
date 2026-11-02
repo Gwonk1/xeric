@@ -43,17 +43,21 @@ class El {
     this.tagName = tag.toUpperCase(); this.className = ''; this.children = []; this.parentNode = null;
     this.dataset = {}; this.attrs = {}; this.hidden = false; this.textContent = ''; this.listeners = {};
     this.classList = new ClassList(this); this.clientWidth = 400; this.clientHeight = 300; this.width = 0; this.height = 0;
+    this.style = {}; this.offsetLeft = 0; this.offsetTop = 0;
   }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   appendChild(c) { if (c.parentNode) c.remove(); c.parentNode = this; this.children.push(c); return c; }
   remove() { const p = this.parentNode; if (!p) return; p.children = p.children.filter((x) => x !== this); this.parentNode = null; }
-  querySelector(sel) {
-    const cls = sel.replace(/^[a-z]*\./, '');
-    const walk = (e) => { for (const c of e.children) { if (c.classList.contains(cls)) return c; const f = walk(c); if (f) return f; } return null; };
-    return walk(this);
+  // One class per group, comma groups allowed: as much selector as the viewers use.
+  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+  querySelectorAll(sel) {
+    const cls = String(sel).split(',').map((g) => g.trim().replace(/^[a-z]*\./, ''));
+    const out = [];
+    const walk = (e) => { for (const c of e.children) { if (cls.some((k) => c.classList.contains(k))) out.push(c); walk(c); } };
+    walk(this);
+    return out;
   }
-  querySelectorAll() { return []; }
   addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); }
   removeEventListener(t, fn) { this.listeners[t] = (this.listeners[t] || []).filter((f) => f !== fn); }
   fire(t, e) { (this.listeners[t] || []).slice().forEach((fn) => fn(Object.assign({ preventDefault() {} }, e))); }
@@ -349,6 +353,43 @@ ok('the 3 m rule: a step to 4 m comes back to 3, inside is untouched',
   const lv = XV.mount({ kind: 'splat', canvas: k.cv, url: k.cv.dataset.src, onReady: (x) => { ready = x; } });
   await tick(40);
   ok('XericView mount({kind:"splat"}) delegates to XericSplat.mount', lv && lv.state && ready && ready.n === 3 && XV.lookView === lv);
+  XV.unmount();
+
+  // -- the people, following the camera ------------------------------------------------
+  ok('project: straight ahead is the middle, a point to the right is right, behind you is hidden',
+    near(XS.project(V0, [0, 0, -2], 100, 100, 400, 300).x, 0) && XS.project(V0, [1, 0, -2], 100, 100, 400, 300).x > 0
+    && XS.project(V0, [0, 0, 2], 100, 100, 400, 300).hidden);
+  const tagged = (places, mode) => {
+    const kk = canvas(mode || 'webgl2'); kk.cv.dataset.src = 'scene.php?w=t&k=y&f=' + 'c'.repeat(40);
+    kk.box.dataset.places = JSON.stringify(places);
+    const row = new El('div'); row.className = 'looktagrow';
+    ['ruth', 'theo', 'nobody'].forEach((h) => { const t = new El('button'); t.className = 'looktag'; t.dataset.h = h; row.appendChild(t); });
+    kk.box.appendChild(row);
+    return [kk, row, (h) => row.children.find((t) => t.dataset.h === h)];
+  };
+  let [kt, rowT, tg] = tagged({ ruth: [0.8, -0.3, -2], theo: [0, -0.3, 2] });
+  const lt = XV.mount({ kind: 'splat', canvas: kt.cv, url: kt.cv.dataset.src });
+  await tick(40);
+  const x0 = parseFloat(tg('ruth').style.left);
+  ok('splat tags: on the first frame the row is laid over the canvas, Ruth right of centre, Theo behind you hidden',
+    rowT.className === 'looktags' && !tg('ruth').hidden && x0 > 200 && tg('theo').hidden && tg('nobody').hidden,
+    JSON.stringify([rowT.className, tg('ruth').style, tg('theo').hidden]));
+  kt.cv.fire('pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
+  kt.cv.fire('pointermove', { pointerId: 1, clientX: 130, clientY: 100 });
+  kt.cv.fire('pointerup', { pointerId: 1 });
+  await tick(30);
+  const x1 = parseFloat(tg('ruth').style.left);
+  ok('splat tags: a tag follows camera yaw — turn left, and Ruth moves right across the frame',
+    lt.state.yaw > 0 && x1 > x0 + 5, x0 + ' -> ' + x1 + ' at yaw ' + lt.state.yaw);
+  for (let i = 0; i < 6; i++) { kt.cv.fire('keydown', { key: 'ArrowLeft' }); }
+  await tick(30);
+  ok('splat tags: turn far enough and she is past the edge, hidden', tg('ruth').hidden, JSON.stringify(tg('ruth').style));
+  XV.unmount();
+  [kt, rowT, tg] = tagged({ ruth: [0.8, -0.3, -2] }, 'none');
+  XV.mount({ kind: 'splat', canvas: kt.cv, url: kt.cv.dataset.src });
+  await tick(10);
+  ok('splat tags: a splat that cannot run leaves the row, every tag shown', rowT.className === 'looktagrow'
+    && rowT.children.every((t) => !t.hidden));
   XV.unmount();
 
   // -- WebGL 1 with instancing --------------------------------------------------------

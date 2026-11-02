@@ -37,7 +37,8 @@ Filed by the commits since the plan landed, not yet fixed.
   `api-lib.php`'s thread route, so a GET has a side effect; a `$markRead` flag would make
   the API's read half side-effect free (c74f580).
 - **The vendor fields in `tools/proxies/` are unverified** — each mapping says *verify*;
-  `tools/proxies/README.md` (0d3208c).
+  `tools/proxies/README.md` (0d3208c). Still so after M5: the scaffold's and the bet test's
+  machines are our own, and no vendor has answered one of these requests.
 - **The smoke test cannot run under full Chrome in a sandbox without D-Bus** —
   `forge/web/tests/smoke-test.php` fails in 20 s and says so; `chrome-headless-shell` via
   `XERIC_CHROME` works (42a3bd4).
@@ -128,7 +129,59 @@ Filed by the room with two humans in it, not yet fixed.
 - **A late joiner's poll shows the whole thread** — `forge/web/room.php` answers rows from the
   cursor, not from `joined_at_row`; harmless while guests may read the room anyway.
 
+## Open — left by M5
+
+Filed by the layout, the stream and the scaffold (cc381c0, a304675, 377bb8a) and
+the follow-up that closed the plan, not yet fixed.
+
+- **No real world model has drawn a room** — `tools/proxies/worldmodel.py` rasterises a
+  blockout; a local video model plugs in at `send_frame()` and none has; Genie 4's API and the
+  hosted streamers were never called. The bet test (`engine/tests/bet-test.php`) proves the
+  bytes, not the picture.
+- **`/v1/frames` is the scaffold's invented shape** — `tools/proxies/worldmodel.py`
+  `--upstream-frames` POSTs a proxy frame and expects a frame back in a contract nobody's
+  model speaks yet; a real one needs a wrapper, or the shape changes.
+- **"Which machine drew it" is untested by a person** — the tags now sit at their bearings
+  over every view (`forge/web/xeric-view.js` `flatAt()`, `splatTags()`), but nobody has looked
+  at the three side by side.
+- **An unconfirmed stream end is never in the ledger, by decision** — `engine/stream.php`
+  `xeric_stream_told()` writes the seconds a machine may still bill as
+  `meta.unconfirmed_end` and shows them (`xeric_stream_unconfirmed_line()`); nobody knows they
+  were spent, so they are not counted.
+- **The sweep's DELETEs are bounded per heart pass** — `engine/stream.php`
+  `XERIC_STREAM_TELL_PER_TICK` (4, every world together) at `XERIC_STREAM_TELL_TIMEOUT` (2 s);
+  a pass that finds more owed sends the rest next minute, so a machine may run up to a minute
+  longer per four abandoned sessions. The owner's own beat or end sends two more.
+- **A second kind of look is engine-only** — `xeric_scene_enqueue($db, $brief, 'splat')`
+  files a splat beside the template's panorama (`engine/scene.php` `xeric_scene_want()`), but
+  no owner action asks for one ("draw it as a splat"), and the look view, the day strip and
+  `scene.php`'s file route show only the template's first kind.
+- **A still's field of view is assumed** — `forge/web/play-view.php`
+  `xeric_play_look_fov_attrs()` takes `hfov`/`fov` from the answer's meta and otherwise 90°;
+  no machine has been asked what it draws, and the brief does not say.
+- **The splat's frame is assumed to be the layout's** — `xeric_play_look_places()` puts the
+  vantage at the splat's origin looking down −z; a machine whose capture is centred or turned
+  elsewhere puts the tags off their people. The y-up line above is the same assumption.
+- **The stand page's tags are still a row under a still or a stream** —
+  `forge/web/stand.php`; only the play view lays them over every view.
+- **smoke-test fails four page checks under `XERIC_SOLO=0`** — `forge/web/tests/smoke-test.php`
+  (the workbench, the book, the watch, the join page); it passes solo, and the CONTRIBUTING
+  loop's measure excludes it.
+
 ## Closed
+
+- **A world kept one look per room-moment** — `scene_jobs` was UNIQUE(key, fingerprint), so a
+  panorama and a splat of one moment could not coexist; it is keyed (key, fingerprint, `want`),
+  rebuilt once under the same rows by `xeric_state_scene_jobs_want()`, and `want` '' is the
+  template's first kind, so every row from before still resolves (found by a304675).
+- **The tags sat in a row under a splat, a still and a stream** — the one way a careful eye
+  could tell the machines apart; they are laid over every view at their bearings, through a
+  flat frame's field of view or the splat's own camera each frame, the row kept as the
+  fallback (found by a304675).
+- **The stream sweep sent DELETEs on the sidebar's read path** — a page render could stall
+  five seconds per abandoned session on a dead machine; the sweep only marks
+  (`meta.tell_owed`), and `xeric_stream_tell_owed()` sends from the heart's pass and the
+  owner's own beat and end (377bb8a's review).
 
 - **Storage readers redacted at whoever's request ran them** — `xeric_messages_recent()`,
   `xeric_room_rows()` and `xeric_events_recent()` take an explicit viewer (null: whole); a kids'
@@ -227,7 +280,8 @@ Built, or offered, and not connected to anything that runs.
   deeper than one step (`docs/NARRATOR.md`, "What author needs before it is built").
 - **Guests' `stranger` and `written_in` are unreachable** — `engine/guest.php:54`; the
   join UI always posts `{}`.
-- **Thin coverage**: heart.php is checked only for HTTP denial; workers only by source
+- **Thin coverage**: heart.php is checked only for HTTP denial (and, for its live-view pass,
+  by source and through `xeric_stream_pass()`, never as a process); workers only by source
   grep; no test names any of `forge/web/pdf.php`'s functions.
 
 ## Deferred from the room on the web

@@ -677,7 +677,7 @@ function xeric_stream_row_endpoint(array $row, ?array $current): ?array
  * could not be reached or refused. A stub hears it as stub('end', {reason},
  * {session}); a stub that throws, or answers {_http: >= 400}, did not confirm.
  */
-function xeric_stream_tell_end(?array $endpoint, array $row, string $reason): bool
+function xeric_stream_tell_end(?array $endpoint, array $row, string $reason, int $timeout = 5): bool
 {
     if ($endpoint === null) return false;
     try {
@@ -690,7 +690,7 @@ function xeric_stream_tell_end(?array $endpoint, array $row, string $reason): bo
         if ($base === '') return false;
         $headers = array_merge(['Accept: application/json'], xeric_scene_auth_headers($endpoint));
         [, $st] = xeric_scene_get($base . '/v1/scenes/' . rawurlencode((string)$row['session']),
-            ['method' => 'DELETE', 'header' => implode("\r\n", $headers), 'timeout' => 5,
+            ['method' => 'DELETE', 'header' => implode("\r\n", $headers), 'timeout' => max(1, $timeout),
              'ignore_errors' => true, 'follow_location' => 0]);
         return ($st >= 200 && $st < 300) || $st === 404;
     } catch (Throwable $e) {
@@ -713,6 +713,11 @@ function xeric_stream_tell_end(?array $endpoint, array $row, string $reason): bo
  *   short, to the address ON THE ROW (xeric_stream_row_endpoint) — $endpoint
  *   is only the machine chosen now, whose key is lent when it is the same one.
  *
+ *   ...UNLESS THIS IS A READ PATH. $opts['tell'] false (the sweep) ends the
+ *   row and meters it with no network at all, and writes meta.tell_owed: the
+ *   DELETE is sent later by xeric_stream_tell_owed — from the heart's pass,
+ *   or the next beat or end the owner's own page sends.
+ *
  *   AN UNCONFIRMED STOP IS WRITTEN DOWN. If the machine could not be told,
  *   and it said when it would stop by itself (max_seconds, expires_at), the
  *   seconds it may still bill are kept as meta.unconfirmed_end — never
@@ -720,7 +725,7 @@ function xeric_stream_tell_end(?array $endpoint, array $row, string $reason): bo
  *   (xeric_stream_unconfirmed_line), because a closed tab must not leave a
  *   costly session running where nobody can see it.
  *
- * $opts: meter (fn(int, bool)).
+ * $opts: meter (fn(int, bool)), tell (default true), timeout (the DELETE's, 5).
  */
 function xeric_stream_end(PDO $db, ?array $endpoint, int $id, string $reason, ?int $wall = null, array $opts = []): bool
 {
@@ -738,9 +743,29 @@ function xeric_stream_end(PDO $db, ?array $endpoint, int $id, string $reason, ?i
     if ($tail > 0 && isset($opts['meter']) && is_callable($opts['meter'])) {
         try { ($opts['meter'])($tail, $costly); } catch (Throwable $e) { /* the seconds happened */ }
     }
-    $told = xeric_stream_tell_end(xeric_stream_row_endpoint($before, $endpoint), $before, $reason);
+    if (array_key_exists('tell', $opts) && !$opts['tell']) {
+        $meta = json_decode((string)$before['meta'], true);
+        if (!is_array($meta)) $meta = [];
+        $meta['tell_owed'] = true;
+        $db->prepare('UPDATE scene_streams SET meta = ? WHERE id = ?')
+           ->execute([json_encode((object)$meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $id]);
+        return true;
+    }
+    xeric_stream_told($db, $before, xeric_stream_tell_end(xeric_stream_row_endpoint($before, $endpoint), $before, $reason,
+                                                         (int)($opts['timeout'] ?? 5)), $wall);
+    return true;
+}
+
+/**
+ * What a DELETE's answer leaves on an ended row: whether the machine
+ * confirmed, and if not, the seconds it said it might still run on.
+ */
+function xeric_stream_told(PDO $db, array $before, bool $told, int $wall): void
+{
+    $id   = (int)$before['id'];
     $meta = json_decode((string)$before['meta'], true);
     if (!is_array($meta)) $meta = [];
+    unset($meta['tell_owed']);
     $meta['end_confirmed'] = $told;
     if (!$told) {
         $until = 0;
@@ -752,25 +777,80 @@ function xeric_stream_end(PDO $db, ?array $endpoint, int $id, string $reason, ?i
     }
     $db->prepare('UPDATE scene_streams SET meta = ? WHERE id = ?')
        ->execute([json_encode((object)$meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $id]);
-    return true;
+}
+
+/** How many owed DELETEs one heart pass sends, across every world, and how long each may take. */
+const XERIC_STREAM_TELL_PER_TICK = 4;
+const XERIC_STREAM_TELL_TIMEOUT  = 2;
+
+/**
+ * Send the DELETEs the sweep owed (meta.tell_owed), oldest end first, at most
+ * $limit, each with a short $timeout. Run where a stall is affordable — the
+ * heart's pass, and the beat and end requests the owner's own page makes —
+ * never on a read path. Each row is claimed before it is told (the flag is
+ * cleared under `meta LIKE`), so two runners never DELETE the same session
+ * twice. Returns how many were sent.
+ */
+function xeric_stream_tell_owed(PDO $db, ?array $endpoint, int $limit = XERIC_STREAM_TELL_PER_TICK,
+                                ?int $wall = null, int $timeout = XERIC_STREAM_TELL_TIMEOUT): int
+{
+    if ($limit <= 0) return 0;
+    xeric_stream_schema($db);
+    $wall ??= time();
+    $q = $db->prepare("SELECT * FROM scene_streams WHERE status = 'ended' AND meta LIKE '%\"tell_owed\":true%'
+                       ORDER BY ended_at, id LIMIT ?");
+    $q->execute([$limit]);
+    $rows = $q->fetchAll(PDO::FETCH_ASSOC);
+    $q->closeCursor();
+    $n = 0;
+    foreach ($rows as $row) {
+        $meta = json_decode((string)$row['meta'], true);
+        if (!is_array($meta)) continue;
+        unset($meta['tell_owed']);
+        $m = json_encode((object)$meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $claim = $db->prepare('UPDATE scene_streams SET meta = ? WHERE id = ? AND meta = ?');
+        $claim->execute([$m, (int)$row['id'], (string)$row['meta']]);
+        if ($claim->rowCount() !== 1) continue;
+        $row['meta'] = $m;
+        $told = xeric_stream_tell_end(xeric_stream_row_endpoint($row, $endpoint), $row, (string)$row['reason'], $timeout);
+        xeric_stream_told($db, $row, $told, $wall);
+        $n++;
+    }
+    return $n;
+}
+
+/**
+ * The heart's turn at a world's live views (forge/web/heart.php, once per
+ * world per pass): the abandoned ones ended and metered as the sidebar would
+ * (xeric_stream_sweep, no network), then up to $left of the DELETEs owed
+ * sent, XERIC_STREAM_TELL_TIMEOUT each (xeric_stream_tell_owed).
+ *
+ * @return array{ended:int,told:int}
+ */
+function xeric_stream_pass(array $t, PDO $db, ?array $endpoint, int $left = XERIC_STREAM_TELL_PER_TICK,
+                           ?int $wall = null): array
+{
+    $ended = xeric_stream_sweep($db, $wall, ['meter' => xeric_stream_ledger($db, xeric_clock_now($db, $t))]);
+    return ['ended' => $ended, 'told' => $left > 0 ? xeric_stream_tell_owed($db, $endpoint, $left, $wall) : 0];
 }
 
 /**
  * Live views nobody is watching any more: no beat for longer than the away
- * window, or past their end. Ended as every view is (xeric_stream_end): the
- * tail metered, the machine on the row told to stop — this runs on the
- * sidebar's read path, and the one network call it may make is a DELETE,
- * which stops spending and never starts it, once per abandoned session.
+ * window, or past their end. Ended as every view is (xeric_stream_end), the
+ * tail metered — BUT WITH NO NETWORK: this runs on the sidebar's read path,
+ * and a page render must not stall on a dead machine. The DELETE each one is
+ * owed is written down (meta.tell_owed) and sent by xeric_stream_tell_owed,
+ * from the heart's pass or the owner's next beat or end.
  *
- * $opts: endpoint (the machine chosen now, for its key), meter.
+ * $opts: meter. (endpoint is accepted and no longer used here.)
  */
 function xeric_stream_sweep(PDO $db, ?int $wall = null, array $opts = []): int
 {
     xeric_stream_schema($db);
     $wall ??= time();
     $n = 0;
-    $ep = $opts['endpoint'] ?? null;
-    $end = ['meter' => $opts['meter'] ?? null];
+    $ep = null;
+    $end = ['meter' => $opts['meter'] ?? null, 'tell' => false];
     $rows = $db->query("SELECT id, last_beat, ends_at FROM scene_streams WHERE status = 'live'")->fetchAll(PDO::FETCH_ASSOC);
     foreach ($rows as $r) {
         if ($wall - (int)$r['last_beat'] > XERIC_STREAM_AWAY) {
