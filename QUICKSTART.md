@@ -163,6 +163,45 @@ own electricity unless you set it false. A day is the world's date, not the
 wall's. Out of tokens, the heart stops living hours where it ran out; out of
 renders, rooms wait. See [`docs/BUDGET.md`](docs/BUDGET.md).
 
+**Ask the narrator.** The narrator is the chip and the row at the end of the
+cast in the sidebar. It sees the whole world with no walls, so you can ask it
+*why*: why nothing happened last night, why she keeps bringing up the
+ledger. It answers straight about how the world works and will not tell you
+how a story ends, where something hidden is, or anybody's secret. One
+question is one model call, counted as a message, and the last few
+exchanges are kept on the narrator's pane. Only the owner of the world can
+ask; a guest on a pairing code is told no. On the same pane you can write a
+beat you want to happen (*Ruth and Walt at the Bluebird this week*). The
+sweeps lean towards it but are not forced, and a beat that happens is struck
+through. `why.php?w=<slug>&audit=1` is the narrator's audit: dropped
+threads, people who have gone missing, contradictions. Reading it costs
+nothing. The button that reads the threads with the model is metered like a
+message. See [`docs/NARRATOR.md`](docs/NARRATOR.md).
+
+**Turn on the Director.** The Director is off until a world's template says
+otherwise. When it is on, it puts two or three people in one room for an
+hour, so the encounter is already there when you walk in. It never decides
+what they say there. Pick the rules you want:
+
+```json
+"director": { "rules": ["narrator", "apart", "player"], "per_day": 2,
+              "apart_days": 7, "player_gap": 2, "minutes": 60 }
+```
+
+- `narrator` stages a narrator beat that names two or more people.
+- `apart` brings together two people of one circle who have gone
+  `apart_days` without an hour together.
+- `player` brings together two people whose trust in you has drifted
+  `player_gap` or more apart.
+
+`per_day` caps the stagings per world-day for all rules together; the
+default is 2. A staging lasts `minutes`, at most 120. It never moves the
+dead, never takes anybody off a shift marked or read as unmissable, never
+seats a minor in a room that serves drink, and moves nobody when fewer than
+two can come. The inspector's *what the director has staged* says why each
+one happened, and you can cancel one there. See
+[`docs/DIRECTOR.md`](docs/DIRECTOR.md).
+
 ## Reading the inspector — the tuning tool
 
 `why.php?w=<slug>` is the index, and it is the thing to reach for whenever the

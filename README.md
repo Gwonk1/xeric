@@ -36,8 +36,8 @@ session.
 
 **Beta.** The engine runs end to end: the forge builds a world from an
 interview, the review step lets you edit or reroll any of it, and the play view
-is a world you can talk to and skip time inside. Thirty-six test suites, run on
-PHP 8.1 and 8.3 on every push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml));
+is a world you can talk to and skip time inside. Forty test suites, about 4,400
+assertions, run on PHP 8.1 and 8.3 on every push ([`.github/workflows/tests.yml`](.github/workflows/tests.yml));
 how to run them yourself is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and what is
 known and not yet fixed is in [`docs/PUNCHLIST.md`](docs/PUNCHLIST.md).
 
@@ -58,6 +58,11 @@ route. [`docs/STAND.md`](docs/STAND.md) is the stand page: linking a headset,
 the secure-context rule, and what each headset can do.
 [`docs/BUDGET.md`](docs/BUDGET.md) is the per-world budget: a ceiling per
 world-day on tokens, renders, clips and hearings.
+[`docs/DIRECTOR.md`](docs/DIRECTOR.md) is the Director: who it may put in a
+room, the rules a template opts into, and what it refuses.
+[`docs/SLEEP.md`](docs/SLEEP.md) is sleep: how old memories become facts with
+their sources kept, and why the prompt gets shorter, not longer, as a world
+ages.
 
 ## A model that is not on this machine
 
@@ -81,6 +86,9 @@ A trailing `/v1` is stripped. See [`QUICKSTART.md`](QUICKSTART.md).
 | **user.json** | You: name, timezone, work hours, motivation, goals. The world builds around your actual life. |
 | **engine** | PHP + SQLite + cron sweeps. Prompt assembly, event generation, proactive contact, photo pipeline, temperature physics. |
 | **setup forge** | A one-time pass by a capable model (remote or local) that writes your world. Runtime then runs on small local models. |
+| **narrator** | The other god of the world: full canon, no walls, discreet about the story. In the play view you can ask it *why*; its write-ahead beats lean the sweeps without ever entering a prompt; its investigate is in the inspector. Author is not built. See [`docs/NARRATOR.md`](docs/NARRATOR.md). |
+| **director** | Changes the set, never the performance: stages two or three people in one room for up to two hours, so an encounter is there when you walk in. Off until the template opts in, rule by rule, capped per day. See [`docs/DIRECTOR.md`](docs/DIRECTOR.md). |
+| **sleep** | Once a world-night, a character's old memories become a few facts with their sources kept and their walls inherited; nothing is deleted and the bible is never touched. See [`docs/SLEEP.md`](docs/SLEEP.md). |
 | **story overlay** | An optional mystery laid over a finished world as a sidecar file: beats, who is wrong about what, and an ending the world survives. |
 | **client API** | `forge/web/api.php`: the world as data and the verbs, versioned (`v1`), with a pulse to poll and per-device tokens. Its first client is the stand page, `forge/web/stand.php` — nothing but the room, for a headset first and any browser second. See [`docs/API.md`](docs/API.md) and [`docs/STAND.md`](docs/STAND.md). |
 | **media** | Photo composition (identity-stable characters via seed + appearance anchoring); the viewport — the room you stand in, as a panorama or a still, with its sound, or a splat you walk inside in our own WebGL viewer; the drawn map, the town from above beside the room from inside; a voice for every character, dealt from a seed; and ears — hold to talk, transcribed into the composer for you to send. All composed in code and dormant until you choose a machine; no machine, no renders, no errors. |

@@ -5,10 +5,9 @@ working document, not a promise — dates are absent on purpose.
 
 The long view — where this goes over about two years, the bets it rests on,
 the milestones, and what the code actually is today as against what this file
-says — is [docs/FUTURE.md](docs/FUTURE.md). Its truth table corrects several
-headings below (the player's body and death are built; the Narrator's powers
-exist and reach nothing a player can see); this file is updated as those
-items are worked, not all at once.
+says — is [docs/FUTURE.md](docs/FUTURE.md). Its truth table is what the
+headings below are checked against, row by row; after milestone three the one
+heading still out of step is story overlays, built and filed under Later.
 
 ---
 
@@ -64,22 +63,39 @@ you will notice.
 
 ## Next
 
-### A world with intent — what is next
+### Together — what is next
 
-M3 in [docs/FUTURE.md](docs/FUTURE.md#m3--a-world-with-intent), first three
-items, in order:
+M4 in [docs/FUTURE.md](docs/FUTURE.md#m4--together): two humans in the same
+room with the cast. Milestone three, "A world with intent", shipped
+([docs/FUTURE.md](docs/FUTURE.md#m3--a-world-with-intent)) apart from more
+than one voice of weights, which is in progress. In order:
 
-- **Wire the Narrator's ask into the play view**, in place of the 30-word
-  hint. `xeric_narrator_ask` exists, is read-only, and is CLI only today.
-- **The Director** — changes the set, never the performance. Its first move
-  is an encounter you walk into: the write-ahead lean pointed at presence
-  (below).
-- **Confidences, formed.** `xeric_confide_form` and `_block` have no caller
-  outside their tests; the sweep only breaks and reads confidences. A
-  confidence the player can betray is the highest-stakes event the engine
-  can offer.
+- **A body each.** Today there is one `player.where`; a position per player,
+  and the other players in `who` with a flag, so the map, the view and the
+  tags show them without learning anything new.
+- **The room with two humans in it.** The who-answers draw treats a human
+  like anyone else who just spoke; the floor can return to either; silence
+  is noticed for both.
+- **Threads that know who said what.** A player id on messages, so a
+  character remembers which of you promised the dish — and so news, worry,
+  ritual and milestone stop reading only the first player.
+- **Rating per viewer.** Messages, events and scene rows stamped with a
+  rating and filtered per viewer, not only clamped when generated.
 
 ### The Narrator
+
+**Shipped**, except author. Ask is the play view's *ask the narrator*
+(`forge/web/play-narrator.php` over `xeric_narrator_ask`): full canon, no
+walls, the discretion rules below in force, a refusal in voice, owner only,
+one model call metered as a message, each exchange kept on the narrator's own
+thread. Write ahead steers: every sweep window reads `xeric_narrator_leans`
+into `xeric_sweep_choose` as a ×2 lean — handles and a kind key, never words —
+and the hour that realizes a beat marks it delivered and says so on its
+trail. Investigate is the inspector's `why.php?audit=1`: the arithmetic free
+on a GET, the read of the threads a metered POST. **Author is not built**, on
+purpose: `xeric_narrator_author_refuses` writes nothing, because "one undo
+away" means nothing while the undo is one step deep. See
+[docs/NARRATOR.md](docs/NARRATOR.md).
 
 The other god of the world: full canon, no walls, the only voice you can ask
 *why*. Four powers, in increasing order of risk — **ask** (read-only, worth
@@ -99,6 +115,20 @@ toward autonomy, and free will left alone produces drift — everyone doing thei
 own plausible thing forever. The Director **changes the set, never the
 performance**: it can put two people in the same room, it cannot decide what
 they say there.
+
+**Shipped, and opt-in.** `engine/director.php` stages two or three people at
+one place for at most two hours, on any of three rules a template lists in
+`director.rules` — `narrator` (a live intent that names two or more people),
+`apart` (a pair of one orbit with no hour together for `apart_days`) and
+`player` (two people whose trust in you is pulling apart) — at most
+`per_day` a world-day. It never moves the dead, never pulls anybody off an
+unmissable shift, never puts a minor in a room that pours, and moves nobody
+if fewer than two can come. The heart ticks it once a world-hour; the play
+view and the map see a staging through the same presence read as everything
+else; the inspector says why each one happened and the owner can cancel one.
+With no rules it writes nothing at all, and the benchmark runs that way, so
+a staged encounter has been tested in `director-test.php` and not yet in a
+world left alone for a month. See [docs/DIRECTOR.md](docs/DIRECTOR.md).
 
 ### Giving the player a body
 
@@ -195,6 +225,20 @@ do. That constraint dissolves the moment death is a row in the database.
 
 ### Social constructs — relationships need obligations
 
+**Shipped.** Expectations with repair and a `kept` state, debts, gossip that
+runs through the walls, guest vouching — and, in milestone three, confidences
+formed and not only broken: an explicit ask to keep something, checked in
+code against what was actually said, becomes a wall the player made, and
+repeating it to somebody who must not hear it costs three notches, mended by
+owning up inside a week, hardened into a grudge otherwise. The six siblings
+— anticipation, news, worry, grudge, ritual, milestone — each have a name
+the engine can arm, a coarse line in an ON YOUR MIND block and one line in
+the inspector; and promises between townspeople are read out of the sweep's
+own quoted speech and kept or missed by their own schedules. Still open,
+in [docs/CONSTRUCTS.md](docs/CONSTRUCTS.md): a bare-day promise is due at
+its midnight and misses at 04:00; a drop-in ignores the workplace's hours;
+and Theo can be dealt into the Thursday game.
+
 A relationship that cannot be let down cannot be kept either. Today the cast has
 history; it has no **expectations**. The seed idea: a person expects you, it
 fades over 24–72 hours, and missing it is a real event.
@@ -210,6 +254,21 @@ milestones.
 Each needs a name the engine can switch on, so an open-ended motivation can arm
 it, and each needs an inspector answer — a grudge that cannot explain itself
 reads as the model being moody.
+
+### Sleep — a long memory that gets shorter
+
+**Shipped.** A character who has lived for months has thousands of memories
+and a prompt that carries twelve. `engine/sleep.php`, once a world-night per
+person, offers memories older than a fortnight to the model as one call and
+keeps what comes back as **facts** only when code can trace every name,
+number and most words to their sources, only when a fact is shorter than
+what it replaces, and only without a six-word quotation of any wall; a fact
+inherits the strictest wall of its sources. Nothing is deleted — sources
+are marked and stop rendering, the chain is kept — and the WHAT YOU KNOW
+block shares the memory cap, so a prompt gets shorter as a world ages. The
+bible is never touched. Budgeted, local-only unless the template says
+`sleep.remote`, and measured by five `sleep` probes. See
+[docs/SLEEP.md](docs/SLEEP.md).
 
 ---
 

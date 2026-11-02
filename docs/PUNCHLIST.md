@@ -54,9 +54,6 @@ Filed by the commits since the plan landed, not yet fixed.
 - **A fork inherits the owner's spend for the day** — `forge/web/session.php`
   `xeric_session_fork_clear()` leaves the `spend` table, so a fork starts its world-day
   with the owner's ledger; it could clear `spend` (934bbe6).
-- **why.php does not say why a world stopped on budget** — `forge/web/why.php`; the heart
-  writes `budget.stopped` and `engine/budget.php` `xeric_budget_why()` has no caller
-  outside its test; one call would show it (934bbe6).
 - **The headset and talk path is untested on a device** — `forge/web/xeric-view.js`
   `standXR`, `raySelect`, `panAt`; run only against fakes in Node and headless Chrome
   (`forge/web/tests/stand-test.js`, the smoke test), never on a Quest, Android XR or
@@ -64,6 +61,45 @@ Filed by the commits since the plan landed, not yet fixed.
 - **The stand page's room poll is untested in a browser** — `forge/web/stand.php`
   `roomPoll()`; stand-test checks that the page's inline script parses and runs the
   viewer's parts, not the page's own polling (934bbe6).
+
+## Open — left by milestone three
+
+Filed by fc576e6, not yet fixed.
+
+- **The teller finds out at once** — `engine/confide.php` `xeric_confide_repeat()` takes the
+  teller's trust the moment the player repeats a confidence; nothing routes the finding-out
+  through the gossip ripple (`docs/CONSTRUCTS.md`, "Still open"; fc576e6).
+- **Repeating a secret in a room is not read** — `engine/chat.php` calls
+  `xeric_confide_repeat()` from the chat harvest only; `engine/room.php` lines never reach it
+  (fc576e6).
+- **News, worry, ritual and milestone read the first player only** — `engine/constructs.php`
+  `xeric_sibling_user()`, `xeric_sibling_thread()`; the thread and the body carry no player
+  id until M4 (fc576e6).
+- **The siblings are not in the forge's vocabulary** — `forge/forge.php` `XERIC_SYSTEMS` has
+  no `anticipation`, `news`, `worry`, `grudge`, `ritual` or `milestone`, so the forge never
+  proposes them; they arm by hand or through the preset systems (fc576e6).
+- **A cast member's confidence is formed by nothing** — `engine/confide.php`
+  `xeric_confide_form()` (the `told.*` rows the gossip sweep breaks) still has no caller
+  outside its tests; the player's side is formed by `xeric_confide_to_player()` (fc576e6).
+- **A skip's rewind does not cover the sleep tables** — `engine/sleep.php` writes
+  `sleep_facts` and `sleep_links` outside the rewind's diff; safe while the heart, never a
+  skip, runs `xeric_sleep_pass()` and only memories older than any skip's mark are taken
+  (`docs/SLEEP.md`, "What it does not do"; fc576e6).
+- **Other readers still see consolidated memories raw** — the extract's dedupe
+  (`engine/chat.php`), `engine/room.php`, `engine/duet.php` and `engine/narrator.php` read
+  every memory, consolidated or not; only `engine/prompt.php` `xeric_prompt_recall()` renders
+  facts in their place (`docs/SLEEP.md`, `engine/sleep.php` header; fc576e6).
+- **The Director has not run for a month** — `engine/director.php` is exercised by
+  `engine/tests/director-test.php` on a fixed clock; the continuity benchmark runs three
+  days with it off (`presence.director_off`), so M3's "an encounter the Director staged"
+  in a month left alone is untested (fc576e6).
+- **Some presence readers do not see stagings** — `docs/DIRECTOR.md`, "Not yet": readers
+  that call `xeric_world_who_is_where()` with no database (the prompt's room line,
+  `engine/room.php`, `engine/scene.php`) and tick-worker's skip see the plain schedule
+  unless their template was dressed by `xeric_director_dress()` (fc576e6).
+- **The narrator's investigate cache is a file under the data dir** — `forge/web/play-narrator.php`
+  `xeric_play_narrator_audit_path()` writes `<data_dir>/audits/<sha1>.json`, outside the
+  world's database, and nothing that deletes or forks a world clears it (fc576e6).
 
 ## Closed
 
@@ -85,6 +121,18 @@ the fix and passing since.
 - **dayView's "earlier:" never cleared** — play-lib writes `data-now` now (0b75ac0).
 - **No token budget** (was deferred by decision) — the per-world budget, `engine/budget.php`,
   `docs/BUDGET.md` (934bbe6).
+- **why.php did not say why a world stopped on budget** — `forge/web/why.php` calls
+  `xeric_budget_why()` when `budget.stopped` is set (414da36).
+- **The narrator's write-ahead was unwired** — the sweeps read `xeric_narrator_leans()` into
+  `xeric_sweep_choose()`, and `xeric_narrator_intents_deliver()` marks a realized beat; ask is
+  the play view's (`forge/web/play-narrator.php`), investigate the inspector's (fc576e6).
+- **Confidences were never formed** — the chat harvest forms them with
+  `xeric_confide_to_player()`, `xeric_confide_repeat()` breaks them, and
+  `engine/constructs.php` renders `xeric_confide_block()` (fc576e6; the cast's own
+  `xeric_confide_form()` is still open, above).
+- **The cast-to-cast seam was dormant** — expectations carry `of`, a cast handle, formed from
+  rooms, duets and now the sweep's quoted speech (`xeric_constructs_cast_tick()`, from the
+  heart), and `engine/room.php`'s heat notch reads it (fc576e6).
 
 ## Deferred by decision
 
@@ -105,19 +153,15 @@ Known, understood, and left on purpose until something forces them.
 - **The forge's result fragment ships a `<script>`** — `forge/web/forge.php:1694`
   re-creates the fragment's scripts with the page's nonce rather than shipping
   wiring in the page itself.
-- **The cast-to-cast seam is dormant** — `engine/room.php:44`, `engine/constructs.php:58`:
-  expectations point only at the user, so the notch for one naming the last speaker
-  reads a field no row carries. Tested so the day it lights up is not the day it breaks.
 
 ## Unwired
 
 Built, or offered, and not connected to anything that runs.
 
 - **`death` and `story` notify kinds are offered and never sent** — `engine/notify.php:40`, `:42`.
-- **The narrator's write-ahead is unwired** — `engine/narrator.php`; CLI only.
-- **Confidences are never formed** — `engine/confide.php:97` `xeric_confide_form` has
-  no caller outside its tests; the sweep (`engine/sweeps.php:867`) only breaks and
-  reads them, and confide has no surface.
+- **The narrator's author power refuses** — `engine/narrator.php`
+  `xeric_narrator_author_refuses()` throws and writes nothing, on purpose, until the undo is
+  deeper than one step (`docs/NARRATOR.md`, "What author needs before it is built").
 - **Guests' `stranger` and `written_in` are unreachable** — `engine/guest.php:54`; the
   join UI always posts `{}`.
 - **Thin coverage**: heart.php is checked only for HTTP denial; workers only by source
@@ -131,8 +175,11 @@ Built, or offered, and not connected to anything that runs.
 
 ## Stale text
 
-- **`ROADMAP.md`** — the Narrator, social constructs and story overlays still read as
-  less built than they are against FUTURE.md's truth table ("Where we stand").
+- **`ROADMAP.md`** — story overlays are built and still filed under Later against
+  FUTURE.md's truth table ("Where we stand"); the Narrator and social constructs were
+  corrected after fc576e6.
+- **`engine/room.php`'s docblock calls the cast-to-cast notch dormant** — the heat rule
+  (MATERIAL HEAT) says expectations point only at the user; they carry `of` now (fc576e6).
 - **Docblocks say PHP 8.2+** (`engine/narrator.php:93`, `confide.php:39`, `table.php:41`);
   `bootstrap.php` enforces 8.1, CI runs 8.1 and 8.3.
 - **QUICKSTART lists `curl`**, which nothing uses.

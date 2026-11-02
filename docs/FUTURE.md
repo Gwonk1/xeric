@@ -86,18 +86,19 @@ shipped; some of what it calls built is wired to nothing.
 |---|---|---|
 | The heart | Built, and it learns | `heart.php`; all four refusals coded; it now runs `xeric_learn_pass` at the end of its hold, so a week lived unattended turns friendly replies into trust [e5a73b4]; it seals idle rooms before it sweeps [0b75ac0] |
 | The undo is one step deep | Still true | rewind is the last skip; one `world-template.prev.json` |
-| The Narrator | Partly | ask, investigate and write-ahead exist (`xeric_narrator_ask`, `_investigate`, `_intend`) but are **CLI only**; `xeric_sweep_choose` accepts intents and nothing calls `xeric_narrator_leans`, so write-ahead changes nothing; the web "ask the narrator" is a separate 30-word hint; author is not built |
-| The Director | Not built | only a ×2 casting lean |
+| The Narrator | Wired, except author | ask is the play view's "ask the narrator" (`forge/web/play-narrator.php` `xeric_play_narrator_ask` over `xeric_narrator_ask`; `xeric_play_hint` delegates to it), owner only; write-ahead steers — the sweeps read `xeric_narrator_leans` into `xeric_sweep_choose` as a ×2 lean, and `xeric_narrator_intents_deliver` marks a realized beat; investigate is the inspector's `why.php?audit=1` (`xeric_play_narrator_audit`); author is `xeric_narrator_author_refuses`, which writes nothing until the undo is deeper [fc576e6] |
+| The Director | Built, opt-in | `engine/director.php`: stagings of two or three people for at most two hours, rules `narrator`, `apart`, `player`, capped by `per_day`; the heart runs `xeric_director_tick` and sweeps a dressed template; why.php shows `xeric_director_why`, the owner cancels; off unless `director.rules` lists something, and the benchmark runs with it off (`presence.director_off`) [fc576e6] |
 | Giving the player a body | Built | `xeric_player_where`, `xeric_travel_go`, `xeric_travel_map`; the roadmap says so and still files it under Next |
 | The room | Built, on the web | `forge/web/room.php` and `room-worker.php` over `xeric_room_step`: talk to the room where two or more are present, lines land one at a time as message rows, the room may carry on a beat or two without you; `xeric_room` keeps watch's CLI rule [0b75ac0] |
 | Death | Built | revivable and permanent, catastrophe and restore, stories can kill; fate.php; not marked shipped |
-| Social constructs | Partly | expectations with repair and a `kept` state (`xeric_expect_keep`, [e5a73b4]), debts, gossip, guest vouching are built; confidences exist but `xeric_confide_form`/`_block` are never called; anticipation, news, worry, grudges, rituals, milestones and cast-to-cast are not built |
+| Social constructs | Built | expectations with repair and a `kept` state (`xeric_expect_keep`, [e5a73b4]), debts, gossip, guest vouching; confidences formed from the chat harvest (`xeric_confide_to_player`), broken by repeating them (`xeric_confide_repeat`), mended or hardened into a grudge, rendered by `xeric_confide_block`; the six siblings — anticipation, news, worry, grudge, ritual, milestone — stepped by `xeric_siblings_tick`; cast-to-cast promises from the sweep's quoted speech (`xeric_constructs_cast_tick`, from the heart) [fc576e6]. `xeric_confide_form`, a confidence one of the cast carries, still has no caller outside its tests |
+| Sleep | Built | `engine/sleep.php`: once a world-night per person, old memories become facts with provenance, walls inherited, nothing deleted; the heart runs `xeric_sleep_pass`; five `sleep` probes; [`docs/SLEEP.md`](SLEEP.md) [fc576e6] |
 | Story overlays | Built, filed under Later | multiple overlays, red herrings, a six-stage curve |
 | A world can start in 1873 | Built | tested |
-| More than one model | Beyond the roadmap | a per-character pin exists for say and watch; not for sweeps |
+| More than one model | Beyond the roadmap | a per-character pin exists for say and watch; not for sweeps — M3's last item, in progress |
 | The viewport | Built | the room in the view [0b75ac0] and walking inside a splat, in our own WebGL renderer [934bbe6]; streaming is not |
 | Voices | Built this week | VOICE.md still has one "not shipped" line to fix |
-| Design rules | Held | the four gendered-prose sites and four more were fixed, and render-test now tokenises every engine file and fails on a gendered pronoun in a string literal, file:line, with a planted pronoun to prove the scan sees [e5a73b4] |
+| Design rules | Held | the four gendered-prose sites and four more were fixed, and render-test now tokenises every engine file and fails on a gendered pronoun in a string literal, file:line, with a planted pronoun to prove the scan sees [e5a73b4]; the scan's glob takes M3's new files (`director.php`, `sleep.php`) with no change, a staged person's `doing` carries no name, pronoun or reason, and the narrator's lean crosses as handles and a kind key, never words [fc576e6] |
 
 Other facts the plan has to respect:
 
@@ -115,19 +116,22 @@ Other facts the plan has to respect:
   push and pull request, with Chrome and Node installed so the smoke and
   viewer suites really run, and `XERIC_REQUIRE_BROWSER` /
   `XERIC_REQUIRE_NODE` turning a missing tool into a failure there [42a3bd4].
-  The suite is 36 suites and about 4,100 assertions: 4,096 `ok` lines from
-  the 35 suites that ran in this sandbox after 934bbe6, counted by running the
+  The suite is 40 suites and about 4,400 assertions: 4,382 `ok` lines from
+  the 39 suites that ran in this sandbox at fc576e6 (4,096 from 35 of 36
+  after 934bbe6), counted by running the
   CONTRIBUTING loop with `XERIC_SOLO=0` and summing lines that start `ok`;
-  the smoke test is excluded because full Chrome hangs here without D-Bus and
-  no headless shell is installed, and demo-test's one DNS check printed SKIP.
-  The four Node-driven suites (viewer, map, splat, stand) ran.
+  the smoke test is left out of the count (it is a browser run, and full
+  Chrome hangs in a sandbox without D-Bus; fc576e6 reports it green in a real
+  browser), and demo-test's one DNS check printed SKIP. The four Node-driven
+  suites (viewer, map, splat, stand) ran.
   The limits are message, skip, reroll and forge counts per hour and per IP,
   off unless caps are set. The meter is a receipt. The Node harness for the
   viewer's JavaScript is committed (`viewer-test.php` + `viewer-test.js`, 84
   assertions). heart.php is still checked only for HTTP denial and the
   detached workers only by source grep.
-- **The big files.** [After 934bbe6: seven files over 2,000 lines — see
-  Measures; play-lib.php is 2,920 since its parts moved out in 5ef82aa.]
+- **The big files.** [At fc576e6: eight files over 2,000 lines — see
+  Measures; constructs.php joined them with the siblings; play-lib.php is
+  2,900 since its parts moved out in 5ef82aa.]
   At the plan: play-lib.php 6,762 lines with 139 functions (24 of them
   machine discovery that belongs in model.php, and about 1,140 lines of CSS);
   forge.php 5,974; play.php 4,366 of which about 3,070 are inline JavaScript
@@ -353,6 +357,54 @@ Done when: a world left alone for a simulated month produces an encounter the
 Director staged, a secret the Narrator kept, a confidence a player could have
 broken, and a benchmark score no lower than the month before.
 
+**Shipped** [fc576e6], with portrait chaining just before it [1afff08]. The
+Narrator reaches the play view: ask is the sidebar's "ask the narrator"
+(`forge/web/play-narrator.php` over `xeric_narrator_ask`, owner only, metered
+as a message, refusals in voice through `xeric_narrator_in_voice`);
+write-ahead steers, every sweep window handed `xeric_narrator_leans` as a ×2
+lean that carries handles and a kind key and never words, a realized beat
+marked by `xeric_narrator_intents_deliver` and cited in the inspector;
+investigate is the inspector's `why.php?audit=1`, arithmetic on a GET and a
+metered read of the threads on a POST. Author refuses
+(`xeric_narrator_author_refuses`) until the undo is deeper than one step
+([`docs/NARRATOR.md`](NARRATOR.md)). The Director (`engine/director.php`,
+[`docs/DIRECTOR.md`](DIRECTOR.md)) stages two or three people in one room for
+at most two hours on three rules — `narrator`, `apart`, `player` — capped by
+`per_day`, never moving the dead, an unmissable shift or a minor into a room
+that pours; **opt-in**, off until `director.rules` lists something. Constructs
+matured ([`docs/CONSTRUCTS.md`](CONSTRUCTS.md)): confidences are formed from
+the chat harvest (`xeric_confide_to_player`), broken by repeating them to
+somebody who must not hear (`xeric_confide_repeat`), mended inside a week or
+hardened into a grudge; the six siblings — anticipation, news, worry, grudge,
+ritual, milestone — each with a name to arm, an ON YOUR MIND line and an
+inspector line; and cast-to-cast promises read out of the sweep's quoted
+speech, through the walls (`xeric_constructs_cast_tick`). Sleep
+(`engine/sleep.php`, [`docs/SLEEP.md`](SLEEP.md)) turns memories older than a
+fortnight into facts with provenance, once a world-night per person, nothing
+deleted, the bible untouched, with five `sleep` probes. Portrait chaining
+(`xeric_photo_reference` in `engine/photo.php`) draws every later frame of a
+person as an edit of their first portrait, on machines that answer
+`/v1/images/edits` ([`docs/VIEWPORT.md`](VIEWPORT.md)). **More than one voice
+of weights is in progress**: the per-character pin still stops short of the
+sweeps.
+
+**Done when is not yet met, and two of its four parts have not been tried.**
+The benchmark is a three-day run, not a month, and it runs with the Director
+off — the probe `presence.director_off` checks exactly that — so "an
+encounter the Director staged" has been exercised in `director-test.php`,
+against the fixture and a fixed clock, and never in a world left alone for a
+simulated month. The confidence a player could have broken is likewise
+covered by `confide-test.php`, not by the benchmark,
+which forms none. The narrator's discretion and the rule that an intent
+quoting a secret reaches no walled prompt are pinned in `narrator-test.php`.
+The score half holds for every hard probe — all pass, and the five new sleep
+probes pass — but the accepted baseline moved: the cost class rose from 56
+calls to 59 and the honest run's tokens from 95,065 to 107,265, about 13%,
+because the news sibling now texts first three times in three days; and the
+soft probe `cost.cache`, already failing, went from 0.946 to 0.895 (0.897
+leaky). At the default `after_days` of 14 a three-day run makes no sleep
+calls, so sleep is measured only by `sleep-test.php`, which patches it to one.
+
 ### M4 — "Together"
 
 Two humans in the same room with the cast. The groundwork exists — players
@@ -497,9 +549,9 @@ A number per promise, tracked in the repo.
 | Local-first | cloud calls at runtime: zero; a room drawn on a loopback machine: possible |
 | Cheap surface | lines of code for a new client against the API; the stand page is the first datum |
 | Cost | tokens, renders and clips per simulated world-day, from the benchmark's cost class |
-| Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six. After 934bbe6: about 4,100 assertions — 4,096 `ok` lines over 35 of 36 suites, by the CONTRIBUTING loop with `XERIC_SOLO=0`, smoke excluded — and seven: `wc -l forge/web/*.php engine/*.php forge/forge.php` finds forge.php 5,974, play.php 4,200, play-lib.php 2,920, review-lib.php 2,386, sweeps.php 2,162, review.php 2,094 and room.php 2,041) |
+| Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six. After 934bbe6: about 4,100 assertions — 4,096 `ok` lines over 35 of 36 suites, by the CONTRIBUTING loop with `XERIC_SOLO=0`, smoke excluded — and seven: `wc -l forge/web/*.php engine/*.php forge/forge.php` finds forge.php 5,974, play.php 4,200, play-lib.php 2,920, review-lib.php 2,386, sweeps.php 2,162, review.php 2,094 and room.php 2,041. At fc576e6: about 4,400 — 4,382 `ok` lines over 39 of 40 suites, the same loop, smoke excluded — and eight: the same `wc` finds forge.php 5,974, play.php 4,319, play-lib.php 2,900, constructs.php 2,429, review-lib.php 2,386, sweeps.php 2,226, review.php 2,094 and room.php 2,041) |
 | Time to a world | minutes from install to a forged, reviewed world on a 12B |
-| Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After this pass: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are) |
+| Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After the docs pass on 0b75ac0: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are. After the M3 docs pass: 14 of 15 — the Narrator, the Director and social constructs now say **Shipped** with what is open, Sleep is a heading of its own, and story overlays alone are still filed under Later though built) |
 
 ---
 
