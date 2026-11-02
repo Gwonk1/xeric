@@ -815,13 +815,39 @@ function xeric_scene_auth_headers(array $endpoint): array
  *
  * @return string[] a subset of ['look', 'sound']
  */
-function xeric_scene_channels(array $t, ?array $endpoint): array
+function xeric_scene_channels(array $t, ?array $endpoint, ?PDO $db = null): array
 {
     $cfg = xeric_scene_config($t);
     if (!$cfg['enabled'] || $endpoint === null) return [];
     $out = ['look'];
-    if ($cfg['sound']['enabled'] && strtolower((string)($endpoint['kind'] ?? '')) !== 'image') $out[] = 'sound';
+    if ($cfg['sound']['enabled'] && strtolower((string)($endpoint['kind'] ?? '')) !== 'image'
+        && !($db !== null && xeric_scene_sound_unsupported($db, $endpoint))) $out[] = 'sound';
     return $out;
+}
+
+/** Which machine this is, for remembering what it said it cannot do: its address, or 'stub'. */
+function xeric_scene_machine_id(array $endpoint): string
+{
+    return rtrim(trim((string)($endpoint['base'] ?? '')), '/') ?: 'stub';
+}
+
+/**
+ * Has THIS machine said it cannot make sound? DETECTION, NOT CONFIGURATION:
+ * nobody declares a machine deaf. The reaper writes the mark the first time a
+ * generic machine answers a sound with a clear "cannot" (a 4xx naming no
+ * asset, or a picture where a sound was asked for), and from then on the
+ * sound rows wait untried, as they do for an image machine. The mark names
+ * the machine it is about, so choosing another machine IS clearing it — a
+ * mark for some other address is stale and is wiped as it is read — and a
+ * sound that does arrive from this one wipes it too.
+ */
+function xeric_scene_sound_unsupported(PDO $db, array $endpoint): bool
+{
+    $mark = (string)(xeric_world_state_get($db, 'scene.sound.unsupported') ?? '');
+    if ($mark === '') return false;
+    if ($mark === xeric_scene_machine_id($endpoint)) return true;
+    xeric_world_state_delete($db, 'scene.sound.unsupported');
+    return false;
 }
 
 /** May this machine be shown what it drew before? Not an images/generations call: it has nowhere to put one. */
@@ -901,9 +927,11 @@ function xeric_scene_takes_reference(array $endpoint): bool
  * 300 — rooms are slower than faces), job (ask after it).
  *
  * @return array{bytes:string,mime:string,usage:array,meta:array,kind:string,
- *               url:?string,extras:array,pending:?string}
+ *               url:?string,extras:array,pending:?string,cannot:bool}
  *         pending is the remote job id when the machine said "later", in
- *         which case bytes is '' and nothing else is meaningful.
+ *         which case bytes is '' and nothing else is meaningful. cannot is a
+ *         sound the machine said plainly it cannot make (see
+ *         xeric_scene_sound_unsupported) — not a failure, an answer.
  */
 function xeric_scene_render(array $endpoint, array $brief, array $opts = []): array
 {
@@ -914,7 +942,7 @@ function xeric_scene_render(array $endpoint, array $brief, array $opts = []): ar
     if (isset($endpoint['stub']) && is_callable($endpoint['stub'])) {
         $out = ($endpoint['stub'])($channel === 'sound' ? 'sound' : 'scene', $brief, $opts);
         if (!is_array($out)) throw new RuntimeException('scene: the stub returned no scene');
-        return xeric_scene_answer($out, [], 0, true, $want);
+        return xeric_scene_answer($out, [], 0, true, $want, $endpoint);
     }
 
     $base = rtrim((string)($endpoint['base'] ?? ''), '/');
@@ -936,17 +964,18 @@ function xeric_scene_render(array $endpoint, array $brief, array $opts = []): ar
         $bytes = base64_decode((string)($j['data'][0]['b64_json'] ?? ''), true);
         if ($bytes === false || $bytes === '') throw new RuntimeException('scene: the image machine answered with no image');
         return ['bytes' => $bytes, 'mime' => 'image/png', 'usage' => (array)($j['usage'] ?? []),
-                'meta' => [], 'kind' => 'image', 'url' => null, 'extras' => [], 'pending' => null];
+                'meta' => [], 'kind' => 'image', 'url' => null, 'extras' => [], 'pending' => null,
+                'cannot' => false];
     }
 
     if ($job !== '') {
         $j = xeric_scene_http('GET', $base . '/v1/scenes/' . rawurlencode($job), $auth, null, $timeout);
-        return xeric_scene_answer($j + ['job' => $job], $auth, $timeout, false, $want);
+        return xeric_scene_answer($j + ['job' => $job], $auth, $timeout, false, $want, $endpoint);
     }
 
     $j = xeric_scene_http('POST', $base . '/v1/scenes', $auth,
                           xeric_scene_body($brief, ['channel' => $channel, 'timeout' => $timeout] + $opts), $timeout);
-    return xeric_scene_answer($j, $auth, $timeout, false, $want);
+    return xeric_scene_answer($j, $auth, $timeout, false, $want, $endpoint);
 }
 
 /**
@@ -983,14 +1012,30 @@ function xeric_scene_body(array $brief, array $opts = []): array
  * One answer, read. Shared by the live path and the stub so the two cannot
  * disagree about what a scene IS; $stub allows raw `bytes` (the stub's
  * shortcut) where the wire only ever carries b64 or a url. $want is the kind
- * an answer that names none is taken to be.
+ * an answer that names none is taken to be; $endpoint is the machine that
+ * answered, which a url in the answer is checked against before it is
+ * fetched (xeric_scene_url_ok).
+ *
+ * A CLEAR "CANNOT" for a sound — an HTTP 4xx (`_http`, as xeric_scene_http
+ * records it, or a stub's own) whose body names no asset, or a picture where
+ * a sound was asked for — comes back as `cannot`, not as a throw: it is the
+ * machine telling us what it is, and a try is for things that might go
+ * better next time. For a look the same 4xx is an ordinary failed try.
  */
-function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, string $want = 'image'): array
+function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, string $want = 'image',
+                            array $endpoint = []): array
 {
     $res = ['bytes' => '', 'mime' => '', 'usage' => (array)($j['usage'] ?? []),
             'meta' => is_array($j['meta'] ?? null) ? $j['meta'] : [],
             'kind' => '', 'url' => null, 'extras' => array_values((array)($j['extras'] ?? [])),
-            'pending' => null];
+            'pending' => null, 'cannot' => false];
+
+    $http = (int)($j['_http'] ?? 200);
+    if ($http >= 400 && $http < 500
+        && !isset($j['b64']) && !isset($j['url']) && !isset($j['bytes']) && !isset($j['job'])) {
+        if ($want === 'audio') { $res['cannot'] = true; return $res; }
+        throw new RuntimeException('scene: the machine refused the request (HTTP ' . $http . ')');
+    }
 
     if (!empty($j['pending']) || strtolower((string)($j['status'] ?? '')) === 'pending') {
         $id = trim((string)($j['job'] ?? ''));
@@ -1003,6 +1048,7 @@ function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, str
     if (!in_array($kind, ['image', 'pano', 'splat', 'glb', 'viewer', 'audio'], true)) {
         throw new RuntimeException('scene: the machine made a kind of scene this engine does not know');
     }
+    if ($want === 'audio' && $kind !== 'audio') { $res['cannot'] = true; return $res; }
     $res['kind'] = $kind;
     $b64 = is_string($j['b64'] ?? null) && $j['b64'] !== '' ? $j['b64'] : null;
     $url = is_string($j['url'] ?? null) && $j['url'] !== '' ? $j['url'] : null;
@@ -1037,29 +1083,139 @@ function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, str
         if ($bytes === false) throw new RuntimeException('scene: the machine answered with bad base64');
         $res['bytes'] = $bytes;
     } else {
-        $ctx = stream_context_create(['http' => [
-            'method' => 'GET', 'header' => implode("\r\n", $auth),
-            'timeout' => $timeout, 'ignore_errors' => false, 'follow_location' => 1,
-        ]]);
-        $bytes = @file_get_contents($url, false, $ctx);
-        if (!is_string($bytes)) throw new RuntimeException('scene: the scene could not be fetched from its url');
-        $res['bytes'] = $bytes;
+        $res['bytes'] = xeric_scene_fetch($url, $endpoint, $auth, $timeout);
     }
     if ($res['bytes'] === '') throw new RuntimeException('scene: the machine answered with an empty scene');
     return $res;
 }
 
-/** One JSON round trip; throws on anything that is not a JSON object. */
+/**
+ * One JSON round trip to the machine. The status rides back as `_http`, so a
+ * plain "no" (a 4xx) can be told from a broken answer; a 4xx with no JSON is
+ * still a "no", anything else that is not a JSON object throws. Redirects are
+ * NOT followed — the key goes to the address the owner typed and nowhere a
+ * Location header names; a machine behind a redirect is configured at its
+ * final address.
+ */
 function xeric_scene_http(string $method, string $url, array $auth, ?array $body, int $timeout): array
 {
     $headers = array_merge(['Accept: application/json'], $body !== null ? ['Content-Type: application/json'] : [], $auth);
     $http = ['method' => $method, 'header' => implode("\r\n", $headers),
-             'timeout' => $timeout, 'ignore_errors' => true];
+             'timeout' => $timeout, 'ignore_errors' => true, 'follow_location' => 0];
     if ($body !== null) $http['content'] = json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    $raw = @file_get_contents($url, false, stream_context_create(['http' => $http]));
-    $j   = is_string($raw) ? json_decode($raw, true) : null;
-    if (!is_array($j)) throw new RuntimeException('scene: the machine did not answer in JSON');
-    return $j;
+    [$raw, $status] = xeric_scene_get($url, $http);
+    $j = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($j)) {
+        if ($status >= 400 && $status < 500) return ['_http' => $status];
+        throw new RuntimeException('scene: the machine did not answer in JSON');
+    }
+    return ['_http' => $status] + $j;
+}
+
+/** file_get_contents with the status line read back: [body or false, status or 0]. */
+function xeric_scene_get(string $url, array $http): array
+{
+    $raw  = @file_get_contents($url, false, stream_context_create(['http' => $http]));
+    $hdrs = function_exists('http_get_last_response_headers')
+          ? (array)(http_get_last_response_headers() ?? [])
+          : (array)($http_response_header ?? []);
+    $status = 0;
+    foreach ($hdrs as $h) {
+        if (preg_match('#^HTTP/\S+\s+(\d{3})#', (string)$h, $m)) $status = (int)$m[1];
+    }
+    return [$raw, $status];
+}
+
+/**
+ * Where a machine's answer may send us to fetch its bytes from. A url is an
+ * instruction FROM the machine, and a third-party machine, or one that has
+ * been taken over, could name the cloud metadata address or the router's
+ * admin page and have this engine read it into a "splat". So: http(s) only;
+ * and the host is either the machine's own (a local box handing back its own
+ * file is the ordinary case) or a name that resolves to no address in a
+ * private, loopback, link-local, carrier-grade, multicast or reserved range
+ * — every address it resolves to, v4 and v6, and a name that does not
+ * resolve at all is refused. What is left is the DNS-rebinding race between
+ * this check and the fetch, which is why the fetch follows no redirect and
+ * carries no key off the machine's own host.
+ */
+function xeric_scene_url_ok(string $url, array $endpoint): bool
+{
+    if (!in_array(strtolower((string)parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true)) return false;
+    $host = xeric_scene_host($url);
+    if ($host === '') return false;
+    $own = xeric_scene_host((string)($endpoint['base'] ?? ''));
+    if ($own !== '' && $host === $own) return true;
+
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+        $ips = [$host];
+    } else {
+        $ips = @gethostbynamel($host) ?: [];
+        foreach ((array)(@dns_get_record($host, DNS_AAAA) ?: []) as $r) {
+            if (isset($r['ipv6'])) $ips[] = (string)$r['ipv6'];
+        }
+    }
+    if ($ips === []) return false;
+    foreach ($ips as $ip) if (xeric_scene_ip_private($ip)) return false;
+    return true;
+}
+
+/** A url's host, lowercased, IPv6 brackets off; '' when there is none. */
+function xeric_scene_host(string $url): string
+{
+    return strtolower(trim((string)parse_url($url, PHP_URL_HOST), '[]'));
+}
+
+/** Addresses no machine's answer may point this engine at. */
+const XERIC_SCENE_PRIVATE_NETS = [
+    '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12',
+    '192.168.0.0/16', '224.0.0.0/4', '240.0.0.0/4',
+    '::/128', '::1/128', 'fc00::/7', 'fe80::/10', 'ff00::/8',
+];
+
+/** Is this address in one of those ranges? Unparseable is yes: fail closed. IPv4-mapped v6 is read as its v4. */
+function xeric_scene_ip_private(string $ip): bool
+{
+    $bin = @inet_pton($ip);
+    if ($bin === false) return true;
+    if (strlen($bin) === 16 && substr($bin, 0, 12) === str_repeat("\0", 10) . "\xff\xff") $bin = substr($bin, 12);
+    foreach (XERIC_SCENE_PRIVATE_NETS as $cidr) {
+        [$net, $bits] = explode('/', $cidr);
+        $nb = inet_pton($net);
+        if (strlen($nb) !== strlen($bin)) continue;
+        $bits  = (int)$bits;
+        $whole = intdiv($bits, 8);
+        if (substr($bin, 0, $whole) !== substr($nb, 0, $whole)) continue;
+        $rest = $bits % 8;
+        if ($rest === 0) return true;
+        $mask = (0xff << (8 - $rest)) & 0xff;
+        if ((ord($bin[$whole]) & $mask) === (ord($nb[$whole]) & $mask)) return true;
+    }
+    return false;
+}
+
+/**
+ * The bytes behind an answer's url, fetched once, now (vendor links expire),
+ * and only if xeric_scene_url_ok says the address may be read. The key goes
+ * along only to the machine's own host, redirects are not followed, and
+ * anything but a 2xx is a failure — a refusal names the host it refused.
+ */
+function xeric_scene_fetch(string $url, array $endpoint, array $auth, int $timeout): string
+{
+    $host = xeric_scene_host($url);
+    if (!xeric_scene_url_ok($url, $endpoint)) {
+        throw new RuntimeException('scene: refused to fetch from ' . ($host !== '' ? $host : 'that url')
+            . ', which is neither the machine nor a public address');
+    }
+    $own = xeric_scene_host((string)($endpoint['base'] ?? ''));
+    [$bytes, $status] = xeric_scene_get($url, [
+        'method' => 'GET', 'header' => implode("\r\n", ($own !== '' && $host === $own) ? $auth : []),
+        'timeout' => $timeout, 'ignore_errors' => true, 'follow_location' => 0,
+    ]);
+    if (!is_string($bytes) || $status < 200 || $status > 299) {
+        throw new RuntimeException('scene: the scene could not be fetched from ' . $host);
+    }
+    return $bytes;
 }
 
 /** A media type as a machine said it, or octet-stream when it said nonsense. */
@@ -1347,7 +1503,7 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
 
     // What this machine can make, for this world. The rest of the queue waits
     // its turn untried rather than burning three tries on the wrong machine.
-    $channels = xeric_scene_channels($t, $endpoint);
+    $channels = xeric_scene_channels($t, $endpoint, $db);
     $held     = [];
     foreach ($pending as $i => $job) {
         $c = xeric_scene_channel_of($job);
@@ -1377,6 +1533,7 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
                    ->execute([$r['pending'], (int)$job['id']]);
                 continue;
             }
+            if ($r['cannot']) { $out['notes'][] = xeric_scene_cannot($db, $job, $endpoint); continue; }
             xeric_scene_fits($channel, $r);
             // The picture that rode along when this was sent was written down
             // then; it is still the one this answer was conditioned on.
@@ -1397,6 +1554,9 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
         $key     = (string)$job['key'];
         $fp      = (string)$job['fingerprint'];
         $channel = xeric_scene_channel_of($job);
+        // A machine that said, earlier in this very pass, that it cannot
+        // make sound is not asked again before the pass is out.
+        if ($channel === 'sound' && xeric_scene_sound_unsupported($db, $endpoint)) continue;
         // THE CLAIM IS THE UPDATE: exactly one reaper gets rowCount 1.
         $claim->execute([xeric_state_time(), (int)$job['id']]);
         if ($claim->rowCount() !== 1) continue;
@@ -1429,6 +1589,7 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
                 $out['notes'][] = xeric_scene_label($job) . ': the machine is making it';
                 continue;
             }
+            if ($r['cannot']) { $out['notes'][] = xeric_scene_cannot($db, $job, $endpoint); continue; }
             xeric_scene_fits($channel, $r);
             if (xeric_scene_finish($db, $job, $r, $scenesDir, $endpoint, $ours)) $out['done']++;
         } catch (Throwable $e) {
@@ -1450,6 +1611,22 @@ function xeric_scene_channel_of(array $job): string
 function xeric_scene_label(array $job): string
 {
     return (xeric_scene_channel_of($job) === 'sound' ? 'sound of ' : 'scene of ') . (string)$job['key'];
+}
+
+/**
+ * The machine said plainly that it cannot make sound. Written down against
+ * THIS machine (xeric_scene_sound_unsupported) and the row put back exactly
+ * as it was before the claim — pending, untried, its tries unspent — because
+ * nothing went wrong that another try could put right. The note is the
+ * pass's to say.
+ */
+function xeric_scene_cannot(PDO $db, array $job, array $endpoint): string
+{
+    xeric_world_state_set($db, 'scene.sound.unsupported', xeric_scene_machine_id($endpoint));
+    $db->prepare("UPDATE scene_jobs SET status = 'pending', done_at = NULL, remote_job = NULL, meta = '{}'
+                  WHERE id = ? AND status = 'working'")->execute([(int)$job['id']]);
+    return xeric_scene_label($job) . ': ' . xeric_scene_machine_id($endpoint)
+         . ' cannot make sound; the sound waits for a machine that can';
 }
 
 /** A sound must come back as a sound, and a room as anything but. */
@@ -1500,6 +1677,9 @@ function xeric_scene_finish(PDO $db, array $job, array $r, string $scenesDir, ?a
                   json_encode((object)$meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                   xeric_state_time(), (int)$job['id']]);
     if ($st->rowCount() !== 1) return false;
+    // A sound arrived: whatever was written down about machines that cannot
+    // make one is out of date.
+    if (xeric_scene_channel_of($job) === 'sound') xeric_world_state_delete($db, 'scene.sound.unsupported');
     if (($fn = xeric_scene_meter()) !== null) {
         // A sound is a scene on the ledger, and says which it was.
         $fn(['scenes' => 1] + (xeric_scene_channel_of($job) === 'sound' ? ['sounds' => 1] : []) + $r['usage'],
@@ -1586,7 +1766,7 @@ function xeric_scene_backfill(array $t, PDO $db, ?array $now = null, ?array $end
         }
     }
 
-    $sound = in_array('sound', xeric_scene_channels($t, $endpoint), true);
+    $sound = in_array('sound', xeric_scene_channels($t, $endpoint, $db), true);
     foreach ($keys as $k) {
         $briefs = [xeric_scene_brief($t, $db, $k, $now)];
         if ($sound) $briefs[] = xeric_sound_brief($t, $db, $k, $now);
@@ -1599,22 +1779,73 @@ function xeric_scene_backfill(array $t, PDO $db, ?array $now = null, ?array $end
 }
 
 /**
+ * What can move a fingerprint the heart would offer, cheaply: where the player
+ * stands, the light bucket, who is where (handles and places, sorted), the
+ * weather line, which rooms are dark, and the scene block itself. Every one
+ * of those is a read or a pass over the cast's weeks — none composes a brief,
+ * resolves an identity or derives a bearing. It is coarser than a fingerprint
+ * in one direction only: a change here may turn out to move nothing, but
+ * nothing moves a fingerprint the heart offers without changing this, short
+ * of a hand edit to a room's furniture or a person's coat, which the next
+ * change of light or company (or the next glance) picks up.
+ */
+function xeric_scene_ahead_key(array $t, PDO $db, ?array $now = null): string
+{
+    $now ??= xeric_clock_now($db, $t);
+    $where = [];
+    foreach (xeric_world_who_is_where($t, $now, xeric_dead_handles($db)) as $h => $row) {
+        if (($row['where'] ?? null) !== null) $where[(string)$h] = (string)$row['where'];
+    }
+    ksort($where, SORT_STRING);
+    $dark = xeric_dark_places($db);
+    sort($dark, SORT_STRING);
+    return sha1(json_encode([
+        'here' => xeric_player_where($t, $db), 'light' => xeric_scene_light($now), 'where' => $where,
+        'weather' => trim(xeric_weather_line($t, $now, $db)), 'dark' => $dark,
+        'scene' => $t['media']['scene'] ?? null,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+/**
  * One pass of drawing ahead, for one world: what the heart calls after it has
  * lived the hours. The world's prerender decides first (no network, no
- * spend); then whether the machine answers, asked ONCE PER MACHINE PER PASS —
- * $up is the pass's memory of that, keyed by address, so a heart with twelve
- * worlds on one machine probes it once — then the backfill, then a reap of at
- * most $limit, told the machine's answer so it does not ask again.
+ * spend). Then THE CHEAP GATE: if nothing that can move a fingerprint has
+ * moved since the last pass that got through (xeric_scene_ahead_key, kept as
+ * world_state 'scene.ahead' with the mode and the machine folded in) and no
+ * row this machine can make is pending or working, the pass is over — the
+ * heart runs every minute and most minutes nothing has changed. Otherwise:
+ * whether the machine answers, asked ONCE PER MACHINE PER PASS — $up is the
+ * pass's memory of that, keyed by address, so a heart with twelve worlds on
+ * one machine probes it once — then the backfill, then a reap of at most
+ * $limit, told the machine's answer so it does not ask again. The key is
+ * written only once a backfill has run, so a machine that was down is asked
+ * again next minute.
  *
- * @return array{mode:string,enqueued:int,keys:string[],done:int,failed:int,notes:string[]}
+ * @return array{mode:string,unchanged:bool,enqueued:int,keys:string[],done:int,failed:int,notes:string[]}
  */
 function xeric_scene_ahead(array $t, PDO $db, string $scenesDir, ?array $endpoint = null, int $limit = 2,
                            ?array &$up = null): array
 {
-    $out = ['mode' => 'off', 'enqueued' => 0, 'keys' => [], 'done' => 0, 'failed' => 0, 'notes' => []];
+    $out = ['mode' => 'off', 'unchanged' => false, 'enqueued' => 0, 'keys' => [], 'done' => 0, 'failed' => 0,
+            'notes' => []];
     $endpoint ??= xeric_scene_endpoint();
     $out['mode'] = xeric_scene_prerender($t, $endpoint);
     if ($out['mode'] === 'off' || $endpoint === null) return $out;
+
+    $key  = sha1(xeric_scene_ahead_key($t, $db) . '|' . $out['mode'] . '|' . xeric_scene_machine_id($endpoint));
+    $open = 0;
+    $channels = xeric_scene_channels($t, $endpoint, $db);
+    if ($channels !== []) {
+        $q = $db->prepare("SELECT COUNT(*) FROM scene_jobs WHERE status IN ('pending', 'working') AND channel IN ("
+                        . implode(',', array_fill(0, count($channels), '?')) . ')');
+        $q->execute($channels);
+        $open = (int)$q->fetchColumn();
+        $q->closeCursor();
+    }
+    if ($open === 0 && (string)(xeric_world_state_get($db, 'scene.ahead') ?? '') === $key) {
+        $out['unchanged'] = true;
+        return $out;
+    }
 
     $up ??= [];
     $sig = json_encode([(string)($endpoint['base'] ?? ''), (string)($endpoint['kind'] ?? ''), isset($endpoint['stub'])]);
@@ -1625,6 +1856,7 @@ function xeric_scene_ahead(array $t, PDO $db, string $scenesDir, ?array $endpoin
     }
 
     $b = xeric_scene_backfill($t, $db, null, $endpoint);
+    xeric_world_state_set($db, 'scene.ahead', $key);
     $r = xeric_scene_reap($t, $db, $scenesDir, $endpoint, $limit, true);
-    return ['mode' => $out['mode'], 'enqueued' => $b['enqueued'], 'keys' => $b['keys']] + $r;
+    return ['mode' => $out['mode'], 'unchanged' => false, 'enqueued' => $b['enqueued'], 'keys' => $b['keys']] + $r;
 }

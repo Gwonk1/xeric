@@ -755,18 +755,58 @@ ok('a sound is found on its own channel, and never in the picture frame',
     (int)xeric_scene_latest($db, 'bluebird', 'sound')['id'] === $sid && xeric_scene_latest($db, 'bluebird') === null
     && xeric_scene_of($db, 'bluebird', $sNow['fingerprint']) === null);
 
+// A machine that cannot make sound says so, and is believed: DETECTION, not
+// configuration. Each stub below has an address of its own, because the mark
+// is written against the machine that said it.
+$deafCalls = 0;
+$deafA = ['base' => 'http://machine-a.example', 'stub' => function (string $tag) use (&$deafCalls) {
+    $deafCalls++;
+    return ['bytes' => 'PNG', 'mime' => 'image/png', 'kind' => 'image'];
+}];
 $sx = xeric_sound_brief($T, $db, 'beck_hardware');
 xeric_scene_enqueue($db, $sx);
-$r = xeric_scene_reap($T, $db, $dir, ['stub' => fn() => ['bytes' => 'PNG', 'mime' => 'image/png', 'kind' => 'image']], 1);
-ok('a sound answered with a picture is a failed try',
-    (int)xeric_scene_of($db, 'beck_hardware', $sx['fingerprint'], 'sound')['tries'] === 1
-    && preg_grep('/asked for a sound/', $r['notes']) !== [], json_encode($r));
+$r   = xeric_scene_reap($T, $db, $dir, $deafA, 1);
+$sxr = xeric_scene_of($db, 'beck_hardware', $sx['fingerprint'], 'sound');
+ok('a sound answered with a picture is the machine saying it cannot: no try spent, the row waits',
+    $r['failed'] === 0 && $sxr['status'] === 'pending' && (int)$sxr['tries'] === 0 && $sxr['done_at'] === null
+    && xeric_world_state_get($db, 'scene.sound.unsupported') === 'http://machine-a.example'
+    && preg_grep('/machine-a\.example cannot make sound/', $r['notes']) !== [], json_encode([$r, $sxr]));
+$r = xeric_scene_reap($T, $db, $dir, $deafA, 1);
+ok('and that machine is not asked for sound again',
+    $deafCalls === 1 && (int)xeric_scene_of($db, 'beck_hardware', $sx['fingerprint'], 'sound')['tries'] === 0
+    && in_array('sound is waiting for a machine that can make it', $r['notes'], true)
+    && !in_array('sound', xeric_scene_channels($T, $deafA, $db), true));
+$deafB = ['base' => 'http://machine-b.example', 'stub' => fn() => ['_http' => 404, 'error' => 'no such route']];
+$r = xeric_scene_reap($T, $db, $dir, $deafB, 1);
+ok('another machine wipes the mark and is asked; a 4xx naming no asset is the same plain no',
+    xeric_world_state_get($db, 'scene.sound.unsupported') === 'http://machine-b.example'
+    && (int)xeric_scene_of($db, 'beck_hardware', $sx['fingerprint'], 'sound')['tries'] === 0
+    && $r['failed'] === 0, json_encode($r));
 $lx = xeric_scene_brief($T, $db, 'the_mill');
 xeric_scene_enqueue($db, $lx);
-$r = xeric_scene_reap($T, $db, $dir, $audio, 2);
-ok('and a room answered with a sound is one too',
+$r = xeric_scene_reap($T, $db, $dir, $deafB, 1);
+ok('while the same 4xx to a look is an ordinary failed try',
     (int)xeric_scene_of($db, 'the_mill', $lx['fingerprint'])['tries'] === 1
+    && preg_grep('/refused the request \(HTTP 404\)/', $r['notes']) !== [], json_encode($r));
+$hearsC = ['base' => 'http://machine-c.example', 'stub' => function (string $tag, array $brief, array $opts) {
+    return $tag === 'sound' ? ['bytes' => 'OggS', 'mime' => 'audio/ogg', 'kind' => 'audio']
+                            : ['bytes' => 'OggS', 'mime' => 'audio/ogg', 'kind' => 'audio'];
+}];
+$r = xeric_scene_reap($T, $db, $dir, $hearsC, 2);
+ok('a machine that can make it makes it, and a room answered with a sound is still a failed try',
+    xeric_scene_of($db, 'beck_hardware', $sx['fingerprint'], 'sound')['status'] === 'done'
+    && (int)xeric_scene_of($db, 'the_mill', $lx['fingerprint'])['tries'] === 2
     && preg_grep('/asked for a room/', $r['notes']) !== [], json_encode($r));
+// A sound that arrives wipes the mark, even one written against this machine:
+// a job it was already making, finished on a poll.
+$sp2 = xeric_sound_brief($T, $db, 'first_lutheran');
+$pid = xeric_scene_enqueue($db, $sp2);
+$db->prepare("UPDATE scene_jobs SET status = 'working', remote_job = 'p1', done_at = ? WHERE id = ?")->execute([time(), $pid]);
+xeric_world_state_set($db, 'scene.sound.unsupported', 'http://machine-c.example');
+xeric_scene_reap($T, $db, $dir, $hearsC, 1);
+ok('and a sound that does arrive wipes what was written down',
+    xeric_scene_of($db, 'first_lutheran', $sp2['fingerprint'], 'sound')['status'] === 'done'
+    && (string)(xeric_world_state_get($db, 'scene.sound.unsupported') ?? '') === '');
 ok('a sound of a type this engine will not keep is refused', (function () use ($s) {
     try { xeric_scene_render(['stub' => fn() => ['kind' => 'audio', 'mime' => 'audio/flac', 'bytes' => 'fLaC']], $s); }
     catch (RuntimeException $e) { return true; }
@@ -801,6 +841,37 @@ ok('and the channels say why',
     && xeric_scene_channels($T, ['kind' => 'generic', 'base' => 'x']) === ['look', 'sound']
     && xeric_scene_channels($T, null) === [] && xeric_scene_channels($Toff, ['kind' => 'generic', 'base' => 'x']) === []
     && xeric_scene_channels($Tmute, ['kind' => 'generic', 'base' => 'x']) === ['look']);
+
+
+// ---------------------------------------------------------------------------
+echo "\n# where an answer may send us\n";
+// ---------------------------------------------------------------------------
+
+$far = ['base' => 'https://scenes.example', 'kind' => 'generic'];
+ok('the cloud metadata address, a LAN box and loopback are never fetched for a machine elsewhere',
+    !xeric_scene_url_ok('http://169.254.169.254/latest/meta-data/', $far)
+    && !xeric_scene_url_ok('http://10.0.0.5/admin', $far) && !xeric_scene_url_ok('http://192.168.1.1/', $far)
+    && !xeric_scene_url_ok('http://127.0.0.1:8080/x', $far) && !xeric_scene_url_ok('http://100.64.0.9/x', $far));
+ok('nor their IPv6 and IPv4-mapped spellings',
+    !xeric_scene_url_ok('http://[::1]/x', $far) && !xeric_scene_url_ok('http://[fe80::1]/x', $far)
+    && !xeric_scene_url_ok('http://[fd00::5]/x', $far) && !xeric_scene_url_ok('http://[::ffff:169.254.169.254]/x', $far)
+    && !xeric_scene_url_ok('http://[::ffff:7f00:1]/x', $far));
+ok('a name that does not resolve is refused, and so is anything not http',
+    !xeric_scene_url_ok('https://assets.nowhere.invalid/room.glb', $far)
+    && !xeric_scene_url_ok('ftp://93.184.216.34/x', $far) && !xeric_scene_url_ok('http:///x', $far));
+ok('a public address is fine, and so is the machine\'s own host, loopback or not',
+    xeric_scene_url_ok('https://93.184.216.34/room.png', $far)
+    && xeric_scene_url_ok('http://127.0.0.1:9001/files/room.png', ['base' => 'http://127.0.0.1:8000'])
+    && xeric_scene_url_ok('http://LOCALHOST/r.png', ['base' => 'http://localhost:8000']));
+$db->exec('DELETE FROM scene_jobs');
+$ssrfB = xeric_scene_brief($T, $db, 'beck_hardware');
+xeric_scene_enqueue($db, $ssrfB);
+$r = xeric_scene_reap($T, $db, $dir, ['stub' => fn() => ['kind' => 'splat',
+                                                          'url' => 'http://169.254.169.254/latest/meta-data/']], 1);
+$ssr = xeric_scene_of($db, 'beck_hardware', $ssrfB['fingerprint']);
+ok('a machine that answers with the metadata address gets a failed try and a note naming the host, and no file',
+    (int)$ssr['tries'] === 1 && $ssr['status'] === 'pending' && $ssr['file'] === ''
+    && preg_grep('/refused to fetch from 169\.254\.169\.254/', $r['notes']) !== [], json_encode($r));
 
 // ---------------------------------------------------------------------------
 echo "\n# ahead of being looked at\n";
@@ -866,7 +937,29 @@ ok('one pass ahead: the room you are in, drawn and heard, with nobody looking',
     $a1['mode'] === 'here' && $a1['enqueued'] === 2 && $a1['done'] === 2 && $a1['keys'] === ['bluebird']
     && count($up) === 1, json_encode($a1));
 $a2 = xeric_scene_ahead($T, $db, $dir, $both, 2, $up);
-ok('and the next pass, the room unchanged, does nothing', $a2['enqueued'] === 0 && $a2['done'] === 0 && count($up) === 1);
+ok('and the next pass, the room unchanged, stops at the cheap gate: no brief, no probe, no reap',
+    $a2['unchanged'] === true && $a2['enqueued'] === 0 && $a2['done'] === 0 && count($up) === 1
+    && xeric_world_state_get($db, 'scene.ahead') !== null);
+$k0 = xeric_scene_ahead_key($T, $db, $mon0710);
+ok('the gate\'s key holds still across the minute, and moves with the light, the company and the sky',
+    $k0 === xeric_scene_ahead_key($T, $db, $mon0740)
+    && $k0 !== xeric_scene_ahead_key($T, $db, $at('2026-11-02 12:30'))
+    && $k0 !== xeric_scene_ahead_key($Tr, $db, $mon0710)
+    && (function () use ($T, $db, $mon0710, $k0) {
+        xeric_world_state_set($db, 'weather:2026-11-02', 'Rain coming sideways off the river.');
+        $k = xeric_scene_ahead_key($T, $db, $mon0710);
+        $db->exec("DELETE FROM world_state WHERE key = 'weather:2026-11-02'");
+        return $k !== $k0;
+    })());
+$gid = (int)xeric_scene_enqueue($db, xeric_scene_brief($T, $db, 'the_mill', $mon0710));
+$a2b = xeric_scene_ahead($T, $db, $dir, $both, 2, $up);
+ok('a pending row opens the gate whatever the key says: it still needs drawing',
+    $a2b['unchanged'] === false && $gid > 0 && xeric_scene_jobs($db, 'pending') === [], json_encode($a2b));
+xeric_player_move($db, 'beck_hardware', $mon0710['epoch']);
+$a2c = xeric_scene_ahead($T, $db, $dir, $both, 2, $up);
+xeric_player_move($db, 'bluebird', $mon0710['epoch'] - 600);
+ok('and so does walking into another room', $a2c['unchanged'] === false && $a2c['keys'] === ['beck_hardware'],
+    json_encode($a2c));
 $upB = [];
 $a3  = xeric_scene_ahead($T, $db, $dir, $billed, 2, $upB);
 ok('a machine that bills is never even asked whether it is up, unless the world said so',

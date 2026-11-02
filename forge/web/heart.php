@@ -92,6 +92,15 @@ function xeric_heart_last_window(PDO $db, int $size): int
  * machines screen is per session and one owner's key must never draw another
  * owner's room; $up remembers, for the length of the pass, which machines
  * answered, so twelve worlds on one machine are one probe and not twelve.
+ *
+ * MOST MINUTES THIS IS A FEW READS. The heart calls this every tick for every
+ * world, and composing every room's look and sound to INSERT OR IGNORE rows
+ * that already exist would be the most expensive way to do nothing. So
+ * xeric_scene_ahead stops at a cheap gate first: a key over what can move a
+ * fingerprint (where the player stands, the light, who is where, the sky, the
+ * dark rooms — xeric_scene_ahead_key, kept as world_state 'scene.ahead') that
+ * has not changed, with no row pending or working for this machine, is the
+ * end of it — no brief, no probe, no reap.
  */
 function xeric_heart_rooms(string $slug, array $w, callable $say, array &$up): int
 {
