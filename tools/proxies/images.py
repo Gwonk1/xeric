@@ -35,6 +35,16 @@ picture or an error. Asked only for what it cannot make — a sound, a splat,
 or a pano without --pano — it answers 400 with an `error` and no asset,
 which the engine reads as "this machine does not do that".
 
+THE LAYOUT, AS A CONTROL IMAGE. With --control the envelope's layout_depth
+(--control=seg: layout_seg) — the room's blockout drawn as a depth or a
+segmentation map from where you stand, which Xeric sends when
+media.scene.layout_images is on — goes to /v1/images/edits as a second
+multipart file, ControlNet-style, beside the reference picture if there is
+one. That field is nobody's standard: OpenAI's edits endpoint has no such
+thing, and sd-server and the ComfyUI / A1111 shims each call it something
+else, so its name is --control-field (default `control`). meta.control_used
+says which map went. No map in the envelope, nothing extra is sent.
+
 THE UPSTREAM SHAPE IS A CONVENTION, NOT A STANDARD. Every field is in
 to_upstream / from_upstream below, marked "per OpenAI images docs as of Nov
 2026 - verify" (sd-server and the shims follow those docs more or less).
@@ -84,21 +94,39 @@ def to_upstream(envelope, kind):
     if envelope.get("negative"):
         fields["negative_prompt"] = envelope["negative"]    # not OpenAI's; sd-server / shims as of Nov 2026 - verify
     headers = {"Authorization": "Bearer " + key()} if key() else {}   # per OpenAI images docs as of Nov 2026 - verify
+    files = []
     ref = envelope.get("reference_image") if isinstance(envelope.get("reference_image"), dict) else None
-    if ARGS.edits and ref and ref.get("b64"):
-        try:
-            raw = base64.b64decode(ref["b64"], validate=True)
-        except ValueError:
-            raw = b""
-        if raw:
-            mime = ref.get("mime") if ref.get("mime") in ("image/png", "image/jpeg", "image/webp") else "image/png"
-            name = "reference." + mime.split("/")[1]
-            return {"method": "POST", "path": "/v1/images/edits",  # per OpenAI images docs as of Nov 2026 - verify
-                    "headers": headers, "fields": fields,
-                    "file": ("image", name, mime, raw),        # field "image", per OpenAI images docs as of Nov 2026 - verify
-                    "reference_used": True}
+    raw = decoded(ref) if ARGS.edits else b""
+    if raw:
+        mime = ref.get("mime") if ref.get("mime") in ("image/png", "image/jpeg", "image/webp") else "image/png"
+        files.append(("image", "reference." + mime.split("/")[1], mime, raw))  # field "image", per OpenAI images docs as of Nov 2026 - verify
+    control = None
+    if ARGS.control:
+        img = envelope.get("layout_" + ARGS.control)     # layout_depth | layout_seg, {mime, b64} PNGs
+        craw = decoded(img) if isinstance(img, dict) else b""
+        if craw:
+            # NOT OpenAI's: a ControlNet-style conditioning picture as a second file. sd-server
+            # and the ComfyUI/A1111 shims each name it differently (control, control_image,
+            # controlnet_image...), hence --control-field - verify against yours.
+            files.append((ARGS.control_field, "layout-%s.png" % ARGS.control, "image/png", craw))
+            control = ARGS.control
+    if files:
+        return {"method": "POST", "path": "/v1/images/edits",  # per OpenAI images docs as of Nov 2026 - verify
+                "headers": headers, "fields": fields, "files": files,
+                "reference_used": bool(raw), "control_used": control or False}
     return {"method": "POST", "path": "/v1/images/generations",   # per OpenAI images docs as of Nov 2026 - verify
-            "headers": headers, "fields": fields, "file": None, "reference_used": False}
+            "headers": headers, "fields": fields, "files": None, "reference_used": False,
+            "control_used": False}
+
+
+def decoded(img):
+    """{mime, b64} -> bytes, or b"" when absent or not base64."""
+    if not isinstance(img, dict) or not img.get("b64"):
+        return b""
+    try:
+        return base64.b64decode(img["b64"], validate=True)
+    except ValueError:
+        return b""
 
 
 def from_upstream(j):
@@ -140,15 +168,15 @@ class Upstream(Exception):
     pass
 
 
-def multipart(fields, file):
+def multipart(fields, files):
     boundary = "xeric-" + uuid.uuid4().hex
     out = []
     for k, v in fields.items():
         out.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
                     % (boundary, k, v)).encode())
-    fname, name, mime, raw = file
-    out.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
-                "Content-Type: %s\r\n\r\n" % (boundary, fname, name, mime)).encode() + raw + b"\r\n")
+    for fname, name, mime, raw in files:
+        out.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n"
+                    "Content-Type: %s\r\n\r\n" % (boundary, fname, name, mime)).encode() + raw + b"\r\n")
     out.append(("--%s--\r\n" % boundary).encode())
     return b"".join(out), "multipart/form-data; boundary=" + boundary
 
@@ -156,8 +184,8 @@ def multipart(fields, file):
 def send(req):
     url = ARGS.upstream.rstrip("/") + req["path"]
     h = {"Accept": "application/json", **req["headers"]}
-    if req["file"] is not None:
-        data, h["Content-Type"] = multipart(req["fields"], req["file"])
+    if req["files"]:
+        data, h["Content-Type"] = multipart(req["fields"], req["files"])
     else:
         data, h["Content-Type"] = json.dumps(req["fields"]).encode(), "application/json"
     r = urllib.request.Request(url, data=data, headers=h, method=req["method"])
@@ -212,7 +240,8 @@ def submit(envelope):
     started = time.time()
     req = to_upstream(envelope, kind)
     seed_sent = req["fields"].get("seed")
-    meta = {"vendor": VENDOR, "seed_used": seed_sent, "reference_used": req["reference_used"]}
+    meta = {"vendor": VENDOR, "seed_used": seed_sent, "reference_used": req["reference_used"],
+            "control_used": req["control_used"]}
 
     if ARGS.dry_run:
         shown = dict(req["fields"])
@@ -220,8 +249,8 @@ def submit(envelope):
             shown["prompt"] = shown["prompt"][:60] + "...<%d chars>" % len(shown["prompt"])
         print(json.dumps({"dry_run": VENDOR, "method": req["method"],
                           "url": ARGS.upstream.rstrip("/") + req["path"], "headers": redact(req["headers"]),
-                          "body": shown, "multipart_file": (None if req["file"] is None else
-                              {"field": req["file"][0], "name": req["file"][1], "bytes": len(req["file"][3])})},
+                          "body": shown, "multipart_files": [{"field": f[0], "name": f[1], "bytes": len(f[3])}
+                                                             for f in (req["files"] or [])]},
                          indent=2), file=sys.stderr)
         meta.update(vendor_id="dry-run", elapsed_s=0.0, dry_run=True)
         return 200, {"kind": kind, "mime": "image/png", "b64": base64.b64encode(PNG_1X1).decode(),
@@ -330,6 +359,11 @@ def main(argv=None):
                    help="prepended to the prompt for a pano (the LoRA's trigger words)")
     p.add_argument("--pano-size", default="2048x1024", help="a 2:1 size for a pano")
     p.add_argument("--edits", action="store_true", help="send reference_image to /v1/images/edits")
+    p.add_argument("--control", nargs="?", const="depth", default="", choices=["depth", "seg"],
+                   help="send the envelope's layout_depth (or, =seg, layout_seg) as a control image "
+                        "to /v1/images/edits; the model needs a depth/seg ControlNet loaded")
+    p.add_argument("--control-field", default="control",
+                   help="the multipart field the control image goes in (servers differ - verify)")
     p.add_argument("--wait", type=float, default=20.0, help="accepted for symmetry; this proxy is synchronous")
     p.add_argument("--timeout", type=float, default=300.0, help="per upstream call")
     p.add_argument("--max-bytes", type=int, default=128 * 1024 * 1024)

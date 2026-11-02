@@ -88,6 +88,7 @@ require_once __DIR__ . '/weather.php';
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/clock.php';
 require_once __DIR__ . '/splat.php';    // a splat, kept as PLY on arrival
+require_once __DIR__ . '/layout.php';   // the room as a box, for a machine that lays one out
 
 // ---------------------------------------------------------------------------
 // The template's own knobs
@@ -370,6 +371,9 @@ function xeric_scene_brief(array $t, PDO $db, ?string $key = null, ?array $now =
 
     $brief['prompt']      = xeric_scene_prompt($brief, $name, $desc, $items, $cfg, trim((string)($opts['ask'] ?? '')));
     $brief['fingerprint'] = xeric_scene_fingerprint($brief, $desc, $items, $cfg, trim((string)($opts['ask'] ?? '')));
+    // The room as a box (layout.php). After the fingerprint and never in it:
+    // it is derived from the interior, the company and the vantage, all in.
+    $brief['layout'] = xeric_layout($brief, $t);
     return $brief;
 }
 
@@ -967,6 +971,15 @@ function xeric_scene_takes_reference(array $endpoint): bool
  *               (seed used, cost, the vendor's id) is recorded on the row as
  *               it came.
  *
+ *     STREAM    { "kind": "stream", "session": {"id", "url", "protocol",
+ *                 "expires_at", "max_seconds", "fallback"?}, "meta": {...} }
+ *               — the answer to a channel "stream" request only, which
+ *               engine/stream.php sends when the owner presses "go live" and
+ *               at no other time. A live session is stored as a session
+ *               (engine/stream.php's own table), never as bytes and never as
+ *               a scene_jobs row: a look answered with a stream is refused
+ *               here, so the reaper and the heart cannot start one.
+ *
  *     LATER     { "status": "pending", "job": "<id>", "retry_after_s": n },
  *               usually as a 202: Xeric does not block. The reaper records
  *               the job and asks again on its next pass with
@@ -983,7 +996,7 @@ function xeric_scene_takes_reference(array $endpoint): bool
  * 300 — rooms are slower than faces), job (ask after it).
  *
  * @return array{bytes:string,mime:string,usage:array,meta:array,kind:string,
- *               url:?string,extras:array,pending:?string,cannot:bool}
+ *               url:?string,extras:array,pending:?string,cannot:bool,session:?array}
  *         pending is the remote job id when the machine said "later", in
  *         which case bytes is '' and nothing else is meaningful. cannot is a
  *         sound the machine said plainly it cannot make (see
@@ -1021,7 +1034,7 @@ function xeric_scene_render(array $endpoint, array $brief, array $opts = []): ar
         if ($bytes === false || $bytes === '') throw new RuntimeException('scene: the image machine answered with no image');
         return ['bytes' => $bytes, 'mime' => 'image/png', 'usage' => (array)($j['usage'] ?? []),
                 'meta' => [], 'kind' => 'image', 'url' => null, 'extras' => [], 'pending' => null,
-                'cannot' => false];
+                'cannot' => false, 'session' => null];
     }
 
     if ($job !== '') {
@@ -1047,7 +1060,7 @@ function xeric_scene_body(array $brief, array $opts = []): array
         'channel'     => $channel,
         'kind_wanted' => $kinds,
         'prompt'      => (string)($brief['prompt'] ?? ''),
-        'brief'       => $brief,
+        'brief'       => array_diff_key($brief, ['layout' => true]),   // the layout rides once, below
         'seed'        => (int)($brief['seed'] ?? $brief['seeds']['place']['interior'] ?? 0),
         'fingerprint' => (string)($brief['fingerprint'] ?? ''),
         'quality'     => ($opts['quality'] ?? 'full') === 'draft' ? 'draft' : 'full',
@@ -1060,6 +1073,15 @@ function xeric_scene_body(array $brief, array $opts = []): array
         $body['reference_image']       = ['mime' => xeric_scene_mime($ref['mime'] ?? ''),
                                           'b64'  => base64_encode($ref['bytes'])];
         $body['reference_fingerprint'] = (string)($ref['fingerprint'] ?? '');
+    }
+    // The room as a box, always when the brief has one; its two pictures only
+    // when the world asked (media.scene.layout_images), because they cost bandwidth.
+    if (is_array($brief['layout'] ?? null)) {
+        $body['layout'] = $brief['layout'];
+        if (!empty($opts['layout_images'])) {
+            $body['layout_depth'] = ['mime' => 'image/png', 'b64' => base64_encode(xeric_layout_depth_png($brief['layout']))];
+            $body['layout_seg']   = ['mime' => 'image/png', 'b64' => base64_encode(xeric_layout_seg_png($brief['layout']))];
+        }
     }
     return $body;
 }
@@ -1084,12 +1106,13 @@ function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, str
     $res = ['bytes' => '', 'mime' => '', 'usage' => (array)($j['usage'] ?? []),
             'meta' => is_array($j['meta'] ?? null) ? $j['meta'] : [],
             'kind' => '', 'url' => null, 'extras' => array_values((array)($j['extras'] ?? [])),
-            'pending' => null, 'cannot' => false];
+            'pending' => null, 'cannot' => false, 'session' => null];
 
     $http = (int)($j['_http'] ?? 200);
     if ($http >= 400 && $http < 500
-        && !isset($j['b64']) && !isset($j['url']) && !isset($j['bytes']) && !isset($j['job'])) {
-        if ($want === 'audio') { $res['cannot'] = true; return $res; }
+        && !isset($j['b64']) && !isset($j['url']) && !isset($j['bytes']) && !isset($j['job'])
+        && !isset($j['session'])) {
+        if ($want === 'audio' || $want === 'stream') { $res['cannot'] = true; return $res; }
         throw new RuntimeException('scene: the machine refused the request (HTTP ' . $http . ')');
     }
 
@@ -1101,10 +1124,27 @@ function xeric_scene_answer(array $j, array $auth, int $timeout, bool $stub, str
     }
 
     $kind = strtolower(trim((string)($j['kind'] ?? $want)));
-    if (!in_array($kind, ['image', 'pano', 'splat', 'glb', 'viewer', 'audio'], true)) {
+    if (!in_array($kind, XERIC_SCENE_KINDS, true)) {
         throw new RuntimeException('scene: the machine made a kind of scene this engine does not know');
     }
     if ($want === 'audio' && $kind !== 'audio') { $res['cannot'] = true; return $res; }
+    // A LIVE VIEW IS ASKED FOR, NEVER FALLEN INTO. Only engine/stream.php asks
+    // with $want 'stream' (an owner pressed "go live"); a stream offered in
+    // answer to a look the reaper or the heart sent is refused, because a
+    // session that bills by the second must never start with nobody watching.
+    // And a stream request answered with anything else is the machine saying
+    // what it is: it does not stream — an answer, not a failed try.
+    if ($kind === 'stream' && $want !== 'stream') {
+        throw new RuntimeException('scene: the machine answered with a live stream, which only "go live" may start');
+    }
+    if ($want === 'stream') {
+        if ($kind !== 'stream') { $res['cannot'] = true; return $res; }
+        $res['kind']    = 'stream';
+        $res['mime']    = xeric_scene_default_mime('stream');
+        $res['session'] = is_array($j['session'] ?? null) ? $j['session'] : null;
+        if ($res['session'] === null) throw new RuntimeException('scene: a stream must name its session');
+        return $res;
+    }
     $res['kind'] = $kind;
     $b64 = is_string($j['b64'] ?? null) && $j['b64'] !== '' ? $j['b64'] : null;
     $url = is_string($j['url'] ?? null) && $j['url'] !== '' ? $j['url'] : null;
@@ -1274,6 +1314,12 @@ function xeric_scene_fetch(string $url, array $endpoint, array $auth, int $timeo
     return $bytes;
 }
 
+/**
+ * Every kind a machine may answer with. 'stream' is a live session's, and is
+ * read only for a stream request (xeric_scene_answer); the rest are kept.
+ */
+const XERIC_SCENE_KINDS = ['image', 'pano', 'splat', 'glb', 'viewer', 'audio', 'stream'];
+
 /** A media type as a machine said it, or octet-stream when it said nonsense. */
 function xeric_scene_mime($m): string
 {
@@ -1300,6 +1346,7 @@ function xeric_scene_default_mime(string $kind): string
         'glb'           => 'model/gltf-binary',
         'viewer'        => 'text/html',
         'audio'         => 'audio/mpeg',
+        'stream'        => 'application/x-xeric-stream',
         default         => 'application/octet-stream',
     };
 }
@@ -1613,7 +1660,7 @@ function xeric_scene_reap(array $t, PDO $db, string $scenesDir, ?array $endpoint
     $optsFor = fn(string $channel): array => $channel === 'sound'
         ? ['channel' => 'sound', 'kinds' => ['audio'], 'quality' => $cfg['quality']]
         : ['channel' => 'look', 'kinds' => $cfg['kinds'], 'quality' => $cfg['quality'],
-           'negative' => $cfg['negative']];
+           'negative' => $cfg['negative'], 'layout_images' => xeric_layout_images($t)];
 
     foreach ($waiting as $job) {
         $channel = xeric_scene_channel_of($job);

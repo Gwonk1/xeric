@@ -40,6 +40,10 @@ The picture itself is not sent. meta.reference_used says which happened. A
 restart forgets, and the room is drawn from the seed alone — honest, if less
 steady.
 
+A LAYOUT IS WORD ORDER HERE. Skybox takes no blockout, so when the envelope
+carries a `layout` its labels lead the prompt, nearest first; the depth and
+segmentation images are not sent anywhere.
+
 SLOW IS NOT BROKEN. Skybox is asynchronous. The proxy waits inline for up to
 --wait seconds (default 20) and then answers 202 {status: pending, job,
 retry_after_s}; Xeric's reaper asks again later with GET /v1/scenes/{job}.
@@ -76,7 +80,7 @@ LOCK = threading.Lock()
 def to_upstream(envelope, remix_id=None):
     """Xeric's envelope -> (method, path, headers, json body) for a new skybox."""
     body = {
-        "prompt": envelope.get("prompt", ""),            # per Blockade Labs docs as of Nov 2026 - verify
+        "prompt": layout_lead(envelope) + envelope.get("prompt", ""),  # per Blockade Labs docs as of Nov 2026 - verify
         "skybox_style_id": int(ARGS.style),              # per Blockade Labs docs as of Nov 2026 - verify
     }
     if envelope.get("negative"):
@@ -121,6 +125,22 @@ def from_upstream(j):
 
 def key():
     return os.environ.get(KEY_ENV, "")
+
+
+def layout_lead(envelope, limit=10):
+    """The layout's labels, nearest first, as a lead-in to the prompt.
+
+    Skybox takes no blockout, so the order of words is all the layout can
+    give it: the near things named first are the ones a panorama model puts
+    in the foreground. It LEADS rather than trails so the rating clause stays
+    the prompt's last words. No layout, or none with labels, adds nothing."""
+    lay = envelope.get("layout") if isinstance(envelope.get("layout"), dict) else {}
+    objs = [o for o in (lay.get("objects") or []) if isinstance(o, dict)
+            and isinstance(o.get("label"), str) and o["label"].strip()
+            and o.get("kind") != "player"]     # you are the camera, never in the picture
+    near = lambda o: o["distance"] if isinstance(o.get("distance"), (int, float)) else float("inf")
+    labels = [o["label"].strip()[:60] for o in sorted(objs, key=lambda o: (near(o), o["label"]))][:limit]
+    return ("nearest first: " + ", ".join(labels) + ". ") if labels else ""
 
 
 def log(line):

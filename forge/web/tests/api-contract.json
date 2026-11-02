@@ -212,6 +212,12 @@
         "brief.interior",
         "brief.key",
         "brief.kind",
+        "brief.layout",
+        "brief.layout.objects",
+        "brief.layout.room",
+        "brief.layout.units",
+        "brief.layout.vantage",
+        "brief.layout.version",
         "brief.light",
         "brief.minor",
         "brief.name",
@@ -264,6 +270,10 @@
         "sound.line",
         "sound.mime",
         "sound.src",
+        "stream",
+        "stream.ended",
+        "stream.live",
+        "stream.offer",
         "world"
     ],
     "thread": [

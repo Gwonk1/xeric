@@ -117,8 +117,13 @@ root.XericView = function (o) {
     var tags = [].slice.call(box.querySelectorAll('.looktag'));
     var img = new Image(), gl = null, g2 = null, prog = null, tex = null, raf = 0, dead = false, xrh = null, gz = null;
     var bm = null, buf = null;                        // opt.load's bitmap, when the page loads it; the quad
-    function pw() { return bm ? bm.width : img.naturalWidth; }
-    function ph() { return bm ? bm.height : img.naturalHeight; }
+    // opt.video: a playing <video> (the live view, stand.php) drawn onto the
+    // same sphere, one texImage2D per frame. Cross-origin video taints a
+    // WebGL texture unless the machine answers with CORS, so a refused upload
+    // drops back to the panorama behind it (opt.videoFail says so).
+    var vid = opt.video || null, vraf = 0;
+    function pw() { return vid ? vid.videoWidth : bm ? bm.width : img.naturalWidth; }
+    function ph() { return vid ? vid.videoHeight : bm ? bm.height : img.naturalHeight; }
     function plain() {
       if (dead) return;
       // The still, and the people as the row a still has under it.
@@ -156,8 +161,13 @@ root.XericView = function (o) {
     // to aim the view (a name tag at a bearing, a day strip, a headset) calls
     // this with its own numbers.
     function drawAt(yaw, pitch, fov) {
-      if (dead || !(bm || (img.complete && img.naturalWidth))) return;
+      if (dead || !((vid && vid.readyState >= 2 && vid.videoWidth) || bm || (!vid && img.complete && img.naturalWidth))) return;
       size();
+      if (gl && vid && tex) {
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, vid); }
+        catch (e) { unvideo(); return; }
+      }
       if (gl) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, cv.width, cv.height);
@@ -176,7 +186,7 @@ root.XericView = function (o) {
       var x = (((yaw / (2 * Math.PI)) % 1 + 1) % 1) * w - w / 2 + cv.width / 2;
       var y0 = -cv.height / 2 + pitch / Math.PI * h;
       g2.clearRect(0, 0, cv.width, cv.height);
-      for (var i = -1; i <= 1; i++) g2.drawImage(bm || img, x + i * w, y0, w, h);
+      for (var i = -1; i <= 1; i++) g2.drawImage(vid || bm || img, x + i * w, y0, w, h);
     }
     // The tags for the same three numbers, in CSS pixels over the canvas. The
     // WebGL view is a perspective, so a bearing lands at tan(angle); the 2D
@@ -217,9 +227,14 @@ root.XericView = function (o) {
 
     function loaded() {
       if (dead) return;
+      if (gl && tex) {                                // a second source (the poster after the video): same texture
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, bm || img); } catch (e) { plain(); return; }
+        ask(); return;
+      }
       if (gl) {
-        var source = bm || img, max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
-        if (pw() > max) {                             // a phone's ceiling: shrink once, on a 2D canvas
+        var source = vid || bm || img, max = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 2048;
+        if (!vid && pw() > max) {                             // a phone's ceiling: shrink once, on a 2D canvas
           var c2 = document.createElement('canvas');
           c2.width = max; c2.height = Math.round(max * ph() / pw());
           c2.getContext('2d').drawImage(bm || img, 0, 0, c2.width, c2.height);
@@ -242,9 +257,22 @@ root.XericView = function (o) {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, source); }
-        catch (e) { plain(); return; }
+        catch (e) { if (vid) { unvideo(); return; } plain(); return; }
+      }
+      if (vid && !vraf) {
+        // A video is a picture that changes: draw every frame while it plays.
+        var loop = function () { vraf = 0; if (dead || !vid) return; ask(); vraf = requestAnimationFrame(loop); };
+        vraf = requestAnimationFrame(loop);
       }
       ask();
+    }
+    // The live view will not draw here (tainted, or gone): the panorama.
+    function unvideo() {
+      if (!vid) return;
+      vid = null;
+      if (vraf) { cancelAnimationFrame(vraf); vraf = 0; }
+      if (typeof opt.videoFail === 'function') { try { opt.videoFail(); } catch (e) {} }
+      picture();
     }
     function broken() { dead = true; box.remove(); }
     // The quad and the panorama put back where the look-around expects them,
@@ -258,6 +286,7 @@ root.XericView = function (o) {
     }
     img.addEventListener('load', loaded);
     img.addEventListener('error', broken);
+    function picture() {
     if (typeof opt.load === 'function') {
       // The page fetches the bytes itself (with its token) and hands back a
       // bitmap: createImageBitmap(blob) needs no blob: URL and no img-src.
@@ -268,6 +297,14 @@ root.XericView = function (o) {
       }, function () { if (!dead) broken(); });
     } else {
       img.src = src;                                  // same origin: img-src 'self', and no tainted texture
+    }
+    }
+    if (vid) {
+      if (vid.readyState >= 2) loaded();
+      else vid.addEventListener('loadeddata', function () { if (vid) loaded(); });
+      vid.addEventListener('error', unvideo);
+    } else {
+      picture();
     }
 
     var drag = null;
@@ -323,11 +360,208 @@ root.XericView = function (o) {
         if (gz) gz.end();
         window.removeEventListener('resize', ask);
         if (raf) cancelAnimationFrame(raf);
+        if (vraf) cancelAnimationFrame(vraf);
         // Hand the context back: a page that repaints its sidebar after every
         // turn would otherwise collect WebGL contexts until the browser drops one.
         if (gl) { var lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); }
       }
     };
+  }
+
+  // THE LIVE VIEW (engine/stream.php, docs/VIEWPORT.md "Streams"). A world
+  // model drawing the room as video, played straight from the scene machine's
+  // own origin — the one remote origin the page's CSP names (ui.php).
+  //
+  // WHEP, MINIMALLY, AND NO LIBRARY: a receive-only RTCPeerConnection, its
+  // offer POSTed as application/sdp to the session url once ICE has gathered
+  // (non-trickle, two seconds at most), the answer set, and the track put on
+  // the <video>. The resource the server names in Location is DELETEd on
+  // close when it is on the same origin. No credentials ride along: the
+  // session url is the machine's own short-lived capability, and the key
+  // never leaves the server. `dep` is the test's seam (PC, fetch, iceWait).
+  function whep(url, video, dep) {
+    dep = dep || {};
+    var PC = dep.PC || root.RTCPeerConnection, F = dep.fetch || root.fetch;
+    var closed = false, res = null;
+    if (!PC || !F) {
+      return { ready: Promise.reject(new Error('this browser has no WebRTC')), close: function () {}, pc: null };
+    }
+    var pc = new PC({ bundlePolicy: 'max-bundle' });
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
+    pc.ontrack = function (e) {
+      var ms = (e.streams && e.streams[0]) || null;
+      if (!ms && root.MediaStream) { ms = new root.MediaStream(); ms.addTrack(e.track); }
+      if (ms && video && video.srcObject !== ms) video.srcObject = ms;
+      var p = video && video.play && video.play();
+      if (p && p.catch) p.catch(function () {});
+    };
+    function gathered() {
+      if (pc.iceGatheringState === 'complete') return Promise.resolve();
+      return new Promise(function (r) {
+        var t = setTimeout(r, dep.iceWait == null ? 2000 : dep.iceWait);
+        pc.onicegatheringstatechange = function () { if (pc.iceGatheringState === 'complete') { clearTimeout(t); r(); } };
+      });
+    }
+    var ready = pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(gathered).then(function () {
+      return F(url, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp,
+                      credentials: 'omit', cache: 'no-store' });
+    }).then(function (r) {
+      if (!r || !(r.status === 201 || r.ok)) throw new Error('the machine did not take the offer');
+      var loc = r.headers && r.headers.get ? r.headers.get('Location') : null;
+      if (loc) { try { var u = new URL(loc, url); if (u.origin === new URL(url).origin) res = u.href; } catch (e) {} }
+      return r.text();
+    }).then(function (sdp) {
+      if (closed) return;
+      return pc.setRemoteDescription({ type: 'answer', sdp: sdp });
+    });
+    return {
+      ready: ready, pc: pc,
+      close: function () {
+        if (closed) return;
+        closed = true;
+        try { pc.close(); } catch (e) {}
+        if (res) { try { F(res, { method: 'DELETE', credentials: 'omit' }).catch(function () {}); } catch (e) {} }
+      }
+    };
+  }
+
+  // Can this browser play HLS by itself? Safari, visionOS and Quest can;
+  // desktop Chrome does not without a library, and this app vendors none.
+  function playsHls(v) {
+    return !!(v && v.canPlayType && v.canPlayType('application/vnd.apple.mpegurl'));
+  }
+
+  // The heartbeat, alone — the stand page runs it beside its own sphere.
+  // Every ten seconds a POST to stream.php says the view is still on screen;
+  // the server counts the seconds and answers whether it goes on. Hidden for
+  // more than thirty seconds, the page ends it itself. o: id, beat, beatS,
+  // auth(headers), fetch, onEnd(reason).
+  function streamBeat(o) {
+    var dead = false, hidAt = 0, hideT = 0;
+    function post(body) {
+      var F = o.fetch || root.fetch;
+      var h = { 'Content-Type': 'application/json' };
+      if (o.auth) h = o.auth(h);
+      var b = { w: W, id: +o.id };
+      Object.keys(body).forEach(function (k) { b[k] = body[k]; });
+      return F(o.beat || 'stream.php', { method: 'POST', headers: h, credentials: 'same-origin', body: JSON.stringify(b) })
+        .then(function (r) { return r.json(); });
+    }
+    function stop() {
+      dead = true; clearInterval(timer); clearTimeout(hideT);
+      if (typeof document !== 'undefined' && document.removeEventListener) document.removeEventListener('visibilitychange', vis);
+    }
+    function ended(reason) { if (dead) return; stop(); if (o.onEnd) o.onEnd(reason); }
+    function beat() {
+      if (dead) return;
+      var hf = hidAt ? Math.round((Date.now() - hidAt) / 1000) : 0;
+      post({ a: 'beat', hidden_for: hf }).then(function (j) {
+        if (j && j.live === false) ended(j.reason || 'it ended');
+      }, function () {});
+    }
+    function vis() {
+      if (document.hidden) {
+        if (!hidAt) hidAt = Date.now();
+        clearTimeout(hideT);
+        hideT = setTimeout(function () {
+          if (!document.hidden || dead) return;
+          post({ a: 'end', why: 'hidden' }).then(function () {}, function () {});
+          ended('the tab was hidden for more than 30 seconds');
+        }, 31000);
+      } else { hidAt = 0; clearTimeout(hideT); }
+    }
+    if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', vis);
+    var timer = setInterval(beat, (+o.beatS || 10) * 1000);
+    return {
+      beat: beat, stop: stop,
+      end: function (why) { if (dead) return; stop(); return post({ a: 'end', why: why || 'closed' }).catch(function () {}); }
+    };
+  }
+
+  // The play view's live box (play-view.php renders it): the media element,
+  // the heartbeat, and the stored room back with "the live view ended:
+  // <reason>" when it ends — opt.onEnd(reason) then asks the server for the
+  // view, which says the same. HLS where the browser plays it; the MJPEG
+  // fallback where it does not and the session offers one; otherwise the
+  // view is ended at once and says why, rather than billing for a picture
+  // nobody can see.
+  function stream(box, opt) {
+    opt = opt || {};
+    var d = box.dataset, pr = d.protocol, url = d.url, fb = d.fallback || '';
+    var media = box.querySelector('video, img.lookstreamimg'), w = null, hb = null, dead = false;
+    function line(t) { var st = box.querySelector('.lookstreamstate'); if (st) st.textContent = t; }
+    function asImg(src) {
+      var im = document.createElement('img');
+      im.className = 'lookstreamimg'; im.alt = 'live'; im.src = src;
+      if (media) media.replaceWith(im);
+      media = im;
+    }
+    function quiet() {
+      if (w) { w.close(); w = null; }
+      if (media && media.tagName === 'VIDEO') {
+        try { media.pause(); } catch (e) {}
+        try { media.removeAttribute('src'); media.srcObject = null; } catch (e) {}
+      }
+    }
+    function end(reason, told) {
+      if (dead) return;
+      dead = true;
+      if (hb) { if (told) hb.stop(); else hb.end('closed'); }
+      quiet();
+      var back = document.createElement('div');
+      back.className = 'lookmain lookstill';
+      if (d.poster) {
+        var im = document.createElement('img');
+        im.className = 'lookimg'; im.src = d.poster; im.alt = '';
+        back.appendChild(im);
+      }
+      var p = document.createElement('p');
+      p.className = 'lookliveend'; p.textContent = 'the live view ended: ' + reason;
+      back.appendChild(p);
+      if (box.parentNode) box.replaceWith(back);
+      if (opt.onEnd) opt.onEnd(reason);
+    }
+    var how = '';
+    if (pr === 'hls') {
+      if (playsHls(media)) {
+        how = 'video';
+        if (!media.getAttribute('src')) media.setAttribute('src', url);
+        var p = media.play && media.play();
+        if (p && p.catch) p.catch(function () {});
+      } else if (fb) {
+        how = 'mjpeg'; asImg(fb);
+        line('live — this browser does not play HLS itself, so this is the machine\'s picture-by-picture view');
+      }
+    } else if (pr === 'webrtc-whep') {
+      how = 'video';
+      w = whep(url, media, opt);
+      w.ready.catch(function () { end('the live view could not be connected', false); });
+    } else if (pr === 'mjpeg') {
+      how = 'mjpeg';
+      if (!media || media.tagName !== 'IMG') asImg(url);
+    }
+    var api = {
+      streamId: d.stream, how: how,
+      get alive() { return !dead; },
+      get media() { return media; },
+      end: function (reason) { end(reason || 'you ended it', false); },
+      // A repaint with the same live view: the playing element moves into the
+      // new box, so the picture does not blink and WHEP does not reconnect.
+      move: function (nb) {
+        var fresh = nb.querySelector('video, img.lookstreamimg');
+        if (fresh && media && fresh !== media) fresh.replaceWith(media);
+        box = nb; d = nb.dataset;
+      },
+      // Thrown away without a repaint to move into (the player walked on, the
+      // view changed): the server is told, so the machine stops drawing now
+      // rather than when the sweep notices.
+      destroy: function () { if (dead) return; dead = true; if (hb) hb.end('page'); quiet(); }
+    };
+    hb = streamBeat({ id: d.stream, beat: d.beat, beatS: opt.beatS, auth: opt.auth, fetch: opt.fetch,
+                      onEnd: function (reason) { end(reason, true); } });
+    if (!how) end('this live view is HLS, and this browser does not play HLS by itself (Safari, Vision Pro and Quest do)', false);
+    return api;
   }
 
   // LOOK WITH THE PHONE. The same view, aimed by the phone in your hand: hold
@@ -1193,6 +1427,8 @@ root.XericView = function (o) {
 
   return {
     pano: pano, xr: xr, xrRay: xrRay, mat4inv: mat4inv, panoProgram: panoProgram,
+    // The live view's: the WHEP client, the HLS question, the heartbeat.
+    whep: whep, playsHls: playsHls, stream: stream, streamBeat: streamBeat,
     gaze: gaze, phoneGaze: phoneGaze, dayView: dayView,
     speak: speak, unspeak: unspeak, refuseSpeak: refuseSpeak, hold: hold,
     // The stand page's: the headset's tags, ray and hold, the voice's panner.
@@ -1203,6 +1439,15 @@ root.XericView = function (o) {
     // next one (its WebGL context goes back to the browser with it). opt is
     // pano()'s: the stand page's loader and hooks; play.php passes none.
     mount: function (box, opt) {
+      // THE LIVE VIEW: mount({ kind: 'stream', box, onEnd }). The same live
+      // view repainted keeps its element; anything else is a fresh one.
+      if (box && box.kind === 'stream') {
+        if (lookView && lookView.alive && lookView.streamId && lookView.streamId === box.box.dataset.stream) {
+          lookView.move(box.box); return lookView;
+        }
+        if (lookView) lookView.destroy();
+        lookView = stream(box.box, box); return lookView;
+      }
       if (lookView) lookView.destroy();
       // A SPLAT is xeric-splat.js's, loaded beside this file and started only
       // here: mount({ kind: 'splat', canvas, url, onReady, onError }).

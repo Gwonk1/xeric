@@ -68,7 +68,12 @@ if (isset($_GET['manifest'])) {
     exit;
 }
 
-xeric_web_head('Xeric: stand', ['stand' => true]);
+// THE LIVE VIEW'S ORIGIN, and still no world: the shell is the same page for
+// every world, so it cannot ask which of them goes live. It names the
+// configured scene machine's own origin when that machine could stream at
+// all (xeric_play_stream_origin with no world) and nothing otherwise; the
+// engine refuses any session not on that origin, so this is never wider.
+xeric_web_head('Xeric: stand', ['stand' => true, 'stream_origin' => xeric_play_stream_origin()]);
 ?>
 <style>
 html,body{height:100%}
@@ -138,6 +143,7 @@ body.insecure #talk{display:none}
     <span id="clock"></span>
     <button type="button" id="enter">come in</button>
     <button type="button" id="listen" aria-pressed="false" hidden>sound</button>
+    <button type="button" id="golive" hidden>go live</button>
     <button type="button" id="relink">link</button>
   </div>
   <div id="view">
@@ -200,7 +206,7 @@ body.insecure #talk{display:none}
     room: null, roomLast: 0, roomConv: 0, roomRows: [], roomSaid: {},
     entered: false, listen: false, ctx: null, amb: null, speech: null, ambSrc: '', ambNode: null,
     stream: null, rec: null, recTimer: 0, busy: false, cap: null, faceB: 0, voiceQ: Promise.resolve(),
-    timer: 0, pulsing: false, fails: 0, pics: {}
+    timer: 0, pulsing: false, fails: 0, pics: {}, beat: null, whep: null
   };
 
   function note(t) { $('#note').textContent = t || ''; }
@@ -308,6 +314,18 @@ body.insecure #talk{display:none}
     showLink('');
   });
   $('#linkclose').addEventListener('click', function () { $('#linkbox').hidden = true; });
+  $('#golive').addEventListener('click', function () {
+    var b = $('#golive'); b.disabled = true;
+    fetch('stream.php', { method: 'POST', headers: auth({ 'Content-Type': 'application/json' }), credentials: 'same-origin',
+      body: JSON.stringify({ w: W, a: 'start' }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        b.disabled = false;
+        if (!d || !d.ok) { note((d && d.error) || 'The live view could not be started.'); return; }
+        return api(WP + 'look').then(function (res) { if (res.ok) takeLook(res.d); });
+      })
+      .catch(function () { b.disabled = false; note('The machine could not be reached.'); });
+  });
   $('#linkform').addEventListener('submit', function (e) {
     e.preventDefault();
     var code = $('#code').value.trim();
@@ -428,14 +446,53 @@ body.insecure #talk{display:none}
     }
   };
 
+  // THE LIVE VIEW, on the sphere: when the room is live (look.stream.live)
+  // and this browser can play the session — HLS natively, or WHEP — a muted
+  // <video> is handed to the panorama as its texture, one texImage2D a frame.
+  // Anything else, or a texture the browser refuses (a machine that sends
+  // no CORS), is the stored panorama. The heartbeat keeps it metered.
+  function liveVideo(live) {
+    if (!live || !live.live) return null;
+    var v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.autoplay = true; v.crossOrigin = 'anonymous';
+    v.setAttribute('playsinline', '');
+    if (live.protocol === 'hls' && XV.playsHls(v)) {
+      v.src = live.url;
+    } else if (live.protocol === 'webrtc-whep') {
+      S.whep = XV.whep(live.url, v);
+      S.whep.ready.catch(function () { note('The live view could not be connected; this is the stored room.'); });
+    } else {
+      return null;
+    }
+    var p = v.play && v.play(); if (p && p.catch) p.catch(noop);
+    return v;
+  }
+  function liveOff() {
+    if (S.beat) { S.beat.stop(); S.beat = null; }
+    if (S.whep) { S.whep.close(); S.whep = null; }
+  }
+  function liveBeat(live) {
+    if (S.beat) return;
+    S.beat = XV.streamBeat({ id: live.id, beat: live.beat || 'stream.php', beatS: live.beat_s, auth: auth,
+      onEnd: function (reason) {
+        S.beat = null;
+        note('the live view ended: ' + reason);
+        api(WP + 'look').then(function (res) { if (res.ok) takeLook(res.d); });
+      } });
+  }
   function paintView(look) {
     var scene = look && look.scene, view = $('#view');
     var empty = $('#empty');
-    if (XV.lookView && XV.lookView.inside && (!scene || scene.src !== S.viewSrc)) { S.pending = look; return; }
-    if (scene && scene.src === S.viewSrc && view.querySelector('.lookmain')) { retag(); return; }
+    var live = look && look.stream && look.stream.live && look.stream.live.live ? look.stream.live : null;
+    var vkey = scene ? scene.src + (live ? '#live' + live.id : '') : '';
+    var gl = $('#golive');
+    if (gl) gl.hidden = !(look && look.stream && look.stream.offer && !live && scene && scene.kind === 'pano');
+    if (XV.lookView && XV.lookView.inside && (!scene || vkey !== S.viewSrc)) { S.pending = look; return; }
+    if (scene && vkey === S.viewSrc && view.querySelector('.lookmain')) { retag(); return; }
     XV.unmount();
+    liveOff();
     $$all('#view .lookmain').forEach(function (x) { x.remove(); });
-    S.viewSrc = scene ? scene.src : '';
+    S.viewSrc = vkey;
     if (!scene) {
       empty.hidden = false;
       empty.innerHTML = '';
@@ -464,7 +521,10 @@ body.insecure #talk{display:none}
       S.who.forEach(function (w) { var t = tagButton(w); t.hidden = true; tags.appendChild(t); });
       box.appendChild(tags);
       view.insertBefore(box, $('#caption'));
-      XV.mount(box, { load: loadPic, stand: hooks });
+      var vid = liveVideo(live);
+      if (live) liveBeat(live);
+      XV.mount(box, { load: loadPic, stand: hooks, video: vid,
+        videoFail: function () { note('The live view will not draw in here (the machine sends no CORS), so this is the stored room.'); } });
     } else {
       // A still: drawn to fit, the people as a row under it.
       box.className = 'lookmain lookstill';

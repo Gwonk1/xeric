@@ -57,6 +57,9 @@ const XERIC_BUDGET_KINDS = [
     'renders'  => 'renders_per_day',
     'clips'    => 'clips_per_day',
     'hearings' => 'hearings_per_day',
+    // A LIVE VIEW IS METERED BY THE SECOND (engine/stream.php): seconds a
+    // world model streamed a room to the page, counted between heartbeats.
+    'stream'   => 'stream_seconds_per_day',
 ];
 
 /** The words a refusal uses for each kind. */
@@ -65,6 +68,7 @@ const XERIC_BUDGET_WORDS = [
     'renders'  => ['render', 'renders'],
     'clips'    => ['clip', 'clips'],
     'hearings' => ['hearing', 'hearings'],
+    'stream'   => ['live-view second', 'seconds of live view'],
 ];
 
 /** A budget said no. The verdict (xeric_budget_allows) rides along. */
@@ -82,7 +86,8 @@ final class XericBudgetOut extends RuntimeException
 /**
  * The template's `budget` block, with defaults that mean "no ceiling".
  *
- * @return array{tokens_per_day:int,renders_per_day:int,clips_per_day:int,hearings_per_day:int,metered_only:bool}
+ * @return array{tokens_per_day:int,renders_per_day:int,clips_per_day:int,hearings_per_day:int,
+ *               stream_seconds_per_day:int,metered_only:bool}
  */
 function xeric_budget(array $t): array
 {
@@ -116,7 +121,7 @@ function xeric_budget_day(array $now): string
  * What this world has spent on its current date.
  *
  * @param bool $costlyOnly only what was spent on costly machines
- * @return array{tokens:int,renders:int,clips:int,hearings:int}
+ * @return array{tokens:int,renders:int,clips:int,hearings:int,stream:int}
  * @throws Throwable when the ledger cannot be read — the caller decides
  */
 function xeric_budget_spent(PDO $db, array $now, bool $costlyOnly = false): array
@@ -244,6 +249,9 @@ function xeric_budget_amount(string $kind, array $u): int
             return max(1, (int)($u['clips'] ?? 1));
         case 'hearings':
             return max(1, (int)($u['hearings'] ?? 1));
+        case 'stream':
+            // Seconds, as counted; a report of none is none, never "one".
+            return max(0, (int)($u['stream_seconds'] ?? 0));
     }
     return 0;
 }

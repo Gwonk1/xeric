@@ -6,7 +6,7 @@ that spends reads it first.
 
 ```json
 "budget": { "tokens_per_day": 0, "renders_per_day": 0, "clips_per_day": 0,
-            "hearings_per_day": 0, "metered_only": true }
+            "hearings_per_day": 0, "stream_seconds_per_day": 0, "metered_only": true }
 ```
 
 **Zero is no ceiling.** Every default is 0, so a world without the block
@@ -50,7 +50,17 @@ writes the ledger by itself; a CLI with no sinks has no ledger.
 | scene.php's look | renders | 429, naming the ceiling |
 | speak.php (a miss) | clips | 503, "this world's clip budget for today is spent" |
 | hear.php | hearings | 429, naming the ceiling |
+| stream.php's go live | stream | 429, naming the ceiling; no session is started |
+| stream.php's heartbeat | stream | the live view ends, and says why |
 | say.php, room.php (a line, a cast beat) | tokens | 429, naming the ceiling |
+
+**Stream seconds** (`kind: stream`, engine/stream.php) are counted by the live
+view's heartbeat: every 10 s the page POSTs, and the server writes the seconds
+since the last beat (at most 15) into the ledger, marked costly by where the
+machine is. A live view on a machine that bills is about $72 an hour, so
+`metered_only` matters here more than anywhere: the ceiling counts a billing
+machine's seconds, and a costly machine will not start a stream at all without
+`media.scene.stream.remote: true`. Zero is still no ceiling.
 
 A token check asks "is anything left": a reply's size is not known before the
 model answers, so the call that crosses the line is the last one.

@@ -969,7 +969,10 @@ $earsOn = (function (): bool {
     }
 })();
 
-xeric_web_head('Xeric: ' . (string)$T['meta']['name'], ['microphone' => true, 'worker' => true]);
+// The live view's one remote origin (ui.php): the scene machine's, and only
+// when this world can go live with it; '' — the policy unchanged — otherwise.
+xeric_web_head('Xeric: ' . (string)$T['meta']['name'], ['microphone' => true, 'worker' => true,
+                                                         'stream_origin' => xeric_play_stream_origin($T, $db)]);
 echo xeric_play_css_link() . '<style>
 /* ── the ⚙ cog and its modal rows (xeric controls) ── */
 /* color set EXPLICITLY: a button never inherits text colour, it takes the
@@ -1029,6 +1032,11 @@ echo xeric_play_css_link() . '<style>
 .mhear:disabled { opacity:.3; cursor:default; }
 /* what you see: the room, the width of the panel, rounded like a photo in a thread */
 .lookimg { display:block; width:100%; height:auto; border-radius:.6rem; margin:0 0 .25rem; }
+.lookstreambox video, .lookstreamimg { display:block; width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:.6rem;
+             background:#000; margin:0 0 .25rem; }
+.lookstreamstate { font-size:.72rem; color:var(--fg-dim); margin:0; }
+.lookliveend { font-size:.75rem; color:var(--fg-dim); font-style:italic; margin:0 0 .4rem; }
+.lookliveact { margin:.2rem 0 .3rem; }
 .lookpanobox { margin:0 0 .25rem; }
 .lookpano { display:block; width:100%; aspect-ratio:16/9; border-radius:.6rem; background:var(--bg-2);
   cursor:grab; touch-action:none; }
@@ -2312,7 +2320,11 @@ echo xeric_play_css_link() . '<style>
   // facing in each one; this page holds when to build it.
   var lookEs = null, lookPoll = null, lookHtml = <?= js($state['look_html']) ?>;
   function bindLook() {
-    XV.unmount();
+    // A live view (xeric-view.js's stream) survives a repaint of itself: the
+    // mount moves its element across rather than tearing it down.
+    var live = document.querySelector('#look .lookstreambox');
+    if (live) XV.mount({ kind: 'stream', box: live, onEnd: function () { refreshState(); } });
+    else XV.unmount();
     var box = document.querySelector('#look .lookpanobox');
     if (box) XV.mount(box);
     var sc = document.querySelector('#look canvas.looksplat');      // a room to stand inside (xeric-splat.js)
@@ -2351,7 +2363,30 @@ echo xeric_play_css_link() . '<style>
     }
     if (t.hasAttribute('data-room')) { roomOpen(true); return; }
     if (t.hasAttribute('data-look') && !t.disabled) look(t);
+    if (t.hasAttribute('data-golive') && !t.disabled) goLive(t);
+    if (t.hasAttribute('data-liveend') && XV.lookView && XV.lookView.end) XV.lookView.end('you ended it');
   });
+
+  // GO LIVE: the owner's press is the only way a live view starts (no heart,
+  // no reaper). The server asks the machine, keeps the session, and the
+  // repaint puts the video where the room was.
+  function goLive(btn) {
+    btn.disabled = true;
+    $('#lookerr').hidden = true;
+    fetch('stream.php', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ w: W, a: 'start' })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j.ok) throw new Error(res.j.error || 'the live view could not be started');
+        refreshState();
+      })
+      .catch(function (e) {
+        $('#lookerr').textContent = e.message;
+        $('#lookerr').hidden = false;
+        btn.disabled = false;
+      });
+  }
 
 
   // A reload in the middle of a render has no job to follow; it comes back

@@ -24,6 +24,9 @@ require_once __DIR__ . '/boot.php';
  *                    `stand` => true on stand.php alone: the microphone and
  *                    the headset are its, and it may register its service
  *                    worker and name its manifest (worker-src, manifest-src).
+ *                    `stream_origin` => the scene machine's origin, from the
+ *                    look reader (xeric_play_stream_origin), on a page that
+ *                    can show a live view; '' or absent everywhere else.
  */
 function xeric_web_head(string $title, array $opts = []): void
 {
@@ -53,14 +56,32 @@ function xeric_web_head(string $title, array $opts = []): void
     // 'self' and nothing wider: a sound is bytes this server sniffed and
     // serves itself (xeric_play_look_file), never a machine's own link.
     //
+    // THE ONE PLACE THIS POLICY NAMES A REMOTE ORIGIN: the live view
+    // (engine/stream.php, docs/VIEWPORT.md "Streams"). A world model's session
+    // is video the page plays straight from the machine — an HLS playlist in
+    // a <video>, a WHEP offer POSTed and its track attached, an MJPEG picture
+    // that keeps arriving — so media-src, connect-src (WHEP's POST) and
+    // img-src (MJPEG) gain exactly one source: the scene machine's own
+    // origin, computed from its configured address (xeric_stream_origin) and
+    // checked again here against a strict shape, so a hostile string cannot
+    // become a second directive. Nothing else: the engine refuses a session
+    // whose url is on any other origin, so there is never a reason to widen
+    // further. A page that cannot show a live view passes nothing and gets
+    // the policy every page always had.
+    $remote = trim((string)($opts['stream_origin'] ?? ''));
+    if (!preg_match('#^https?://(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$#', $remote)) {
+        $remote = '';
+    }
+    $plus = $remote !== '' ? ' ' . $remote : '';
+    //
     // frame-ancestors matters more here than it looks: a local server on a known
     // port is trivially framed by any page the owner happens to open.
     header("Content-Security-Policy: default-src 'none'; "
         . "script-src 'nonce-" . xeric_web_nonce() . "'; "
         . "style-src 'self' 'unsafe-inline'; "
-        . "img-src 'self' data:; "
-        . "media-src 'self'; "
-        . "connect-src 'self'; "
+        . "img-src 'self' data:" . $plus . "; "
+        . "media-src 'self'" . $plus . "; "
+        . "connect-src 'self'" . $plus . "; "
         . "form-action 'self'; "
         . "base-uri 'none'; "
         . "frame-ancestors 'none'; "

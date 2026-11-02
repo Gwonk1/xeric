@@ -255,6 +255,11 @@ Design principles, learned the hard way:
                                             // can see the place sees this, so
                                             // nothing a wall protects goes here
       "residents": ["dot"],                 // character or fixture keys usually here
+      // "layout": { "width": 6, "depth": 4, "height": 3 },  // optional: the
+                                            // room's size in metres, each 2–50,
+                                            // for the box a scene machine is
+                                            // shown (docs/VIEWPORT.md, Layout).
+                                            // Missing or bad is these defaults
       "special": null                       // or "mystery" — a label for the
                                             // reader and the forge; `mystery`
                                             // below is what the engine reads
@@ -711,12 +716,27 @@ Design principles, learned the hard way:
                                             // pano | image | splat | glb | viewer
       "quality": "full",                    // | "draft" — anything else is full
       "negative": "",                       // sent only when set
+      "layout_images": false,               // true: the layout's depth and
+                                            // segmentation PNGs ride in every
+                                            // generic request (bandwidth)
       "sound": { "enabled": true,           // what you hear: off with the rooms
                  "style": "" }              // too, when "enabled" above is false
       // "prerender": off | here | occupied | all — what the heart draws
       //   before anybody looks. Deliberately UNSET by default, and unset is
       //   decided by cost: "here" on a loopback machine, "off" on one that
       //   bills. Writing a word is how a world asks the heart to spend.
+      "stream": {                           // the live view (docs/VIEWPORT.md,
+                                            // Streams): a world model drawing
+                                            // the room as video. OFF unless said
+        "enabled": false,                   // true: the owner gets "go live" on
+                                            // a still or a pano, when the machine
+                                            // streams (it is asked, once)
+        "remote": false,                    // true: allowed on a machine that
+                                            // bills — about $72 an hour; without
+                                            // it a costly machine never streams
+        "max_seconds": 300                  // one session's ceiling, 30..3600;
+                                            // the machine's own is the other cap
+      }
     }
   },
 
@@ -727,6 +747,7 @@ Design principles, learned the hard way:
     "renders_per_day": 0,                   // rooms and photographs drawn
     "clips_per_day": 0,                     // lines read aloud
     "hearings_per_day": 0,                  // lines heard through push to talk
+    "stream_seconds_per_day": 0,            // seconds of live view (media.scene.stream)
     "metered_only": true                    // count only machines that bill (a
                                             // remote model, scene, voice or ears
                                             // machine); false rations the owner's

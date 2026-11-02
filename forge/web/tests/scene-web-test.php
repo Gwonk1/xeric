@@ -350,7 +350,9 @@ ok('the magic for each kept container is known',
     && xeric_play_audio_sniff('RIFF....WAVEfmt ') === 'audio/wav' && xeric_play_audio_sniff("\x1A\x45\xDF\xA3....") === 'audio/webm'
     && xeric_play_audio_sniff("\x00\x00\x00\x20ftypM4A ") === 'audio/mp4' && xeric_play_audio_sniff('<html>') === '');
 ok('the page lets <audio> load from this server and nowhere else',
-    str_contains((string)file_get_contents(dirname(__DIR__) . '/ui.php'), ". \"media-src 'self'; \""));
+    // and, on a page that can go live, the scene machine's own origin
+    // (stream-test.php holds that to exactly one origin and only then)
+    str_contains((string)file_get_contents(dirname(__DIR__) . '/ui.php'), '. "media-src \'self\'" . $plus . "; "'));
 $db->exec('DELETE FROM scene_jobs');
 
 echo "\n# what a press owes, and what the worker waits for\n";

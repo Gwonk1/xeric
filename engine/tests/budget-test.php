@@ -60,7 +60,7 @@ echo "# defaults are no ceiling\n";
 // ---------------------------------------------------------------------------
 
 $none = ['tokens_per_day' => 0, 'renders_per_day' => 0, 'clips_per_day' => 0, 'hearings_per_day' => 0,
-         'metered_only' => true];
+         'stream_seconds_per_day' => 0, 'metered_only' => true];
 ok('a template without the block is every ceiling at zero, metered only', xeric_budget($T) === $none);
 ok('the block as WORLD_TEMPLATE.md prints it is the same', xeric_budget($withBudget($none)) === $none);
 ok('nonsense is zero, a negative is zero, only an explicit false rations the owner\'s machine',
@@ -182,11 +182,13 @@ xeric_budget_sink('renders')(['images' => 1], 'http://localhost:7860');
 xeric_budget_sink('clips')(['clips' => 1, 'chars' => 40], 'https://voice.example');
 xeric_budget_sink('hearings')(['hearings' => 1, 'seconds' => 2.5], 'https://ears.example');
 xeric_budget_sink('renders')(['scenes' => 1], 'stub');
+xeric_budget_sink('stream')(['stream_seconds' => 20], 'https://scenes.example');
+xeric_budget_sink('stream')(['stream_seconds' => 5], 'http://127.0.0.1:9000');
 ok('every kind lands in the bound world\'s ledger',
-    xeric_budget_spent($db, $now) === ['tokens' => 127, 'renders' => 3, 'clips' => 1, 'hearings' => 1],
+    xeric_budget_spent($db, $now) === ['tokens' => 127, 'renders' => 3, 'clips' => 1, 'hearings' => 1, 'stream' => 25],
     json_encode(xeric_budget_spent($db, $now)));
 ok('marked costly by where it went: loopback and a stub are the owner\'s own',
-    xeric_budget_spent($db, $now, true) === ['tokens' => 7, 'renders' => 1, 'clips' => 1, 'hearings' => 1],
+    xeric_budget_spent($db, $now, true) === ['tokens' => 7, 'renders' => 1, 'clips' => 1, 'hearings' => 1, 'stream' => 20],
     json_encode(xeric_budget_spent($db, $now, true)));
 ok('an empty usage is no spend', (function () use ($db, $now) {
     xeric_budget_sink('tokens')([], 'https://api.example');

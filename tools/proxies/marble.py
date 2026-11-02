@@ -36,6 +36,15 @@ reference_image, the world_prompt becomes an image prompt with the text
 alongside, and meta.reference_used says so. The seed is passed too; whether
 it reproduces a room exactly is unconfirmed, so do not lean on it alone.
 
+THE LAYOUT, AS WORDS FOR NOW. When the envelope carries a `layout` (the
+room's blockout: labelled boxes at bearings and distances from the vantage),
+its objects lead the text prompt, nearest first. Chisel blocks a room out on
+World Labs' side, but whether the API takes a blockout could not be verified;
+when it does, to_upstream is where it goes. With --pano-input (the owner's
+word that the service takes a panorama to start from), a reference that is
+2:1 is sent as a panorama prompt rather than an image one — the whole room
+beats one view of it — and meta.reference_used says "pano".
+
 QUALITY IS A PRICE. `quality: draft` uses --model (default marble-1.0-draft,
 about twenty seconds and twelve cents); `quality: full` uses --full-model when
 one is given (marble-1.1, about five minutes and a dollar twenty) and --model
@@ -78,10 +87,27 @@ def auth():
 
 def to_upstream(envelope):
     """Xeric's envelope -> (method, path, headers, json body, reference_used)."""
-    text = envelope.get("prompt", "")
+    # The layout rides as words leading the text prompt (the rating clause stays last).
+    # World Labs' Chisel blocks a room out before generation; whether the API takes a
+    # blockout, and in what shape, could not be checked from here - verify, and when it
+    # does, this is the line that sends envelope["layout"] instead.
+    text = layout_words(envelope) + envelope.get("prompt", "")
     ref = envelope.get("reference_image") if isinstance(envelope.get("reference_image"), dict) else None
     if ref and ref.get("b64"):
         ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(ref.get("mime"), "png")
+    if ref and ref.get("b64") and ARGS.pano_input and is_pano(ref["b64"]):
+        # The reference IS a panorama: the whole room, not one view of it. Preferred
+        # over an image prompt when the service takes one (--pano-input says it does).
+        world_prompt = {
+            "type": "panorama",                                       # per World Labs docs as of Nov 2026 - verify
+            "panorama_prompt": {                                      # per World Labs docs as of Nov 2026 - verify
+                "source": "data_base64",                              # per World Labs docs as of Nov 2026 - verify
+                "data_base64": ref["b64"],                            # per World Labs docs as of Nov 2026 - verify
+                "extension": ext,                                     # per World Labs docs as of Nov 2026 - verify
+            },
+            "text_prompt": text,                                      # per World Labs docs as of Nov 2026 - verify
+        }
+    elif ref and ref.get("b64"):
         world_prompt = {
             "type": "image",                                          # per World Labs docs as of Nov 2026 - verify
             "image_prompt": {                                         # per World Labs docs as of Nov 2026 - verify
@@ -102,7 +128,8 @@ def to_upstream(envelope):
     }
     if isinstance(envelope.get("seed"), int):
         body["seed"] = envelope["seed"]                               # per World Labs docs as of Nov 2026 - verify (reproducibility unconfirmed)
-    return "POST", "/marble/v1/worlds:generate", auth(), body, bool(ref and ref.get("b64"))  # per World Labs docs as of Nov 2026 - verify
+    used = ("pano" if world_prompt["type"] == "panorama" else True) if ref and ref.get("b64") else False
+    return "POST", "/marble/v1/worlds:generate", auth(), body, used  # per World Labs docs as of Nov 2026 - verify
 
 
 def poll_path(vendor_id):
@@ -143,6 +170,55 @@ def from_upstream(j):
 
 def key():
     return os.environ.get(KEY_ENV, "")
+
+
+def layout_words(envelope, limit=12):
+    """The envelope's `layout` as a sentence leading the prompt, nearest first:
+    "laid out from where you stand, nearest first: the counter at 239 deg, 1.8 m; ...".
+    No layout, or none with labels, adds nothing."""
+    lay = envelope.get("layout") if isinstance(envelope.get("layout"), dict) else {}
+    objs = [o for o in (lay.get("objects") or []) if isinstance(o, dict)
+            and isinstance(o.get("label"), str) and o["label"].strip()
+            and o.get("kind") != "player"]     # you are the camera, never in the picture
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+    objs.sort(key=lambda o: (o["distance"] if num(o.get("distance")) else float("inf"), o["label"]))
+    parts = []
+    for o in objs[:limit]:
+        p = o["label"].strip()[:60]
+        if num(o.get("bearing")):
+            p += " at %d deg" % (int(o["bearing"]) % 360)
+        if num(o.get("distance")):
+            p += ", %.1f m" % o["distance"]
+        parts.append(p)
+    if not parts:
+        return ""
+    return "laid out from where you stand (bearings clockwise from straight ahead), nearest first: " \
+        + "; ".join(parts) + ". "
+
+
+def image_size(raw):
+    """(w, h) of a PNG or baseline/progressive JPEG, else None."""
+    if raw[:8] == b"\x89PNG\r\n\x1a\n" and len(raw) >= 24:
+        return int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
+    if raw[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(raw):
+            if raw[i] != 0xFF:
+                return None
+            m = raw[i + 1]
+            if m in (0xC0, 0xC1, 0xC2):
+                return int.from_bytes(raw[i + 7:i + 9], "big"), int.from_bytes(raw[i + 5:i + 7], "big")
+            i += 2 + int.from_bytes(raw[i + 2:i + 4], "big")
+    return None
+
+
+def is_pano(b64):
+    """A 2:1 picture is taken for an equirect panorama."""
+    try:
+        wh = image_size(base64.b64decode(b64[:65536], validate=False))
+    except ValueError:
+        return False
+    return bool(wh and wh[1] >= 2 and abs(wh[0] - 2 * wh[1]) <= wh[0] // 100)
 
 
 def log(line):
@@ -398,6 +474,8 @@ def main(argv=None):
     p.add_argument("--retry-after", type=int, default=30, help="retry_after_s in a 202")
     p.add_argument("--timeout", type=float, default=60.0, help="per upstream call")
     p.add_argument("--max-bytes", type=int, default=128 * 1024 * 1024)
+    p.add_argument("--pano-input", action="store_true",
+                   help="the service takes a panorama to start a world from: send a 2:1 reference as one")
     p.add_argument("--pass-url", action="store_true", help="answer the pano's url instead of fetching to b64")
     p.add_argument("--dry-run", action="store_true", help="print the upstream request, answer a 1x1 PNG")
     p.add_argument("--allow-remote", action="store_true", help="answer clients that are not loopback")

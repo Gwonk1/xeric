@@ -419,7 +419,9 @@ ok('solo: no `players` key, no flagged rows, the template\'s name',
     && array_filter(array_merge(...array_column($soloMap['places'], 'who')), fn($w) => isset($w['player'])) === []);
 $soloBrief = xeric_scene_brief($M, $solo, null, $m0710);
 ok('solo: the look brief and its fingerprint are unchanged — no view on disk goes stale',
-    $soloBrief['fingerprint'] === ONE_BODY_FPRINT && sha1($enc($soloBrief)) === ONE_BODY_BRIEF_SHA1,
+    // (less `layout`, which M5 added beside everything and is derived from it)
+    $soloBrief['fingerprint'] === ONE_BODY_FPRINT
+    && sha1($enc(array_diff_key($soloBrief, ['layout' => true]))) === ONE_BODY_BRIEF_SHA1,
     $soloBrief['fingerprint']);
 ok('solo: and no new row is written to say where anybody came from',
     xeric_world_state_get($solo, 'player.where_from') === null

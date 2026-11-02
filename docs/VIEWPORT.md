@@ -377,7 +377,11 @@ configured auth header. The fields, as `scene.php` documents them:
   "timeout_s":   how long Xeric will wait on this call,
   "reference_image":       {mime, b64} — the newest picture
                            of this room, only when one exists,
-  "reference_fingerprint": which look that picture was of
+  "reference_fingerprint": which look that picture was of,
+  "layout":      the room as a box (below) — a look's, always,
+  "layout_depth": {mime, b64} — its depth map, and
+  "layout_seg":   {mime, b64} — its segmentation map, both only
+                  when media.scene.layout_images is true
 }
 ```
 
@@ -435,10 +439,65 @@ A sound request at the same 07:10 (brief omitted):
 }
 ```
 
+### Layout
+
+The machines that hold still best are conditioned on geometry — a low-poly
+proxy, a blockout, a depth map — not on a paragraph. Xeric already knows where
+everything is, so it draws the box: `engine/layout.php`, `xeric_layout($brief,
+$t)`, pure and deterministic, carried on the brief as `layout` and sent once in
+the body (the `brief` inside the body leaves it out).
+
+```
+{ "version": 1, "units": "m",
+  "room":    { "width": 6, "depth": 4, "height": 3, "x0": -3, "x1": 3, "z0": -1, "z1": 3 },
+  "vantage": { "mode": "first_person", "x": 0, "y": 1.6, "z": 0, "yaw": 0,
+               "projection": "equirectangular" },
+  "objects": [{ "id": "person:dot", "label": "Dot Vance", "kind": "person",
+                "bearing": 239, "distance": 1.359, "x": -1.165, "z": -0.7,
+                "y": 0, "w": 0.5, "d": 0.5, "h": 1.7, "size": "small", "seed": 660118203 },
+              { "id": "player:you", "label": "you", "kind": "player", "bearing": 0, … }] }
+```
+
+- **Axes.** Metres; x right, y up, z straight ahead. The origin is the point
+  the bearings are measured from, on the floor — your feet for `first_person`
+  (one metre inside the near wall, facing the far one), the middle of the room
+  for `establishing` (whose vantage stands in a corner, `yaw` turned to the
+  middle). For every thing and person, `atan2(x, z)` is its bearing. Boxes are
+  axis-aligned: centre `x, z`, base `y`, extents `w` (x), `d` (z), `h`.
+- **The room** is 6 × 4 × 3 m unless the place says otherwise (`layout:
+  {width, depth, height}` in the template, each 2–50).
+- **Things** stand 1.5–2.5 m out, **people** 1.2–2 m, the exact distance a
+  jitter of their own seed (the item's seed, the face seed; a player's is
+  crc32 of the place and handle). A small room squeezes a thing nearer, turns
+  it round or, as a last resort, shrinks it — never moves it off its bearing,
+  never onto you. Windows and doors go back to the wall. The size class comes
+  from the first keyword in the name — counter, booth, bar, piano (large);
+  table, case (medium); stool (small); window, door (on the wall); anything
+  else medium.
+- **You** are `kind: "player"` at the vantage, and never in the pictures: the
+  camera is you.
+- **The pictures**, `xeric_layout_depth_png` and `xeric_layout_seg_png`: 512 ×
+  256 equirectangular PNGs from the vantage, the middle column its `yaw`, row 0
+  straight up. Depth is 8-bit grey, the nearest hit mapped so near is bright
+  and the room's diagonal is black. Segmentation is flat RGB: floor, walls and
+  ceiling three greys (64, 160, 224 — no saturation), each thing a colour from
+  its seed in hues 0–249, each person one in **300–339**, a range nothing else
+  uses, so a model can tell a person from a pie case by hue alone. They cost
+  bandwidth, so they ride only when the world sets `media.scene.layout_images:
+  true`; a proxy that wants them asks its owner to.
+- **Not in the fingerprint**, like the bearings it is built from: everything it
+  reads is already in. (Changing a place's `layout` block therefore does not
+  redraw a room already drawn.)
+- **No words of its own.** A label is an interior item's text or a present
+  person's name — both already in the brief.
+
+`php tools/layout.php <world> <place>` writes both pictures and the JSON to a
+temp directory, for a human to look at.
+
 ### Answer
 
 ```
-{ "kind": "image"|"pano"|"splat"|"glb"|"viewer"|"audio",
+{ "kind": "image"|"pano"|"splat"|"glb"|"viewer"|"audio"|"stream",
   "mime": "...", and EXACTLY ONE of "b64" | "url",
   "extras": [...] optional, "meta": {...} optional,
   "usage": {...} optional, reaches the meter }
@@ -459,11 +518,15 @@ For example:
   names no kind is taken as an image for a look and audio for a sound.
 - **viewer**: the url *is* the scene, a hosted explorable room, and is stored as
   a string with no bytes.
+- **stream**: a live session, `{session: {id, url, protocol, expires_at,
+  max_seconds, fallback?}, meta}` — the answer to a `channel: "stream"` request
+  only, and refused in answer to a look, so the reaper and the heart can never
+  start one. Stored as a session, never as bytes ([Streams](#streams)).
 - `meta` (the seed used, cost, the vendor's own id) is recorded on the row as it
   came. `extras` (a depth map, a collider) is kept in it too.
 
 The answer is checked, and refused rather than guessed at: a kind outside the
-six, a sound outside the five audio types, both or neither of `b64` and `url`, bad base64, an empty scene, or **a url
+seven, a sound outside the five audio types, both or neither of `b64` and `url`, bad base64, an empty scene, or **a url
 that is not http(s)** — a reply naming `file://` is not a scene, it is a request
 to read this disk, and a viewer link that is `javascript:` is not a link.
 
@@ -484,6 +547,103 @@ schedule.
 The patience is measured from the first ask, not the last poll: past thirty
 minutes the wait counts as a failed try and the row goes back to be asked for
 afresh. Three tries and it is failed, exactly as a photo is.
+
+### Streams
+
+**Off by default, and started only by a person.** `media.scene.stream.enabled`
+is false unless the template says true ([WORLD_TEMPLATE.md](WORLD_TEMPLATE.md)).
+With it on, the owner sees **go live** under a still or a panorama — never
+while the room is being drawn, never for a guest. Nothing else starts a live
+view: the heart, the reapers and draw-ahead never do, and a look answered with
+a stream is refused (`xeric_scene_answer`). A machine is believed to stream
+only once it has answered a stream request with a session; anything else is
+written down against that machine (detection, never configuration, the way
+sound is) and the button goes until another machine is chosen.
+
+**A machine that bills refuses** unless the template also says
+`media.scene.stream.remote: true`. Streaming costs about **$72 an hour**,
+against $0.12–$1.20 for a room drawn once ([FUTURE.md](FUTURE.md) Appendix D),
+and independent tests show under a minute of visual memory: the stored
+panorama is the room, and a live view is a while of watching it move.
+
+**Request.** `POST {base}/v1/scenes` with the look's own body (the prompt, the
+brief whole, the seed, `reference_image` — the newest picture of the room —
+and `layout` when the brief has one, with `layout_depth`/`layout_seg` when
+`media.scene.layout_images` asks), plus:
+
+```json
+{ "channel": "stream", "kind_wanted": ["stream"],
+  "bearings": { "items": { "the pie case": 40 }, "who": { "dot": 300 } },
+  "protocols": ["hls", "webrtc-whep", "mjpeg"], "max_seconds": 300,
+  "events": ["weather", "arrival", "departure", "light"] }
+```
+
+**Answer.**
+
+```json
+{ "kind": "stream",
+  "session": { "id": "s-1", "url": "https://machine:8443/live/s-1/index.m3u8",
+               "protocol": "hls", "expires_at": 1793650000, "max_seconds": 900,
+               "fallback": { "protocol": "mjpeg", "url": "https://machine:8443/live/s-1.mjpg" } },
+  "meta": { } }
+```
+
+The session url, and its fallback, **must be on the machine's own origin** —
+the one remote origin the page's CSP is widened to (below); a session anywhere
+else is refused. Kept in `scene_streams` (engine/stream.php), its own table:
+a session has a lifetime and a reason it ended, a scene_jobs row has tries and
+a fingerprint, and keeping them apart means nothing that reads views (the
+latest, the day strip, the reference walk, the queue) can mistake one for the
+other. The session ends at the first of `media.scene.stream.max_seconds`
+(default 300), the machine's `max_seconds`, and `expires_at`.
+
+**Promptable events — the engine's, never the player's.** While live, every
+heartbeat compares the room with what the session was last told and sends
+what changed as `POST {base}/v1/scenes/{session}/events {type, text, at}`:
+`weather` (the weather line changed), `arrival` / `departure` (the doorway's
+own sentence, `xeric_travel_comings_line` — *Theo Vance comes in, shaking the
+rain off.*), `light` (the light moved on one bucket). Composed in code from
+observables, the rating clause last — the scene prompt's own words, the floor's
+when a minor is in the room. **The player's free text never reaches it**, and
+the composer has no argument that could carry it: the world model *draws* the
+world, it does not *decide* it. A dragon typed at a stream would be in the
+picture and nowhere else — not in the cast's knowledge, not in the next still,
+not in anybody else's view.
+
+**It ends** when the player leaves the place; when the room moves past what one
+conditioning can carry (the light two buckets on from where it began, or the
+room shut or gone dark — go live again for a fresh start); at max_seconds; when
+the tab is hidden for more than 30 s or stops beating; or when the world's
+`stream_seconds_per_day` are spent ([BUDGET.md](BUDGET.md)). The machine is
+told (`DELETE {base}/v1/scenes/{session}`, best effort), and the view goes back
+to the stored panorama with a line: *the live view ended: you left the
+Bluebird Diner.*
+
+**Metered by the second.** The page POSTs `stream.php {a: 'beat'}` every 10 s;
+the server counts the seconds since the last beat (at most 15 per beat, never
+past the session's end), owner-only, refused cross-site, and writes them into
+the world's ledger as kind `stream`.
+
+**In the page.** A `<video>` for HLS — **native playback only**: Safari, Vision
+Pro and Quest play HLS themselves; desktop Chrome does not without a library,
+and this app vendors none, so there it shows the session's MJPEG fallback if it
+offers one, or ends the view and says plainly that it needs a browser that
+plays HLS. WebRTC is a minimal WHEP client in xeric-view.js (a receive-only
+offer POSTed as `application/sdp`, the answer set, the track attached, the
+resource DELETEd on close) — no library, no credentials sent. The stand page
+draws a playable session onto the pano sphere as a video texture
+(`texImage2D` from the `<video>` each frame); a texture the browser refuses —
+cross-origin video without CORS from the machine — is the stored panorama.
+
+**The one remote origin in the CSP.** `media-src`, `connect-src` (WHEP's POST)
+and `img-src` (MJPEG) gain the scene machine's own origin, computed from its
+configured address and checked against a strict shape — and only on a page that
+can show a live view: the play page of a world that offers go live (or has one
+live), and the stand shell when a streaming-capable machine is configured
+(the shell opens no world, so it cannot ask which one streams). Every other
+page sends the policy it always had. This is the only place the policy names
+an origin that is not this server, and it is narrow because the engine refuses
+any session that is not on that one origin.
 
 ### Writing a proxy
 
@@ -529,7 +689,7 @@ should answer something, because that is how "is it up" is asked.
 
 ### Reference proxies
 
-Three of them ship in [`tools/proxies/`](../tools/proxies/README.md), one file
+Four of them ship in [`tools/proxies/`](../tools/proxies/README.md), one file
 each, Python standard library only, so the first proxy anybody writes can be a
 copy of one that runs:
 
@@ -537,31 +697,53 @@ copy of one that runs:
   the seed, returns the depth map as an extra. It takes no picture to condition
   on, so it remembers which upstream id drew which fingerprint and *remixes*
   that render when a reference rides along — `meta.reference_used: "remix"`.
+  A `layout` reaches it only as word order: the labels lead the prompt,
+  nearest first.
 - **`marble.py`** — the World Labs Marble shape. Answers the world's `pano` by
   default, or its `.spz` as kind `splat` when `media.scene.kinds` puts splat
   first; the collider `.glb` and the other asset ride as `extras`. A reference
-  picture becomes an image `world_prompt`. `quality: draft` uses `--model`;
-  full uses `--full-model` only when one was typed.
+  picture becomes an image `world_prompt` — or, with `--pano-input` and a 2:1
+  reference, a panorama one (`meta.reference_used: "pano"`). The layout's
+  objects lead the text prompt with their bearings and distances; whether the
+  API takes a Chisel-style blockout instead is unverified. `quality: draft`
+  uses `--model`; full uses `--full-model` only when one was typed.
 - **`images.py`** — any local `/v1/images/generations`. What kind `image`
-  already does, plus the two things that kind cannot: a 2:1 `pano` with
-  `--pano` (the owner's word that a 360 LoRA is loaded), and the last picture
-  of the room sent to `/v1/images/edits` with `--edits`. Synchronous.
+  already does, plus the things that kind cannot: a 2:1 `pano` with
+  `--pano` (the owner's word that a 360 LoRA is loaded), the last picture
+  of the room sent to `/v1/images/edits` with `--edits`, and with `--control`
+  the layout's depth map (`--control=seg`: its segmentation) as a second
+  multipart file, ControlNet-style, in the field `--control-field` names
+  (servers differ). Synchronous.
+- **`worldmodel.py`** — the engine-driven loop of M5, on one desk: answers
+  only `stream`. It rasterises the layout's boxes from the vantage (a
+  flat-shaded 320×180 frame, all the way round, at the brief's light),
+  hands each frame to a local video model at `--upstream-frames` to be
+  re-rendered — the Matrix-Game shape: proxy frame, caption, first frame,
+  memory frames — or, with none, streams the blockout itself, so the path
+  runs without a GPU. MJPEG at `/s/{session}.mjpeg` on the machine's own
+  origin; `weather`, `light`, `arrival` and `departure` events change the
+  frame; the session ends at `max_seconds`. A scaffold: the real model plugs
+  in at `send_frame()`.
 
 What they share is the contract's other side. The vendor key comes from the
 proxy's own environment and nowhere else — Xeric holds none
 (`XERIC_SCENE_BASE=http://127.0.0.1:9100`, `XERIC_SCENE_KIND=generic`, no
-`XERIC_SCENE_KEY`). Only loopback clients are answered unless `--allow-remote`.
+`XERIC_SCENE_KEY`; for `worldmodel.py`, `media.scene.stream.enabled: true` as
+well). Only loopback clients are answered unless `--allow-remote`.
 `kind_wanted` is read in order and the first makeable kind answered; nothing
 makeable is a `400 {error}` with no asset, so a sound request reads as the
 engine's plain *cannot*. An async upstream is waited on inline for `--wait`
 seconds, then answered `202 pending`. `meta` always carries `vendor`,
-`vendor_id`, `seed_used` and `elapsed_s`.
+`vendor_id`, `seed_used` and `elapsed_s`. A layout never displaces the rating
+clause from the end of a prompt.
 
 **The vendors' fields were not verified when these were written.** Each sits
-in one `to_upstream` / `from_upstream` pair, every field marked *verify*, and
-`--dry-run` prints the upstream request (key redacted) and answers a 1×1 PNG,
-so the whole path — reaper, adapter, proxy — runs without an account.
-`python3 -I tools/proxies/test_proxies.py` drives all three against a fake of
+in one `to_upstream` / `from_upstream` pair (for `worldmodel.py`, the
+invented `/v1/frames` shape in `send_frame`), every field marked *verify*,
+and `--dry-run` prints the upstream request (key redacted) and answers a 1×1
+PNG — or, for `worldmodel.py`, the first frame's stats — so the whole path —
+reaper, adapter, proxy — runs without an account.
+`python3 -I tools/proxies/test_proxies.py` drives all four against a fake of
 each upstream.
 
 ---
@@ -715,9 +897,11 @@ answered is a second click, not a safeguard. Drawing *ahead* is the one place
 the choice of machine is not enough on its own: on a metered machine the
 template has to ask for it ([above](#ahead-of-being-looked-at)).
 
-**No streaming.** The world models that stream are not yet worth a machine that
-streams, and a viewport that re-imagines the room every frame has thrown away
-the one thing this one has — that it is *this* room, from canon.
+**No streaming by default.** A live view exists ([Streams](#streams)), off
+unless the template asks, started only by the owner, metered by the second, and
+conditioned on the stored room — because a viewport that re-imagines the room
+every frame has thrown away the one thing this one has — that it is *this*
+room, from canon — unless canon is what it is told.
 
 **No multi-room walkthrough.** Travel is still the unit of movement. A splat you
 can walk around in is a picture of one room; walking out of its door is a trip,

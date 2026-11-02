@@ -20,6 +20,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../scene.php';
+require_once __DIR__ . '/../stream.php';
 
 $FAILED = 0;
 
@@ -1250,6 +1251,233 @@ ok('two: with nobody else in the room the fingerprint is the solo one — no pla
     $bW1['fingerprint'] === xeric_scene_brief($T, $dbS1, null, $mon0710)['fingerprint'] && !isset($bW1['company']));
 $dbT = $dbS1 = null;
 foreach ([$dbTP, $dbS1P] as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
+
+// ---------------------------------------------------------------------------
+echo "\n# the live view (engine/stream.php)\n";
+// ---------------------------------------------------------------------------
+
+// The envelope first: a stream is read only when one was asked for.
+$threw = '';
+try { xeric_scene_answer(['kind' => 'stream', 'session' => ['id' => 'x', 'url' => 'https://m.example/x']], [], 0, true, 'image'); }
+catch (Throwable $e) { $threw = $e->getMessage(); }
+ok('stream: a look answered with a live stream is refused, so the reaper and the heart can never start one',
+    str_contains($threw, 'only "go live" may start'), $threw);
+$aS = xeric_scene_answer(['kind' => 'stream', 'session' => ['id' => 's1', 'url' => 'https://m.example/s1.m3u8',
+                          'protocol' => 'hls'], 'meta' => ['vendor_id' => 'v9']], [], 0, true, 'stream');
+ok('stream: a stream request answered with one carries its session and meta, and no bytes',
+    $aS['kind'] === 'stream' && $aS['session']['id'] === 's1' && $aS['bytes'] === '' && $aS['meta']['vendor_id'] === 'v9');
+$aN = xeric_scene_answer(['kind' => 'image', 'bytes' => 'x'], [], 0, true, 'stream');
+$a4 = xeric_scene_answer(['_http' => 404], [], 0, false, 'stream');
+ok('stream: a picture, or a plain 4xx, where a stream was asked for is "cannot" — an answer, not a try',
+    $aN['cannot'] === true && $a4['cannot'] === true);
+ok('stream: the kinds table names stream, and its default type is ours', in_array('stream', XERIC_SCENE_KINDS, true)
+    && xeric_scene_default_mime('stream') === 'application/x-xeric-stream');
+ok('stream: the look kinds a template may ask for still do not include it',
+    !in_array('stream', xeric_scene_config(['media' => ['scene' => ['kinds' => ['stream', 'pano']]]])['kinds'], true));
+
+// Off by default, and off until the template and the machine both say so.
+$Ts = $T;
+$Ts['media']['scene']['stream'] = ['enabled' => true];
+$dbLP = $dir . '-live.sqlite';
+foreach ([$dbLP, $dbLP . '-wal', $dbLP . '-shm'] as $f) @unlink($f);
+$dbL = xeric_state_open($dbLP);
+xeric_clock_begin($dbL, $T);
+$t1420 = $at('2026-11-02 14:20');
+xeric_player_move($dbL, 'bluebird', $t1420['epoch'] - 600);
+$heard = [];
+$streamer = ['base' => 'https://scenes.example:8443', 'stub' => function (string $tag, array $b, array $o) use (&$heard) {
+    $heard[] = [$tag, $b, $o];
+    if ($tag === 'stream') return ['kind' => 'stream', 'meta' => ['vendor' => 'v'], 'session' => [
+        'id' => 'sess-1', 'url' => 'https://scenes.example:8443/live/sess-1/index.m3u8', 'protocol' => 'hls',
+        'expires_at' => time() + 3600, 'max_seconds' => 900,
+        'fallback' => ['protocol' => 'mjpeg', 'url' => 'https://scenes.example:8443/live/sess-1.mjpg']]];
+    return [];
+}];
+ok('stream: the default is off — no template says go live, so nothing offers it',
+    xeric_stream_config($T)['enabled'] === false && xeric_stream_offer($T, $dbL, $streamer)['ok'] === false
+    && xeric_stream_start($T, $dbL, $streamer)['ok'] === false && $heard === []);
+ok('stream: off with the rooms', xeric_stream_config(['media' => ['scene' => ['enabled' => false, 'stream' => ['enabled' => true]]]])['enabled'] === false);
+ok('stream: an image machine cannot stream', !xeric_stream_offer($Ts, $dbL, ['kind' => 'image', 'base' => 'http://127.0.0.1:7860'])['ok']);
+$costlyEp = ['base' => 'https://scenes.example', 'kind' => 'generic'];
+$cs = xeric_stream_start($Ts, $dbL, $costlyEp);
+ok('stream: a machine that bills refuses without media.scene.stream.remote: true, and says what it costs',
+    !$cs['ok'] && str_contains($cs['why'], '$72 an hour') && str_contains($cs['why'], 'remote: true'), $cs['why']);
+$Tr = $Ts; $Tr['media']['scene']['stream']['remote'] = true;
+ok('stream: with remote: true the same machine may be offered', xeric_stream_offer($Tr, $dbL, $costlyEp)['ok'] === true
+    && xeric_stream_offer($Tr, $dbL, $costlyEp)['origin'] === 'https://scenes.example');
+
+// A reference render on disk, so the conditioning has a picture to carry.
+$bL = xeric_scene_brief($Ts, $dbL, null, $t1420);
+$dbL->prepare("INSERT INTO scene_jobs (key, fingerprint, status, tries, kind, file, mime, prompt, meta, created_at, done_at)
+               VALUES ('bluebird', ?, 'done', 1, 'pano', 'scene-bluebird-ref.png', 'image/png', '', '{}', 1, 2)")
+    ->execute([$bL['fingerprint']]);
+file_put_contents($dir . '/scene-bluebird-ref.png', "\x89PNG\r\n\x1a\nref");
+$wall = 1_800_000_000;
+$st = xeric_stream_start($Ts, $dbL, $streamer, ['scenes_dir' => $dir, 'now' => $t1420, 'wall' => $wall]);
+ok('stream: a stub machine answering stream starts a session row', $st['ok'] && ($st['row']['status'] ?? '') === 'live'
+    && $st['row']['session'] === 'sess-1' && $st['row']['protocol'] === 'hls'
+    && str_ends_with($st['row']['url'], '/index.m3u8') && str_ends_with($st['row']['fallback'], '.mjpg'), $st['why']);
+ok('stream: kept in its own table, never as a scene_jobs row', (int)$dbL->query("SELECT COUNT(*) FROM scene_jobs")->fetchColumn() === 1);
+$sb = $heard[0][2]['body'] ?? [];
+ok('stream: started with the brief, the reference render, the bearings and what a session may be',
+    $heard[0][0] === 'stream' && ($sb['channel'] ?? '') === 'stream' && ($sb['kind_wanted'] ?? []) === ['stream']
+    && isset($sb['brief']['key'], $sb['reference_image']['b64']) && $sb['reference_fingerprint'] === $bL['fingerprint']
+    && isset($sb['bearings']['who']['dot']) && ($sb['protocols'] ?? []) === XERIC_STREAM_PROTOCOLS
+    && $sb['max_seconds'] === 300 && !isset($sb['size']), json_encode(array_keys($sb)));
+ok('stream: the layout rides along when the brief has one, and is absent when it does not',
+    !array_key_exists('layout', xeric_stream_body(array_diff_key($bL, ['layout' => 1]), xeric_stream_config($Ts), null))
+    && (xeric_stream_body(array_merge($bL, ['layout' => ['kind' => 'blockout']]), xeric_stream_config($Ts), null)['layout'] ?? null) === ['kind' => 'blockout']);
+ok('stream: the session ends at the first of the template\'s, the machine\'s and its expiry', (int)$st['row']['ends_at'] === $wall + 300);
+ok('stream: the machine is written down as one that streams', xeric_stream_machine_says($dbL, $streamer) === true);
+ok('stream: pressing again in the same room is the same session', xeric_stream_start($Ts, $dbL, $streamer,
+    ['now' => $t1420, 'wall' => $wall + 1])['row']['id'] === $st['row']['id'] && count($heard) === 1);
+
+$offOrigin = ['base' => 'https://scenes.example:8443', 'stub' => fn($tag) => $tag === 'stream'
+    ? ['kind' => 'stream', 'session' => ['id' => 'x', 'url' => 'https://cdn.elsewhere.example/x.m3u8', 'protocol' => 'hls']] : []];
+$dbL2P = $dir . '-live2.sqlite';
+foreach ([$dbL2P, $dbL2P . '-wal', $dbL2P . '-shm'] as $f) @unlink($f);
+$dbL2 = xeric_state_open($dbL2P);
+xeric_clock_begin($dbL2, $T);
+xeric_player_move($dbL2, 'bluebird', $t1420['epoch'] - 600);
+$oo = xeric_stream_start($Ts, $dbL2, $offOrigin, ['now' => $t1420]);
+ok('stream: a session that is not on the machine\'s own origin is refused (the CSP names that origin and no other)',
+    !$oo['ok'] && str_contains($oo['why'], 'own address'), $oo['why']);
+$deaf = ['base' => 'https://other.example', 'stub' => fn() => ['kind' => 'image', 'bytes' => 'png']];
+$dd = xeric_stream_start($Ts, $dbL2, $deaf, ['now' => $t1420]);
+ok('stream: a machine that answers with something else is written down as not streaming, and go live goes',
+    !$dd['ok'] && xeric_stream_machine_says($dbL2, $deaf) === false && !xeric_stream_offer($Ts, $dbL2, $deaf)['ok']
+    && xeric_stream_offer($Ts, $dbL2, $streamer)['ok'], $dd['why']);
+
+// While live: the engine's own events, and only those.
+$metered = [];
+$meter = function (int $s, bool $c) use (&$metered) { $metered[] = [$s, $c]; };
+$heard = [];
+$t1440 = $at('2026-11-02 14:40');
+$bt = xeric_stream_beat($Ts, $dbL, $streamer, (int)$st['row']['id'], ['wall' => $wall + 10, 'now' => $t1440, 'meter' => $meter]);
+$types = array_column($bt['events'], 'type');
+ok('stream: a beat counts the seconds since the last and hands them to the meter', $bt['live'] && $bt['counted'] === 10
+    && $metered === [[10, false]], json_encode($bt));
+ok('stream: Dot going is an event', $types === ['departure'], json_encode($bt['events']));
+$sent = array_values(array_filter($heard, fn($h) => $h[0] === 'event'));
+ok('stream: each sent to the session as {type, text, at}', count($sent) === 1 && $sent[0][2]['session'] === 'sess-1'
+    && array_keys($sent[0][1]) === ['type', 'text', 'at']);
+$clause = xeric_stream_rating_clause($bL);
+ok('stream: composed from observables — the doorway\'s own sentence — rating clause last',
+    str_contains($bt['events'][0]['text'] ?? '', 'Dot Vance gets up and goes') && str_ends_with($bt['events'][0]['text'] ?? '', $clause . '.'),
+    $bt['events'][0]['text'] ?? '');
+ok('stream: the clause is the scene prompt\'s own words', str_ends_with($bL['prompt'], $clause . '.'), $bL['prompt']);
+$t1450 = $at('2026-11-02 14:50');
+xeric_weather_set($dbL, $t1450, 'A cold rain has set in, coming sideways off the river.');
+$bt2 = xeric_stream_beat($Ts, $dbL, $streamer, (int)$st['row']['id'], ['wall' => $wall + 20, 'now' => $t1450, 'meter' => $meter]);
+ok('stream: the weather line changing since it was last told is an event',
+    array_column($bt2['events'], 'type') === ['weather'] && str_contains($bt2['events'][0]['text'], 'cold rain'), json_encode($bt2['events']));
+$t1540 = $at('2026-11-02 15:40');
+$bt3 = xeric_stream_beat($Ts, $dbL, $streamer, (int)$st['row']['id'], ['wall' => $wall + 30, 'now' => $t1540, 'meter' => $meter]);
+ok('stream: an arrival is an event, and it carries the weather in with it',
+    array_column($bt3['events'], 'type') === ['arrival'] && str_contains($bt3['events'][0]['text'], 'comes in, shaking the rain off'),
+    json_encode($bt3['events']));
+$bt4 = xeric_stream_beat($Ts, $dbL, $streamer, (int)$st['row']['id'], ['wall' => $wall + 40, 'now' => $t1540, 'meter' => $meter]);
+ok('stream: nothing changed, nothing said', $bt4['live'] && $bt4['events'] === []);
+$t1710 = $at('2026-11-02 17:10');
+$bt4b = xeric_stream_beat($Ts, $dbL, $streamer, (int)$st['row']['id'], ['wall' => $wall + 45, 'now' => $t1710, 'meter' => $meter]);
+ok('stream: the light moving one bucket on is an event, the clause last (the floor\'s, with Theo in the room)',
+    $bt4b['live'] && array_column($bt4b['events'], 'type') === ['light'] && str_contains($bt4b['events'][0]['text'], 'golden hour')
+    && str_ends_with($bt4b['events'][0]['text'], xeric_stream_rating_clause(xeric_scene_brief($Ts, $dbL, 'bluebird', $t1710)) . '.')
+    && str_contains($bt4b['events'][0]['text'], XERIC_PHOTO_FLOOR_FRAMING), json_encode($bt4b['events']));
+// The player cannot steer it: there is no argument that takes text, and none
+// of what a player said anywhere reaches an event.
+$rf = new ReflectionFunction('xeric_stream_compose');
+ok('stream: the composer takes no text — template, db, conditions, brief, clock, and nothing else',
+    array_map(fn($p) => $p->getName(), $rf->getParameters()) === ['t', 'db', 'cond', 'brief', 'now']);
+$said = 'a dragon walks in and sets fire to the counter';
+$conv = xeric_conversation_for($dbL, 'theo');
+xeric_message_append($dbL, $conv, 'user', null, $said);
+$allText = json_encode(array_merge($bt['events'], $bt2['events'], $bt3['events'], $bt4b['events'],
+    xeric_stream_compose($Ts, $dbL, ['light' => 'noon', 'light0' => 'noon', 'who' => []], xeric_scene_brief($Ts, $dbL, 'bluebird', $t1540), $t1540)['events']));
+ok('stream: never the player\'s free text', stripos($allText, 'dragon') === false);
+ok('stream: and never a wall', leaks($allText, SECRETS) === [], implode(', ', leaks($allText, SECRETS)));
+
+$t1930 = $at('2026-11-02 19:30');
+$bt5 = xeric_stream_beat($Ts, $dbL, $streamer, (int)$st['row']['id'], ['wall' => $wall + 50, 'now' => $t1930, 'meter' => $meter]);
+ok('stream: the light two buckets from where it began ends it — a fresh conditioning is needed',
+    !$bt5['live'] && str_contains($bt5['reason'], 'moved on too far') && str_contains($bt5['reason'], 'go live again'), $bt5['reason']);
+ok('stream: and the machine is told', (end($heard)[0] ?? '') === 'end');
+ok('stream: an ended view stays ended', !xeric_stream_beat($Ts, $dbL, $streamer, (int)$st['row']['id'], ['wall' => $wall + 60])['live']
+    && xeric_stream_live($dbL) === null && xeric_stream_ended($dbL, 'bluebird', 600, $wall + 60) !== null);
+$secs = (int)xeric_stream_get($dbL, (int)$st['row']['id'])['seconds'];
+ok('stream: forty-odd seconds live, forty-odd metered', $secs === 50 && array_sum(array_column($metered, 0)) === 50, (string)$secs);
+
+// The other ends.
+$go = function (int $w) use ($Ts, $dbL, $streamer, $t1420): int {
+    $r = xeric_stream_start($Ts, $dbL, $streamer, ['now' => $t1420, 'wall' => $w]);
+    return (int)($r['row']['id'] ?? 0);
+};
+xeric_player_move($dbL, 'bluebird', $t1420['epoch'] - 60);
+$id2 = $go($wall + 100);
+xeric_player_move($dbL, 'beck_hardware', $t1420['epoch']);
+$e = xeric_stream_beat($Ts, $dbL, $streamer, $id2, ['wall' => $wall + 110, 'now' => $t1420]);
+ok('stream: ends when the player leaves the place', !$e['live'] && str_contains($e['reason'], 'you left the Bluebird Diner'), $e['reason']);
+xeric_player_move($dbL, 'bluebird', $t1420['epoch'] + 1);
+$id3 = $go($wall + 200);
+$e = xeric_stream_beat($Ts, $dbL, $streamer, $id3, ['wall' => $wall + 210, 'now' => $t1420, 'hidden_for' => 31]);
+ok('stream: ends when the tab has been hidden more than thirty seconds', !$e['live'] && str_contains($e['reason'], 'hidden'), $e['reason']);
+$id4 = $go($wall + 300);
+$e = xeric_stream_beat($Ts, $dbL, $streamer, $id4, ['wall' => $wall + 345, 'now' => $t1420]);
+ok('stream: a page that stopped beating is away, and only one capped beat is counted',
+    !$e['live'] && str_contains($e['reason'], 'away') && $e['counted'] === XERIC_STREAM_BEAT_CAP, json_encode($e));
+$Tm = $Ts; $Tm['media']['scene']['stream']['max_seconds'] = 30;
+$r5 = xeric_stream_start($Tm, $dbL, $streamer, ['now' => $t1420, 'wall' => $wall + 400]);
+$id5 = (int)$r5['row']['id'];
+foreach ([410, 420] as $k) xeric_stream_beat($Tm, $dbL, $streamer, $id5, ['wall' => $wall + $k, 'now' => $t1420]);
+$e = xeric_stream_beat($Tm, $dbL, $streamer, $id5, ['wall' => $wall + 434, 'now' => $t1420]);
+ok('stream: ends at max_seconds, and nothing past it is counted', !$e['live'] && str_contains($e['reason'], 'limit of 30 seconds')
+    && (int)xeric_stream_get($dbL, $id5)['seconds'] === 30, json_encode($e));
+$Tb = $Ts; $Tb['budget'] = ['stream_seconds_per_day' => 25, 'metered_only' => false];
+$id6 = (int)xeric_stream_start($Tb, $dbL, $streamer, ['now' => $t1420, 'wall' => $wall + 500])['row']['id'];
+$ledger = fn(int $s, bool $c) => xeric_budget_note($dbL, $t1420, 'stream', $s, $c);
+$e1 = xeric_stream_beat($Tb, $dbL, $streamer, $id6, ['wall' => $wall + 510, 'now' => $t1420, 'meter' => $ledger]);
+$e2 = xeric_stream_beat($Tb, $dbL, $streamer, $id6, ['wall' => $wall + 520, 'now' => $t1420, 'meter' => $ledger]);
+$e3 = xeric_stream_beat($Tb, $dbL, $streamer, $id6, ['wall' => $wall + 530, 'now' => $t1420, 'meter' => $ledger]);
+ok('stream: ends when the world\'s stream seconds for today are spent, naming the ceiling',
+    $e1['live'] && $e2['live'] && !$e3['live'] && str_contains($e3['reason'], 'seconds of live view a day'), $e3['reason']);
+ok('stream: and a spent world cannot go live again today',
+    !($nx = xeric_stream_start($Tb, $dbL, $streamer, ['now' => $t1420, 'wall' => $wall + 540]))['ok'] && $nx['status'] === 429);
+$Tbl = $Ts; $Tbl['budget'] = ['stream_seconds_per_day' => 25];
+xeric_budget_note($dbL, $t1420, 'stream', 30, true);
+ok('stream: metered_only applies — the owner\'s own machine is not rationed unless asked',
+    xeric_budget_allows($Tbl, $dbL, $t1420, 'stream', 1, false)['ok'] && !xeric_budget_allows($Tbl, $dbL, $t1420, 'stream', 1, true)['ok']
+    && xeric_budget_amount('stream', ['stream_seconds' => 12]) === 12 && xeric_budget_amount('stream', []) === 0);
+$id7 = $go($wall + 600);
+ok('stream: the sweep ends a live view nobody beats for, without reaching the network',
+    xeric_stream_sweep($dbL, $wall + 640) === 1 && xeric_stream_get($dbL, $id7)['reason'] === 'the page went away');
+ok('stream: origins are strict — no path, no credentials, nothing a CSP could misread',
+    xeric_stream_origin('https://Scenes.Example:8443/v1/x?y') === 'https://scenes.example:8443'
+    && xeric_stream_origin('https://a.example:443/') === 'https://a.example'
+    && xeric_stream_origin('https://u:p@a.example/') === '' && xeric_stream_origin('javascript:alert(1)') === ''
+    && xeric_stream_origin("https://a.example;script-src *") === '' && xeric_stream_origin('http://[::1]:9/') === 'http://[::1]:9');
+// The reaper's look asks for the layout's pictures exactly when the world does.
+foreach ([false, true] as $li) {
+    $Tli = $T; $Tli['media']['scene']['layout_images'] = $li;
+    $dbIP = $dir . '-li.sqlite';
+    foreach ([$dbIP, $dbIP . '-wal', $dbIP . '-shm'] as $f) @unlink($f);
+    $dbI = xeric_state_open($dbIP);
+    xeric_clock_begin($dbI, $Tli);
+    xeric_player_move($dbI, 'bluebird', $t1420['epoch'] - 60);
+    xeric_scene_enqueue($dbI, xeric_scene_brief($Tli, $dbI));
+    $liSeen = null;
+    $liStub = ['stub' => function (string $tag, array $b, array $o) use (&$liSeen) {
+        $liSeen = xeric_scene_body($b, $o);
+        return ['kind' => 'image', 'bytes' => "\x89PNG\r\n\x1a\nx", 'mime' => 'image/png'];
+    }];
+    xeric_scene_reap($Tli, $dbI, $dir, $liStub, 1, true);
+    ok('layout: a generic look request ' . ($li ? 'carries' : 'does not carry') . ' layout_depth when media.scene.layout_images is '
+        . ($li ? 'true' : 'false'), is_array($liSeen) && array_key_exists('layout_depth', $liSeen) === $li
+        && array_key_exists('layout_seg', $liSeen) === $li, json_encode(array_keys((array)$liSeen)));
+    $dbI = null;
+    foreach ([$dbIP, $dbIP . '-wal', $dbIP . '-shm'] as $f) @unlink($f);
+}
+$dbL = $dbL2 = null;
+foreach ([$dbLP, $dbL2P] as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 
 // ---------------------------------------------------------------------------
 
