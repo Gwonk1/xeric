@@ -3977,7 +3977,33 @@ function xeric_play_look_has(array $row, string $scenesDir): bool
         $mime = (string)(@getimagesize($scenesDir . '/' . $f)['mime'] ?? '');
         return in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true);
     }
+    // A sound is the same rule in another medium: twelve bytes of header must
+    // say what the row says, or there is no <audio> to point at it.
+    if ((string)($row['kind'] ?? '') === 'audio') {
+        $head = (string)@file_get_contents($scenesDir . '/' . $f, false, null, 0, 16);
+        $want = xeric_scene_audio_mime((string)($row['mime'] ?? ''));
+        return $want !== '' && xeric_play_audio_sniff($head) === $want;
+    }
     return true;
+}
+
+/**
+ * What a sound's first bytes say it is, or ''. MAGIC, NOT THE MACHINE'S WORD:
+ * the row's mime is what a third party claimed, and a stored-XSS delivery
+ * service is exactly a server that repeats a claim as a Content-Type. Five
+ * containers and no sixth — the five the engine keeps (XERIC_SCENE_AUDIO_MIMES).
+ * An MP3 is an ID3 tag or a bare frame sync (eleven set bits: 0xFFFB and its
+ * MPEG-2 and unprotected cousins).
+ */
+function xeric_play_audio_sniff(string $head): string
+{
+    if (str_starts_with($head, 'ID3')) return 'audio/mpeg';
+    if (strlen($head) >= 2 && ord($head[0]) === 0xFF && (ord($head[1]) & 0xE0) === 0xE0) return 'audio/mpeg';
+    if (str_starts_with($head, 'OggS')) return 'audio/ogg';
+    if (str_starts_with($head, 'RIFF') && substr($head, 8, 4) === 'WAVE') return 'audio/wav';
+    if (str_starts_with($head, "\x1A\x45\xDF\xA3")) return 'audio/webm';
+    if (substr($head, 4, 4) === 'ftyp') return 'audio/mp4';
+    return '';
 }
 
 /**
@@ -3985,12 +4011,14 @@ function xeric_play_look_has(array $row, string $scenesDir): bool
  * that room that can actually be shown, whether it is out of date, and whether
  * the current look is already being made.
  *
- * @return array{brief:?array,row:?array,stale:bool,pending:bool,failed:bool,scenes_dir:string}
+ * @return array{brief:?array,row:?array,stale:bool,pending:bool,failed:bool,scenes_dir:string,
+ *               day:array<string,array>,sound:?array,sound_row:?array}
  */
 function xeric_play_look(array $t, PDO $db, ?array $now = null): array
 {
     $out = ['brief' => null, 'row' => null, 'stale' => false, 'pending' => false,
-            'failed' => false, 'scenes_dir' => xeric_play_scenes_dir($db)];
+            'failed' => false, 'scenes_dir' => xeric_play_scenes_dir($db),
+            'day' => [], 'sound' => null, 'sound_row' => null];
     $brief = xeric_scene_brief($t, $db, null, $now);
     if ($brief === null) return $out;
     $out['brief'] = $brief;
@@ -4008,6 +4036,29 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
     if ($row !== null && xeric_play_look_has($row, $out['scenes_dir'])) {
         $out['row']   = $row;
         $out['stale'] = (string)$row['fingerprint'] !== (string)$brief['fingerprint'];
+    }
+
+    // THE ROOM THROUGH ITS DAY: the newest view per light that can still be
+    // shown as a picture — a thumbnail is bytes, so a viewer link or a glb
+    // sits the strip out. Two or more, or it is not a strip, it is the view.
+    foreach (xeric_scene_day($db, (string)$brief['key']) as $light => $d) {
+        if (in_array((string)$d['kind'], ['image', 'pano'], true) && xeric_play_look_has($d, $out['scenes_dir'])) {
+            $out['day'][$light] = $d;
+        }
+    }
+    if (count($out['day']) < 2) $out['day'] = [];
+
+    // WHAT YOU HEAR, beside it: the line always (it is the sound brief's own
+    // fixed vocabulary, safe on any surface), the recording only when one for
+    // THIS sound is done and on this disk — never an older one: a stale
+    // picture says so with a pill, a stale sound would just lie.
+    $sb = xeric_sound_brief($t, $db, (string)$brief['key'], $now);
+    if ($sb !== null && !empty($sb['enabled'])) {
+        $out['sound'] = $sb;
+        $srow = xeric_scene_of($db, (string)$sb['key'], (string)$sb['fingerprint'], 'sound');
+        if ($srow !== null && (string)$srow['kind'] === 'audio' && xeric_play_look_has($srow, $out['scenes_dir'])) {
+            $out['sound_row'] = $srow;
+        }
     }
     return $out;
 }
@@ -4039,10 +4090,25 @@ function xeric_play_look_view(array $t, PDO $db, string $slug, ?array $now = nul
             'stale'       => $l['stale'],
         ];
     }
+    $day = [];
+    foreach ($l['day'] as $light => $d) {
+        $day[] = ['light' => (string)$light, 'kind' => (string)$d['kind'],
+                  'src' => xeric_play_look_src($slug, (string)$d['key'], (string)$d['fingerprint']),
+                  'current' => $l['row'] !== null && (int)$d['id'] === (int)$l['row']['id']];
+    }
+    $sound = $l['sound'] === null ? null : [
+        'line'        => (string)$l['sound']['line'],
+        'fingerprint' => (string)$l['sound']['fingerprint'],
+        'src'         => $l['sound_row'] === null ? null
+                         : xeric_play_look_src($slug, (string)$l['sound_row']['key'], (string)$l['sound_row']['fingerprint']),
+        'mime'        => $l['sound_row'] === null ? null : (string)$l['sound_row']['mime'],
+    ];
     return [
         'ok'      => true,
         'brief'   => $l['brief'],
         'scene'   => $scene,
+        'day'     => $day,
+        'sound'   => $sound,
         'pending' => $l['pending'],
         'machine' => [
             'up'     => $probe && $ep !== null && xeric_scene_up($ep, 3),
@@ -4061,21 +4127,25 @@ function xeric_play_look_src(string $slug, string $key, string $fp): string
 /**
  * What the bytes GET may serve for (key, fingerprint), or null for a 404.
  *
- * TWO RULES AND NO THIRD. A still or a panorama is served inline ONLY if its
+ * THREE RULES AND NO FOURTH. A still or a panorama is served inline ONLY if its
  * bytes sniff as an image — photo.php's own rule, because a docroot that
  * echoes unverified bytes under an image type is a stored-XSS delivery
  * service. A splat or a glb is not something a browser renders, so it is
  * served only under a type on a two-entry allowlist, as an ATTACHMENT, with
- * nosniff: whatever is in it is saved, never executed. A viewer row has no
- * bytes at all. The path is the row's file column, basename()d, under this
+ * nosniff: whatever is in it is saved, never executed. A sound is served
+ * inline to an <audio> only when its row's type is on the audio allowlist AND
+ * its magic bytes agree (xeric_play_audio_sniff). A viewer row has no bytes
+ * at all. The path is the row's file column, basename()d, under this
  * db's own scenes dir — never a user string.
  *
  * @return ?array{path:string,mime:string,inline:bool,name:string,bytes:string}
  */
 function xeric_play_look_file(PDO $db, string $key, string $fp): ?array
 {
-    if ($key === '' || strlen($key) > 64 || !preg_match('/^[a-f0-9]{40}$/', $fp)) return null;
-    $row = xeric_scene_of($db, $key, $fp);
+    // A look is forty hex; a sound is the same behind 'sound:' — and the
+    // prefix IS the channel, so a sound fingerprint can only find a sound row.
+    if ($key === '' || strlen($key) > 64 || !preg_match('/^(sound:)?[a-f0-9]{40}$/', $fp)) return null;
+    $row = xeric_scene_of($db, $key, $fp, str_starts_with($fp, 'sound:') ? 'sound' : 'look');
     if ($row === null || (string)$row['status'] !== 'done' || (string)$row['file'] === '') return null;
     $dir = xeric_play_scenes_dir($db);
     if ($dir === '') return null;
@@ -4093,6 +4163,14 @@ function xeric_play_look_file(PDO $db, string $key, string $fp): ?array
         $mime = (string)$row['mime'];
         if (!in_array($mime, ['model/gltf-binary', 'application/octet-stream'], true)) return null;
         return ['path' => $path, 'mime' => $mime, 'inline' => false, 'name' => basename($path), 'bytes' => $bytes];
+    }
+    // A sound: the row's type off the allowlist, AND the bytes' own magic
+    // agreeing with it. Never served as an image, whatever it sniffs as — the
+    // channel and the kind both have to say audio before anything does.
+    if ($kind === 'audio' && (string)$row['channel'] === 'sound') {
+        $mime = xeric_scene_audio_mime((string)$row['mime']);
+        if ($mime === '' || xeric_play_audio_sniff(substr($bytes, 0, 16)) !== $mime) return null;
+        return ['path' => $path, 'mime' => $mime, 'inline' => true, 'name' => basename($path), 'bytes' => $bytes];
     }
     return null;
 }
@@ -4127,13 +4205,112 @@ function xeric_play_look_prose(array $b): string
 }
 
 /**
- * #look, rendered. The states, in the order they are decided:
+ * What one press of "look" owes, read before anybody waits on a machine: the
+ * look, unless it is already drawn as it looks now and on this disk; and the
+ * sound, when this machine can make one (xeric_scene_channels — an image
+ * machine draws and cannot hear) and the room does not already sound like
+ * this on disk. Reading the endpoint is a session read, not a call.
+ *
+ * @return array{look:bool,sound:bool,sound_brief:?array}
+ */
+function xeric_play_look_owed(array $t, PDO $db, array $brief, ?array $ep): array
+{
+    $dir = xeric_play_scenes_dir($db);
+    $row = xeric_scene_of($db, (string)$brief['key'], (string)$brief['fingerprint']);
+    $out = ['look' => !($row !== null && xeric_play_look_has($row, $dir)), 'sound' => false, 'sound_brief' => null];
+    if ($ep === null || !in_array('sound', xeric_scene_channels($t, $ep), true)) return $out;
+    $sb = xeric_sound_brief($t, $db, (string)$brief['key']);
+    if ($sb === null || empty($sb['enabled'])) return $out;
+    $srow = xeric_scene_of($db, (string)$sb['key'], (string)$sb['fingerprint'], 'sound');
+    $out['sound']       = !($srow !== null && xeric_play_look_has($srow, $dir));
+    $out['sound_brief'] = $sb;
+    return $out;
+}
+
+/**
+ * What the heart draws ahead with this scene machine, in one sentence — the
+ * engine's own default (xeric_scene_prerender) said out loud on the machines
+ * screen, because "the heart spends nothing on a meter nobody asked it to" is
+ * a promise, and a promise belongs where the meter is chosen. A world's
+ * template can say otherwise (media.scene.prerender); this is what happens
+ * when it does not. HTML, escaped here.
+ */
+function xeric_play_scene_ahead_line(array $ep, string $keyVar): string
+{
+    if (!xeric_scene_costly($ep)) {
+        return 'Drawn ahead: while the world lives, the heart draws the room you are standing in '
+            . 'before you look at it, on this computer, unless a world&rsquo;s template says otherwise.';
+    }
+    return 'Drawn ahead: nothing — the heart never spends ' . h($keyVar) . ' on a room nobody looked at, '
+        . 'unless a world&rsquo;s template sets <code>media.scene.prerender</code>.';
+}
+
+/**
+ * Rows still owed: pending ON A CHANNEL THIS MACHINE CAN MAKE, or working on
+ * a machine that said "later". The channel matters: an image machine never
+ * makes a sound (xeric_scene_channels), the reaper leaves those rows waiting
+ * untried, and scene-worker.php, counting them, would sit out its fifteen minutes
+ * on work nobody here can do.
+ *
+ * @param string[] $channels
+ */
+function xeric_play_scene_owed(PDO $db, array $channels): int
+{
+    $waiting = (int)$db->query("SELECT COUNT(*) FROM scene_jobs
+                                WHERE status = 'working' AND remote_job IS NOT NULL")->fetchColumn();
+    if ($channels === []) return $waiting;
+    // A row from before channels existed is a look (xeric_scene_channel_of).
+    $in = implode(',', array_fill(0, count($channels), '?'));
+    $st = $db->prepare("SELECT COUNT(*) FROM scene_jobs WHERE status = 'pending'
+                        AND (CASE WHEN channel = '' THEN 'look' ELSE channel END) IN ($in)");
+    $st->execute(array_values($channels));
+    return $waiting + (int)$st->fetchColumn();
+}
+
+/**
+ * The people in the room as buttons — one per `who` row, its name on it, what
+ * they are at as its title and description, its bearing in data-b. Pressing
+ * one opens that person's thread, the same function the cast chips call
+ * (play.php, bindLook). Over a panorama the page's script places each at its
+ * bearing; under a still they sit in a row, LEFT TO RIGHT as you would see
+ * them, which is bearing read as -180..180 rather than 0..359.
+ *
+ * Furniture gets no button — a tag on the pie case is noise — but its
+ * bearings ride on the viewer's root (data-bearings) for whatever wants to
+ * aim at them next.
+ */
+function xeric_play_look_tags(array $who, string $class): string
+{
+    usort($who, fn($a, $b) => xeric_play_signed_bearing((int)$a['bearing']) <=> xeric_play_signed_bearing((int)$b['bearing']));
+    $out = '';
+    foreach ($who as $p) {
+        $d = trim((string)$p['doing']);
+        $out .= '<button type="button" class="looktag" data-h="' . h((string)$p['handle'])
+              . '" data-b="' . (int)$p['bearing'] . '"'
+              . ($d !== '' ? ' title="' . h($d) . '" aria-description="' . h($d) . '"' : '')
+              . ($class === 'looktags' ? ' hidden' : '') . '>' . h((string)$p['name']) . '</button>';
+    }
+    return $out === '' ? '' : '<div class="' . $class . '">' . $out . '</div>';
+}
+
+/** A bearing as a signed turn: 350° is ten degrees to your left, not most of the way round. */
+function xeric_play_signed_bearing(int $b): int
+{
+    $b = (($b % 360) + 360) % 360;
+    return $b > 180 ? $b - 360 : $b;
+}
+
+/**
+ * #look, rendered — and the ONE place it is assembled. The states, in the
+ * order they are decided:
  *
  *   nowhere           one line, and an invitation to walk.
  *   no view yet       the room in prose, and a look button.
- *   image             the still, its light and sky under it.
+ *   image             the still, the people as a row of buttons under it,
+ *                     its light and sky under that.
  *   pano              a canvas the page's own script turns into a look-around
- *                     (play.php, bindLook); the image is the fallback.
+ *                     (play.php, pano), the people as buttons it places at
+ *                     their bearings; the image is the fallback.
  *   viewer            a link out, NEVER a frame: this app sends
  *                     frame-ancestors 'none' and frames nothing either,
  *                     because a third party's page inside ours is a page
@@ -4143,6 +4320,9 @@ function xeric_play_look_prose(array $b): string
  *
  * Over any of them: "from an earlier hour" when the view is of a room that
  * has since changed, and "developing…" while the current look is being made.
+ * Under any of them: the day strip, when the room has been seen in two lights
+ * or more; and what you hear — the line, and the recording when there is one
+ * for exactly this sound.
  *
  * THE BUTTON IS SHOWN, NOT PROBED. Whether a machine is CONFIGURED is a read
  * of the session; whether it is ANSWERING is a network call, and this renders
@@ -4166,55 +4346,106 @@ function xeric_play_look_html(array $t, PDO $db, ?array $now, string $slug, bool
     $ep  = null;
     try { $ep = xeric_scene_endpoint(); } catch (Throwable $e) { $ep = null; }
     $row = $l['row'];
-    $out = '';
 
+    // -- the view ---------------------------------------------------------------
+    $view = '';
     $meta = '<p class="lookmeta">' . h(ucfirst((string)$b['light']))
           . (trim((string)$b['weather']) !== '' ? ' · ' . h(rtrim(trim((string)$b['weather']), '.')) : '');
-
     if ($row !== null) {
         $kind = (string)$row['kind'];
         $src  = xeric_play_look_src($slug, (string)$row['key'], (string)$row['fingerprint']);
         $alt  = (string)$b['name'] . ', ' . (string)$b['light'];
         if ($kind === 'image') {
-            $out .= '<img class="lookimg" src="' . h($src) . '" alt="' . h($alt) . '">';
+            $view .= '<div class="lookmain lookstill" data-src="' . h($src) . '"><img class="lookimg" src="' . h($src) . '" alt="' . h($alt) . '">'
+                   . xeric_play_look_tags($b['who'], 'looktagrow') . '</div>';
         } elseif ($kind === 'pano') {
-            $out .= '<div class="lookpanobox" data-src="' . h($src) . '" data-alt="' . h($alt) . '">'
-                  . '<canvas class="lookpano" tabindex="0" role="img" aria-label="'
-                  . h('A look around ' . (string)$b['name'] . '. Drag, or use the arrow keys, to turn; scroll to zoom.')
-                  . '"></canvas></div>';
+            // The bearings of everything, furniture too, on the viewer's
+            // root: the tags read the people's off their own buttons, and the
+            // rest is there for the next client that wants to aim at the room.
+            $bear = ['who'   => array_map(fn($p) => ['handle' => (string)$p['handle'], 'bearing' => (int)$p['bearing']], $b['who']),
+                     'items' => array_map(fn($i) => ['text' => (string)($i['text'] ?? ''), 'bearing' => (int)($i['bearing'] ?? 0)],
+                                          (array)$b['interior'])];
+            $view .= '<div class="lookmain lookpanobox" data-src="' . h($src) . '" data-alt="' . h($alt) . '"'
+                   . ' data-bearings="' . h((string)json_encode($bear, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . '">'
+                   . '<canvas class="lookpano" tabindex="0" role="img" aria-label="'
+                   . h('A look around ' . (string)$b['name'] . '. Drag, or use the arrow keys, to turn; scroll to zoom.')
+                   . '"></canvas>' . xeric_play_look_tags($b['who'], 'looktags') . '</div>';
         } elseif ($kind === 'viewer') {
-            $out .= '<p><a class="lookview" href="' . h((string)$row['url'])
-                  . '" target="_blank" rel="noopener noreferrer">open the room in its viewer</a></p>';
+            $view .= '<p class="lookmain"><a class="lookview" href="' . h((string)$row['url'])
+                   . '" target="_blank" rel="noopener noreferrer">open the room in its viewer</a></p>';
         } else {
             $ext = ltrim(strrchr(basename((string)$row['file']), '.') ?: '.' . $kind, '.');
-            $out .= '<p><a class="lookdl" href="' . h($src) . '" download>download the room (.' . h($ext) . ')</a></p>'
-                  . '<p class="note">This app shows panoramas and stills inline; a ' . h($kind)
-                  . ' opens in a viewer of your own.</p>';
+            $view .= '<p class="lookmain"><a class="lookdl" href="' . h($src) . '" download>download the room (.' . h($ext) . ')</a></p>'
+                   . '<p class="note">This app shows panoramas and stills inline; a ' . h($kind)
+                   . ' opens in a viewer of your own.</p>';
         }
-        $out .= $meta . ($l['stale'] ? ' <span class="lookstale">from an earlier hour</span>' : '') . '</p>';
+        $view .= '<p class="lookearlier" hidden></p>'
+               . $meta . ($l['stale'] ? ' <span class="lookstale">from an earlier hour</span>' : '') . '</p>';
     } else {
-        $out .= xeric_play_look_prose($b);
+        $view .= xeric_play_look_prose($b);
     }
 
+    // -- the day strip ----------------------------------------------------------
+    // In day order (xeric_scene_day already is), the view on screen marked.
+    // Pressing a thumb swaps the view to it (play.php) and says "earlier: …";
+    // the thumbs are the same bytes GET as the view, sized by CSS.
+    $strip = '';
+    if ($l['day'] !== []) {
+        $strip = '<div class="lookday" role="group" aria-label="this room through the day">';
+        foreach ($l['day'] as $light => $d) {
+            $cur  = $row !== null && (int)$d['id'] === (int)$row['id'];
+            $dsrc = xeric_play_look_src($slug, (string)$d['key'], (string)$d['fingerprint']);
+            $strip .= '<button type="button" class="lookthumb' . ($cur ? ' cur' : '') . '" data-src="' . h($dsrc)
+                    . '" data-kind="' . h((string)$d['kind']) . '" data-light="' . h((string)$light) . '"'
+                    . ' aria-pressed="' . ($cur ? 'true' : 'false') . '">'
+                    . '<img src="' . h($dsrc) . '" alt="" loading="lazy"><span>' . h((string)$light) . '</span></button>';
+        }
+        $strip .= '</div>';
+    }
+
+    // -- what you hear ----------------------------------------------------------
+    // The line always; the recording only on request — preload none, never
+    // autoplay, and a `listen` toggle rather than a sound that starts because
+    // somebody walked into a diner with their speakers up.
+    $sound = '';
+    if ($l['sound'] !== null) {
+        $sound = '<p class="looksound">' . h((string)$l['sound']['line']) . '</p>';
+        if ($l['sound_row'] !== null) {
+            $asrc = xeric_play_look_src($slug, (string)$l['sound_row']['key'], (string)$l['sound_row']['fingerprint']);
+            $sound .= '<div class="lookaudio"><button type="button" class="nbtn ghost" data-listen aria-pressed="false">listen</button>'
+                    . '<audio loop preload="none" controls src="' . h($asrc) . '"></audio></div>';
+        }
+    }
+
+    // -- the room -------------------------------------------------------------
+    // Three to five people talking is engine/room.php, and only the CLI can
+    // start one today. Said where the offer would go, so the next person to
+    // wire it knows where it belongs.
+    $room = count($b['who']) >= 2
+        ? '<!-- the room (engine/room.php) has no web surface yet, so there is no "join the conversation" here -->'
+        : '';
+
+    // -- what can be pressed ----------------------------------------------------
+    $act = '';
     if ($l['pending']) {
         // data-pending is what the page's script watches for: a reload in the
         // middle of a render still knows to come back and look.
-        return $out . '<p class="lookdev" data-pending="1">developing…</p>';
+        $act = '<p class="lookdev" data-pending="1">developing…</p>';
+    } elseif ($row === null || $l['stale']) {
+        if (empty($b['enabled'])) {
+            $act = '<p class="note">This world does not draw its rooms.</p>';
+        } else {
+            if ($l['failed']) $act .= '<p class="note">The machine could not make this room last time.</p>';
+            if ($mine && $ep === null) {
+                $act .= '<p class="lookact"><button type="button" class="nbtn" data-look disabled>look</button>'
+                      . ' <span class="note">no scene machine — set one on the <a href="model.php">machines screen</a></span></p>';
+            } elseif ($mine) {
+                $act .= '<p class="lookact"><button type="button" class="nbtn" data-look>look</button></p>';
+            }
+        }
     }
-    if ($row !== null && !$l['stale']) return $out;
 
-    if (empty($b['enabled'])) {
-        return $out . '<p class="note">This world does not draw its rooms.</p>';
-    }
-    if ($l['failed']) {
-        $out .= '<p class="note">The machine could not make this room last time.</p>';
-    }
-    if (!$mine) return $out;
-    if ($ep === null) {
-        return $out . '<p class="lookact"><button type="button" class="nbtn" data-look disabled>look</button>'
-             . ' <span class="note">no scene machine — set one on the <a href="model.php">machines screen</a></span></p>';
-    }
-    return $out . '<p class="lookact"><button type="button" class="nbtn" data-look>look</button></p>';
+    return $view . $act . $strip . $sound . $room;
 }
 
 /**

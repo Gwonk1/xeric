@@ -4,7 +4,8 @@
  *
  *     GET  scene.php?w=<slug>                  → the brief, the newest view, the machine
  *     GET  scene.php?w=<slug>&k=<key>&f=<fp>   → that view's bytes, or 404
- *     POST scene.php {w, a: 'look'}            → ask for the room as it looks now
+ *     GET  scene.php?w=<slug>&k=<key>&f=sound:<fp> → that sound's bytes, or 404
+ *     POST scene.php {w, a: 'look'}            → ask for the room as it looks (and sounds) now
  *
  * where.php's sibling, and built on the same bet. Everything a viewport ever
  * needs — who is in the room, what the light is doing, which view of it is
@@ -74,11 +75,17 @@ if ($post) {
     if (empty($brief['enabled'])) {
         xeric_web_json(['error' => 'This world does not draw its rooms.'], 409);
     }
-    // ALREADY DRAWN, as it looks now and on this disk: nothing to spend, and
-    // no reason to make anybody wait on a probe to be told so.
-    $dir = xeric_play_scenes_dir($db);
-    $row = xeric_scene_of($db, (string)$brief['key'], (string)$brief['fingerprint']);
-    if ($row !== null && xeric_play_look_has($row, $dir)) {
+    // WHAT THIS PRESS OWES: the look, unless it is already drawn as it looks
+    // now and on this disk; and the sound, when this machine can make one
+    // (xeric_scene_channels — an image machine draws and cannot hear) and the
+    // room does not already sound like this on disk. Reading the endpoint is a
+    // session read, not a call, so this is decided before anybody waits.
+    $ep    = xeric_scene_endpoint();
+    $owe   = xeric_play_look_owed($t, $db, $brief, $ep);
+    $sound = $owe['sound_brief'];
+    unset($owe['sound_brief']);
+    if (!in_array(true, $owe, true)) {
+        // Already drawn and heard. Nothing to spend, nothing to wait for.
         xeric_web_json(['ok' => 1, 'job' => '', 'fingerprint' => (string)$brief['fingerprint'], 'pending' => false]);
     }
 
@@ -87,7 +94,6 @@ if ($post) {
     // place a press is turned into spend, so this is where the machine is
     // asked whether it is there at all — BEFORE anything is queued, because a
     // pending row with no machine behind it is a "developing…" that never ends.
-    $ep = xeric_scene_endpoint();
     if ($ep === null || !xeric_scene_up($ep, 4)) {
         xeric_web_json(['error' => 'no scene machine is answering; the brief is still readable'], 409);
     }
@@ -98,21 +104,25 @@ if ($post) {
     // somebody needs to talk to the cast.
     xeric_limit_guard(xeric_limit_check('reroll', ['sid' => $sid]));
 
-    $id = xeric_scene_enqueue($db, $brief);
-    if ($id === 0) xeric_web_json(['error' => 'This room cannot be asked for.'], 409);
-
     // ASKING AGAIN IS A REAL ASK. The queue is one row per look, so a look
     // that failed three times, or a done row whose file is not on this disk
     // any more, would otherwise answer every later press with the same dead
     // row. Somebody pressing the button IS the retry; it is put back to
     // pending with its tries cleared, and only from those two states — a row
     // that is pending or working is left exactly as it is.
-    $db->prepare("UPDATE scene_jobs SET status = 'pending', tries = 0, done_at = NULL, remote_job = NULL
-                  WHERE id = ? AND status IN ('failed', 'done')")->execute([$id]);
+    $retry = $db->prepare("UPDATE scene_jobs SET status = 'pending', tries = 0, done_at = NULL, remote_job = NULL
+                           WHERE id = ? AND status IN ('failed', 'done')");
+    foreach (['look' => $brief, 'sound' => $sound] as $ch => $br) {
+        if (empty($owe[$ch]) || $br === null) continue;
+        $id = xeric_scene_enqueue($db, $br);
+        if ($id === 0 && $ch === 'look') xeric_web_json(['error' => 'This room cannot be asked for.'], 409);
+        if ($id !== 0) $retry->execute([$id]);
+    }
 
     $job = xeric_web_job_new();
     xeric_web_spawn($job, ['slug' => (string)$w['slug'], 'sid' => $sid], 'scene-worker.php');
-    xeric_web_json(['ok' => 1, 'job' => $job, 'fingerprint' => (string)$brief['fingerprint'], 'pending' => true]);
+    xeric_web_json(['ok' => 1, 'job' => $job, 'fingerprint' => (string)$brief['fingerprint'],
+                    'pending' => $owe['look'], 'sound' => !empty($owe['sound'])]);
 }
 
 // -- the bytes -----------------------------------------------------------------

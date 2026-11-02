@@ -49,13 +49,6 @@ ignore_user_abort(true);
 $sid = (string)($payload['sid'] ?? '');
 if (preg_match('/^[a-f0-9]{32}$/', $sid)) xeric_session_use($sid);
 
-/** Rows still owed: pending, or working on a machine that said "later". */
-function xeric_scene_worker_owed(PDO $db): int
-{
-    return (int)$db->query("SELECT COUNT(*) FROM scene_jobs WHERE status = 'pending'
-                            OR (status = 'working' AND remote_job IS NOT NULL)")->fetchColumn();
-}
-
 try {
     $slug = xeric_web_slug((string)($payload['slug'] ?? ''));
     $w    = xeric_play_open($slug);
@@ -92,7 +85,7 @@ try {
         }
         if ($stuck) break;
 
-        $owed = xeric_scene_worker_owed($w['db']);
+        $owed = xeric_play_scene_owed($w['db'], xeric_scene_channels($w['template'], xeric_scene_endpoint()));
         if ($owed === 0) break;
         if ($r['done'] > 0 || $r['failed'] > 0) continue;      // progress: straight on to the next
 

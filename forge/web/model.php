@@ -796,6 +796,7 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
         <p class="whois">Local: renders cost your own electricity and GPU time, nothing metered.
           Every render is still counted on the meter.</p>
         <?php endif; ?>
+        <p class="whois"><?= xeric_play_scene_ahead_line($scEp, 'XERIC_SCENE_KEY') ?></p>
         <div class="mact"><form method="post" action="model.php">
           <input type="hidden" name="act" value="sceneoff">
           <button type="submit" class="btn">Disconnect</button>
@@ -813,6 +814,7 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
           counts every one, but the meter is a receipt, not a limit — set spending caps with your
           provider.</p>
         <?php endif; ?>
+        <p class="whois"><?= xeric_play_scene_ahead_line($scEp, 'XERIC_IMAGE_KEY') ?></p>
         <div class="mact"><form method="post" action="model.php">
           <input type="hidden" name="act" value="sceneoff">
           <button type="submit" class="btn">No rooms</button>

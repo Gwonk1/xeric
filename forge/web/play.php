@@ -963,6 +963,26 @@ echo '<style>' . xeric_play_css() . '
   border:1px solid var(--line); color:var(--fg-dim); margin-left:.3rem; }
 .lookprose { margin:0 0 .5rem; }
 .lookdev { font-size:.8rem; color:var(--fg-dim); font-style:italic; }
+/* the people in the room: buttons over the panorama at their bearings, a row under a still */
+.lookpanobox { position:relative; }
+.looktags .looktag { position:absolute; transform:translate(-50%,-50%); }
+.looktag { font:inherit; font-size:.72rem; line-height:1.2; padding:.15rem .5rem; border-radius:999px;
+  border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; white-space:nowrap; }
+.looktag:hover, .looktag:focus-visible { border-color:var(--fg); }
+.looktagrow { display:flex; flex-wrap:wrap; gap:.3rem; margin:.3rem 0 .2rem; }
+.lookxr { position:absolute; right:.5rem; bottom:.5rem; }
+/* the room through its day */
+.lookday { display:flex; gap:.35rem; overflow-x:auto; margin:.2rem 0 .5rem; }
+.lookthumb { flex:0 0 auto; width:4.6rem; padding:0; border:1px solid var(--line); border-radius:.4rem;
+  background:var(--bg-2); cursor:pointer; overflow:hidden; font:inherit; color:var(--fg-dim); }
+.lookthumb img { display:block; width:100%; height:2.6rem; object-fit:cover; }
+.lookthumb span { display:block; font-size:.62rem; padding:.1rem .2rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lookthumb.cur { border-color:var(--fg); color:var(--fg); }
+.lookearlier { font-size:.72rem; color:var(--fg-dim); font-style:italic; margin:0; }
+/* what you hear */
+.looksound { font-size:.75rem; color:var(--fg-dim); font-style:italic; margin:0 0 .3rem; }
+.lookaudio { display:flex; gap:.4rem; align-items:center; margin:0 0 .5rem; }
+.lookaudio audio { height:2rem; flex:1 1 auto; min-width:0; }
 .xcrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
 .xchint { font-size:12px; opacity:.65; flex:1 1 200px; }
 </style>';
@@ -2114,10 +2134,81 @@ echo '<style>' . xeric_play_css() . '
     var img = document.querySelector('#look .lookimg');
     // Bound, not an onerror= attribute: the CSP grants no inline handlers.
     if (img) img.addEventListener('error', function () { this.remove(); });
-    $$('#look [data-look]').forEach(function (b) {
-      b.addEventListener('click', function () { look(b); });
-    });
+    // The view the server put on screen is the one the strip calls "now".
+    $$('#look .lookthumb').forEach(function (t) { t.dataset.now = t.classList.contains('cur') ? '1' : '0'; });
+    var au = document.querySelector('#look audio'), lb = document.querySelector('#look [data-listen]');
+    if (au && lb) {
+      var says = function () {
+        lb.setAttribute('aria-pressed', au.paused ? 'false' : 'true');
+        lb.textContent = au.paused ? 'listen' : 'stop listening';
+      };
+      au.addEventListener('play', says);
+      au.addEventListener('pause', says);
+    }
     armLookPoll();
+  }
+
+  // ONE LISTENER FOR THE WHOLE VIEW, on the box that survives every repaint:
+  // #look's insides are replaced wholesale, and a handler bound to a button
+  // that has since been thrown away is a button that does nothing.
+  if ($('#look')) $('#look').addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('button') : null;
+    if (!t || !$('#look').contains(t)) return;
+    // A person in the room is a thread, opened exactly as the cast chip opens it.
+    if (t.classList.contains('looktag')) { openThread(t.dataset.h); return; }
+    if (t.classList.contains('lookthumb')) { dayView(t); return; }
+    if (t.hasAttribute('data-listen')) {
+      var au = document.querySelector('#look audio');
+      if (!au) return;
+      if (au.paused) { var p = au.play(); if (p && p.catch) p.catch(function () {}); } else au.pause();
+      return;
+    }
+    if (t.hasAttribute('data-look') && !t.disabled) look(t);
+  });
+
+  // THE DAY STRIP: pressing a light puts that hour's view where the view is.
+  // The main view is rebuilt rather than re-pointed — a WebGL canvas whose
+  // context has been handed back cannot be given another — and the people's
+  // buttons move across with it, because they are where people are NOW
+  // whichever hour the walls are lit for. Where you were facing is kept.
+  function dayView(th) {
+    var main = document.querySelector('#look .lookmain');
+    if (!main) return;
+    var src = th.dataset.src, kind = th.dataset.kind, old = main.dataset.src || '';
+    if (lookYaw[old] && !lookYaw[src]) lookYaw[src] = lookYaw[old];
+    var tags = main.querySelector('.looktags, .looktagrow');
+    var el = document.createElement('div');
+    if (kind === 'pano') {
+      el.className = 'lookmain lookpanobox';
+      el.dataset.src = src;
+      el.dataset.alt = th.dataset.light || '';
+      if (main.dataset.bearings) el.dataset.bearings = main.dataset.bearings;
+      var cv = document.createElement('canvas');
+      cv.className = 'lookpano'; cv.tabIndex = 0; cv.setAttribute('role', 'img');
+      cv.setAttribute('aria-label', 'A look around the room, ' + (th.dataset.light || '') + '. Drag, or use the arrow keys, to turn.');
+      el.appendChild(cv);
+      if (tags) { tags.className = 'looktags'; $$('.looktag', tags).forEach(function (b) { b.hidden = true; }); }
+    } else {
+      el.className = 'lookmain lookstill';
+      el.dataset.src = src;
+      var im = document.createElement('img');
+      im.className = 'lookimg'; im.src = src; im.alt = th.dataset.light || '';
+      el.appendChild(im);
+      if (tags) { tags.className = 'looktagrow'; $$('.looktag', tags).forEach(function (b) { b.hidden = false; }); }
+    }
+    if (tags) el.appendChild(tags);
+    if (lookView) { lookView.destroy(); lookView = null; }
+    main.replaceWith(el);
+    if (kind === 'pano') lookView = pano(el);
+    $$('#look .lookthumb').forEach(function (x) {
+      x.classList.toggle('cur', x === th);
+      x.setAttribute('aria-pressed', x === th ? 'true' : 'false');
+    });
+    var lab = document.querySelector('#look .lookearlier');
+    if (lab) {
+      lab.hidden = th.dataset.now === '1';
+      lab.textContent = th.dataset.now === '1' ? '' : 'earlier: ' + (th.dataset.light || '');
+    }
   }
 
   // A reload in the middle of a render has no job to follow; it comes back
@@ -2182,38 +2273,40 @@ echo '<style>' . xeric_play_css() . '
   // requestAnimationFrame. A still sidebar costs nothing. WebGL first; a 2D
   // canvas that pans the strip sideways if there is no WebGL; the plain image
   // if there is no canvas at all.
+  //
+  // THE PEOPLE are real buttons laid over the canvas, not pixels drawn on it,
+  // so they can be tabbed to, read out and pressed. Each frame puts each one
+  // at its bearing (degrees clockwise from where the room faces you, the
+  // engine's own number) just under the horizon, fades it toward the edge of
+  // the view and hides it past the edge, where a hidden button is also not a
+  // tab stop.
   function pano(box) {
     var cv = box.querySelector('canvas'), src = box.dataset.src;
     var v = lookYaw[src] || { yaw: 0, pitch: 0, fov: 1.4 };
     lookYaw[src] = v;
-    var img = new Image(), gl = null, g2 = null, prog = null, tex = null, raf = 0, dead = false;
+    var tags = [].slice.call(box.querySelectorAll('.looktag'));
+    var img = new Image(), gl = null, g2 = null, prog = null, tex = null, raf = 0, dead = false, xrh = null;
     function plain() {
       if (dead) return;
+      // The still, and the people as the row a still has under it.
+      var st = document.createElement('div');
+      st.className = 'lookmain lookstill';
       var im = document.createElement('img');
       im.className = 'lookimg'; im.src = src; im.alt = box.dataset.alt || '';
-      box.replaceWith(im);
+      st.appendChild(im);
+      var tg = box.querySelector('.looktags');
+      if (tg) { tg.className = 'looktagrow'; tags.forEach(function (b) { b.hidden = false; b.style.cssText = ''; }); st.appendChild(tg); }
+      box.replaceWith(st);
       dead = true;
     }
     try { gl = cv.getContext('webgl', { antialias: false, preserveDrawingBuffer: false }); } catch (e) { gl = null; }
     if (gl) {
-      var vs = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
-      var fs = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n'
-        + 'uniform sampler2D t;uniform vec2 r;uniform float y,p,f;'
+      prog = panoProgram(gl, 'uniform vec2 r;uniform float y,p,f;'
         + 'void main(){vec2 q=(gl_FragCoord.xy/r)*2.0-1.0;q.x*=r.x/r.y;'
         + 'vec3 d=normalize(vec3(q.x*f,q.y*f,-1.0));'
         + 'float cp=cos(p),sp=sin(p);d=vec3(d.x,d.y*cp-d.z*sp,d.y*sp+d.z*cp);'
         + 'float cy=cos(y),sy=sin(y);d=vec3(d.x*cy+d.z*sy,d.y,-d.x*sy+d.z*cy);'
-        + 'float lon=atan(d.x,-d.z);float lat=asin(clamp(d.y,-1.0,1.0));'
-        + 'gl_FragColor=texture2D(t,vec2(fract(lon/6.2831853+0.5),0.5-lat/3.1415927));}';
-      var sh = function (type, text) {
-        var s = gl.createShader(type); gl.shaderSource(s, text); gl.compileShader(s);
-        return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
-      };
-      var a = sh(gl.VERTEX_SHADER, vs), b = sh(gl.FRAGMENT_SHADER, fs);
-      if (a && b) {
-        prog = gl.createProgram(); gl.attachShader(prog, a); gl.attachShader(prog, b); gl.linkProgram(prog);
-        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) prog = null;
-      }
+        + 'gl_FragColor=look(d);}');
       if (!prog) gl = null;
     }
     if (!gl) { try { g2 = cv.getContext('2d'); } catch (e) { g2 = null; } }
@@ -2233,6 +2326,7 @@ echo '<style>' . xeric_play_css() . '
       if (dead || !img.complete || !img.naturalWidth) return;
       size();
       if (gl) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.viewport(0, 0, cv.width, cv.height);
         gl.useProgram(prog);
         gl.uniform2f(gl.getUniformLocation(prog, 'r'), cv.width, cv.height);
@@ -2251,8 +2345,38 @@ echo '<style>' . xeric_play_css() . '
       g2.clearRect(0, 0, cv.width, cv.height);
       for (var i = -1; i <= 1; i++) g2.drawImage(img, x + i * w, y0, w, h);
     }
+    // The tags for the same three numbers, in CSS pixels over the canvas. The
+    // WebGL view is a perspective, so a bearing lands at tan(angle); the 2D
+    // strip is linear, so it lands at angle × pixels-per-radian.
+    function placeTags(yaw, pitch, fov) {
+      if (!tags.length || dead) return;
+      var W = cv.clientWidth, H = cv.clientHeight, f = Math.tan(fov / 2), asp = W / Math.max(1, H);
+      var below = -0.12;                              // a little under the horizon: about chest height
+      var k = 2 * H / Math.PI;                        // the strip's pixels per radian, both ways
+      tags.forEach(function (t) {
+        var a = (+t.dataset.b || 0) * Math.PI / 180 + yaw;
+        a = Math.atan2(Math.sin(a), Math.cos(a));     // -π..π, the short way round
+        var x, y;
+        if (gl) {
+          if (Math.abs(a) >= Math.PI / 2) { t.hidden = true; return; }
+          x = Math.tan(a) / (f * asp);
+          y = Math.tan(below - pitch) / f;
+        } else {
+          x = a * k / (W / 2);
+          y = (below - pitch) * k / (H / 2);
+        }
+        var ax = Math.abs(x);
+        if (ax > 1 || Math.abs(y) > 1) { t.hidden = true; return; }
+        t.hidden = false;
+        t.style.left = ((x + 1) / 2 * W + cv.offsetLeft) + 'px';
+        t.style.top = ((1 - y) / 2 * H + cv.offsetTop) + 'px';
+        t.style.opacity = ax > 0.75 ? String(Math.max(0.15, (1 - ax) / 0.25)) : '1';
+      });
+    }
     function ask() {
-      if (!raf) raf = requestAnimationFrame(function () { raf = 0; drawAt(v.yaw, v.pitch, v.fov); });
+      if (!raf) raf = requestAnimationFrame(function () {
+        raf = 0; drawAt(v.yaw, v.pitch, v.fov); placeTags(v.yaw, v.pitch, v.fov);
+      });
     }
     function turn(dx, dy) {
       v.yaw += dx; v.pitch = Math.max(-1.45, Math.min(1.45, v.pitch + dy)); ask();
@@ -2271,9 +2395,10 @@ echo '<style>' . xeric_play_css() . '
         var buf = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-        var loc = gl.getAttribLocation(prog, 'a');
-        gl.enableVertexAttribArray(loc);
-        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        // Location 0 by construction (panoProgram binds it), so the headset's
+        // program reads the same quad without being told where it is.
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
         tex = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, tex);
         // No mipmaps and clamp both ways: a panorama is never a power of two,
@@ -2323,10 +2448,13 @@ echo '<style>' . xeric_play_css() . '
       e.preventDefault();
     });
     window.addEventListener('resize', ask);
+    if (gl) xrh = xr({ gl: gl, box: box, redraw: ask,
+                       ready: function () { return !dead && !!tex; }, dead: function () { return dead; } });
     return {
-      view: v, draw: drawAt, redraw: ask,
+      view: v, draw: drawAt, tags: placeTags, redraw: ask,
       destroy: function () {
         dead = true;
+        if (xrh) xrh.end();
         window.removeEventListener('resize', ask);
         if (raf) cancelAnimationFrame(raf);
         // Hand the context back: a page that repaints its sidebar after every
@@ -2334,6 +2462,142 @@ echo '<style>' . xeric_play_css() . '
         if (gl) { var lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); }
       }
     };
+  }
+
+  // STEP INSIDE. The same panorama on a headset, through the same context and
+  // the same sampling GLSL (panoProgram's look()), with one change: the ray for
+  // each pixel comes from the headset rather than from yaw and pitch. Per eye,
+  // the inverse of projection × view — the view's rotation only, because a
+  // panorama is at infinity and leaning forward must not walk you into the pie
+  // case — turns a pixel's position on that eye's viewport into a direction in
+  // the 'local' space, which is -z ahead and y up exactly as the 2D view is.
+  //
+  // OFFERED, NEVER DANGLED: the button exists only once the browser has said
+  // an immersive session is supported; absent rather than disabled otherwise.
+  // The people's tags do not come along — buttons do not exist in there, and
+  // drawing them into the shader would be a second renderer of who is where.
+  // Anything that throws, anywhere, takes the button away and says nothing;
+  // the 2D view is the floor and it is still there.
+  function xr(api) {
+    var gl = api.gl, box = api.box, btn = null, session = null, xprog = null;
+    function off() { session = null; if (btn) { btn.remove(); btn = null; } }
+    function fail() { var s = session; off(); try { if (s) s.end(); } catch (e) {} }
+    try {
+      var nx = navigator.xr;
+      if (!nx || typeof nx.isSessionSupported !== 'function') return { end: function () {} };
+      nx.isSessionSupported('immersive-vr').then(function (yes) {
+        if (!yes || api.dead()) return;
+        btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'nbtn lookxr'; btn.textContent = 'step inside';
+        btn.addEventListener('click', function () {
+          if (session) { try { session.end(); } catch (e) { fail(); } return; }
+          enter();
+        });
+        box.appendChild(btn);
+      }, off).catch(off);
+    } catch (e) { off(); }
+
+    function enter() {
+      try {
+        var ready = gl.makeXRCompatible ? gl.makeXRCompatible() : Promise.resolve();
+        ready.then(function () { return navigator.xr.requestSession('immersive-vr'); }).then(function (s) {
+          session = s;
+          xprog = xprog || panoProgram(gl, 'uniform mat4 m;uniform vec4 vp;'
+            + 'void main(){vec2 q=((gl_FragCoord.xy-vp.xy)/vp.zw)*2.0-1.0;'
+            + 'vec4 w=m*vec4(q,1.0,1.0);gl_FragColor=look(normalize(w.xyz/w.w));}');
+          if (!xprog) throw new Error('no headset shader');
+          s.updateRenderState({ baseLayer: new XRWebGLLayer(s, gl) });
+          s.addEventListener('end', function () {
+            session = null;
+            if (btn) btn.textContent = 'step inside';
+            try { gl.bindFramebuffer(gl.FRAMEBUFFER, null); } catch (e) {}
+            api.redraw();                               // the 2D view, back where it was
+          });
+          if (btn) btn.textContent = 'step out';
+          return s.requestReferenceSpace('local').then(function (space) {
+            var frame = function (t, f) {
+              if (session !== s) return;
+              try {
+                s.requestAnimationFrame(frame);
+                var pose = f.getViewerPose(space);
+                if (!pose || !api.ready()) return;
+                var layer = s.renderState.baseLayer;
+                gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+                gl.useProgram(xprog);
+                for (var i = 0; i < pose.views.length; i++) {
+                  var view = pose.views[i], vp = layer.getViewport(view);
+                  gl.viewport(vp.x, vp.y, vp.width, vp.height);
+                  gl.uniform4f(gl.getUniformLocation(xprog, 'vp'), vp.x, vp.y, vp.width, vp.height);
+                  gl.uniformMatrix4fv(gl.getUniformLocation(xprog, 'm'), false, xrRay(view));
+                  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                }
+              } catch (e) { fail(); }
+            };
+            s.requestAnimationFrame(frame);
+          });
+        }).catch(fail);
+      } catch (e) { fail(); }
+    }
+    return { end: function () { if (session) fail(); } };
+  }
+
+  // inverse(P × R), column-major as WebXR hands matrices over: R is the
+  // view's world-to-eye matrix with its translation taken out.
+  function xrRay(view) {
+    var r = Array.prototype.slice.call(view.transform.inverse.matrix);
+    r[12] = r[13] = r[14] = 0;
+    var p = view.projectionMatrix, m = new Array(16);
+    for (var c = 0; c < 4; c++) for (var row = 0; row < 4; row++) {
+      var sum = 0;
+      for (var k = 0; k < 4; k++) sum += p[k * 4 + row] * r[c * 4 + k];
+      m[c * 4 + row] = sum;
+    }
+    return mat4inv(m);
+  }
+
+  // A 4×4 inverse by cofactors; the singular case cannot come from a real
+  // projection, and answers identity rather than NaN if it ever does.
+  function mat4inv(a) {
+    var b00 = a[0] * a[5] - a[1] * a[4], b01 = a[0] * a[6] - a[2] * a[4], b02 = a[0] * a[7] - a[3] * a[4],
+        b03 = a[1] * a[6] - a[2] * a[5], b04 = a[1] * a[7] - a[3] * a[5], b05 = a[2] * a[7] - a[3] * a[6],
+        b06 = a[8] * a[13] - a[9] * a[12], b07 = a[8] * a[14] - a[10] * a[12], b08 = a[8] * a[15] - a[11] * a[12],
+        b09 = a[9] * a[14] - a[10] * a[13], b10 = a[9] * a[15] - a[11] * a[13], b11 = a[10] * a[15] - a[11] * a[14];
+    var det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (!det) return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    det = 1 / det;
+    return new Float32Array([
+      (a[5] * b11 - a[6] * b10 + a[7] * b09) * det, (a[2] * b10 - a[1] * b11 - a[3] * b09) * det,
+      (a[13] * b05 - a[14] * b04 + a[15] * b03) * det, (a[10] * b04 - a[9] * b05 - a[11] * b03) * det,
+      (a[6] * b08 - a[4] * b11 - a[7] * b07) * det, (a[0] * b11 - a[2] * b08 + a[3] * b07) * det,
+      (a[14] * b02 - a[12] * b05 - a[15] * b01) * det, (a[8] * b05 - a[10] * b02 + a[11] * b01) * det,
+      (a[4] * b10 - a[5] * b08 + a[7] * b06) * det, (a[1] * b08 - a[0] * b10 - a[3] * b06) * det,
+      (a[12] * b04 - a[13] * b02 + a[15] * b00) * det, (a[9] * b02 - a[8] * b04 - a[11] * b00) * det,
+      (a[5] * b07 - a[4] * b09 - a[6] * b06) * det, (a[0] * b09 - a[1] * b07 + a[2] * b06) * det,
+      (a[13] * b01 - a[12] * b03 - a[14] * b00) * det, (a[8] * b03 - a[9] * b01 + a[10] * b00) * det
+    ]);
+  }
+
+  // One program, two ways to aim it. Both share the quad (attribute 0) and
+  // look(d): a direction in, the panorama's texel out — bearing to column,
+  // elevation to row, the seam wrapped with fract(). Null when the GPU will
+  // not compile it, which every caller reads as "no WebGL here".
+  function panoProgram(gl, body) {
+    var vs = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
+    var fs = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n'
+      + 'uniform sampler2D t;'
+      + 'vec4 look(vec3 d){float lon=atan(d.x,-d.z);float lat=asin(clamp(d.y,-1.0,1.0));'
+      + 'return texture2D(t,vec2(fract(lon/6.2831853+0.5),0.5-lat/3.1415927));}' + body;
+    var sh = function (type, text) {
+      var s = gl.createShader(type); gl.shaderSource(s, text); gl.compileShader(s);
+      return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null;
+    };
+    var a = sh(gl.VERTEX_SHADER, vs), b = sh(gl.FRAGMENT_SHADER, fs);
+    if (!a || !b) return null;
+    var p = gl.createProgram();
+    gl.attachShader(p, a); gl.attachShader(p, b);
+    gl.bindAttribLocation(p, 0, 'a');
+    gl.linkProgram(p);
+    return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
   }
   bindLook();
 

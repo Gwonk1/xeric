@@ -40,12 +40,19 @@ function xeric_web_head(string $title): void
     // script, and the alternative is nonce-ing several hundred attributes for a
     // much smaller prize.
     //
+    // media-src 'self' is the room's sound (scene.php, `what you hear`).
+    // Without it default-src 'none' refuses every <audio>, silently — the
+    // nonce discipline's failure mode again, an absence rather than an error.
+    // 'self' and nothing wider: a sound is bytes this server sniffed and
+    // serves itself (xeric_play_look_file), never a machine's own link.
+    //
     // frame-ancestors matters more here than it looks: a local server on a known
     // port is trivially framed by any page the owner happens to open.
     header("Content-Security-Policy: default-src 'none'; "
         . "script-src 'nonce-" . xeric_web_nonce() . "'; "
         . "style-src 'self' 'unsafe-inline'; "
         . "img-src 'self' data:; "
+        . "media-src 'self'; "
         . "connect-src 'self'; "
         . "form-action 'self'; "
         . "base-uri 'none'; "
