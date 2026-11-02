@@ -1848,6 +1848,9 @@ function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60): 
     $out = [];
     foreach ($rows as $m) {
         $row = [
+            // The id rides along for the speaker beside a bubble (speak.php),
+            // which asks after a line by id and by nothing else.
+            'id'   => (int)$m['id'],
             'role' => (string)$m['role'],
             'who'  => (string)$m['role'] === 'user'
                         ? (trim((string)($t['user']['name'] ?? '')) ?: 'you')
@@ -4038,6 +4041,123 @@ function xeric_play_where_html(array $map, string $slug = ''): string
 // client was handed, and the file the server is willing to send cannot
 // disagree about which row is the room.
 
+// ---------------------------------------------------------------------------
+// The cast, out loud: the voice machine's web half (engine/voice.php)
+// ---------------------------------------------------------------------------
+
+/**
+ * The machine's voice ids, harvested once on connect (model.php). Ids only —
+ * what the deal needs, and nothing a session file should carry beyond it. A
+ * machine that cannot say is [] and still speaks; the engine deals the six
+ * every compatible server knows.
+ *
+ * @return string[]
+ */
+function xeric_play_voice_ids(array $ep): array
+{
+    try {
+        $ids = array_column(xeric_voice_list($ep), 'id');
+    } catch (Throwable $e) {
+        return [];
+    }
+    return array_values(array_unique(array_filter(array_map('strval', $ids), fn($i) => $i !== '')));
+}
+
+/**
+ * Is a voice machine set for this visitor? CONFIGURED, NOT PROBED — the rule
+ * the look button keeps: this renders on every page load, and asking a
+ * machine whether it is there is the speaker's job when it is pressed
+ * (speak.php), not the page's on the way in.
+ */
+function xeric_play_voice_on(): bool
+{
+    try {
+        return xeric_voice_endpoint() !== null;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+/**
+ * One message as speak.php needs it: a CHARACTER's line in THIS world's
+ * database. The handle is the row's, never the request's — a query string
+ * that could name the speaker could make anybody say anything. Null for an
+ * unknown id (which is also every id from another world: a world's messages
+ * live in its own db), for the player's own lines, and for the narrator.
+ *
+ * @return ?array{id:int,handle:string,content:string}
+ */
+function xeric_play_spoken(PDO $db, int $id): ?array
+{
+    if ($id <= 0) return null;
+    $st = $db->prepare("SELECT id, handle, content FROM messages WHERE id = ? AND role = 'character'
+                        AND handle IS NOT NULL AND handle != '' LIMIT 1");
+    $st->execute([$id]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    $st->closeCursor();
+    return $row ? ['id' => (int)$row['id'], 'handle' => (string)$row['handle'], 'content' => (string)$row['content']] : null;
+}
+
+/**
+ * The clip for a message, as speak.php serves it — found, or rendered now.
+ *
+ * ONLY THE ENGINE COMPOSES. Which voice, which words, which fingerprint are
+ * xeric_voice_clip's to decide, and nothing here repeats them. What this adds
+ * is the split speak.php needs between the half that is free and the half
+ * that spends:
+ *
+ *   A HIT is the clip this message was last voiced with (xeric_voice_of),
+ *   still on disk. It is served to anybody who can read the thread — it cost
+ *   nothing, and it costs nothing again.
+ *
+ *   A MISS goes through $beforeRender first, and only then to the engine,
+ *   which may render. speak.php's hook is the door and the budget: the owner
+ *   (or a visitor in their own copy) and the rate limit. A hook that refuses
+ *   answers the request itself and never comes back, so a guest in the
+ *   owner's real world hears what has been said aloud already and cannot make
+ *   the owner's key say anything new.
+ *
+ * The answer is the bytes, sniffed — scene.php's rule for sound: the stored
+ * type must be on the audio allowlist and the first bytes must say the same.
+ * Null is a 404 (nothing to say, nobody to say it, no machine, bytes that are
+ * not what they claim). A machine that refused throws, in its own words.
+ *
+ * @return ?array{bytes:string,mime:string,cached:bool}
+ */
+function xeric_play_voice_clip(array $t, PDO $db, string $clipsDir, array $msg, ?array $ep, ?array $voices,
+                               ?callable $beforeRender = null): ?array
+{
+    if ($ep === null) return null;
+    $row = xeric_voice_of($db, (int)$msg['id']);
+    if ($row !== null && is_file($clipsDir . '/' . basename((string)$row['file']))) {
+        return xeric_play_voice_bytes($clipsDir . '/' . basename((string)$row['file']), (string)$row['mime'], true);
+    }
+    if ($beforeRender !== null) $beforeRender();
+    $clip = xeric_voice_clip($t, $db, $clipsDir, (string)$msg['handle'], (int)$msg['id'],
+                             (string)$msg['content'], $ep, $voices);
+    if ($clip === null) return null;
+    return xeric_play_voice_bytes($clipsDir . '/' . basename((string)$clip['file']), (string)$clip['mime'],
+                                  (bool)$clip['cached']);
+}
+
+/**
+ * A clip's bytes, if they are what the row says. Opus is an Ogg stream on
+ * disk whatever a machine calls it, so it is sniffed and served as one —
+ * a serving rule, not a composing one; the rest of the allowlist is the five
+ * containers scene.php will play.
+ *
+ * @return ?array{bytes:string,mime:string,cached:bool}
+ */
+function xeric_play_voice_bytes(string $path, string $said, bool $cached): ?array
+{
+    if (!is_file($path)) return null;
+    $bytes = (string)file_get_contents($path);
+    $said  = strtolower($said);
+    $mime  = xeric_scene_audio_mime($said === 'audio/opus' ? 'audio/ogg' : $said);
+    if ($mime === '' || xeric_play_audio_sniff(substr($bytes, 0, 16)) !== $mime) return null;
+    return ['bytes' => $bytes, 'mime' => $mime, 'cached' => $cached];
+}
+
 /**
  * Where this database keeps its rooms: beside the db, under scenes/. Read off
  * the open connection rather than passed in, because the db a page opened IS
@@ -4134,10 +4254,15 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
         $out['failed']  = (string)$cur['status'] === 'failed';
     }
     // The CURRENT look first, when it is done and showable; otherwise the
-    // newest finished view of the room, whatever it looked like then — a
-    // stale room is better than a blank one, provided it says so.
+    // newest finished view of the room that can still be SHOWN, whatever it
+    // looked like then — a stale room is better than a blank one, provided it
+    // says so. Walked back, not just the newest: a newest row whose file has
+    // gone, or that is a splat the sidebar has no frame for, must not hide a
+    // perfectly good still from the hour before. Five, like
+    // xeric_scene_reference's walk, because a room whose last five views are
+    // all unshowable is a room to describe in words.
     $row = ($cur !== null && xeric_play_look_has($cur, $out['scenes_dir'])) ? $cur
-         : xeric_scene_latest($db, (string)$brief['key']);
+         : xeric_play_look_back($db, (string)$brief['key'], $out['scenes_dir']);
     if ($row !== null && xeric_play_look_has($row, $out['scenes_dir'])) {
         $out['row']   = $row;
         $out['stale'] = (string)$row['fingerprint'] !== (string)$brief['fingerprint'];
@@ -4166,6 +4291,29 @@ function xeric_play_look(array $t, PDO $db, ?array $now = null): array
         }
     }
     return $out;
+}
+
+/**
+ * The newest done look of a place that the sidebar can SHOW, from the last
+ * five done looks: a still, a panorama or a viewer link first — something the
+ * room can be seen in, inline or one tap away — and only when none of the
+ * five is one of those, a splat or glb to download. A missing file, or a
+ * picture that is not one, is never the answer.
+ */
+function xeric_play_look_back(PDO $db, string $key, string $scenesDir, int $tries = 5): ?array
+{
+    $st = $db->prepare("SELECT * FROM scene_jobs WHERE key = ? AND channel = 'look' AND status = 'done'
+                        ORDER BY done_at DESC, id DESC LIMIT ?");
+    $st->execute([$key, max(1, $tries)]);
+    $rows = $st->fetchAll();
+    $st->closeCursor();
+    $download = null;
+    foreach ($rows as $r) {
+        if (!xeric_play_look_has($r, $scenesDir)) continue;
+        if (in_array((string)$r['kind'], ['image', 'pano', 'viewer'], true)) return $r;
+        $download ??= $r;
+    }
+    return $download;
 }
 
 /**
@@ -6516,15 +6664,21 @@ function xeric_watch_close(array $w, array $s, ?array $endpoint): array
 // every witness's memory of it; an hour has no single voice to route. The
 // assignment is stored in the world db (an arc, not the template) because a
 // machine address is a fact about THIS house, and templates travel.
+//
+// NAMED xeric_play_speaker_*, NOT xeric_voice_*: engine/voice.php is the cast
+// out loud (text-to-speech), and it owns that prefix — including the engine's
+// own xeric_voice_endpoint(). These four route a character's WORDS to a model;
+// the engine's route their SOUND to a speech machine. Same word, two features,
+// and PHP has one namespace for both.
 
 /** The base a character is pinned to, or '' for the world's engine. */
-function xeric_voice_machine(PDO $db, string $handle): string
+function xeric_play_speaker_machine(PDO $db, string $handle): string
 {
     return trim((string)(xeric_arc_get($db, $handle, 'voice.machine') ?? ''));
 }
 
 /** Pin (a wired base) or clear (''). Returns the label the UI should say. */
-function xeric_voice_set(PDO $db, string $handle, string $base, ?string $sid = null): string
+function xeric_play_speaker_set(PDO $db, string $handle, string $base, ?string $sid = null): string
 {
     $base = rtrim(trim($base), '/');
     if ($base === '') { xeric_arc_clear($db, $handle, 'voice.machine'); return 'the world\'s engine'; }
@@ -6543,9 +6697,9 @@ function xeric_voice_set(PDO $db, string $handle, string $base, ?string $sid = n
  * still answers. The trail of which machine actually spoke is the endpoint's
  * own label, already recorded where calls are logged.
  */
-function xeric_voice_endpoint(array $t, PDO $db, string $handle, ?string $sid = null): array
+function xeric_play_speaker_endpoint(array $t, PDO $db, string $handle, ?string $sid = null): array
 {
-    $base = xeric_voice_machine($db, $handle);
+    $base = xeric_play_speaker_machine($db, $handle);
     if ($base !== '' && in_array($base, xeric_model_wired($sid), true)) {
         try {
             $ep = xeric_web_endpoint(xeric_model_descriptor($base));
@@ -6556,9 +6710,9 @@ function xeric_voice_endpoint(array $t, PDO $db, string $handle, ?string $sid = 
 }
 
 /** The compact picker's rows: the engine default plus every connected machine. */
-function xeric_voice_choices(PDO $db, string $handle, ?string $sid = null): array
+function xeric_play_speaker_choices(PDO $db, string $handle, ?string $sid = null): array
 {
-    $now = xeric_voice_machine($db, $handle);
+    $now = xeric_play_speaker_machine($db, $handle);
     $out = [['base' => '', 'label' => "the world's engine", 'on' => $now === '']];
     foreach (xeric_model_wired($sid) as $b) {
         $out[] = ['base' => $b,

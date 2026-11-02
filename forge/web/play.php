@@ -539,7 +539,7 @@ if ($action !== '') {
             // default. Sam can be one model and Lucy another; the per-model
             // prefix cache makes this cheaper than it sounds, because a
             // character pinned to a machine keeps their prefix warm THERE.
-            'voice'  => xeric_voice_choices($w['db'], $h, $sid),
+            'voice'  => xeric_play_speaker_choices($w['db'], $h, $sid),
             // The portrait's stand-in words, straight off the job row: the alt
             // text for a developed photo, the whole photo for a pending one.
             'photo_caption' => (string)((xeric_photo_of($w['db'], 'portrait', $h)['caption'] ?? '')),
@@ -555,7 +555,7 @@ if ($action !== '') {
             xeric_web_json(['error' => 'nobody by that name'], 400);
         }
         try {
-            $label = xeric_voice_set($w['db'], $h, (string)($in['base'] ?? ''), $sid);
+            $label = xeric_play_speaker_set($w['db'], $h, (string)($in['base'] ?? ''), $sid);
         } catch (Throwable $e) {
             xeric_web_json(['error' => $e->getMessage()], 422);
         }
@@ -951,6 +951,15 @@ echo '<style>' . xeric_play_css() . '
 /* a photo in a thread bubble: the picture, its caption underneath */
 .mphoto { display:block; max-width:100%; max-height:280px; border-radius:.6rem; margin:0 0 .25rem; }
 .mcap { display:block; font-size:.72rem; font-style:italic; opacity:.75; }
+/* the speaker beside a line a character said, and what it says when it cannot */
+.mspk { font:inherit; font-size:.8rem; line-height:1; margin-left:.35rem; padding:.1rem .3rem; border:0;
+  border-radius:.4rem; background:transparent; color:inherit; opacity:.55; cursor:pointer; vertical-align:middle; }
+.mspk:hover, .mspk:focus-visible, .mspk.on { opacity:1; }
+.mspk:focus-visible { outline:2px solid var(--fg); outline-offset:1px; }
+.mspk.loading { opacity:.35; animation:mspkpulse 1.2s ease-in-out infinite; }
+.mspk:disabled { opacity:.25; cursor:default; }
+@keyframes mspkpulse { 50% { opacity:.8; } }
+.mspkno { display:block; font-size:.7rem; font-style:italic; opacity:.7; }
 /* what you see: the room, the width of the panel, rounded like a photo in a thread */
 .lookimg { display:block; width:100%; height:auto; border-radius:.6rem; margin:0 0 .25rem; }
 .lookpanobox { margin:0 0 .25rem; }
@@ -1408,6 +1417,9 @@ echo '<style>' . xeric_play_css() . '
 (function () {
   'use strict';
   var W = <?= js($w['slug']) ?>;
+  // Is a voice machine set for this visitor? Configured, never probed, the
+  // look button's rule: the speaker asks the machine when it is pressed.
+  var VOICE = <?= js(xeric_play_voice_on()) ?>;
 
   // -- the rewind ------------------------------------------------------------
   // The button never fires without the card, the card never lies about what
@@ -2851,7 +2863,7 @@ echo '<style>' . xeric_play_css() . '
           $('#composer').placeholder = d.name + ' is dead' + (d.how ? ', ' + d.how : '') + '.';
           $('#tone').textContent = d.how || (d.name + ' is dead.');
         }
-        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when, m.photo); });
+        d.messages.forEach(function (m) { addMsg(m.role === 'user' ? 'me' : (m.role === 'character' ? 'them' : 'narr'), m.text, m.when, m.photo, m.id); });
         // the dot is out now — repaint the cast behind this screen
         refreshState();
         var t = $('#composer');
@@ -2879,7 +2891,67 @@ echo '<style>' . xeric_play_css() . '
     return { text: (initials || '?').toUpperCase(), hue: h };
   }
 
-  function addMsg(who, text, when, photo) {
+  // THE SPEAKER, one per character line. ONE <audio> for the whole thread, so
+  // two lines can never talk over each other, and a press on a second line
+  // is a change of mind, not a duet. The line is asked for with a fetch first
+  // and only then handed to the <audio>: a fetch can read speak.php's 404 and
+  // the machine's own 503 sentence, an <audio> element can only say "error".
+  // The second request is the engine's cache, or this browser's — a file
+  // read either way, never a second render. Shown once and then the button
+  // stands down: a line that cannot be spoken will not be spoken on a retry.
+  var voiceAu = null, voiceBtn = null;
+  function speak(btn) {
+    if (!voiceAu) {
+      voiceAu = document.createElement('audio');
+      voiceAu.preload = 'none';
+      // The element's own events arrive late (a pause fires after the next
+      // press has begun), so they speak only for the button the element is
+      // PLAYING FOR — voiceAu.forBtn, set when the src is handed over — and
+      // never for whichever button happens to be newest.
+      voiceAu.addEventListener('playing', function () {
+        var b = voiceAu.forBtn; if (!b) return;
+        b.classList.remove('loading'); b.classList.add('on'); b.setAttribute('aria-pressed', 'true');
+      });
+      var stop = function () { var b = voiceAu.forBtn; if (b) unspeak(b); };
+      voiceAu.addEventListener('ended', stop);
+      voiceAu.addEventListener('pause', stop);
+      voiceAu.addEventListener('error', stop);
+    }
+    var again = voiceBtn === btn && (btn.classList.contains('on') || btn.classList.contains('loading'));
+    if (voiceBtn) unspeak(voiceBtn);
+    voiceAu.forBtn = null;
+    voiceAu.pause();
+    voiceBtn = null;
+    if (again) return;                                // the second press is "stop"
+    voiceBtn = btn;
+    btn.classList.add('loading');
+    var url = 'speak.php?w=' + encodeURIComponent(W) + '&m=' + encodeURIComponent(btn.dataset.m);
+    fetch(url).then(function (r) {
+      if (r.ok) return null;
+      if (r.status === 404) return 'There is nothing in this line to hear.';
+      return r.json().then(function (j) { return (j && j.error) || 'the voice machine did not answer'; },
+                           function () { return 'the voice machine did not answer'; });
+    }).then(function (why) {
+      if (voiceBtn !== btn) return;                   // another line was pressed meanwhile
+      if (why) { refuseSpeak(btn, why); return; }
+      voiceAu.forBtn = btn;
+      voiceAu.src = url;
+      var p = voiceAu.play();
+      if (p && p.catch) p.catch(function () { btn.classList.remove('loading'); });
+    }).catch(function () { refuseSpeak(btn, 'the voice machine could not be reached'); });
+  }
+  function unspeak(b) { b.classList.remove('loading', 'on'); b.setAttribute('aria-pressed', 'false'); }
+  function refuseSpeak(btn, why) {
+    btn.classList.remove('loading', 'on');
+    btn.disabled = true;
+    var n = document.createElement('span');
+    n.className = 'mspkno';
+    n.textContent = why;
+    btn.after(n);
+    if (voiceBtn === btn) voiceBtn = null;
+  }
+
+  function addMsg(who, text, when, photo, mid) {
     var li = document.createElement('li');
     li.className = who;
 
@@ -2901,8 +2973,18 @@ echo '<style>' . xeric_play_css() . '
            + '<span class="mcap">' + esc(photo.caption || text) + '</span>';
     }
 
+    // A character's line, with an id to ask after and words rather than a
+    // photograph, gets a speaker — when a voice machine is set. The player's
+    // own bubbles never do: nobody needs to hear themselves read back.
+    var spk = '';
+    if (VOICE && who === 'them' && mid && !photo && !/^📷/.test(String(text || ''))) {
+      spk = '<button type="button" class="mspk" data-m="' + escA(String(mid)) + '" aria-pressed="false" aria-label="hear '
+          + escA($('#tname').textContent || 'this line') + '">🔈</button>';
+    }
     li.innerHTML = face + '<span class="b">' + body
-                 + (when ? '<span class="st">' + esc(when) + '</span>' : '') + '</span>';
+                 + (when ? '<span class="st">' + esc(when) + '</span>' : '') + spk + '</span>';
+    var sb = li.querySelector('.mspk');
+    if (sb) sb.addEventListener('click', function () { speak(sb); });
     // BOUND, NOT WRITTEN AS AN ATTRIBUTE. An inline `onerror=` is inline script,
     // and the Content-Security-Policy grants no 'unsafe-inline' — so as an
     // attribute this would silently never fire, and a photo that failed to load
@@ -3101,7 +3183,7 @@ echo '<style>' . xeric_play_css() . '
           return;
         }
         pending = null;                                // the xeric has it now
-        addMsg('them', res.d.text, res.d.when);
+        addMsg('them', res.d.text, res.d.when, null, res.d.mid);
         // The photo she promised, right behind her words: the caption bubble
         // lands now, and the picture replaces it on a later repaint once the
         // reaper (running behind this conversation) has developed the film.

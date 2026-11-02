@@ -105,7 +105,7 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     // nothing; see xeric_chat_canary() for what it is and why it must stay.
     $canary = xeric_chat_canary($userText);
     if ($canary !== null) {
-        return ['text' => $canary, 'conversation_id' => null, 'remind' => null,
+        return ['text' => $canary, 'conversation_id' => null, 'message_id' => null, 'remind' => null,
                 'usage' => ['ms' => 0, 'reply_chars' => mb_strlen($canary), 'raw_chars' => 0],
                 'story' => [], 'canary' => true];
     }
@@ -206,7 +206,7 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     try {
         if ($convId === null) $convId = xeric_conversation_create($db, $speaker, 'chat', null, $at);
         xeric_message_append($db, $convId, 'user', null, $userText, $epoch, $at);
-        xeric_message_append($db, $convId, 'character', $speaker, $text, $epoch, $at);
+        $replyId = xeric_message_append($db, $convId, 'character', $speaker, $text, $epoch, $at);
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
@@ -244,6 +244,9 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     return [
         'text'            => $text,
         'conversation_id' => $convId,
+        // The row the reply was written as: what a client asks after the line
+        // by (the speaker beside a bubble), rather than finding it again.
+        'message_id'      => $replyId,
         'photo_ask'       => $photoAsk,
         'remind'          => $remind,
         'usage'           => $usage + ['ms' => $ms, 'reply_chars' => mb_strlen($text), 'raw_chars' => mb_strlen($raw)],

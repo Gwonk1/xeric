@@ -1603,7 +1603,7 @@ $mustDeny = ['/lib/forge.php', '/forge/lib/interview.json', '/forge/lib/engine/s
              '/tests/demo-test.php', '/forge/tests/demo-test.php'];
 $mustServe = ['/', '/forge.php', '/play.php', '/build.php', '/progress.php', '/review.php',
               '/why.php', '/world.php', '/say.php', '/tick.php', '/where.php', '/fate.php', '/tile.php', '/model.php', '/notify.php',
-              '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php',
+              '/power.php', '/addchar.php', '/book.php', '/watch.php', '/photo.php', '/scene.php', '/speak.php',
               '/forge/forge.php', '/forge/play.php'];
 
 $served = array_values(array_filter($mustDeny, fn($u) => !$denied($u)));
@@ -1615,7 +1615,7 @@ ok('and no page of the app is caught by the same patterns', $blocked === [], imp
 // list is a hand-written enumeration, and a hand-written enumeration goes stale.
 $pages = ['forge.php', 'play.php', 'build.php', 'progress.php', 'review.php',
           'why.php', 'world.php', 'say.php', 'tick.php', 'where.php', 'fate.php', 'tile.php', 'model.php',
-          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php',
+          'notify.php', 'power.php', 'addchar.php', 'book.php', 'watch.php', 'photo.php', 'scene.php', 'speak.php',
           'debrief.php', 'join.php'];
 $uncovered = [];
 foreach (glob(dirname(__DIR__) . '/*.php') ?: [] as $f) {
@@ -3858,6 +3858,19 @@ ok('and so is a LAN box that is not the configured one',
 putenv('XERIC_LOCAL_KEY');
 ok('with no local key the hosted key does not travel to a stranger either',
     xeric_model_probe_key('https://attacker.example/') === '' && xeric_model_probe_key('http://192.168.50.10:8080') === 'hosted');
+putenv('XERIC_LOCAL_KEY=s3cret'); putenv('XERIC_LOCAL_MODEL=qwen3-router');
+ok('the resolved endpoint carries the operator key only to the configured box',
+    xeric_web_endpoint(['kind' => 'local', 'local' => 'http://192.168.50.10:8080'])['key'] === 's3cret'
+    && xeric_web_endpoint(['kind' => 'local', 'local' => 'http://10.1.2.3:8080'])['key'] === '');
+// The hosted branch resolves its host first; a box with no DNS throws before
+// the key line, which is also a pass — nothing was sent anywhere.
+try { $hostedKey = xeric_web_endpoint(['kind' => 'openai', 'base' => 'https://api.openai.com/v1'])['key']; }
+catch (Throwable $e) { $hostedKey = ''; }
+ok('a hosted endpoint never takes a key from the environment', $hostedKey === '');
+ok('an empty stored model name falls back to XERIC_LOCAL_MODEL',
+    xeric_web_endpoint(['kind' => 'local', 'local' => 'http://192.168.50.10:8080', 'model' => ''])['model'] === 'qwen3-router'
+    && xeric_web_endpoint(['kind' => 'local', 'local' => 'http://192.168.50.10:8080', 'model' => 'picked'])['model'] === 'picked');
+putenv('XERIC_LOCAL_MODEL');
 foreach (['XERIC_LOCAL_BASE' => $pkBase, 'XERIC_LOCAL_KEY' => $pkKey, 'XERIC_API_KEY' => $pkApi] as $k => $v) {
     if ($v === false) putenv($k); else putenv("$k=$v");
 }

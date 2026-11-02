@@ -145,9 +145,9 @@ $speakerName = xeric_world_name($T, $handle);
 
 try {
     // Per-speaker: the pinned voice machine when one stands, else the engine
-    // (xeric_voice_endpoint falls back, never fails — a tuning choice must
+    // (xeric_play_speaker_endpoint falls back, never fails — a tuning choice must
     // not silence somebody).
-    $endpoint = xeric_voice_endpoint($T, $db, $handle, $sid);
+    $endpoint = xeric_play_speaker_endpoint($T, $db, $handle, $sid);
 } catch (Throwable $e) {
     // Nothing attached. Said as the state it is rather than as a failure, and
     // with the fix in the sentence — this is the one error on this screen whose
@@ -301,6 +301,8 @@ $done([
     'handle'    => $handle,
     'name'      => xeric_world_name($T, $handle),
     'text'      => (string)$out['text'],
+    // The reply's own row, for the speaker beside her bubble (speak.php).
+    'mid'       => (int)($out['message_id'] ?? 0),
     'when'      => xeric_play_stamp($T, (int)$now['epoch']),
     'seconds'   => round($took, 1),
     'waited'    => (float)($got['waited'] ?? 0),     // seconds spent in the line, honestly reported

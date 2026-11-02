@@ -638,7 +638,19 @@ function xeric_web_endpoint(array $model): array
         $key = function_exists('xeric_llm_header_safe')
             ? xeric_llm_header_safe((string)($model['key'] ?? ''))
             : (string)($model['key'] ?? '');
-        if ($key === '' && function_exists('xeric_llm_default_key')) $key = xeric_llm_default_key();
+        // THE ENVIRONMENT'S KEY GOES TO ONE BOX. XERIC_LOCAL_KEY is llama-server's
+        // --api-key on the machine named in XERIC_LOCAL_BASE; loopback is the
+        // operator's own as well. Any other local-kind address came off a
+        // visitor's machines list, and the list admits LAN boxes on purpose, so
+        // the operator's key is not sent there (xeric_model_probe_key states the
+        // same rule for the probes).
+        if ($key === '' && function_exists('xeric_llm_default_base')) {
+            $host = strtolower((string)(parse_url($base, PHP_URL_HOST) ?? ''));
+            if ($base === xeric_llm_default_base()
+                    || in_array($host, ['127.0.0.1', 'localhost', '::1', '[::1]'], true)) {
+                $key = xeric_llm_default_key('local');
+            }
+        }
 
         // `local` RIDES THE OUTPUT. build.php resolves, pipes the result to
         // worker.php, and the worker calls this function again. A shape that
@@ -647,7 +659,12 @@ function xeric_web_endpoint(array $model): array
         // pass fell through to 127.0.0.1:8080 and the forge built from the
         // surprise table against a box nobody asked for.
         return ['kind' => 'local', 'base' => $base, 'local' => $base,
-                'model' => (string)($model['model'] ?? (function_exists('xeric_llm_default_model') ? xeric_llm_default_model() : '')),
+                // xeric_model_descriptor stores model => '' for every row, so
+                // the stored name is empty, never absent: test for '', or the
+                // --llm-model / XERIC_LOCAL_MODEL router name is never applied.
+                'model' => trim((string)($model['model'] ?? '')) !== ''
+                    ? trim((string)$model['model'])
+                    : (function_exists('xeric_llm_default_model') ? xeric_llm_default_model() : ''),
                 'key' => $key];
     }
 
@@ -664,8 +681,10 @@ function xeric_web_endpoint(array $model): array
             . 'resolve to anywhere the forge is allowed to call. Point it at a public API host.');
     }
 
+    // A hosted endpoint's key is the visitor's, passed through and never stored
+    // — and never defaulted from the environment: the host here is whatever a
+    // visitor typed, and the gate above admits public hosts on purpose.
     $key = (string)($model['key'] ?? '');
-    if ($key === '' && function_exists('xeric_llm_default_key')) $key = xeric_llm_default_key();
 
     return ['kind' => $kind, 'base' => rtrim($base, '/'),
             'model' => trim((string)($model['model'] ?? '')), 'key' => $key];
@@ -1165,6 +1184,51 @@ xeric_scene_meter(function (array $u, string $where = ''): void {
     }
 });
 
+// AND THE CAST, OUT LOUD. engine/voice.php wired the way the rooms are: the
+// machines screen's stored address first (the visitor's own session), then
+// the environment; `off` is explicitly none. Unlike scene.php there is no
+// fallback past that, and the engine says why: a picture machine cannot
+// speak. The KEY is never stored — XERIC_VOICE_KEY, environment only. What
+// the session does keep is the machine's own voice inventory, ids only,
+// harvested on connect (model.php), so the deal is made from the voices the
+// machine actually has without asking it on every line.
+require_once $XERIC_LIB . '/engine/voice.php';
+
+xeric_voice_source(function () {
+    try {
+        $v = (array)(xeric_web_session_read()['voice'] ?? []);
+    } catch (Throwable $e) {
+        return null;                                   // no session: fall to env
+    }
+    if (($v['off'] ?? false) === true) return false;   // explicitly none, env ignored
+    $base = trim((string)($v['base'] ?? ''));
+    if ($base === '') return null;
+    // Model and format from the environment, as the engine reads them: they
+    // describe what the install asks for, not which machine it asks.
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_VOICE_KEY') ?: '')]
+         + xeric_voice_settings(['model'  => (string)(getenv('XERIC_VOICE_MODEL') ?: ''),
+                                 'format' => (string)(getenv('XERIC_VOICE_FORMAT') ?: '')]);
+});
+
+// Lines spoken, on the same ledger: counted as clips, and the characters
+// beside them, because characters are what a hosted voice bills by.
+xeric_voice_meter(function (array $u, string $where = ''): void {
+    $key = xeric_web_meter_key($where);
+    try {
+        xeric_web_session_edit(function (array &$s) use ($u, $key): void {
+            $by  = (array)($s['tokens']['by'] ?? []);
+            $row = (array)($by[$key] ?? []);
+            $row['clips'] = (int)($row['clips'] ?? 0) + max(1, (int)($u['clips'] ?? 1));
+            $row['chars'] = (int)($row['chars'] ?? 0) + max(0, (int)($u['chars'] ?? 0));
+            $row['calls'] = (int)($row['calls'] ?? 0) + 1;
+            $by[$key] = $row;
+            $s['tokens'] = ['by' => $by] + (array)($s['tokens'] ?? []);
+        });
+    } catch (Throwable $e) {
+        // No session to write to. The line was still spoken.
+    }
+});
+
 /**
  * Where this visitor's notifications go, and what they are for.
  *
@@ -1212,7 +1276,7 @@ function xeric_web_meter_key(string $base): string
 function xeric_web_tokens(?string $sid = null, string $at = ''): array
 {
     $by  = (array)(xeric_web_session_read($sid)['tokens']['by'] ?? []);
-    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0, 'scenes' => 0];
+    $out = ['in' => 0, 'out' => 0, 'calls' => 0, 'images' => 0, 'scenes' => 0, 'clips' => 0, 'chars' => 0];
 
     $want = $at === '' ? null : xeric_web_meter_key($at);
     foreach ($by as $key => $row) {
@@ -1222,6 +1286,8 @@ function xeric_web_tokens(?string $sid = null, string $at = ''): array
         $out['calls']  += (int)($row['calls'] ?? 0);
         $out['images'] += (int)($row['images'] ?? 0);
         $out['scenes'] += (int)($row['scenes'] ?? 0);
+        $out['clips']  += (int)($row['clips'] ?? 0);
+        $out['chars']  += (int)($row['chars'] ?? 0);
     }
     return $out;
 }

@@ -10,6 +10,8 @@
  *     POST {act:drop, i}          forget one
  *     GET  model.php?a=sceneup    is the scene machine (or the still-drawing image machine) answering
  *     POST {act:scene, base, kind, auth}   the scene machine; sceneoff = no rooms; scenedefault = the fallback
+ *     GET  model.php?a=voiceup    is the voice machine answering
+ *     POST {act:voice, base}      the voice machine, and its voice list harvested; voiceoff = none
  *
  * A machine is an address and nothing else. Its kind is read off the host —
  * api.anthropic.com speaks Anthropic, anything else public speaks the OpenAI
@@ -62,7 +64,7 @@ if ((string)($_GET['a'] ?? '') === 'probe') {
 
     $base = (string)$list[$i]['base'];
     $kind = xeric_model_kind($base);
-    $key  = function_exists('xeric_llm_default_key') ? xeric_llm_default_key() : '';
+    $key  = xeric_model_probe_key($base);   // the operator's key, to the operator's box only
 
     // A hosted API usually cannot be probed honestly: the key is never stored,
     // so a keyless request to a working OpenAI endpoint is a 401 — which reads
@@ -137,6 +139,14 @@ if (in_array('sceneup', [(string)($_GET['a'] ?? ''), (string)($_GET['act'] ?? ''
     $ep = xeric_scene_endpoint();
     xeric_web_json(['up' => $ep !== null && xeric_scene_up($ep, 4),
                     'kind' => $ep === null ? null : (isset($ep['image_kind']) ? 'still' : (string)($ep['kind'] ?? ''))]);
+}
+
+// -- is the voice machine answering ------------------------------------------
+// The configured one only, like every lamp here. No fallback to report: a
+// picture machine cannot speak (engine/voice.php), so none is none.
+if (in_array('voiceup', [(string)($_GET['a'] ?? ''), (string)($_GET['act'] ?? '')], true)) {
+    $ep = xeric_voice_endpoint();
+    xeric_web_json(['up' => $ep !== null && xeric_voice_up($ep, 4)]);
 }
 
 // -- what else is on this machine --------------------------------------------
@@ -269,6 +279,39 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
         // Explicitly none — and that includes the still the image machine
         // would otherwise draw. Somebody who said no rooms meant no rooms.
         xeric_web_session_edit(function (array &$s): void { $s['scene'] = ['off' => true]; }, $sid);
+        header('Location: model.php');
+        exit;
+    }
+    // -- the voice machine ---------------------------------------------------
+    // The scene machine's discipline, for speech: one address in the session,
+    // held to the same private-address boundary, read at call time by the
+    // engine's resolver (boot.php); the KEY never stored — XERIC_VOICE_KEY,
+    // environment only. Connect is also the harvest, as it is for the image
+    // machine's LoRAs: the machine's own voice ids, kept so the deal is made
+    // from what it actually has (xeric_voice_identity) without asking it on
+    // every line. Ids only — a voice's labels are the machine's to say again.
+    if ($act === 'voice') {
+        $b = trim((string)($_POST['base'] ?? ''));
+        if ($b !== '' && !preg_match('#^https?://#i', $b)) $b = 'http://' . $b;
+        $b    = rtrim($b, '/');
+        $host = strtolower((string)(parse_url($b, PHP_URL_HOST) ?? ''));
+        $ok   = $b !== '' && filter_var($b, FILTER_VALIDATE_URL) !== false && $host !== '';
+        if ($ok && !xeric_web_host_open($host) && !$edit) $ok = false;
+        if ($ok) {
+            $ids = xeric_play_voice_ids(['base' => $b, 'key' => (string)(getenv('XERIC_VOICE_KEY') ?: '')]);
+            xeric_web_session_edit(function (array &$s) use ($b, $ids): void {
+                $s['voice'] = ['base' => $b, 'voices' => $ids];
+            }, $sid);
+            header('Location: model.php');
+            exit;
+        }
+        header('Location: model.php?no=' . rawurlencode(xeric_model_no($b, $host, $edit)));
+        exit;
+    }
+    if ($act === 'voiceoff') {
+        // Explicitly none: even an environment XERIC_VOICE_BASE is ignored for
+        // this browser, and every bubble goes back to being read.
+        xeric_web_session_edit(function (array &$s): void { $s['voice'] = ['off' => true]; }, $sid);
         header('Location: model.php');
         exit;
     }
@@ -909,6 +952,54 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
     </ul>
   </section>
 
+  <!-- VOICES. The cast out loud: a speaker on every line a character says,
+       on whatever text-to-speech machine is set here. Always shown, like the
+       scene card, because it is set by typing an address. -->
+  <?php
+    $vSess = (array)(xeric_web_session_read($sid)['voice'] ?? []);
+    $vEp   = xeric_voice_endpoint();
+    $vIds  = array_values(array_filter((array)($vSess['voices'] ?? []), 'is_string'));
+  ?>
+  <section class="found" id="voices">
+    <h2 class="fh">Voice machine</h2>
+    <p class="mnote">What reads the cast&rsquo;s lines aloud, from the speaker beside each one on
+      the play screen. Anything that answers <code>{address}/v1/audio/speech</code> works.
+      Each person&rsquo;s voice is dealt by seed from this machine&rsquo;s own list, the same
+      voice every time, or named per character in the template (<code>speech.voice</code>).</p>
+    <ul class="mlist">
+    <?php if ($vEp !== null): ?>
+      <li><div class="opt fopt">
+        <span class="thead"><span class="t"><?= h(preg_replace('#^https?://#', '', (string)($vEp['base'] ?? 'a test machine'))) ?></span></span>
+        <p class="whois"><span class="wname">the voice machine</span>
+          <span class="wmodel" id="voicelamp">checking…</span></p>
+        <p class="whois"><?= $vIds === [] ? 'No voice list from this machine: the six voices every compatible machine knows are dealt instead.'
+          : h(count($vIds) . ' voice' . (count($vIds) === 1 ? '' : 's') . ' found') ?></p>
+        <?php if (xeric_voice_costly($vEp)): ?>
+        <p class="whois"><strong>This address is not on this computer: every line spoken bills an API
+          key</strong> (XERIC_VOICE_KEY, environment only — keys are never stored here). The meter
+          counts every one, but the meter is a receipt, not a limit — set spending caps with your
+          provider.</p>
+        <?php else: ?>
+        <p class="whois">Local: lines cost your own electricity and GPU time, nothing metered.
+          Every line is still counted on the meter, and a line is only ever spoken once.</p>
+        <?php endif; ?>
+        <div class="mact"><form method="post" action="model.php">
+          <input type="hidden" name="act" value="voiceoff">
+          <button type="submit" class="btn">Disconnect</button>
+        </form></div>
+      </div></li>
+    <?php endif; ?>
+      <li><form method="post" action="model.php" class="opt fopt">
+        <input type="hidden" name="act" value="voice">
+        <span class="thead"><span class="t">Connect a voice machine</span></span>
+        <p class="whois"><input type="text" name="base" inputmode="url" autocapitalize="off"
+          autocorrect="off" spellcheck="false" placeholder="host:port" aria-label="voice machine address"></p>
+        <p class="whois"><span class="wmodel">The key comes from XERIC_VOICE_KEY and is never stored here.</span></p>
+        <div class="mact"><button type="submit" class="btn join">Connect</button></div>
+      </form></li>
+    </ul>
+  </section>
+
   <p class="corner"><?= xeric_web_meter_html() ?> · <a href="play.php">back</a></p>
 </div>
 
@@ -1047,6 +1138,18 @@ echo '<style>' . xeric_play_css() . xeric_play_shelf_css() . '</style>';
           : 'not answering right now — the room is still described in words';
       })
       .catch(function () { scenelamp.textContent = 'not answering right now'; });
+  }
+
+  // The voice machine's lamp: the same question, after the page is up.
+  var voicelamp = document.getElementById('voicelamp');
+  if (voicelamp) {
+    fetch('model.php?a=voiceup').then(function (r) { return r.json(); })
+      .then(function (d) {
+        voicelamp.textContent = d && d.up
+          ? 'answering — every line a character says has a speaker beside it'
+          : 'not answering right now — the lines are still there to read';
+      })
+      .catch(function () { voicelamp.textContent = 'not answering right now'; });
   }
 
   function paintFound(sectionId, listId, rows, addable) {

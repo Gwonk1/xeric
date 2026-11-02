@@ -358,6 +358,36 @@ ok('it renders through the same context, made xr-compatible, in the local space'
 ok('and the people open their threads the way the cast chips do',
     str_contains($pp, "if (t.classList.contains('looktag')) { openThread(t.dataset.h); return; }"));
 
+echo "\n# the stale view walks back to one it can show\n";
+
+$db->exec('DELETE FROM scene_jobs');
+file_put_contents($scenes . '/scene-old-still.png', $png);
+$old1 = done_row($db, 'bluebird', str_repeat('4', 40), 'image', 'scene-old-still.png', null, 'image/png');
+$new1 = done_row($db, 'bluebird', str_repeat('5', 40), 'image', 'scene-gone.png', null, 'image/png');
+$db->prepare('UPDATE scene_jobs SET done_at = ? WHERE id = ?')->execute([100, $old1]);
+$db->prepare('UPDATE scene_jobs SET done_at = ? WHERE id = ?')->execute([200, $new1]);
+$h = xeric_play_look_html($T, $db, null, $slug, true);
+ok('a newest view whose file has gone does not hide an older still',
+    str_contains($h, 'f=' . str_repeat('4', 40)) && str_contains($h, 'from an earlier hour') && !str_contains($h, 'lookprose'), $h);
+file_put_contents($scenes . '/scene-new.splat', "splat\x00");
+$db->prepare("UPDATE scene_jobs SET kind = 'splat', file = 'scene-new.splat', mime = 'application/octet-stream' WHERE id = ?")
+   ->execute([$new1]);
+$h = xeric_play_look_html($T, $db, null, $slug, true);
+ok('nor does a newer splat the sidebar cannot show inline', str_contains($h, '<img class="lookimg" src="scene.php?w='
+    . $slug . '&amp;k=bluebird&amp;f=' . str_repeat('4', 40)) && !str_contains($h, 'download the room'), $h);
+$db->exec("DELETE FROM scene_jobs WHERE kind = 'image'");
+ok('and with nothing else to show, the splat is still offered as a download',
+    str_contains(xeric_play_look_html($T, $db, null, $slug, true), 'download the room (.splat)'));
+$db->exec('DELETE FROM scene_jobs');
+$keep = done_row($db, 'bluebird', str_repeat('6', 40), 'image', 'scene-old-still.png', null, 'image/png');
+$db->prepare('UPDATE scene_jobs SET done_at = 1 WHERE id = ?')->execute([$keep]);
+for ($i = 0; $i < 5; $i++) {
+    $g = done_row($db, 'bluebird', str_repeat(dechex(7 + $i), 40), 'image', 'scene-gone-' . $i . '.png', null, 'image/png');
+    $db->prepare('UPDATE scene_jobs SET done_at = ? WHERE id = ?')->execute([10 + $i, $g]);
+}
+ok('the walk is five deep and no deeper', !str_contains(xeric_play_look_html($T, $db, null, $slug, true), '<img class="lookimg"'));
+$db->exec('DELETE FROM scene_jobs');
+
 echo "\n# the fork\n";
 
 done_row($db, 'mill', str_repeat('c', 40), 'viewer', '', 'https://rooms.example/r/2', 'text/html');

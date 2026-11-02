@@ -622,6 +622,12 @@ function xeric_session_fork_clear(string $path): bool
         // has no file, survives; anything still in flight was the owner's ask
         // on the owner's machine and goes too.
         "DELETE FROM scene_jobs WHERE NOT (status = 'done' AND kind = 'viewer')",
+        // The owner's lines, read aloud: their messages went above, and their
+        // clips live beside the OWNER'S db. A row left behind would only ever
+        // miss (the fork's clips dir is its own), but it names a message the
+        // stranger never saw, and that is reason enough. Absent on a world no
+        // one has voiced yet, which the loop below shrugs off.
+        'DELETE FROM voice_clips',
     ];
 
     try {
