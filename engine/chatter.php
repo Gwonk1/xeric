@@ -58,7 +58,7 @@
  * their town, that the person may be standing in it, and that what is said in
  * it stays said. Which is what makes badmouthing somebody mean anything.
  *
- * Zero dependencies beyond the engine. PHP 8.2+.
+ * Zero dependencies beyond the engine. PHP 8.1+.
  */
 
 declare(strict_types=1);

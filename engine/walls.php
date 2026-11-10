@@ -8,7 +8,7 @@
  * what. If a fact is audience-restricted, a wall in the template says so and
  * the renderer asks before it writes a word.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 // world.php requires this file back, and require_once makes the cycle a no-op

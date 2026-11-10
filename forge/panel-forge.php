@@ -30,7 +30,7 @@
  * the prompt. The forge picks the room from the problem — a redundancy plan
  * gets a conference table, a marriage gets a kitchen.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

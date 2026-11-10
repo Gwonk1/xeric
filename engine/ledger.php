@@ -29,7 +29,7 @@
  * point of the casserole ledger is that Walt is winning it and would never
  * say so.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

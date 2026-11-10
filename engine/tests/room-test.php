@@ -1092,6 +1092,45 @@ ok('close: a second close of the same seal cannot land it twice',
     str_contains(err(fn() => xeric_room_land_live($T, $dbX, $liveX + ['conv' => $convX, 'ended' => 'x', 'spoke' => ['ruth' => 1]], null)),
         'already closed') && xeric_events_count($dbX) === 1);
 
+// -- a secret said at the table is said to everybody at it --------------------
+// The chat harvest was the only reader of a repeated confidence, so the place
+// it costs the most — out loud, in company — was the place nothing heard it.
+require_once dirname(__DIR__) . '/confide.php';
+$dbS = fresh_db('live-secret'); $cS = [];
+$epS = stub_room($cS, [], null, fn(int $n) => 'Plain line ' . $n . '.');
+$keptS = fn(array $more) => json_encode($more + ['p' => XERIC_PLAYER_FIRST, 'not' => [], 'at' => (int)$SUN['epoch'] - 86400, 'state' => 'kept']);
+xeric_arc_set($dbS, 'dot', 'confided.1', $keptS(['what' => 'the till is short', 'quote' => 'Not a word, but the till is short.']));
+xeric_arc_set($dbS, 'dot', 'confided.2', $keptS(['what' => 'the lease runs out', 'quote' => 'Keep it from Harlan: the lease runs out.', 'not' => ['harlan']]));
+xeric_arc_set($dbS, 'ruth', 'confided.1', $keptS(['what' => 'the organ fund is gone', 'quote' => 'Between us, the organ fund is gone.']));
+xeric_arc_set($dbS, 'harlan', 'confided.1', $keptS(['what' => 'the truck was repossessed', 'quote' => 'Nobody knows the truck was repossessed.']));
+xeric_arc_set($dbS, 'harlan', 'confided.2', $keptS(['what' => 'the hymns ran short', 'quote' => 'Keep it quiet: the hymns ran short.']));
+$trustS = xeric_arc_int($dbS, 'dot', 'trust', 0);
+live_open($T, $dbS, $SUN, 'first_lutheran');
+live_say($T, $dbS, $SUN, 'Did you all hear the till is short at the diner? And the lease runs out in spring.');
+live_say($T, $dbS, $SUN, 'Ruth, you said the organ fund is gone, did you not?');
+live_say($T, $dbS, $SUN, 'I do like the hymns here.');
+live_say($T, $dbS, $SUN, 'We ran short of chairs again, though.');
+live_turn($T, $dbS, $SUN, $epS, 3, ['seed' => 's']);
+$convS = xeric_room_seal($dbS, 'stepped back', $SUN);
+ok('secret: armed in this world, and nothing is read before the close',
+    xeric_confide_armed($T) && xeric_confide_told_player($dbS, 'dot')[0]['state'] === 'kept');
+xeric_room_land_live($T, $dbS, xeric_room_seals($dbS)[$convS], $epS);
+$rowS = fn(string $h, int $i) => xeric_confide_told_player($dbS, $h)[$i];
+ok('secret: repeated to the room, a confidence is broken and the hearer is somebody who was there',
+    $rowS('dot', 0)['state'] === 'broken' && in_array($rowS('dot', 0)['heard_by'] ?? '', ['pastor_dale', 'ruth', 'janelle'], true),
+    json_encode($rowS('dot', 0)));
+ok('secret: and the teller\'s trust takes it, by the earned path', xeric_arc_int($dbS, 'dot', 'trust', 0) < $trustS,
+    xeric_arc_int($dbS, 'dot', 'trust', 0) . ' vs ' . $trustS);
+ok('secret: one meant to be kept from somebody who was not in the room is still kept',
+    $rowS('dot', 1)['state'] === 'kept', json_encode($rowS('dot', 1)));
+ok('secret: said back in front of the others, the teller in the room hears it go',
+    $rowS('ruth', 0)['state'] === 'broken' && ($rowS('ruth', 0)['heard_by'] ?? 'ruth') !== 'ruth', json_encode($rowS('ruth', 0)));
+ok('secret: and one nobody mentioned is untouched', $rowS('harlan', 0)['state'] === 'kept');
+ok('secret: words scattered across an hour of talk are not a secret told', $rowS('harlan', 1)['state'] === 'kept',
+    json_encode($rowS('harlan', 1)));
+ok('secret: the teller remembers who it was said to',
+    (int)$dbS->query("SELECT COUNT(*) FROM memories WHERE handle = 'dot' AND source = 'construct' AND text LIKE 'Walt told %'")->fetchColumn() === 1);
+
 // A promise the player made across the table is the v1 row: of nobody, which
 // means the user, held by whoever it was said to.
 $dbE = fresh_db('live-promise'); $cE = [];

@@ -32,7 +32,7 @@
  *     prompt as history, so it passes the same age floor a reply does — see the
  *     drops in xeric_seed_apply(), which are drops and not refusals on purpose.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

@@ -27,7 +27,7 @@
  * table closes that gap exactly: the game reports the win as a FACT, not as
  * words to be matched.
  *
- * Zero dependencies. Deterministic given a seed. PHP 8.2+.
+ * Zero dependencies. Deterministic given a seed. PHP 8.1+.
  */
 
 declare(strict_types=1);

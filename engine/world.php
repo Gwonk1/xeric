@@ -23,7 +23,7 @@
  *     time() deep in a renderer would make half the world live in the present
  *     and the other half in the visitor's fast-forward.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/walls.php';

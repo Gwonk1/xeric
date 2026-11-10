@@ -30,7 +30,7 @@
  * a different climate edits its locale line, which is the field that SHOULD
  * mean that.
  *
- * PHP 8.2+. Zero dependencies beyond world.php's day names.
+ * PHP 8.1+. Zero dependencies beyond world.php's day names.
  */
 
 declare(strict_types=1);

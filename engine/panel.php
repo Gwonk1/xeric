@@ -40,7 +40,7 @@
  * ANY proposal cleared both of them, across the whole session. A pair that was
  * never jointly cleared is where the problem actually lives.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

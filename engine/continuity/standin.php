@@ -23,7 +23,7 @@
  *            "You hold this back:" line into what it says. That is what gives
  *            the wall probes something that genuinely tries to leak.
  *
- * Zero dependencies beyond the engine. PHP 8.2+.
+ * Zero dependencies beyond the engine. PHP 8.1+.
  */
 
 declare(strict_types=1);

@@ -23,7 +23,7 @@
  *  2. NO NEGATIVE SPACE. When a wall removes something, its header goes too.
  *     A viewer must never be able to infer the shape of what was taken.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/../walls.php';

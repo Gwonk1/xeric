@@ -59,7 +59,7 @@
  *     prompt — while the raw crumbs keep landing unread, so the week it sat
  *     out is still on the record the day it is switched back on.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/state.php';

@@ -24,7 +24,7 @@
  *     The demo runs the world on a shifted clock; rows written by a sweep must
  *     carry the WORLD's epoch, not the server's.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 // ---------------------------------------------------------------------------

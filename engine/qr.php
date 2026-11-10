@@ -20,7 +20,7 @@
  * reference encoder, module for module, which is the only test that means
  * anything here — a QR that is almost right is a QR that does not scan.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

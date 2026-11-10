@@ -217,18 +217,12 @@ time of day ("Wednesday morning") now carries the hour in scenes too.
 
 ## Still open
 
-- **A bare day is due at its midnight.** `xeric_promise_when("Thursday")`
-  resolves to 00:00 Thursday, so with the four-hour grace "I'll be there
-  Thursday" misses at four in the morning, before the day it named has begun,
-  and its keep window is those four hours. A promise with a time word
-  ("Friday morning") is unaffected. Found while adding `kept`; not changed
-  here because the miss tests and the benchmark's scenario both pin the
-  current resolution.
-
-- **A drop-in ignores the workplace's hours.** The sweep's drop-in group in
-  `engine/sweeps.php` checks walls and not `xeric_sweep_open_places()`, so a
-  visitor can be seated with Theo in the Bluebird's after-close booth. An
-  engine finding, recorded in the fixture's `bluebird_hours` note.
+A bare day used to be due at its midnight, so "I'll be there Thursday" missed
+at four in the morning, before Thursday had begun. It is due at 20:00 now
+(`XERIC_EXPECT_BARE_HOUR`): the grace runs out at midnight, and being there at
+any hour of the day keeps it. And the sweep's drop-in group reads
+`xeric_sweep_open_places()`, so nobody drops in on a workplace after it has
+shut. Both were filed here; both are closed.
 
 - **Theo can be dealt into the Thursday game.** `xeric_table_barred()` bars
   by walls, and the wall that hides the pot is the child role's; Theo is
@@ -238,7 +232,9 @@ time of day ("Wednesday morning") now carries the hour in scenes too.
 - **The teller learns at once.** A broken confidence costs the teller's trust
   the moment the player repeats it; nothing routes the finding-out through the
   ripple (the hearer and teller sharing a room). That would be truer.
-- **Repeating it in a room** (room.php) is not read; only the chat harvest is.
+- **Repeating it in a room** is read when the room closes, one line at a time
+  (`xeric_room_land_live`), not as it is said; a duet or a scene among the
+  cast is not read at all.
 - **One person at the centre for news, worry, ritual, milestone.** They read
   the thread and the body, which carry no player id yet (M4).
 - **The sibling names are not in `XERIC_SYSTEMS`**, so the forge never

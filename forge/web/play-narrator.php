@@ -236,8 +236,7 @@ function xeric_play_narrator_pane_html(array $w): array
 /** Where one world-hour's audit is kept. One file per database, overwritten. */
 function xeric_play_narrator_audit_path(array $w): string
 {
-    return xeric_web_dir((string)xeric_web_config()['data_dir'] . '/audits')
-        . '/' . sha1((string)($w['db_path'] ?? $w['slug'])) . '.json';
+    return xeric_web_audit_path((string)($w['db_path'] ?? $w['slug']));
 }
 
 /**

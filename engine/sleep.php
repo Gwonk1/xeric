@@ -63,7 +63,7 @@
  * sleeps never grows them, and a prompt build in a world without them reads
  * exactly what it read before this file existed.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

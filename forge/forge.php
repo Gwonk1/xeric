@@ -43,7 +43,7 @@
  *    are assembled here, in code, where they cannot be got wrong. A small model
  *    is asked what a place smells like, never what a valid week[] block is.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 declare(strict_types=1);

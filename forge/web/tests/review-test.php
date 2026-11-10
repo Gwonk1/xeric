@@ -623,6 +623,114 @@ $forkDb = null;
 ok('fork: a diary that survived the clear is a reason to refuse the handover',
     xeric_session_fork_is_clear($forkPath) === false);
 
+// ---------------------------------------------------------------------------
+// AND WHAT THE CAST HELD AGAINST THE OWNER, AND WHAT THEY SLEPT ON.
+//
+// The scrub predates the constructs, the night's consolidation, the ledger and
+// the narrator's requests, so a stranger's copy opened with the owner's
+// promise in a character's prompt word for word, the facts a model distilled
+// from the owner's conversations, and a day's budget somebody else had spent.
+// ---------------------------------------------------------------------------
+
+echo "\n# a fork forgets what the cast held for or against the owner\n";
+
+require_once dirname(__DIR__, 3) . '/engine/sleep.php';
+require_once dirname(__DIR__, 3) . '/engine/director.php';
+require_once dirname(__DIR__, 3) . '/engine/stream.php';
+
+$forkPath = $tmp . '/fork-standing.db';
+$forkDb = xeric_state_open($forkPath);
+xeric_state_seed($forkDb, $fixT);
+xeric_sleep_migrate($forkDb);
+xeric_director_ensure($forkDb);
+$J = fn(array $a) => json_encode($a, JSON_UNESCAPED_UNICODE);
+// The owner's promise to Dot, its residue, and everything that grew from it.
+xeric_arc_set($forkDb, 'dot', 'expect.1', $J(['what' => 'come by Friday', 'quote' => "I'll come by Friday at noon.", 'due' => 5000, 'state' => 'missed']));
+xeric_arc_set($forkDb, 'dot', 'anticipate.expect.1', $J(['expect' => 'expect.1', 'what' => 'come by Friday', 'due' => 5000, 'state' => 'let_down']));
+xeric_arc_set($forkDb, 'dot', 'grudge.1', $J(['of' => '', 'what' => 'come by Friday', 'from' => 'expect.1', 'state' => 'cold']));
+xeric_arc_set($forkDb, 'dot', 'confided.1', $J(['what' => 'the till is short', 'quote' => 'Not a word to Ruth.', 'p' => 1, 'state' => 'kept']));
+xeric_arc_set($forkDb, 'dot', 'ritual.bluebird', $J(['place' => 'bluebird', 'state' => 'held']));
+xeric_arc_set($forkDb, 'dot', 'milestone.month', $J(['what' => 'a month of you and Dot', 'state' => 'due']));
+xeric_arc_set($forkDb, 'dot', 'worry', $J(['state' => 'sore', 'since' => 4000]));
+xeric_arc_set($forkDb, 'dot', 'news', $J(['event' => 3, 'title' => 'a hinge fixed badly', 'state' => 'told']));
+xeric_arc_set($forkDb, '', 'ritual.visits', $J([['bluebird', 4000]]));
+xeric_memory_add($forkDb, 'dot', 'Walt said "I\'ll come by Friday at noon." and did not come.', 'construct', ['expect' => 'expect.1'], 5000);
+xeric_memory_add($forkDb, 'dot', 'Walt did not come into the Bluebird on Friday, the way Walt usually does.', 'construct', ['ritual' => 'ritual.bluebird'], 5000);
+// The town's own: Ruth's promise to Dale, the grudge between them, what went around.
+xeric_arc_set($forkDb, 'pastor_dale', 'expect.1', $J(['of' => 'ruth', 'what' => 'bring the urn', 'quote' => "I'll bring the urn Sunday.", 'due' => 6000, 'state' => 'hardened']));
+xeric_arc_set($forkDb, 'pastor_dale', 'grudge.1', $J(['of' => 'ruth', 'what' => 'the urn', 'from' => 'expect.1', 'state' => 'cold']));
+xeric_arc_set($forkDb, 'ruth', 'worry', '3');                      // a template's own dial of that name
+xeric_memory_add($forkDb, 'pastor_dale', 'Ruth Amberg said "I\'ll bring the urn Sunday." and did not come.', 'construct', ['expect' => 'expect.1', 'of' => 'ruth'], 6000);
+xeric_memory_add($forkDb, 'pastor_dale', 'It sat with Pastor Dale that Ruth Amberg never said anything about bring the urn.', 'construct', ['expect' => 'expect.1'], 6100);
+xeric_memory_add($forkDb, 'ruth', 'Ruth Amberg told Pastor Dale "I\'ll bring the urn Sunday." and did not make it.', 'construct', ['expect' => 'expect.1', 'to' => 'pastor_dale'], 6000);
+xeric_memory_add($forkDb, 'janelle', 'It went around for days that Dot Vance waited at the Bluebird Diner.', 'construct', ['gossip' => 'gossip.1', 'event' => 3], 7000);
+$trustWas = xeric_arc_get($forkDb, 'dot', 'trust');
+// What they slept on, the owner's errands, and the owner's bills.
+$mem = xeric_memory_add($forkDb, 'dot', 'The mill whistle went at noon.', 'event', [], 1000);
+$forkDb->exec("INSERT INTO sleep_facts (handle, text, since, night, created_at) VALUES ('dot', 'Walt is behind on the rent and told nobody else.', 1000, '2026-07-30', 1)");
+$forkDb->exec("INSERT INTO sleep_links (memory_id, fact_id, handle) VALUES ($mem, 1, 'dot')");
+$forkDb->exec("INSERT INTO sleep_offers (memory_id, handle, times, offered_at) VALUES ($mem, 'dot', 1, '2026-07-30')");
+$forkDb->exec("INSERT INTO spend (day, kind, costly, count, created, updated) VALUES ('2026-07-30', 'tokens', 1, 90000, 1, 1)");
+$forkDb->exec("INSERT INTO reminders (handle, text, due, created_at) VALUES ('dot', 'call the bank', 99, 1)");
+foreach (['owner', 'narrator:1', 'player', 'apart'] as $src) {
+    $forkDb->exec("INSERT INTO director_stagings (who, place, epoch_from, epoch_to, why, source, made, created_at)"
+        . " VALUES ('[\"dot\",\"ruth\"]', 'bluebird', 8000, 9000, 'a reason', '$src', 7000, 1)");
+}
+xeric_world_state_set($forkDb, 'intent:1', $J(['n' => 1, 'text' => 'get Dot and Ruth talking about the till', 'state' => 'live']));
+xeric_world_state_set($forkDb, 'intent_seq', 1);
+xeric_world_state_set($forkDb, 'budget.stopped', $J(['day' => '2026-07-30', 'reason' => 'spent']));
+xeric_world_state_set($forkDb, 'scene.stream.machines', $J(['m1' => 1]));
+$forkDb = null;
+
+ok('fork: the clear passes on a world the owner lived in', xeric_session_fork_clear($forkPath));
+$forkDb = new PDO('sqlite:' . $forkPath);
+$arcsLeft = [];
+foreach ($forkDb->query('SELECT handle, key FROM arcs')->fetchAll(PDO::FETCH_NUM) as [$h, $k]) $arcsLeft[] = "$h/$k";
+ok('fork: the promise the owner made is gone, with what grew from it',
+    array_intersect($arcsLeft, ['dot/expect.1', 'dot/anticipate.expect.1', 'dot/grudge.1', 'dot/confided.1']) === [],
+    json_encode($arcsLeft));
+ok('fork: and the habit, the milestone, the worry and the told-you news',
+    array_intersect($arcsLeft, ['dot/ritual.bluebird', 'dot/milestone.month', 'dot/worry', 'dot/news', '/ritual.visits']) === [],
+    json_encode($arcsLeft));
+ok('fork: what stands between two of the cast is the town\'s past and stays',
+    in_array('pastor_dale/expect.1', $arcsLeft, true) && in_array('pastor_dale/grudge.1', $arcsLeft, true));
+ok('fork: a template\'s own dial that happens to be called worry is not a construct row',
+    in_array('ruth/worry', $arcsLeft, true));
+ok('fork: trust is left where it was (written down as open, not decided here)',
+    xeric_arc_get($forkDb, 'dot', 'trust') === $trustWas);
+$cm = $forkDb->query("SELECT text FROM memories WHERE source = 'construct' ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+ok('fork: nobody remembers the owner\'s sentence, or the Friday they did not come in',
+    !preg_grep('/Walt/', $cm), json_encode($cm));
+ok('fork: the cast-to-cast residue stays, on both sides, with the town\'s talk',
+    count($cm) === 4 && count(preg_grep('/urn/', $cm)) === 3 && count(preg_grep('/went around/', $cm)) === 1, json_encode($cm));
+$count = fn(string $q) => (int)$forkDb->query($q)->fetchColumn();
+ok('fork: what the cast slept on is gone, links and offers with it',
+    $count('SELECT COUNT(*) FROM sleep_facts') + $count('SELECT COUNT(*) FROM sleep_links') + $count('SELECT COUNT(*) FROM sleep_offers') === 0);
+ok('fork: the memory a fact had folded away is back in the open, not lost',
+    $count("SELECT COUNT(*) FROM memories WHERE id = $mem") === 1);
+ok('fork: the new player starts the day with nothing spent',
+    $count('SELECT COUNT(*) FROM spend') === 0 && $count("SELECT COUNT(*) FROM world_state WHERE key = 'budget.stopped'") === 0);
+ok('fork: the owner\'s reminders and narrator requests do not come along',
+    $count('SELECT COUNT(*) FROM reminders') === 0 && $count("SELECT COUNT(*) FROM world_state WHERE key LIKE 'intent:%'") === 0
+    && $count("SELECT COUNT(*) FROM world_state WHERE key = 'scene.stream.machines'") === 0);
+ok('fork: the request counter stays, so a number is never issued twice',
+    $count("SELECT COUNT(*) FROM world_state WHERE key = 'intent_seq'") === 1);
+ok('fork: only the Director\'s own cast-to-cast staging is left on the timeline',
+    $forkDb->query('SELECT source FROM director_stagings')->fetchAll(PDO::FETCH_COLUMN) === ['apart']);
+// The read-back refuses each of them rather than trusting the delete.
+$forkDb->exec("INSERT INTO arcs (handle, key, value, updated_at) VALUES ('dot', 'expect.2', '{\"what\":\"x\",\"quote\":\"I will.\",\"due\":1,\"state\":\"open\"}', 1)");
+$forkDb = null;
+ok('fork: a promise of the owner\'s that survived is a reason to refuse the handover',
+    xeric_session_fork_is_clear($forkPath) === false);
+$forkDb = new PDO('sqlite:' . $forkPath);
+$forkDb->exec("DELETE FROM arcs WHERE handle = 'dot' AND key = 'expect.2'");
+$forkDb = null;
+ok('fork: and with it gone the copy reads clear again', xeric_session_fork_is_clear($forkPath) === true);
+$forkDb = new PDO('sqlite:' . $forkPath);
+$forkDb->exec("INSERT INTO sleep_facts (handle, text, since, night, created_at) VALUES ('dot', 'left over', 1, '2026-07-30', 1)");
+$forkDb = null;
+ok('fork: and so is a consolidated fact', xeric_session_fork_is_clear($forkPath) === false);
+
 rmtree($tmp);
 
 echo "\n" . ($FAILED === 0 ? "all review tests passed\n" : "$FAILED review test(s) FAILED\n");

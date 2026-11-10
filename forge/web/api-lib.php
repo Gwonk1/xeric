@@ -1311,11 +1311,12 @@ function xeric_api_route(string $method, array $seg, array $get, array $server, 
         if ($c === null) return xeric_api_no(404, 'no_character', 'Nobody in this xeric answers to that name.');
         if ($name === 'read') return xeric_api_yes(xeric_api_read($w, $handle));
         $since = max(0, (int)($get['since'] ?? 0));
-        // Reading a thread puts its unread dot out, exactly as play.php's
-        // a=thread does (xeric_play_thread). The learn signal — "this person,
-        // not that one" — is NOT recorded here: that is a statement about a
-        // screen somebody is looking at, and it is `POST threads/{h}/read`.
-        $th   = xeric_play_thread($t, $db, $handle, $since > 0 ? 500 : 60);
+        // A GET CHANGES NOTHING. It used to put the unread dot out, as
+        // play.php's a=thread does, which made a poll, a retry or a cache
+        // warm-up a write. Both things a person looking at a screen says —
+        // the dot out, and the learn signal ("this person, not that one") —
+        // are one explicit act: `POST threads/{h}/read`.
+        $th   = xeric_play_thread($t, $db, $handle, $since > 0 ? 500 : 60, false);
         $gone = xeric_deaths($db)[$handle] ?? null;
         return xeric_api_yes(['world' => $slug, 'handle' => $handle,
             'name' => (string)($c['display_name'] ?? $handle),

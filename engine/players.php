@@ -42,7 +42,7 @@
  * WORLD, and two people standing in the same world at the same hour had
  * better agree about what time it is.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

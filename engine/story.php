@@ -32,7 +32,7 @@
  *     the template, because the system message is assembled from it and a ticking
  *     field would drag a whole prompt out of cache every turn.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

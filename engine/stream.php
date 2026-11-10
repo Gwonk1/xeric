@@ -52,7 +52,7 @@
  * more than thirty seconds or stops beating; or the world's stream seconds
  * for today are spent. Every end has a reason, and the page says it.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

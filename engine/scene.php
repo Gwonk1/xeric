@@ -77,7 +77,7 @@
  * template asked in so many words. A glance is consent to draw what you are
  * looking at; a heartbeat is consent to nothing.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

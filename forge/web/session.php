@@ -627,6 +627,16 @@ function xeric_session_vacuum_missing(Throwable $e): bool
  *    who answers fast and likes short replies, having never met them.
  *  • the sweep's decision trail and the proactive ledger, which are notes about
  *    evenings the new player was not there for.
+ *  • what the cast holds FOR OR AGAINST the last player (see
+ *    xeric_session_fork_standing): the promises they made, word for word, the
+ *    secrets they were told, the grudges, the habits, the worry.
+ *  • what the cast slept on. A night's consolidation (engine/sleep.php) boils
+ *    a person's memories — the harvested ones included — down to facts that
+ *    ride every prompt as WHAT YOU KNOW. Deleting the memory and keeping the
+ *    fact made out of it is not deleting it.
+ *  • the owner's own errands and bills: reminders they asked for, the day's
+ *    ledger of what their world spent, the narrator requests they typed and
+ *    the stagings made from them, a stream running on their machine.
  *
  * Each statement stands alone: a world old enough to be missing one of these
  * tables must not stop the rest of the clearing from happening. And the result
@@ -643,6 +653,95 @@ function xeric_session_vacuum_missing(Throwable $e): bool
  * (A dot is not a LIKE wildcard, so 'room.%' is exactly "room." and anything.)
  */
 const XERIC_FORK_LIVED_MEMORIES = "source IN ('auto', 'duet', 'room') OR source LIKE 'room.%'";
+
+/**
+ * WHAT THE CAST HOLDS FOR OR AGAINST THE LAST PLAYER, as the rows to remove.
+ *
+ * The constructs (engine/constructs.php, confide.php) keep their state in arcs
+ * and their residue in `source='construct'` memories, and the scrub was written
+ * before any of them existed. A fork therefore inherited the owner's promises
+ * WORD FOR WORD — `expect.<n>` carries the sentence the owner typed, and the
+ * prompt puts it in the character's mouth: a stranger opened a copy and was
+ * told what "they" had said on Friday and that they never came. The same for
+ * a secret the owner was told (`confided.<n>`, quoted), the grudge that came
+ * of breaking it, the Friday habit the owner had and the stranger has not, and
+ * a character sore at being left unanswered by somebody who has just arrived.
+ *
+ * The line it draws: what stands between a character and THE PERSON AT THE
+ * CENTRE goes; what stands between two of the cast is the town's past and
+ * stays. So an expectation or grudge with an `of` (a townsperson) is kept, and
+ * so is the memory it left; one without is the player's. Anticipation follows
+ * its expectation. Confidences, rituals, milestones, worry and told-you news
+ * are only ever about the player. Gossip is the town talking about an event
+ * that is still on the record, and stays.
+ *
+ * Only rows a construct WROTE are taken: the value must be the JSON object or
+ * list a construct stores, so a template that names one of its own dials
+ * `worry` keeps it.
+ *
+ * NOT taken, on purpose and written down: `trust` and `trust.warmth`. The
+ * template sets them and the owner's time moved them, and a single number
+ * cannot be split back into the two — see docs/PUNCHLIST.md.
+ *
+ * Shared by the clear and its read-back so the two cannot drift apart.
+ *
+ * @return array{arcs: list<array{0:string,1:string}>, memories: list<int>}
+ */
+function xeric_session_fork_standing(PDO $db): array
+{
+    $out = ['arcs' => [], 'memories' => []];
+
+    // The arcs. $cast[handle][key] = true marks a row that is cast-to-cast.
+    $cast = [];
+    $rows = [];
+    try {
+        $rows = $db->query("SELECT handle, key, value FROM arcs WHERE key IN ('worry', 'news')"
+            . " OR key LIKE 'expect.%' OR key LIKE 'grudge.%' OR key LIKE 'anticipate.%'"
+            . " OR key LIKE 'confided.%' OR key LIKE 'ritual.%' OR key LIKE 'milestone.%'")
+            ->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        // no arcs table: nothing held
+    }
+    $made = [];
+    foreach ($rows as $r) {
+        $row = json_decode((string)$r['value'], true);
+        if (!is_array($row)) continue;                    // a template's own dial
+        $h = (string)$r['handle']; $k = (string)$r['key'];
+        $made[] = [$h, $k, $row];
+        if ((str_starts_with($k, 'expect.') || str_starts_with($k, 'grudge.'))
+            && trim((string)($row['of'] ?? '')) !== '') {
+            $cast[$h][$k] = true;
+        }
+    }
+    foreach ($made as [$h, $k, $row]) {
+        if (isset($cast[$h][$k])) continue;
+        if (str_starts_with($k, 'anticipate.') && isset($cast[$h][(string)($row['expect'] ?? '')])) continue;
+        $out['arcs'][] = [$h, $k];
+    }
+
+    // And what they left in somebody's head.
+    $rows = [];
+    try {
+        $rows = $db->query("SELECT id, handle, meta FROM memories WHERE source = 'construct'")
+            ->fetchAll(PDO::FETCH_ASSOC);
+    } catch (Throwable $e) {
+        // no memories table
+    }
+    foreach ($rows as $r) {
+        $meta = json_decode((string)($r['meta'] ?? ''), true);
+        if (!is_array($meta)) $meta = [];
+        $h = (string)$r['handle'];
+        if (trim((string)($meta['of'] ?? '')) !== '' || trim((string)($meta['to'] ?? '')) !== ''
+            || isset($meta['gossip'])) {
+            continue;                                     // cast-to-cast, or the town's talk
+        }
+        if (isset($cast[$h][(string)($meta['expect'] ?? '')]) || isset($cast[$h][(string)($meta['grudge'] ?? '')])) {
+            continue;                                     // residue of a cast-to-cast row
+        }
+        $out['memories'][] = (int)$r['id'];
+    }
+    return $out;
+}
 
 function xeric_session_fork_clear(string $path): bool
 {
@@ -682,8 +781,38 @@ function xeric_session_fork_clear(string $path): bool
             // deleted, and a live one would seat a stranger in the owner's
             // conversation mid-sentence. The diaries those rooms already
             // wrote (source room / room.*) go with the lived memories above.
-            . " OR key LIKE 'room:%'",
+            . " OR key LIKE 'room:%'"
+            // WHAT THE OWNER ASKED THE NARRATOR FOR, in their own typed words
+            // (intent:<n>), still pulling the stranger's hours toward a story
+            // somebody else wanted; the stamp that says the OWNER'S budget ran
+            // out today, about a ledger this fork no longer holds; and the
+            // owner's stream machines, by id.
+            . " OR key LIKE 'intent:%' OR key = 'budget.stopped' OR key = 'scene.stream.machines'",
         'DELETE FROM signals',
+        // The ledger of what the owner's world spent, by day. Inherited, it
+        // charged a stranger's first day with tokens somebody else burned: a
+        // fork taken on a busy afternoon opened already at its ceiling.
+        'DELETE FROM spend',
+        // Reminders are a person asking a character to tell them something on
+        // a real Thursday — the owner's Thursday, in the owner's words.
+        'DELETE FROM reminders',
+        // What the cast slept on. A fact is written by a model from a night's
+        // memories, the chat-harvested ones among them, and nothing on the row
+        // says which — so all of them go, links and offer record with them,
+        // and the fork's first night consolidates again from what is left.
+        // Leaving the links would be its own bug: they hide a memory as
+        // "already folded into fact N", and fact N is gone.
+        'DELETE FROM sleep_facts',
+        'DELETE FROM sleep_links',
+        'DELETE FROM sleep_offers',
+        // Stagings the owner made by hand, the ones the narrator made from
+        // the owner's requests (cleared above) and the ones planned around the
+        // owner's standing. The Director's own cast-to-cast rule ('apart') is
+        // the town's business and stays.
+        "DELETE FROM director_stagings WHERE source <> 'apart'",
+        // A stream is a session on the OWNER'S machine, billed by the second.
+        // A fork's heart must not beat it, close it or meter it.
+        'DELETE FROM scene_streams',
         // The owner's outstanding message-photos are jobs about their own private
         // thread — whose text this fork has just deleted. Left behind they are
         // counted as the stranger's pending work on the play screen, and the
@@ -723,6 +852,16 @@ function xeric_session_fork_clear(string $path): bool
         } catch (Throwable $e) {
             xeric_web_log('fork: ' . basename($path) . ', ' . $e->getMessage());
         }
+    }
+    try {
+        $held = xeric_session_fork_standing($db);
+        $st = $db->prepare('DELETE FROM memories WHERE id = ?');
+        foreach ($held['memories'] as $id) $st->execute([$id]);
+        $st = $db->prepare('DELETE FROM arcs WHERE handle = ? AND key = ?');
+        foreach ($held['arcs'] as [$h, $k]) $st->execute([$h, $k]);
+        $st = null;
+    } catch (Throwable $e) {
+        xeric_web_log('fork: ' . basename($path) . ', ' . $e->getMessage());
     }
     try { $db->exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (Throwable $e) { /* nothing to fold in */ }
     $db = null;
@@ -771,6 +910,23 @@ function xeric_session_fork_is_clear(string $path): bool
             }
         } catch (Throwable $e) {
             // No world_state at all is a world too old to have had a roster.
+        }
+        // What the cast held for or against the last player, and what they
+        // slept on: both are sentences a stranger's cast would SAY.
+        $held = xeric_session_fork_standing($db);
+        $n = count($held['arcs']) + count($held['memories']);
+        if ($n > 0) {
+            xeric_web_log('fork: ' . basename($path) . " still holds $n row(s) of the last player's standing, not handing it over");
+            return false;
+        }
+        try {
+            $n = (int)$db->query('SELECT COUNT(*) FROM sleep_facts')->fetchColumn();
+            if ($n > 0) {
+                xeric_web_log('fork: ' . basename($path) . " still holds $n consolidated fact(s), not handing it over");
+                return false;
+            }
+        } catch (Throwable $e) {
+            // a world that never slept has no such table
         }
         return true;
     } catch (Throwable $e) {
@@ -827,9 +983,13 @@ function xeric_session_forget(string $sid): array
         $dir = xeric_web_worlds_dir() . '/' . $slug;
         foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);
         if (@rmdir($dir)) $worlds++;
+        xeric_web_audit_forget($dir . '/world.db');   // the narrator's audit of it
     }
 
-    foreach (glob(xeric_session_db_dir($sid) . '/*') ?: [] as $f) @unlink($f);
+    foreach (glob(xeric_session_db_dir($sid) . '/*') ?: [] as $f) {
+        if (str_ends_with($f, '.db')) xeric_web_audit_forget($f);
+        @unlink($f);
+    }
     @rmdir(xeric_session_db_dir($sid));
     @unlink(xeric_web_session_path($sid));
 
@@ -859,7 +1019,10 @@ function xeric_session_sweep(?int $now = null): int
     foreach (glob(xeric_session_root() . '/*') ?: [] as $d) {
         if (!is_dir($d)) continue;
         if (is_file(xeric_web_session_path(basename($d)))) continue;
-        foreach (glob($d . '/*') ?: [] as $f) @unlink($f);
+        foreach (glob($d . '/*') ?: [] as $f) {
+            if (str_ends_with($f, '.db')) xeric_web_audit_forget($f);
+            @unlink($f);
+        }
         @rmdir($d);
     }
     return $n;

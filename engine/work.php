@@ -31,7 +31,7 @@
  * hour shift an hour at a time never misses it; you are there, living it.
  * Pressing "skip to evening" at seven in the morning does, and should.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

@@ -376,9 +376,9 @@ larger id (up to 500). `epoch` is the world time it was said at; `when` stays
 for display. A message may carry `photo` {k, s, caption}. `last` is the
 highest id in the answer (or `since`): pass it as the next `since`.
 
-Reading a thread **puts its unread dot out**, as play.php does. The learn
-signal ("this person, not that one") is not recorded by a read; that is the
-`POST threads/{h}/read`.
+A GET **changes nothing**: the unread dot stays lit, so a poll or a retry is
+safe. Putting the dot out, and the learn signal ("this person, not that
+one"), are one explicit act, `POST threads/{h}/read`.
 
 ```sh
 curl -s "$X/worlds/milldale/threads/dot?since=410"

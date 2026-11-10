@@ -33,7 +33,7 @@
  *     to the sweep guards, so a cron sweep, a web request and a CLI run all agree
  *     about what time it is without passing anything to each other.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

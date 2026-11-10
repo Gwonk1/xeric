@@ -90,7 +90,7 @@
  * voice. state.php's discipline holds all the same: CREATE IF NOT EXISTS, and
  * never a DROP.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

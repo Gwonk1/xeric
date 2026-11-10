@@ -45,7 +45,7 @@
  * moves. An owner staging (xeric_director_stage with source `owner`) needs no
  * rule; it is a hand on the set, not the Director deciding.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

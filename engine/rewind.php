@@ -121,7 +121,7 @@
  * bug report, a button that explains is a UI — and every refusal names its
  * reason in words the player can act on. Nothing is written on any refusal.
  *
- * Zero dependencies beyond the store and the clock. PHP 8.2+.
+ * Zero dependencies beyond the store and the clock. PHP 8.1+.
  */
 
 require_once __DIR__ . '/state.php';

@@ -36,7 +36,7 @@
  * classifier is never the only control. The adult ceiling is the world's
  * effective rating, capped in code the same way.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

@@ -42,7 +42,7 @@
  * restate the same fact in twelve slightly different sentences until her whole
  * system prompt is one thought.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

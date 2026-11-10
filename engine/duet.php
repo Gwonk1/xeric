@@ -78,7 +78,7 @@
  * $opts['on_line']); a watching surface that wants to keep it can, and the
  * canonical record of the hour is the event, like every other hour.
  *
- * Zero dependencies beyond the engine. PHP 8.2+.
+ * Zero dependencies beyond the engine. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

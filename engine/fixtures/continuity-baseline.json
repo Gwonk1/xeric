@@ -25,7 +25,7 @@
                 "walls.telltale": {
                     "pass": false,
                     "severity": "soft",
-                    "score": 0.053
+                    "score": 0.048
                 },
                 "walls.coverage": {
                     "pass": true,
@@ -140,7 +140,7 @@
                 "cost.cache": {
                     "pass": false,
                     "severity": "soft",
-                    "score": 0.895
+                    "score": 0.95
                 },
                 "learn.tally": {
                     "pass": true,
@@ -184,39 +184,39 @@
                 }
             },
             "cost": {
-                "calls": 59,
-                "tokens": 107265,
-                "chars": 428987,
+                "calls": 62,
+                "tokens": 120223,
+                "chars": 480791,
                 "by_phase": {
                     "extract": {
-                        "calls": 11,
-                        "chars": 30388,
-                        "tokens": 7600
+                        "calls": 12,
+                        "chars": 37520,
+                        "tokens": 9385
                     },
                     "learn": {
                         "calls": 7,
-                        "chars": 17744,
-                        "tokens": 4438
+                        "chars": 18449,
+                        "tokens": 4616
                     },
                     "proactive": {
                         "calls": 5,
-                        "chars": 93784,
-                        "tokens": 23448
+                        "chars": 102014,
+                        "tokens": 25505
                     },
                     "say": {
-                        "calls": 11,
-                        "chars": 204632,
-                        "tokens": 51162
+                        "calls": 12,
+                        "chars": 224391,
+                        "tokens": 56103
                     },
                     "skip": {
                         "calls": 12,
-                        "chars": 39407,
-                        "tokens": 9855
+                        "chars": 45411,
+                        "tokens": 11357
                     },
                     "sweep": {
-                        "calls": 13,
-                        "chars": 43032,
-                        "tokens": 10762
+                        "calls": 14,
+                        "chars": 53006,
+                        "tokens": 13257
                     }
                 }
             },
@@ -234,9 +234,9 @@
                 "kill.harlan.after": "9b34bd04f1b1"
             },
             "digests": {
-                "1": "9adbf06bd4ecfb26ccf1e4689ae11fa53a07468281e79178f2445b6e3b3df07a",
-                "2": "a462437c7556ca240340be84e0f506559ab5f01d147004dc5f277c24cc5ab930",
-                "3": "a826dff91e70ddf0bbce8bcd8e3771c428ba403a96c711f547813dbb1bc93efa"
+                "1": "280843404b0e60eb834161119f7ef010e8455ab89a5a1c9e814e4eca33c8ca4f",
+                "2": "06b4c87e0d298257e21f43aaab947e19c854c75b4890cc59dc4f625995d84d92",
+                "3": "b7750a4825c0438e8d427010cd1111463492b11569c6626fdda7c328664724c8"
             }
         },
         "leaky": {
@@ -244,13 +244,13 @@
                 "walls.quote": {
                     "pass": false,
                     "severity": "hard",
-                    "score": 0.731,
+                    "score": 0.962,
                     "teeth": "the leaky stand-in copies hold-back and still-carries lines; the oracle must catch it"
                 },
                 "walls.rest": {
                     "pass": false,
                     "severity": "hard",
-                    "score": 0.938,
+                    "score": 0.98,
                     "teeth": "the leaky stand-in copies hold-back and still-carries lines; the oracle must catch it"
                 },
                 "walls.table": {
@@ -324,9 +324,9 @@
                     "score": 1
                 },
                 "presence.audit": {
-                    "pass": false,
+                    "pass": true,
                     "severity": "soft",
-                    "score": 0.5
+                    "score": 1
                 },
                 "presence.activity": {
                     "pass": true,
@@ -376,7 +376,7 @@
                 "cost.cache": {
                     "pass": false,
                     "severity": "soft",
-                    "score": 0.897
+                    "score": 0.951
                 },
                 "learn.tally": {
                     "pass": true,
@@ -420,39 +420,39 @@
                 }
             },
             "cost": {
-                "calls": 59,
-                "tokens": 114424,
-                "chars": 457610,
+                "calls": 55,
+                "tokens": 121746,
+                "chars": 486900,
                 "by_phase": {
                     "extract": {
-                        "calls": 11,
-                        "chars": 37922,
-                        "tokens": 9484
+                        "calls": 12,
+                        "chars": 49013,
+                        "tokens": 12257
                     },
                     "learn": {
                         "calls": 7,
-                        "chars": 17858,
-                        "tokens": 4467
+                        "chars": 18525,
+                        "tokens": 4635
                     },
                     "proactive": {
                         "calls": 5,
-                        "chars": 97944,
-                        "tokens": 24487
+                        "chars": 108197,
+                        "tokens": 27051
                     },
                     "say": {
-                        "calls": 11,
-                        "chars": 211339,
-                        "tokens": 52840
+                        "calls": 12,
+                        "chars": 233550,
+                        "tokens": 58393
                     },
                     "skip": {
-                        "calls": 12,
-                        "chars": 46338,
-                        "tokens": 11590
+                        "calls": 6,
+                        "chars": 25077,
+                        "tokens": 6272
                     },
                     "sweep": {
                         "calls": 13,
-                        "chars": 46209,
-                        "tokens": 11556
+                        "chars": 52538,
+                        "tokens": 13138
                     }
                 }
             },
@@ -470,9 +470,9 @@
                 "kill.harlan.after": "9b34bd04f1b1"
             },
             "digests": {
-                "1": "5dc488b6c7302710d8b695cb5b9b76d14597e883ea79b3b4cb996413fbe6c388",
-                "2": "61b3d24801d51e3609b9a1a3c4d542842b0726a207f2af668796c06465a18ab0",
-                "3": "2e8175bc03a862603bb52835a247cfe097f3e18a630592a89c996ee1582fae26"
+                "1": "31277409caa65fecfd055060d2cf0cbff8d069344f13a9b989574c50a260ab09",
+                "2": "5ab96f7c7fba040d908fdc8fd829f03e1f81e75edfabb5a98f5956526f1ee8a4",
+                "3": "d68b082bdad073a8680544afc13fce72f92e4fa7af20c72d710745f05b7ab963"
             }
         }
     }

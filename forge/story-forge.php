@@ -31,7 +31,7 @@
  * HERE rather than discovered there, because a refusal after three minutes of
  * model time is a worse experience than a story that quietly obeys the rules.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

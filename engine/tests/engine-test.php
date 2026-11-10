@@ -1465,8 +1465,10 @@ ok('story age: nothing keeps him out of the hour, the room or the conversation',
     $now = xeric_world_now($C, $evening);
     $who = xeric_world_who_is_where($C, $now);
     $his = implode("\n", array_column(xeric_prompt_build($C, $db3, 'theo', $now), 'content'));
+    // The back booth at four is his alone: the Bluebird shut at two, and nobody
+    // drops in on a closed diner. His offscreen hours are the rest of his day.
     $inAnHour = false;
-    foreach (xeric_sweep_groups($C, $now) as $g) {
+    foreach (xeric_sweep_groups($C, xeric_world_now($C, $evening - 3600)) as $g) {
         if (in_array('theo', (array)$g['handles'], true)) $inAnHour = true;
     }
     return !array_key_exists('theo', xeric_sweep_protected($C))              // no wall on the child
@@ -1475,6 +1477,20 @@ ok('story age: nothing keeps him out of the hour, the room or the conversation',
         && str_starts_with($his, 'YOU ARE THEO VANCE')                       // answerable
         && str_contains($his, 'fourth-floor stairwell')                      // holding his piece
         && str_starts_with(xeric_story_lines($C, 'theo')[0] ?? '', 'If he asks you about the mill');
+})());
+ok('sweep groups: nobody drops in on a workplace after it has shut', (function () use ($T, $evening) {
+    $now = xeric_world_now($T, $evening);                                    // 16:00, two hours after close
+    if (in_array('bluebird', xeric_sweep_open_places($T, $now), true)) return false;
+    if ((xeric_world_who_is_where($T, $now)['theo']['where'] ?? null) !== 'bluebird') return false;
+    foreach (xeric_sweep_groups($T, $now) as $g) {
+        if (($g['where'] ?? null) === 'bluebird') return false;
+    }
+    // ...and the same door is open at noon, with the same people.
+    $noon = xeric_world_now($T, $evening - 4 * 3600);
+    foreach (xeric_sweep_groups($T, $noon) as $g) {
+        if (($g['where'] ?? null) === 'bluebird' && str_contains((string)$g['why'], 'was open')) return true;
+    }
+    return false;
 })());
 ok('story age: his material is sfw in this world and in any other', (function () use ($T, $S, $db3) {
     $explicit = mutate($T, ['meta', 'rating'], 'explicit');

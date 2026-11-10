@@ -93,7 +93,7 @@ shipped; some of what it calls built is wired to nothing.
 | Death | Built | revivable and permanent, catastrophe and restore, stories can kill; fate.php; not marked shipped |
 | Social constructs | Built | expectations with repair and a `kept` state (`xeric_expect_keep`, [e5a73b4]), debts, gossip, guest vouching; confidences formed from the chat harvest (`xeric_confide_to_player`), broken by repeating them (`xeric_confide_repeat`), mended or hardened into a grudge, rendered by `xeric_confide_block`; the six siblings — anticipation, news, worry, grudge, ritual, milestone — stepped by `xeric_siblings_tick`; cast-to-cast promises from the sweep's quoted speech (`xeric_constructs_cast_tick`, from the heart) [fc576e6]. a confidence one of the cast carries is formed from quoted speech in a two-person hour (`xeric_confide_from_line`, [a287e01]) |
 | Sleep | Built | `engine/sleep.php`: once a world-night per person, old memories become facts with provenance, walls inherited, nothing deleted; the heart runs `xeric_sleep_pass`; five `sleep` probes; [`docs/SLEEP.md`](SLEEP.md) [fc576e6] |
-| Story overlays | Built, filed under Later | multiple overlays, red herrings, a six-stage curve |
+| Story overlays | Built | multiple overlays, red herrings, a six-stage curve |
 | A world can start in 1873 | Built | tested |
 | More than one model | Built | the per-character pin reaches say, watch, both rooms and the sweeps; each hour in its centre's machine and llama.cpp slot, falling back to the default when the pin is down [9bbecf5] |
 | The viewport | Built | the room in the view [0b75ac0] and walking inside a splat, in our own WebGL renderer [934bbe6]; the live view, the layout and the world-model scaffold [cc381c0]; the people's tags at their bearings over every view, not only the panorama |
@@ -145,11 +145,10 @@ Other facts the plan has to respect:
 - **Unwired things offered in the UI**: the `death` and `story` notify kinds
   are offered and never sent; guest `stranger` and `written_in` modes are
   unreachable because the UI always posts `{}`.
-- **Platform**: bootstrap enforces PHP 8.1+ while docblocks say 8.2+; it
-  checks pdo_sqlite, sqlite3, mbstring, json and zlib — curl, which the
-  quickstart lists, is never used; ctype and openssl are needed and not
-  checked. Windows has xeric.cmd and heart.cmd and a single-request `php -S`;
-  the test suites need a POSIX shell.
+- **Platform**: PHP 8.1+, enforced by bootstrap, which checks pdo_sqlite,
+  mbstring, json, zlib and ctype and says so when openssl (needed only for a
+  remote model) is missing. Windows has xeric.cmd and heart.cmd and a
+  single-request `php -S`; the test suites need a POSIX shell.
 
 What shipped in the viewport week, as a reminder of the pattern:
 
@@ -593,7 +592,7 @@ A number per promise, tracked in the repo.
 | Cost | tokens, renders and clips per simulated world-day, from the benchmark's cost class |
 | Health | assertions in the suite; files over 2,000 lines (at the plan: 2,599 assertions, six files. After 0b75ac0: about 3,700 assertions — 3,678 `ok` lines over 31 of 32 suites, smoke excluded — and still six. After 934bbe6: about 4,100 assertions — 4,096 `ok` lines over 35 of 36 suites, by the CONTRIBUTING loop with `XERIC_SOLO=0`, smoke excluded — and seven: `wc -l forge/web/*.php engine/*.php forge/forge.php` finds forge.php 5,974, play.php 4,200, play-lib.php 2,920, review-lib.php 2,386, sweeps.php 2,162, review.php 2,094 and room.php 2,041. At fc576e6: about 4,400 — 4,382 `ok` lines over 39 of 40 suites, the same loop, smoke excluded — and eight: the same `wc` finds forge.php 5,974, play.php 4,319, play-lib.php 2,900, constructs.php 2,429, review-lib.php 2,386, sweeps.php 2,226, review.php 2,094 and room.php 2,041. With the five milestones shipped: about 4,900 — 4,904 `ok` lines over 43 of 44 suites, the same loop with `XERIC_SOLO=0`, smoke excluded — and nine: forge/forge.php 5,974, forge/web/play.php 4,378, forge/web/play-lib.php 3,032, engine/constructs.php 2,540, engine/room.php 2,422, forge/web/review-lib.php 2,386, engine/sweeps.php 2,347, engine/scene.php 2,176 and forge/web/review.php 2,094; scene.php is the new one, and play.php and play-lib.php the ones to split next) |
 | Time to a world | minutes from install to a forged, reviewed world on a 12B |
-| Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After the docs pass on 0b75ac0: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are. After the M3 docs pass: 14 of 15 — the Narrator, the Director and social constructs now say **Shipped** with what is open, Sleep is a heading of its own, and story overlays alone are still filed under Later though built. With M5 shipped: 15 of 16 — "When the world models hold still" says **Shipped**, streaming under the viewport is struck through, the new "What is left" names only what the outside world can supply, and story overlays are still the one out of step) |
+| Honesty | roadmap headings whose state matches the code (at the plan: 9 of 14. After the docs pass on 0b75ac0: 11 of 14, counted row by row against the truth table in "Where we stand" — the Narrator, social constructs and story overlays still read as less built, or filed later, than they are. After the M3 docs pass: 14 of 15 — the Narrator, the Director and social constructs now say **Shipped** with what is open, Sleep is a heading of its own, and story overlays alone are still filed under Later though built. With M5 shipped: 15 of 16 — "When the world models hold still" says **Shipped**, streaming under the viewport is struck through, the new "What is left" names only what the outside world can supply, and story overlays are still the one out of step. Since then the overlays heading has moved up among what is built) |
 
 ---
 

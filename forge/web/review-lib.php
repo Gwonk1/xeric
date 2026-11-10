@@ -117,10 +117,13 @@ function xeric_review_delete(string $slug): array
         if (is_file($f) && @unlink($f)) $files++;
     }
     if (!@rmdir($dir)) throw new RuntimeException('the folder would not go');
+    // And the narrator's audit of it, which is kept outside the folder.
+    xeric_web_audit_forget(xeric_review_dir($slug) . '/world.db');
 
     // Every session's copy of it, including this one's.
     $forks = 0;
     foreach (glob(xeric_session_root() . '/*/' . $slug . '.db*') ?: [] as $f) {
+        if (str_ends_with($f, '.db')) xeric_web_audit_forget($f);
         if (@unlink($f)) $forks++;
     }
 

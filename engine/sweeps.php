@@ -59,7 +59,7 @@
  * did before overlays existed. That is the whole integration, and it is the
  * reason a story can end by simply no longer being passed in.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';
@@ -1482,7 +1482,16 @@ function xeric_sweep_groups(array $t, array $now, array $exclude = [], int $maxP
     }
 
     // -- somebody dropping in on somebody who is working -------------------
+    // A DROP-IN NEEDS AN OPEN DOOR. The reason this group gives is "<place>
+    // was open", and it used to give it for a diner an hour after it shut: the
+    // walls were read and the hours were not, so a visitor could be seated in
+    // the after-close booth with whoever was still on the clock. Only a place
+    // the template lists can be shut; a workplace with no place row has no
+    // hours to read and stays as open as it always was.
+    $open   = xeric_sweep_open_places($t, $now);
+    $listed = array_map(fn($p) => (string)($p['key'] ?? ''), (array)($t['places'] ?? []));
     foreach ($atWork as $place => $handles) {
+        if (in_array((string)$place, $listed, true) && !in_array((string)$place, $open, true)) continue;
         $handles = array_values(array_filter($handles, fn($h) => !$barred((string)$h, (string)$place)));
         if ($handles === []) continue;
         foreach ($free as $visitor) {
@@ -1500,7 +1509,6 @@ function xeric_sweep_groups(array $t, array $now, array $exclude = [], int $maxP
     }
 
     // -- both off shift ----------------------------------------------------
-    $open = xeric_sweep_open_places($t, $now);
     $n    = count($free);
     for ($i = 0; $i < $n; $i++) {
         for ($j = $i + 1; $j < $n; $j++) {

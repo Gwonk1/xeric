@@ -41,7 +41,7 @@
  *               never re-rolled, because a person whose place in the world
  *               changes every session is not a person.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

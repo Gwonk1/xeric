@@ -27,7 +27,8 @@
  * WHY static-php-cli FOR LINUX AND macOS. php.net ships source there and nothing
  * else, and a build that depends on the host's libraries is the problem this is
  * meant to remove. static-php-cli's "common" build is one file with sqlite,
- * mbstring and zlib in it, which is exactly the list bootstrap.php checks for.
+ * mbstring, zlib and ctype in it (json is part of every PHP 8), which is the list
+ * bootstrap.php checks for.
  */
 
 declare(strict_types=1);
@@ -318,7 +319,8 @@ function xeric_rmdir(string $d): void
  * The official zip ships php.ini-development and php.ini-production and loads
  * NEITHER until one is named php.ini, with every extension commented out — so a
  * bundled PHP with no ini is a PHP with no sqlite, which is a xeric that cannot
- * open. The list is exactly what bootstrap.php checks for.
+ * open. With what the Windows build has compiled in (json, ctype, zlib) the list
+ * covers everything bootstrap.php checks for.
  */
 function xeric_write_ini(string $dir): void
 {

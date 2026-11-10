@@ -36,7 +36,7 @@
  * a different problem with a different answer, and this file would be the
  * wrong one.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

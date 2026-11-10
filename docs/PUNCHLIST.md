@@ -14,12 +14,6 @@ filed *here*.
 
 Filed by the commits since the plan landed, not yet fixed.
 
-- **A bare-day promise misses at 04:00** — `engine/constructs.php` `xeric_promise_when()`
-  resolves "Thursday" to its midnight; with the four-hour grace it misses before the day
-  begins (`docs/CONSTRUCTS.md`, "Still open"; e5a73b4).
-- **Drop-in visits ignore a workplace's hours** — `engine/sweeps.php` the drop-in group
-  checks walls (`$barred`) and never `xeric_sweep_open_places()` (fixture note
-  `bluebird_hours`; e5a73b4).
 - **Theo can be dealt into the Thursday game** — `engine/table.php` `xeric_table_barred()`
   bars by walls only, and Theo is not walled from the pot (e5a73b4).
 - **The casserole-ledger board re-ranks inside two static prompts** — a cache break the
@@ -33,9 +27,6 @@ Filed by the commits since the plan landed, not yet fixed.
   person (0b75ac0).
 - **Apache + PHP-FPM drops `Authorization`** unless the vhost says `CGIPassAuth On`, so a
   Bearer token never arrives — `docs/API.md`, "Behind Apache with PHP-FPM" (c74f580).
-- **`xeric_play_thread()` marks the thread read** — `forge/web/play-lib.php`, called by
-  `api-lib.php`'s thread route, so a GET has a side effect; a `$markRead` flag would make
-  the API's read half side-effect free (c74f580).
 - **The vendor fields in `tools/proxies/` are unverified** — each mapping says *verify*;
   `tools/proxies/README.md` (0d3208c). Still so after M5: the scaffold's and the bet test's
   machines are our own, and no vendor has answered one of these requests.
@@ -52,9 +43,14 @@ Filed by the commits since the plan landed, not yet fixed.
   `raySelect()`'s 7° limit (934bbe6).
 - **The walk-inside view has no XR mode** — `forge/web/xeric-splat.js` is a flat canvas;
   stepping inside a splat in a headset is not built (934bbe6).
-- **A fork inherits the owner's spend for the day** — `forge/web/session.php`
-  `xeric_session_fork_clear()` leaves the `spend` table, so a fork starts its world-day
-  with the owner's ledger; it could clear `spend` (934bbe6).
+- **A fork keeps the trust the owner earned** — `forge/web/session.php`
+  `xeric_session_fork_clear()` takes the owner's promises, confidences, grudges, sleep facts
+  and spend, and leaves `trust` and `trust.warmth` on the cast: a template's starting dial and
+  what the owner earned on top of it are one number, and nothing records the dial to put back.
+- **A fork keeps the town's memory of the owner** — same function: `events` (a room's or a
+  duet's prose can name them), `gossip.*`, and the owner's position (`player.where`,
+  `player.where_since`) are copied as they stand. By design so far — a visitor gets the town
+  as it is — and not the same thing as a blank slate.
 - **The headset and talk path is untested on a device** — `forge/web/xeric-view.js`
   `standXR`, `raySelect`, `panAt`; run only against fakes in Node and headless Chrome
   (`forge/web/tests/stand-test.js`, the smoke test), never on a Quest, Android XR or
@@ -70,9 +66,11 @@ Filed by fc576e6, not yet fixed.
 - **The teller finds out at once** — `engine/confide.php` `xeric_confide_repeat()` takes the
   teller's trust the moment the player repeats a confidence; nothing routes the finding-out
   through the gossip ripple (`docs/CONSTRUCTS.md`, "Still open"; fc576e6).
-- **Repeating a secret in a room is not read** — `engine/chat.php` calls
-  `xeric_confide_repeat()` from the chat harvest only; `engine/room.php` lines never reach it
-  (fc576e6).
+- **A secret said in a room is read at the close, a line at a time** — `engine/room.php`
+  `xeric_room_land_live()` hands each line to `xeric_confide_repeat()` when the hour lands,
+  so the breach is not felt while the room is still talking, and one told across two lines
+  is missed (on purpose: an hour's words pooled would break confidences nobody told). A duet
+  or a scene the cast holds among themselves is still not read.
 - **News, worry, ritual and milestone read the first player only** — `engine/constructs.php`
   `xeric_sibling_user()`, `xeric_sibling_thread()`; the thread and the body carry no player
   id until M4 (fc576e6).
@@ -95,9 +93,6 @@ Filed by fc576e6, not yet fixed.
   that call `xeric_world_who_is_where()` with no database (the prompt's room line,
   `engine/room.php`, `engine/scene.php`) and tick-worker's skip see the plain schedule
   unless their template was dressed by `xeric_director_dress()` (fc576e6).
-- **The narrator's investigate cache is a file under the data dir** — `forge/web/play-narrator.php`
-  `xeric_play_narrator_audit_path()` writes `<data_dir>/audits/<sha1>.json`, outside the
-  world's database, and nothing that deletes or forks a world clears it (fc576e6).
 
 ## Open — left by M4
 
@@ -117,9 +112,6 @@ Filed by the room with two humans in it, not yet fixed.
 - **The ceiling never comes back up** after the lower-rated player leaves —
   `engine/room.php` `xeric_room_player_join()` folds down only, by design (the hour is one
   record), so the rest of that session stays at the floor.
-- **The payer files are never swept** — `forge/web/play-view.php`
-  `xeric_play_room_payer_set()` writes `<jobs>/room-pay-<lease>.json`, one small file per turn
-  another person spoke into; nothing deletes them.
 - **Kept and explained without a name are a heuristic** — `engine/chat.php`
   `xeric_chat_extract()` falls back to the newest user line the harvest is the first to read
   when the model answers `true` rather than a name, which is right for a reply and wrong for an
@@ -170,6 +162,30 @@ the follow-up that closed the plan, not yet fixed.
 
 ## Closed
 
+- **A bare-day promise missed at 04:00** — `xeric_promise_when("Thursday")` resolved to that
+  day's midnight, so the four-hour grace ran out before the day began. A bare day is due at
+  20:00 (`XERIC_EXPECT_BARE_HOUR`): missed when the day is over, kept by being there at any
+  hour of it.
+- **Drop-in visits ignored a workplace's hours** — the sweep's drop-in group reads
+  `xeric_sweep_open_places()` now, so nobody is seated in the Bluebird after it has shut.
+- **A GET of a thread marked it read** — `xeric_play_thread()` takes `$markRead`; the API's
+  read route and the suggester pass false, and `POST …/read` is the one way the dot goes out.
+- **A fork carried what the cast held for or against the owner** — beyond the day's `spend`
+  (the line as filed): the owner's promises and their quotes, confidences, grudges, rituals,
+  milestones, worry and news, the construct memories about them, sleep facts, reminders, the
+  narrator's intents and the director's requested stagings. `xeric_session_fork_clear()`
+  takes them and `xeric_session_fork_is_clear()` refuses a copy that still has any.
+- **Repeating a secret in a room was not read** — the close of a live room reads each line
+  against the confidences its hearers must not hear (what is left of it is filed above).
+- **The narrator's audit outlived its world** — the cache is named for a database path, and
+  a world forged again under an old name, or a visitor's second copy, found the last one's
+  audit. Deleting a world, forgetting a session and making a new database each drop the one
+  file (`xeric_web_audit_forget()`).
+- **The payer files were never swept** — the turn's worker removes its own
+  `room-pay-<lease>.json` when it ends, and one a dead worker left ages out with the jobs.
+- **Extensions** — `bootstrap.php` checks `ctype` and no longer `sqlite3`, and says so when
+  `openssl` is missing (needed only for a remote model); the PHP finder knows an 8.1 binary.
+- **`worlds.pre-blank-20260803-082606/` was tracked** — it is not in the tree any more.
 - **A world kept one look per room-moment** — `scene_jobs` was UNIQUE(key, fingerprint), so a
   panorama and a splat of one moment could not coexist; it is keyed (key, fingerprint, `want`),
   rebuilt once under the same rows by `xeric_state_scene_jobs_want()`, and `want` '' is the
@@ -290,16 +306,8 @@ Built, or offered, and not connected to anything that runs.
 
 ## Stale text
 
-- **`ROADMAP.md`** — story overlays are built and still filed under Later against
-  FUTURE.md's truth table ("Where we stand"); the Narrator and social constructs were
-  corrected after fc576e6.
-- **`engine/room.php`'s docblock calls the cast-to-cast notch dormant** — the heat rule
-  (MATERIAL HEAT) says expectations point only at the user; they carry `of` now (fc576e6).
-- **Docblocks say PHP 8.2+** (`engine/narrator.php:93`, `confide.php:39`, `table.php:41`);
-  `bootstrap.php` enforces 8.1, CI runs 8.1 and 8.3.
-- **QUICKSTART lists `curl`**, which nothing uses.
-- ~~README's "Nine test suites"~~ and ~~VOICE.md's "not shipped"~~ — fixed; the README
-  now points at CI.
+Nothing known. (The roadmap's overlays heading, the room's "dormant" notch, the PHP 8.2
+docblocks and QUICKSTART's `curl` were the last; all four are corrected.)
 
 ## Platform
 
@@ -309,8 +317,3 @@ Built, or offered, and not connected to anything that runs.
 - **`power.php`'s `off` is probably a no-op on Windows** — `forge/web/power.php:100`.
 - **`deploy.sh` assumes bash, ssh and Apache.**
 - **The suites need a POSIX shell** (`shell_exec`, `command -v`, `timeout`).
-- **Extensions**: `sqlite3` is checked and unused (PDO only); `ctype` and `openssl`
-  are needed and not checked by `bootstrap.php`.
-- **`worlds.pre-blank-20260803-082606/` is tracked against the stated policy** — 20
-  files of forged worlds in the repository, which `.gitignore` says never belong
-  there. Not deleted: it is the owner's call whether to remove it from history.

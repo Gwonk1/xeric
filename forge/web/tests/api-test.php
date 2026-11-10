@@ -442,7 +442,13 @@ ok('the pulse is small and says the cursor\'s parts', isset($p['cursor'], $p['of
 $etag = (string)($h['etag'] ?? '');
 [, , , $p2] = req($port, $W . '/pulse', $C);
 ok('with an ETag that is the cursor', $etag === '"' . ($p2['cursor'] ?? '') . '"' && str_contains($h['cache-control'] ?? '', 'no-cache'));
-ok('reading the thread put its dot out, and the cursor saw it', ($p2['unread'] ?? null) === [] && $p2['cursor'] !== $p['cursor']);
+ok('a GET of the thread changed nothing: the dot is still lit and the cursor has not moved',
+    ($p2['unread'] ?? null) === [['handle' => 'dot', 'n' => 1]] && $p2['cursor'] === $p['cursor'], json_encode($p2));
+[$st] = req($port, $W . '/threads/dot/read', $C, 'POST');
+[$st2, $h, , $p2] = req($port, $W . '/pulse', $C);
+$etag = (string)($h['etag'] ?? '');
+ok('POST read put its dot out, and the cursor saw it',
+    $st === 200 && ($p2['unread'] ?? null) === [] && $p2['cursor'] !== $p['cursor'], json_encode($p2));
 $t0 = microtime(true);
 [$st, $h, $raw] = req($port, $W . '/pulse', array_merge($C, ['If-None-Match: ' . $etag]));
 $ms = (int)round((microtime(true) - $t0) * 1000);

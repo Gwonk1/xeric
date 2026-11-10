@@ -78,7 +78,7 @@
  * keeps the room going afterwards at its own pace, warmed by the fact you
  * spoke (chatter.php's WARM rule reads the user line this beat answered).
  *
- * Zero dependencies beyond the engine. PHP 8.2+.
+ * Zero dependencies beyond the engine. PHP 8.1+.
  */
 
 declare(strict_types=1);

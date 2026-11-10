@@ -48,7 +48,7 @@
  * with a schedule, an orbit, a secret and an opinion; he is in the bible, in the
  * cast lines, in the room. Nothing below removes him from any of it.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

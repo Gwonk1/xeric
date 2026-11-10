@@ -58,6 +58,20 @@ ok('when: "Thursday" said on Wednesday is tomorrow',
     $thu !== null && (new DateTimeImmutable('@' . $thu))->setTimezone(new DateTimeZone('America/New_York'))->format('D') === 'Thu'
     && $thu > $wedAm['epoch'] && $thu < $wedAm['epoch'] + 2 * 86400);
 
+$nyc = new DateTimeZone('America/New_York');
+ok('when: a bare day is due at the day\'s close, so the grace ends at its midnight',
+    $thu !== null && (new DateTimeImmutable('@' . $thu))->setTimezone($nyc)->format('D H:i') === 'Thu 20:00'
+    && (new DateTimeImmutable('@' . ($thu + XERIC_EXPECT_GRACE)))->setTimezone($nyc)->format('D H:i') === 'Fri 00:00');
+ok('when: "tomorrow" is tomorrow\'s close too, not its midnight',
+    xeric_promise_when('tomorrow', $T, $wedAm) === $thu);
+ok('when: "today" said in the morning is this evening',
+    ($td = xeric_promise_when('today', $T, $wedAm)) !== null
+    && (new DateTimeImmutable('@' . $td))->setTimezone($nyc)->format('D H:i') === 'Wed 20:00');
+$wedLate = xeric_world_now($T, ep('2026-07-29 21:30'));
+ok('when: "today" said late is still tonight, not next week',
+    ($tl = xeric_promise_when('today', $T, $wedLate)) !== null
+    && $tl > $wedLate['epoch'] && $tl < ep('2026-07-30 00:00'));
+
 $satAm = xeric_promise_when('Saturday morning', $T, $wedAm);
 ok('when: "Saturday morning" carries its hour',
     $satAm !== null && (new DateTimeImmutable('@' . $satAm))->setTimezone(new DateTimeZone('America/New_York'))->format('D H') === 'Sat 09');
@@ -139,6 +153,11 @@ $counts = fn() => [
 $before = $counts();
 $friPm  = xeric_world_now($T, ep('2026-07-31 20:00'));     // due Thursday + grace long past
 
+// The day it named has to be over first. Thursday afternoon is still Thursday.
+$rThu = xeric_constructs_tick($T, $db, xeric_world_now($T, ep('2026-07-30 15:00')));
+ok('tick: a bare-day promise is not missed while its day is still running',
+    $rThu['missed'] === 0 && $counts() === $before);
+
 $r = xeric_constructs_tick($T, $db, $friPm);
 ok('tick: the overdue promise misses', $r['missed'] >= 1);
 $after = $counts();
@@ -216,7 +235,7 @@ $db2 = xeric_state_open($db2Path);
 
 // Ruth hears the Thursday promise; Thursday passes unkept.
 xeric_expect_form($T, $db2, 'ruth', $firm, $wedAm);
-$r1 = xeric_constructs_tick($T, $db2, xeric_world_now($T, ep('2026-07-30 20:00')));
+$r1 = xeric_constructs_tick($T, $db2, xeric_world_now($T, ep('2026-07-31 00:30')));   // Thursday is over
 $items = xeric_gossip_items($db2);
 $item1 = $items['gossip.1'] ?? null;
 ok('ripple: the miss becomes an item the same tick it fires',

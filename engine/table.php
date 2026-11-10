@@ -38,7 +38,7 @@
  * costs you a little with them, and it is the one place in this engine where
  * doing well is faintly expensive.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

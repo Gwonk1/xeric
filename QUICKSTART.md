@@ -4,8 +4,9 @@ Everything to start it, forge a world, and look inside it, in one page.
 
 ## What you need
 
-- **PHP 8.1 or newer** on your PATH, with `sqlite3`, `pdo_sqlite`, `mbstring`,
-  `json` and `curl`. `bootstrap.php` checks all of it and names anything missing.
+- **PHP 8.1 or newer** on your PATH, with `pdo_sqlite`, `mbstring`, `json`,
+  `zlib` and `ctype` — and `openssl` if the model is anywhere but this computer.
+  `bootstrap.php` checks all of it and names anything missing.
 - **A model.** Either something running locally that speaks the OpenAI chat API
   — llama.cpp's server, Ollama, LM Studio — or an API key you bring at the time
   you use it. Nothing is stored either way.

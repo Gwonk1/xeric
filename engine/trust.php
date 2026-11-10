@@ -33,7 +33,7 @@
  * neither of them is shown to you, because a meter on screen is a resource to
  * farm and this one is supposed to be a person's mind.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

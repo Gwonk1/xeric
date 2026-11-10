@@ -40,7 +40,7 @@
  *
  * Protocol: MCP over stdio, newline-delimited JSON-RPC 2.0 — initialize,
  * tools/list, tools/call, ping. Logs to stderr only; stdout is the wire.
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 declare(strict_types=1);

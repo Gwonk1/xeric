@@ -6,9 +6,7 @@ working document, not a promise — dates are absent on purpose.
 The long view — where this goes over about two years, the bets it rests on,
 the milestones, and what the code actually is today as against what this file
 says — is [docs/FUTURE.md](docs/FUTURE.md). Its truth table is what the
-headings below are checked against, row by row; with all five milestones
-shipped, the one heading still out of step is story overlays, built and filed
-under Later.
+headings below are checked against, row by row.
 
 ---
 
@@ -202,12 +200,10 @@ you will notice.
 - **The undo is one step deep.** Deliberate — a deep undo stack in a
   single-user tool is a way to lose track of which world you are in — but a
   reroll spree past two steps is unrecoverable.
-- **Three promises the constructs still break**, written down in
+- **One promise the constructs still break**, written down in
   [docs/CONSTRUCTS.md](docs/CONSTRUCTS.md) and filed in
-  [docs/PUNCHLIST.md](docs/PUNCHLIST.md): a promise for a bare day ("I'll be
-  there Thursday") is due at that day's midnight and misses at 04:00; a
-  drop-in visit ignores the hours of the workplace it drops in on; and Theo
-  can still be dealt into the Thursday game.
+  [docs/PUNCHLIST.md](docs/PUNCHLIST.md): Theo can still be dealt into the
+  Thursday game.
 
 ---
 
@@ -423,9 +419,8 @@ owning up inside a week, hardened into a grudge otherwise. The six siblings
 the engine can arm, a coarse line in an ON YOUR MIND block and one line in
 the inspector; and promises between townspeople are read out of the sweep's
 own quoted speech and kept or missed by their own schedules. Still open,
-in [docs/CONSTRUCTS.md](docs/CONSTRUCTS.md): a bare-day promise is due at
-its midnight and misses at 04:00; a drop-in ignores the workplace's hours;
-and Theo can be dealt into the Thursday game.
+in [docs/CONSTRUCTS.md](docs/CONSTRUCTS.md): Theo can be dealt into the
+Thursday game.
 
 A relationship that cannot be let down cannot be kept either. Today the cast has
 history; it has no **expectations**. The seed idea: a person expects you, it

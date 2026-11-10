@@ -47,7 +47,9 @@ for ($i = 1; $i < $argc; $i++) {
         case '--cmd': $dialect = 'cmd'; break;
         case '--port':
             $v = $argv[++$i] ?? '';
-            if (!ctype_digit((string)$v) || (int)$v < 1 || (int)$v > 65535) {
+            // Not ctype_digit(): ctype is one of the extensions checked for below,
+            // and this runs first.
+            if (preg_match('/^[0-9]{1,5}$/', (string)$v) !== 1 || (int)$v < 1 || (int)$v > 65535) {
                 fwrite(STDERR, "xeric: --port needs a number between 1 and 65535\n");
                 exit(1);
             }
@@ -96,13 +98,22 @@ if (version_compare(PHP_VERSION, '8.1', '<')) {
     fwrite(STDERR, 'xeric: this is PHP ' . PHP_VERSION . " and it needs 8.1 or newer.\n");
     exit(1);
 }
+// The list is what the code calls, not what usually ships together: every
+// database is opened through PDO (pdo_sqlite — the separate sqlite3 extension
+// is used by nothing here), and ctype is called on nearly every request.
 $missing = [];
-foreach (['pdo_sqlite', 'sqlite3', 'mbstring', 'json', 'zlib'] as $ext) {
+foreach (['pdo_sqlite', 'mbstring', 'json', 'zlib', 'ctype'] as $ext) {
     if (!extension_loaded($ext)) $missing[] = $ext;
 }
 if ($missing !== []) {
     fwrite(STDERR, 'xeric: this php is missing: ' . implode(' ', $missing) . "\n");
     exit(1);
+}
+// openssl is what makes https:// a thing this PHP can open. A model on this
+// computer needs none of it, so it is said and not refused.
+if (!extension_loaded('openssl')) {
+    fwrite(STDERR, "xeric: this php has no openssl, so it can use a model on this computer"
+        . " and cannot reach one over https.\n");
 }
 
 // -- where things live -------------------------------------------------------

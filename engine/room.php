@@ -116,7 +116,7 @@
  * exactly as it found it. No messages rows: the transcript is returned and
  * streamed ($opts['on_line']); the record of the hour is the event.
  *
- * Zero dependencies beyond the engine. PHP 8.2+.
+ * Zero dependencies beyond the engine. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';
@@ -2309,6 +2309,27 @@ function xeric_room_land_live(array $t, PDO $db, array $s, ?array $endpoint, arr
     $why .= '; ' . $names[$last] . ' had the last word. It ended because '
           . xeric_room_end_words((string)($s['ended'] ?? 'quiet')) . '.';
 
+    // WHAT IS SAID AT A TABLE IS SAID TO EVERYBODY AT IT. A confidence was
+    // only ever read as broken by the chat harvest, so the one place a secret
+    // does the most damage — out loud, in company — was the one place nothing
+    // heard it. Each person at the centre's lines go to each of the cast who
+    // was in the room for them (the slice: somebody who had left did not
+    // hear it), by the same test a text is held to — but ONE LINE AT A TIME.
+    // A text harvest reads the few lines since it last looked; this reads an
+    // hour of talk, and a secret's words scattered across an hour are not a
+    // secret told. Missing one costs nothing; a breach nobody committed
+    // costs the trust. Before the diaries, with no model in it, and safe to
+    // run twice: only a kept confidence breaks.
+    require_once __DIR__ . '/confide.php';
+    foreach ($ever as $p) {
+        foreach ($cast as $h) {
+            foreach ($slices[$h] as $l) {
+                if ($l['kind'] !== 'line' || (string)$l['handle'] !== (string)$p['handle']) continue;
+                xeric_confide_repeat($t, $db, $h, [(string)$l['text']], $now, (int)$p['id']);
+            }
+        }
+    }
+
     return xeric_room_land($t, $db, [
         'handles'   => $cast,
         'names'     => $names,
@@ -2419,7 +2440,7 @@ function xeric_room_land(array $t, PDO $db, array $c): array
         // a room of three the ADDRESSED party is the one who gets the
         // expectation — which is the same "named in the sentence outranks"
         // rule this file already uses to decide who answers a beat. The
-        // dormant `of` notch in the draw weight above lights up from here.
+        // `of` notch in the draw weight above is fed from here.
         xeric_expect_from_scene($t, $db, $lines, (array)$c['now']);
 
         // AND IN A DISCUSSION ROOM, THE OPEN RECORD. Silent in every ordinary

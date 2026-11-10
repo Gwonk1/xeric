@@ -244,6 +244,38 @@ ok('the inspector\'s index offers it to the owner', str_contains($wi['raw'], 'au
 $wg = page('why.php', $G, ['w' => $slug, 'audit' => '1'], [], 'GET');
 ok('a guest reading the inspector is not handed the audit', !str_contains($wg['raw'], 'contradictions in the record'));
 
+// THE AUDIT IS NAMED FOR A PATH, AND A PATH IS REUSED. It goes when its
+// database goes, and a database made just now starts without one.
+$auditOwn = xeric_play_narrator_audit_path($w);
+xeric_play_open($slug);
+ok('opening a world that already exists keeps its audit', is_file($auditOwn));
+$V = bin2hex(random_bytes(16));                      // a stranger: their own copy
+xeric_session_use($V);
+$copy = xeric_session_db_dir($V) . '/' . $slug . '.db';
+@mkdir(dirname(xeric_web_audit_path($copy)), 0775, true);
+file_put_contents(xeric_web_audit_path($copy), json_encode(['hour' => 1, 'observations' => [['stale' => true]]]));
+$wv = xeric_play_open($slug);
+ok('a visitor\'s copy taken just now does not inherit the audit an earlier copy left at that path',
+    !empty($wv['forked']) && (string)$wv['db_path'] === $copy && !is_file(xeric_web_audit_path($copy)));
+file_put_contents(xeric_web_audit_path($copy), json_encode(['hour' => 1, 'observations' => []]));
+$wv = null;
+xeric_session_use($A);
+$w = null; $db = null;
+gc_collect_cycles();
+require_once dirname(__DIR__) . '/review-lib.php';
+$gone = xeric_review_delete($slug);
+ok('deleting the world takes its audit, and every copy\'s, with it',
+    $gone['forks'] >= 1 && !is_file($auditOwn) && !is_file(xeric_web_audit_path($copy)) && !is_dir($wdir),
+    json_encode($gone));
+@mkdir($wdir, 0775, true);
+file_put_contents($wdir . '/world-template.json', json_encode($fixT, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+file_put_contents($auditOwn, json_encode(['hour' => 1, 'observations' => [['stale' => true]]]));
+xeric_session_claim($slug, $A);
+$w2 = xeric_play_open($slug);
+ok('and a world forged again under the old name starts with none',
+    (string)$w2['db_path'] === $wdir . '/world.db' && !is_file($auditOwn));
+$w2 = null;
+
 $w = null; $db = null;
 gc_collect_cycles();
 rmtree($tmp);

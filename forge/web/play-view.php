@@ -1189,6 +1189,18 @@ function xeric_play_room_payer_set(string $lease, string $sid): void
     @file_put_contents(xeric_play_room_payer_path($lease), json_encode(['sid' => $sid, 'at' => time()]), LOCK_EX);
 }
 
+/**
+ * The turn is over: its note goes with it. A session id is a credential, and
+ * one left lying beside the jobs for ever is one more place to find it. The
+ * exact file, by the lease that named it — and anything a worker died before
+ * clearing ages out with the jobs (xeric_web_job_sweep).
+ */
+function xeric_play_room_payer_clear(string $lease): void
+{
+    if (!preg_match('/^[a-f0-9]+$/', $lease)) return;
+    @unlink(xeric_play_room_payer_path($lease));
+}
+
 /** The session the turn under $lease is charged to, or $fallback (the worker's own). */
 function xeric_play_room_payer(string $lease, string $fallback): string
 {
@@ -1732,6 +1744,9 @@ function xeric_play_room_run(array $w, string $sid, string $lease, array $o = []
         if ($landed !== 'landed') { $out['stopped'] = $landed; break; }
         $out['beats']++;
     }
+    // However it ended, this lease carries nothing more, so nobody is left to
+    // read who was paying for it.
+    xeric_play_room_payer_clear($lease);
     return $out;
 }
 

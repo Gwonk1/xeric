@@ -69,7 +69,7 @@
  * no-nag arc swallows it like any ping, so it sits unanswered until morning,
  * which is the entire point of it.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

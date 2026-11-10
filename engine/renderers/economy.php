@@ -17,7 +17,7 @@
  * Deterministic: no clock, no rand, no LLM. Boards are re-sorted on every
  * render so an unsorted state array can't move the output around.
  *
- * Zero dependencies. PHP 8.2+.
+ * Zero dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/../walls.php';

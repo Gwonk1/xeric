@@ -131,6 +131,8 @@ require_once __DIR__ . '/players.php'; // and whose promise it was
 
 /** Grace past the promised hour before a wait becomes a miss, world seconds. */
 const XERIC_EXPECT_GRACE = 4 * 3600;
+/** The hour a promise with a day and no hour is due: the day's close, so the grace ends at midnight. */
+const XERIC_EXPECT_BARE_HOUR = 20;
 
 /** How long a miss stays repairable before it hardens, world seconds. */
 const XERIC_EXPECT_REPAIR_WINDOW = 7 * 24 * 3600;
@@ -202,7 +204,27 @@ function xeric_promise_when(string $when, array $t, array $now): ?int
         $base = (new DateTimeImmutable('@' . (int)($now['epoch'] ?? 0)))->setTimezone($tz);
         $due  = $base->modify($when);
         if ($due === false) return null;
-        if ($hour !== null) $due = $due->setTime($hour, 0);
+        if ($hour !== null) {
+            $due = $due->setTime($hour, 0);
+        } elseif ($due->format('H:i:s') === '00:00:00') {
+            // A BARE DAY IS THE DAY, NOT ITS MIDNIGHT. "I'll be there Thursday"
+            // names no hour, and a due at 00:00 with the four-hour grace missed
+            // at four in the morning, before the day it named had begun. Due at
+            // the day's close instead: the grace then runs out at midnight, so
+            // the promise is missed when Thursday is over, and being there at
+            // any hour of Thursday keeps it (the keep window opens at the due
+            // day's start).
+            $today = $due->format('Y-m-d') === $base->format('Y-m-d');
+            $due   = $due->setTime(XERIC_EXPECT_BARE_HOUR, 0);
+            if ($today && !preg_match('/(?<![a-z])today(?![a-z])/u', $when)) {
+                // Today's own weekday, said by name, is next week's: promises
+                // face forward, and somebody who meant today says "today".
+                $due = $due->modify('+1 week');
+            } elseif ($today && $due <= $base) {
+                // "Today", said late: there is still tonight, not next week.
+                $due = min($base->modify('+1 hour'), $base->setTime(23, 59));
+            }
+        }
         // A promise is about the future. "Thursday" said on a Thursday evening
         // means next Thursday; a resolved past means the phrase pointed
         // backward and a week forward is what the speaker meant.

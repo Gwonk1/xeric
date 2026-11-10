@@ -36,7 +36,7 @@
  * gate that is only correct while nobody repurposes the thing behind it is not
  * a gate.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

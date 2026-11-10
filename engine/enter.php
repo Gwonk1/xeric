@@ -41,7 +41,7 @@
  * since the FILE EXISTING is what "this world has been lived in" means to
  * everything that reads the shelf.
  *
- * Zero web dependencies. PHP 8.2+.
+ * Zero web dependencies. PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

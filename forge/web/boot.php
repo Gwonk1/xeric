@@ -231,6 +231,29 @@ function xeric_web_sessions_dir(): string { return xeric_web_dir((string)xeric_w
 function xeric_web_jobs_dir(): string     { return xeric_web_dir((string)xeric_web_config()['data_dir'] . '/jobs'); }
 
 /**
+ * Where the narrator's audit of one database is kept (play-narrator.php): a
+ * file beside the sessions, named for the database's path, because the audit
+ * is read by a page that must not write to a world to look at it.
+ */
+function xeric_web_audit_path(string $dbPath): string
+{
+    return xeric_web_dir((string)xeric_web_config()['data_dir'] . '/audits') . '/' . sha1($dbPath) . '.json';
+}
+
+/**
+ * The audit goes when its database does, and a database made just now has
+ * none. It is named for a PATH, and a path is reused: a world deleted and
+ * forged again under its old name, or a visitor's copy taken a second time,
+ * used to find the last one's audit waiting for it, about hours it never
+ * lived. The one exact file, and no directory made in order to find nothing.
+ */
+function xeric_web_audit_forget(string $dbPath): void
+{
+    $f = (string)xeric_web_config()['data_dir'] . '/audits/' . sha1($dbPath) . '.json';
+    if (is_file($f)) @unlink($f);
+}
+
+/**
  * A php CLI binary to run the worker with.
  *
  * PHP_BINARY under mod_php is /usr/sbin/apache2, which would be an entertaining
@@ -251,12 +274,12 @@ function xeric_web_php_bin(): string
     }
 
     // Then the PATH, which is where a php somebody installed actually is.
-    foreach (['php', 'php8.4', 'php8.3', 'php8.2'] as $name) {
+    foreach (['php', 'php8.4', 'php8.3', 'php8.2', 'php8.1'] as $name) {
         $p = xeric_web_which($name);
         if ($p !== '') return $p;
     }
 
-    foreach (['/usr/bin/php', '/usr/bin/php8.3', '/usr/bin/php8.2', '/usr/local/bin/php',
+    foreach (['/usr/bin/php', '/usr/bin/php8.3', '/usr/bin/php8.2', '/usr/bin/php8.1', '/usr/local/bin/php',
               '/opt/homebrew/bin/php'] as $p) {
         if (is_executable($p)) return $p;
     }
@@ -390,6 +413,12 @@ function xeric_web_job_sweep(): void
     $cut = time() - 7200;
     foreach (glob(xeric_web_jobs_dir() . '/*.jsonl') ?: [] as $f) {
         if (@filemtime($f) < $cut) @unlink($f);
+    }
+    // And who-pays notes for a room's turn (play-view.php): a turn lasts
+    // minutes and its worker clears its own, so one this old is from a worker
+    // that died, and it has a session id in it.
+    foreach (glob(xeric_web_jobs_dir() . '/room-pay-*.json') ?: [] as $f) {
+        if (preg_match('/^room-pay-[a-f0-9]+\.json$/', basename($f)) && @filemtime($f) < $cut) @unlink($f);
     }
 }
 

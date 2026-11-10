@@ -18,7 +18,7 @@
  * outside, and renaming a tested function to record a refactor is a diff that
  * costs every caller and buys nothing.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

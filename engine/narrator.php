@@ -90,7 +90,7 @@
  *     cast, last-heard dates — and the question, last, where a model pays the
  *     most attention.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 require_once __DIR__ . '/world.php';

@@ -256,6 +256,9 @@ function xeric_play_open(string $slug, ?string $dbPath = null, ?bool $adult = nu
         if (!$ok) throw new RuntimeException('that is not a xeric database this demo owns');
     }
 
+    // A database that is about to exist for the first time has no audit yet,
+    // whatever one of the same name left behind (xeric_web_audit_forget).
+    if (!empty($pick['forked']) || !is_file((string)$pick['path'])) xeric_web_audit_forget((string)$pick['path']);
     $db = xeric_state_open((string)$pick['path']);
     // THE DIRECTOR'S STAGINGS, worn by the template so every reader that takes
     // no database (the prompt's room line, the cast panel, rooms, scenes, the
@@ -1465,12 +1468,6 @@ function xeric_play_mark_read(PDO $db, int $convId): void
 }
 
 /**
- * One thread, oldest first, and the unread dot put out.
- *
- * Reading a thread is what marks it read, so the dot means "since you last
- * looked" rather than "since the server last restarted".
- */
-/**
  * One collapsible section of the sidebar, opened.
  *
  * THE SIDEBAR OUTGREW ITS COLUMN. Rooms, the people the clock says are nowhere,
@@ -2044,7 +2041,7 @@ function xeric_play_suggest(array $t, PDO $db, string $handle, array $endpoint, 
             if ($txt !== '') $lines[] = $who . ': ' . mb_substr($txt, 0, 300);
         }
     } else {
-        $th   = xeric_play_thread($t, $db, $handle, 12);
+        $th   = xeric_play_thread($t, $db, $handle, 12, false);   // a suggestion reads, it does not look
         $lines = [];
         foreach ((array)($th['messages'] ?? []) as $m) {
             $who = ((string)($m['role'] ?? '')) === 'user' ? $you : $them;
@@ -2077,14 +2074,23 @@ function xeric_play_suggest(array $t, PDO $db, string $handle, array $endpoint, 
     return mb_substr($v, 0, 240);
 }
 
-function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60): array
+/**
+ * One thread, oldest first, and the unread dot put out.
+ *
+ * Reading a thread is what marks it read, so the dot means "since you last
+ * looked" rather than "since the server last restarted". That is true of a
+ * person opening it on a page. A caller that only wants the lines — the API's
+ * GET, which must be safe to repeat, and the suggester, which is a model
+ * reading over a shoulder — passes $markRead false and changes nothing.
+ */
+function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60, bool $markRead = true): array
 {
     $conv = xeric_conversation_find($db, $handle, 'chat');
     if ($conv === null) return ['conversation_id' => null, 'messages' => []];
 
     $id   = (int)$conv['id'];
     $rows = xeric_messages_recent($db, $id, $limit, 0, xeric_state_rating());   // as this viewer reads it
-    xeric_play_mark_read($db, $id);
+    if ($markRead) xeric_play_mark_read($db, $id);
 
     // The photos running behind this conversation, mapped by the message they
     // belong to. A done job turns its caption message into an image bubble; a

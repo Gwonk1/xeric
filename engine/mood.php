@@ -39,7 +39,7 @@
  * The narrator may read it (the narrator sees the board) and the sidebar may
  * show it. Characters simply live in it.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);

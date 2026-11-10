@@ -464,6 +464,24 @@ $rP = xeric_play_room_run($w, $A, (string)$sP['lease'], [
 ]);
 $pairs = [];
 foreach ($seenP as $i => $c) $pairs[] = [$whoSpoke[$i] ?? '?', $c['machine'], $c['slot']];
+
+// the who-pays note is a session id on disk: it is there while the turn is
+// carried, read by the worker, and gone with the turn.
+$sPay = xeric_play_room_say($w, 'And the hymns? Too slow, or is that just me?');
+$payLease = (string)($sPay['lease'] ?? $sPay['turn'] ?? '');
+xeric_play_room_payer_set($payLease, $A);
+ok('the payer note sits beside the jobs while the turn is carried',
+    $payLease !== '' && is_file(xeric_play_room_payer_path($payLease)) && xeric_play_room_payer($payLease, 'nobody') === $A);
+xeric_play_room_run($w, $A, $payLease, ['endpoint' => fn(string $h): array => $mA,
+    'up' => false, 'wait' => 2.0, 'seed' => 'pay', 'sleep' => fn(float $s) => null]);
+ok('and the turn takes it along when it ends', !is_file(xeric_play_room_payer_path($payLease)));
+$stray = xeric_web_jobs_dir() . '/room-pay-' . str_repeat('ab', 16) . '.json';
+$young = xeric_web_jobs_dir() . '/room-pay-' . str_repeat('cd', 16) . '.json';
+file_put_contents($stray, '{}'); touch($stray, time() - 3 * 3600);
+file_put_contents($young, '{}');
+for ($i = 0; $i < 400 && is_file($stray); $i++) xeric_web_job_sweep();   // one pass in ten does the work
+ok('a note a dead worker left ages out with the jobs, a fresh one does not', !is_file($stray) && is_file($young));
+@unlink($young);
 $pinRight = $pairs !== [];
 foreach ($pairs as [$h, $m, $sl]) {
     if ($m !== ($h === $pinned ? 'B' : 'A')) $pinRight = false;

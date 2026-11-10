@@ -59,7 +59,7 @@
  * the meter, not in an error message. It passes llm.php's header filter on
  * the way out.
  *
- * PHP 8.2+.
+ * PHP 8.1+.
  */
 
 declare(strict_types=1);
