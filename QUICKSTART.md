@@ -42,8 +42,32 @@ It will not run a paused world, will not take the model from somebody who is
 mid-conversation, and will not try to live a month-long gap in a single tick.
 
 The app finds a local model by probing the ports people actually use (11434,
-8080, 1234, 5000, 8000, 4891). If yours is somewhere else, the machines screen
-in the UI takes an address, or set it and skip the probe.
+8080, 1234, 5000, 8000, 4891). If yours is somewhere else — a GPU box on the
+LAN, an ssh tunnel, llama.cpp bound on another host — point it there:
+
+```bash
+./xeric --llm http://192.168.1.50:8080
+./xeric --llm http://gpu.example.com:8080 --llm-key SECRET   # llama-server --api-key
+export XERIC_LOCAL_BASE=http://192.168.1.50:8080            # same thing, sticky
+```
+
+A trailing `/v1` is stripped, so the URL you copied from an OpenAI-compatible
+tutorial works. The machines screen in the UI also takes an address.
+
+On the llama.cpp side, bind all interfaces if Xeric is not on the same box:
+
+```bash
+llama-server --host 0.0.0.0 --port 8080 --api-key SECRET -m model.gguf
+```
+
+Router mode (no `-m`, several GGUFs behind one address) needs a model id, which
+the machines screen offers as a list once it sees GET `/models` with a lifecycle
+status. Same thing from the shell:
+
+```bash
+./xeric --llm http://192.168.1.50:8080 --llm-model Qwen3-8B-Q4_K_M
+export XERIC_LOCAL_MODEL=Qwen3-8B-Q4_K_M
+```
 
 ## Your first world
 
@@ -56,6 +80,156 @@ Then **review it before you launch it.** The review page shows every section
 with a reroll button, 159 editable fields, and every knowledge wall written out
 in plain English — because a wall the forge got wrong is a secret told to the
 wrong person, and you are the only one who can catch that.
+
+### Seeing the room
+
+The play view can show you the room you are standing in — a 360° panorama you
+drag to look around, or a still — once there is a machine to draw it. Choose
+one on **the machines screen** (the *Scene machine* card), or set it and skip
+the screen:
+
+```bash
+XERIC_SCENE_BASE=http://127.0.0.1:9100   # anything that speaks POST /v1/scenes
+XERIC_SCENE_KIND=generic                 # or image
+XERIC_SCENE_AUTH=x-api-key               # where the key goes; default bearer
+XERIC_SCENE_KEY=...                      # environment only, never stored
+```
+
+No scene machine and an image machine already set up? The viewport falls back
+to it and gives you **a still of the room from where you stand**. Neither, and
+there is simply no view — nothing breaks. Press **look** in the sidebar and the
+room is asked for; a second look in the same light with the same people is the
+same picture, not a second render. The request format, and how to put a proxy
+in front of a panorama service, is in [`docs/VIEWPORT.md`](docs/VIEWPORT.md).
+
+**Hearing it.** Under the view is a line saying what the room sounds like. When
+the scene machine can make sound as well (an image machine cannot), a
+**listen** toggle plays it. It never plays on its own. Turn a world's sound off
+with `media.scene.sound.enabled: false`. On a local machine the heart also draws
+the room you are in ahead of time; on a metered one it draws nothing unless the
+template sets `media.scene.prerender`.
+
+**Go live.** A scene machine that streams can show the room moving instead of
+a stored picture. It is off until the world's template says
+`media.scene.stream.enabled: true`; then the owner — never a guest — sees
+**go live** under a still or a panorama, and nothing else ever starts one. A
+machine that bills is refused unless the template also says
+`media.scene.stream.remote: true`, because a streamed hour costs about **$72**
+where drawing the room once costs a dollar or less. A live view is metered by
+the second (`budget.stream_seconds_per_day` caps it), lasts at most
+`media.scene.stream.max_seconds` (300 by default), and ends when you leave,
+the light moves on, the room shuts or the tab goes quiet — the stored
+panorama comes back with a line saying why. While live, the machine is told
+the engine's own events (the weather turning, someone arriving), never what
+you typed. See [`docs/VIEWPORT.md`](docs/VIEWPORT.md#streams).
+
+**Try the world-model scaffold.** `tools/proxies/worldmodel.py` is a scene
+machine on your own desk that streams: it draws the room's layout as a
+low-poly blockout all the way round, applies the engine's events as they come
+and serves the frames as MJPEG — no GPU, no account, no key:
+
+```bash
+python3 tools/proxies/worldmodel.py --port 9100
+XERIC_SCENE_BASE=http://127.0.0.1:9100 XERIC_SCENE_KIND=generic ./xeric
+```
+
+with `media.scene.stream.enabled: true` in the world's template, then **look**
+and **go live**. Loopback is your own electricity, so it is not metered as a
+bill. A real local video model plugs in with `--upstream-frames`; see
+[`tools/proxies/README.md`](tools/proxies/README.md).
+
+**The voices.** Any text-to-speech server that answers `POST /v1/audio/speech`
+(Kokoro-FastAPI on your own machine, or a hosted one) gives every character a
+voice of their own:
+
+```bash
+XERIC_VOICE_BASE=http://127.0.0.1:8880   # the speech server
+XERIC_VOICE_MODEL=tts-1                  # the default
+XERIC_VOICE_FORMAT=mp3                   # or opus, wav
+XERIC_VOICE_KEY=...                      # environment only, never stored
+```
+
+Each person is dealt a voice from their name and keeps it. Pick one yourself
+with `speech.voice` on the character ([`docs/VOICE.md`](docs/VOICE.md)).
+
+**The ears.** Any speech-to-text server that answers
+`POST /v1/audio/transcriptions` (a local Whisper server, or a hosted one)
+puts a **hold to talk** button beside the composer. What you said lands in
+the box for you to read and send; the recording is never stored.
+
+```bash
+XERIC_EARS_BASE=http://127.0.0.1:8090    # the transcription server; unset is no button
+XERIC_EARS_MODEL=whisper-1               # the default
+XERIC_EARS_LANGUAGE=en                   # optional; empty lets the machine tell
+XERIC_EARS_KEY=...                       # environment only, never stored
+```
+
+**Talk to the room.** Where two or more of the cast are standing with you, the
+view offers *talk to the room*: say something, and the people there answer one
+at a time — or don't, and the room may carry on a line or two without you.
+
+**Put on a headset.** On the machine Xeric runs on, open `link.php`, name the
+device and press *Make a code*; on the headset, open `stand.php?w=<slug>`,
+press **link** and type the eight characters within five minutes (on `--lan`
+the link page also shows the code as a QR). The stand page is the room and
+nothing else: press a name to turn to them, hold to talk, *step inside* for
+the headset. WebXR and the microphone need a secure context — https, or a
+page on this machine — so plain `--lan` http gets the 2D view with neither;
+Quest Link, `adb reverse` and `tailscale serve` are the three setups that
+work. See [`docs/STAND.md`](docs/STAND.md).
+
+**Set a budget.** A world's template may carry a ceiling per world-day:
+
+```json
+"budget": { "tokens_per_day": 200000, "renders_per_day": 20, "clips_per_day": 0,
+            "hearings_per_day": 0, "metered_only": true }
+```
+
+Every default is 0, and 0 means no ceiling, so a world without the block
+behaves as before. `metered_only` (on by default) counts only machines that
+bill — a remote model, scene, voice or ears machine — and never rations your
+own electricity unless you set it false. A day is the world's date, not the
+wall's. Out of tokens, the heart stops living hours where it ran out; out of
+renders, rooms wait. See [`docs/BUDGET.md`](docs/BUDGET.md).
+
+**Ask the narrator.** The narrator is the chip and the row at the end of the
+cast in the sidebar. It sees the whole world with no walls, so you can ask it
+*why*: why nothing happened last night, why she keeps bringing up the
+ledger. It answers straight about how the world works and will not tell you
+how a story ends, where something hidden is, or anybody's secret. One
+question is one model call, counted as a message, and the last few
+exchanges are kept on the narrator's pane. Only the owner of the world can
+ask; a guest on a pairing code is told no. On the same pane you can write a
+beat you want to happen (*Ruth and Walt at the Bluebird this week*). The
+sweeps lean towards it but are not forced, and a beat that happens is struck
+through. `why.php?w=<slug>&audit=1` is the narrator's audit: dropped
+threads, people who have gone missing, contradictions. Reading it costs
+nothing. The button that reads the threads with the model is metered like a
+message. See [`docs/NARRATOR.md`](docs/NARRATOR.md).
+
+**Turn on the Director.** The Director is off until a world's template says
+otherwise. When it is on, it puts two or three people in one room for an
+hour, so the encounter is already there when you walk in. It never decides
+what they say there. Pick the rules you want:
+
+```json
+"director": { "rules": ["narrator", "apart", "player"], "per_day": 2,
+              "apart_days": 7, "player_gap": 2, "minutes": 60 }
+```
+
+- `narrator` stages a narrator beat that names two or more people.
+- `apart` brings together two people of one circle who have gone
+  `apart_days` without an hour together.
+- `player` brings together two people whose trust in you has drifted
+  `player_gap` or more apart.
+
+`per_day` caps the stagings per world-day for all rules together; the
+default is 2. A staging lasts `minutes`, at most 120. It never moves the
+dead, never takes anybody off a shift marked or read as unmissable, never
+seats a minor in a room that serves drink, and moves nobody when fewer than
+two can come. The inspector's *what the director has staged* says why each
+one happened, and you can cancel one there. See
+[`docs/DIRECTOR.md`](docs/DIRECTOR.md).
 
 ## Reading the inspector — the tuning tool
 
@@ -111,14 +285,25 @@ php engine/chat-cli.php --world=worlds/<slug> --speaker=<handle> --say="..."
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h
 php engine/sweep-cli.php --world=worlds/<slug> --advance=6h --no-learn
 
-# the test suites — all of them, no exceptions
-for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php tools/tests/*.php; do php "$t" || break; done
+# the test suites — all of them, no exceptions; stops at the first that fails
+for t in engine/tests/*-test.php forge/tests/*.php forge/web/tests/*.php tools/tests/*.php; do php "$t" || { echo "FAILED: $t"; break; }; done
 
-# the last of those is the smoke test: it starts a throwaway server, loads
-# every page in headless Chrome, and fails on any uncaught javascript. It
-# SKIPS when there is no browser installed, which is not a failure.
-php forge/web/tests/smoke-test.php
+# two of those need something besides PHP, and say SKIP (exit 0) without it:
+#   smoke-test.php  starts a throwaway server, loads every page in headless
+#                   Chrome, and fails on any uncaught javascript. Needs chrome,
+#                   chromium or chrome-headless-shell; XERIC_CHROME names one.
+#   viewer-test.php runs the play view's panorama, headset, day-strip and
+#                   speaker JavaScript in Node against a fake DOM and WebGL.
+# A SKIP line is not a pass: CI sets XERIC_REQUIRE_BROWSER=1 and
+# XERIC_REQUIRE_NODE=1 so a missing tool fails there instead.
+XERIC_CHROME=/path/to/chrome-headless-shell php forge/web/tests/smoke-test.php
 ```
+
+In a container with no D-Bus session bus (some sandboxes), full Chrome starts
+and never dumps a page whatever flags it is given; the smoke test notices in
+twenty seconds and says so. `chrome-headless-shell` does not need the bus.
+The one demo-test check that needs real DNS says SKIP when offline.
+CONTRIBUTING.md has the rest.
 
 ## An AI can hold a seat too
 
@@ -139,7 +324,7 @@ forge, no review, no inspector, no time control. A seat is a seat. Walking
 costs it real world-minutes like anybody, silence is a real answer it is told
 to respect, and the inspector's trails record what it was told and why.
 
-
+## Running it where other people can reach it
 
 `forge/web/deploy.sh` puts the web app behind a real web server. It is
 parameterized and bakes in no host: set `XERIC_HOST` to an ssh target and

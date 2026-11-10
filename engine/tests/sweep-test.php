@@ -444,6 +444,14 @@ ok('places: a mill chained since 1998 is never open, at any hour of any day',
 ok('places: the documented grammar is READ — a diner that closes at two is shut in the evening',
     in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-07-30 08:00'))), true)
     && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-07-30 18:30'))), true));
+// The fixture's own canon: "The diner closes at two and does not reopen for
+// anyone." Its hours said `close_weekday`, which the reader applies Monday to
+// Friday, so Saturday — Dot works it — read as open all afternoon and evening.
+ok('places: the Bluebird closes at two on Saturday too, as its canon says',
+    in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 10:00'))), true)
+    && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 15:00'))), true)
+    && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 19:00'))), true)
+    && !in_array('bluebird', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-02 10:00'))), true));
 ok('places: a place with a Saturday of its own keeps it, and a closed day shuts it',
     in_array('beck_hardware', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 09:00'))), true)
     && !in_array('beck_hardware', xeric_sweep_open_places($BASE, xeric_world_now($BASE, ep('2026-08-01 15:00'))), true)
@@ -457,6 +465,42 @@ ok('places: and hours nobody can read still mean open, because the bag is free-f
 // ---------------------------------------------------------------------------
 // 6. The wall: the protected character and what they must not know
 // ---------------------------------------------------------------------------
+
+// W3, THE TABLE. Milldale's child role hides `economies.thursday_pot` and
+// declares no must_not_know, so xeric_sweep_protected() is empty and nothing
+// used to stop [pastor_dale, janelle] being a legal drop-in at First Lutheran on
+// Thursday night — the hour the sweep turns into the game itself. Fixed in the
+// engine, not the fixture: a wall that hides the ledger is already the
+// statement that she must not sit at the game that pays it (xeric_table_barred).
+$thuNight = xeric_world_now($BASE, ep('2026-07-30 19:30'));
+$seatsJanelleAtGame = static function (array $groups): bool {
+    foreach ($groups as $g) {
+        if (($g['where'] ?? null) === 'first_lutheran' && in_array('janelle', (array)$g['handles'], true)) return true;
+    }
+    return false;
+};
+ok('wall: Milldale names nobody under must_not_know — the table rule must not depend on it',
+    xeric_sweep_protected($BASE) === []);
+ok('wall: on Thursday night no legal group seats Janelle at her father\'s game',
+    !$seatsJanelleAtGame(xeric_sweep_groups($BASE, $thuNight))
+    && in_array('pastor_dale', array_merge(...array_map(fn($g) => (array)$g['handles'],
+        xeric_sweep_groups($BASE, $thuNight))), true),
+    json_encode(array_map(fn($g) => [$g['handles'], $g['where']], xeric_sweep_groups($BASE, $thuNight))));
+ok('wall: and over 200 draws the chooser never puts her at it',
+    (function () use ($BASE, $thuNight) {
+        $kinds = xeric_sweep_kinds_for($BASE);
+        for ($i = 0; $i < 200; $i++) {
+            $c = xeric_sweep_choose($BASE, $thuNight, $kinds, ['spine' => (bool)($i % 2)]);
+            if ($c !== null && ($c['where'] ?? null) === 'first_lutheran' && in_array('janelle', $c['handles'], true)) return false;
+        }
+        return true;
+    })());
+ok('wall: the rule is the table\'s night, not the room — Sunday she is at church like anybody',
+    !xeric_table_barred($BASE, 'first_lutheran', xeric_world_now($BASE, ep('2026-08-02 10:00')), 'janelle')
+    && xeric_table_barred($BASE, 'first_lutheran', $thuNight, 'janelle'));
+ok('wall: and it bars only those the ledger is hidden from — the pastor sits at his own game',
+    !xeric_table_barred($BASE, 'first_lutheran', $thuNight, 'pastor_dale')
+    && !xeric_table_barred($BASE, 'bluebird', $thuNight, 'janelle'));
 
 $TW = world(['secrets', 'rumors', 'slow_reveal'], [], 'ruth');
 ok('wall: the template names who is protected and from what',
@@ -2177,6 +2221,66 @@ ok('outage: but a stretch that ENDED cleanly stays lived — skip twice, mine on
     && str_contains(implode(' ', $tail['notes']), 'already been lived'), json_encode($tail['notes']));
 
 // ---------------------------------------------------------------------------
+// THE BUDGET INSIDE THE WALK — `afford`, asked before each window.
+//
+// The heart used to walk a budgeted world one catchup call per window: every
+// call stamped the mark past its window whether the model answered or not, so
+// an outage under a ceiling buried the hours nobody lived, and its own
+// three-event cap differed from the one call's. Now the question is asked
+// inside the one walk, and the caps, the give-up and the mark stay there.
+// ---------------------------------------------------------------------------
+
+echo "\n# afford\n";
+
+$TAF  = world(['gossip', 'meals']);
+$afW0 = xeric_sweep_windex(ep('2026-07-30 08:00'), 3600);
+
+$dbAF = fresh_db('afford-stop');
+xeric_state_seed($dbAF, $TAF);
+$asked = [];
+$afR = xeric_sweep_catchup($TAF, $dbAF, stub_event(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'),
+    ['chance' => 1.0, 'seed' => 31, 'max_events' => 8,
+     'afford' => function (int $w) use ($afW0, &$asked): bool { $asked[] = $w; return $w < $afW0 + 2; }]);
+$afLate = array_filter((array)$afR['events'], fn($e) => (int)$e['world_epoch'] >= ($afW0 + 2) * 3600);
+ok('afford: a world that cannot afford its third hour stops in front of it, and says budget',
+    ($afR['stopped'] ?? '') === 'budget' && end($asked) === $afW0 + 2 && $afLate === []
+    && count($afR['events']) === 2, json_encode([$afR['notes'], $asked]));
+ok('afford: and the watermark stands right behind the hour it could not afford',
+    (int)xeric_world_state_get($dbAF, 'sweep_watermark:3600') === $afW0 + 1,
+    var_export(xeric_world_state_get($dbAF, 'sweep_watermark:3600'), true));
+$afNext = xeric_sweep_catchup($TAF, $dbAF, stub_event(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'),
+    ['chance' => 1.0, 'seed' => 32, 'max_events' => 1, 'afford' => fn(int $w): bool => true]);
+ok('afford: so the next day\'s money lives that very hour, not the one after',
+    count($afNext['events']) === 1
+    && xeric_sweep_windex((int)$afNext['events'][0]['world_epoch'], 3600) === $afW0 + 2, json_encode($afNext['notes']));
+
+$dbAD = fresh_db('afford-dead');
+xeric_state_seed($dbAD, $TAF);
+$adAsked = 0;
+$adR = xeric_sweep_catchup($TAF, $dbAD, stub_dead(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'),
+    ['chance' => 1.0, 'seed' => 33, 'afford' => function (int $w) use (&$adAsked): bool { $adAsked++; return true; }]);
+ok('afford: a dead model under a ceiling still gives up after max_misses',
+    ($adR['events'] ?? []) === [] && $adAsked === 2 && !isset($adR['stopped'])
+    && str_contains(implode(' ', $adR['notes']), 'gave up'), json_encode([$adR['notes'], $adAsked]));
+$adMark = xeric_world_state_get($dbAD, 'sweep_watermark:3600');
+ok('afford: and buries none of the hours it failed to live',
+    $adMark === null || (int)$adMark < $afW0, var_export($adMark, true));
+
+$capRun = function (bool $withAfford) use ($TAF): array {
+    $d = fresh_db('afford-cap-' . ($withAfford ? 'on' : 'off'));
+    xeric_state_seed($d, $TAF);
+    $o = ['chance' => 1.0, 'seed' => 34];
+    if ($withAfford) $o['afford'] = fn(int $w): bool => true;
+    $r = xeric_sweep_catchup($TAF, $d, stub_event(), ep('2026-07-30 08:00'), ep('2026-07-30 14:00'), $o);
+    return [array_map(fn($e) => (int)$e['world_epoch'], (array)$r['events']),
+            xeric_world_state_get($d, 'sweep_watermark:3600')];
+};
+$capOff = $capRun(false);
+$capOn  = $capRun(true);
+ok('afford: the event cap and the mark are the same with a budget as without one',
+    $capOff === $capOn && count($capOff[0]) === 3, json_encode([$capOff, $capOn]));
+
+// ---------------------------------------------------------------------------
 // SHAPES — a world's own rhythm, with or without a story on it.
 //
 // The load-bearing claim of the whole feature is arithmetic: intensity 0.5 is
@@ -2978,6 +3082,232 @@ $drOut = xeric_proactive_dream($TOut, $dbDr, stub_says_text('must not be dreamed
     ['dream_chance' => 1.0, 'seed' => 4], $notes);
 ok('out: nor can they wake and dream at you',
     $drOut === null && xeric_messages_count($dbDr, $cidDr) === 2, json_encode($notes));
+
+// ---------------------------------------------------------------------------
+// Talking with you: a live room's table is out of every hour while it lasts
+// ---------------------------------------------------------------------------
+//
+// engine/room.php keeps the player's live session in world_state `room:live`;
+// the people seated at it are in a conversation the player is reading line by
+// line, and an hour that cast them elsewhere would contradict the screen.
+
+echo "\n# talking with you\n";
+
+$dbLR = fresh_db('live-room');
+xeric_state_seed($dbLR, $T2);
+ok('live room: no session, nobody busy', xeric_sweep_live_room($dbLR) === []);
+xeric_world_state_set($dbLR, 'room:live', json_encode(['conv' => 1, 'present' => ['ruth', 'dot'], 'ended' => null]));
+ok('live room: the sweep reads who is at the table', xeric_sweep_live_room($dbLR) === ['ruth', 'dot']);
+$kindsLR = xeric_sweep_kinds_for($T2, $dbLR);
+$hitLR = ''; $whyLR = [];
+foreach (range(1, 30) as $i) {
+    mt_srand(500 + $i);
+    $ch = xeric_sweep_choose($T2, $NOW, $kindsLR, ['busy' => ['ruth', 'dot'], 'spine' => false]);
+    if ($ch === null) continue;
+    if (array_intersect(['ruth', 'dot'], (array)$ch['handles']) !== []) $hitLR = implode(',', (array)$ch['handles']);
+    foreach ((array)$ch['trail']['excluded'] as $x) $whyLR[(string)$x['handle']] = (string)$x['why'];
+}
+ok('live room: thirty draws, and not one casts somebody who is talking with you', $hitLR === '', $hitLR);
+ok('live room: the trail says why, in its own words — not a wall, not death',
+    ($whyLR['ruth'] ?? '') === 'talking with you' && ($whyLR['dot'] ?? '') === 'talking with you', json_encode($whyLR));
+$rLR = xeric_sweep_run($T2, $dbLR, stub_event(), $NOW, ['chance' => 1.0, 'seed' => 11]);
+ok('live room: and a real sweep with the session in the db leaves them out',
+    count($rLR['events']) === 1 && array_intersect(['ruth', 'dot'], (array)$rLR['events'][0]['participants']) === [],
+    json_encode($rLR['events'][0]['participants'] ?? $rLR['notes']));
+xeric_world_state_set($dbLR, 'room:live', json_encode(['conv' => 1, 'present' => ['ruth'], 'ended' => 'quiet']));
+ok('live room: a session that has ended holds nobody', xeric_sweep_live_room($dbLR) === []);
+
+// ---------------------------------------------------------------------------
+// The narrator's lean (write-ahead): a weight, bounded, and nothing without it
+// ---------------------------------------------------------------------------
+echo "\n# the narrator's lean\n";
+
+// Two armed kinds, both reachable at Thursday 18:30. Base share of the second
+// is about a half; leaned ×2 it is about two thirds. Bounded means exactly
+// that: well short of every hour, because a pull that always wins is a script.
+$kindsNL = xeric_sweep_kinds_for($T2);
+$leanK   = array_keys($kindsNL)[1];
+$baseN = $leanN = 0;
+for ($s = 1; $s <= 400; $s++) {
+    mt_srand(9000 + $s);
+    $c0 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false]);
+    mt_srand(9000 + $s);
+    $c1 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false, 'intents' => [['n' => 1, 'kind' => $leanK]]]);
+    if ($c0 !== null && $c0['kind']['key'] === $leanK) $baseN++;
+    if ($c1 !== null && $c1['kind']['key'] === $leanK) $leanN++;
+}
+ok('lean: a kind the narrator intends is chosen more often', $leanN > $baseN + 20, "base $baseN, lean $leanN of 400");
+ok('lean: and bounded — a ×2 weight, never a script (under 3 in 4 hours)',
+    $leanN < 300 && $leanN - $baseN < 120, "base $baseN, lean $leanN of 400");
+mt_srand(31);
+$n0 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false]);
+mt_srand(31);
+$n1 = xeric_sweep_choose($T2, $NOW, $kindsNL, ['spine' => false, 'intents' => []]);
+ok('lean: no lean is the draw it always was, byte for byte', json_encode($n0) === json_encode($n1));
+ok('lean: and its trail says no lean happened', array_key_exists('lean', $n0['trail']) && $n0['trail']['lean'] === null);
+
+// CATCHUP READS THE LEDGER. With no intent recorded the stretch is exactly the
+// stretch an explicit empty list walks; with one, the trail carries its number.
+$dbNL0 = fresh_db('lean-none');
+$dbNL1 = fresh_db('lean-empty');
+$fromNL = ep('2026-07-30 14:00');
+$cuA = xeric_sweep_catchup($T2, $dbNL0, stub_event(), $fromNL, $fromNL + 4 * 3600, ['chance' => 1.0, 'seed' => 44, 'max_events' => 2]);
+$cuB = xeric_sweep_catchup($T2, $dbNL1, stub_event(), $fromNL, $fromNL + 4 * 3600, ['chance' => 1.0, 'seed' => 44, 'max_events' => 2, 'intents' => []]);
+$shape = fn(array $r) => json_encode(array_map(fn($e) => [$e['kind'], $e['participants'], $e['place'], $e['trail']['lean'] ?? null], $r['events']));
+ok('catchup: an empty intent ledger leans nothing — same hours as an explicit empty list',
+    $cuA['events'] !== [] && $shape($cuA) === $shape($cuB), $shape($cuA) . ' vs ' . $shape($cuB));
+
+$dbNL2 = fresh_db('lean-live');
+xeric_state_seed($dbNL2, $T2);
+require_once __DIR__ . '/../narrator.php';
+xeric_narrator_intend($T2, $dbNL2, 'LEAN-SWEEP-NEEDLE a quiet one', ['epoch' => $fromNL - 3600, 'kind' => $leanK]);
+$cuC = xeric_sweep_catchup($T2, $dbNL2, stub_event(), $fromNL, $fromNL + 4 * 3600, ['chance' => 1.0, 'seed' => 44, 'max_events' => 3]);
+$leaned = array_filter($cuC['events'], fn($e) => in_array(1, (array)($e['trail']['lean']['intents'] ?? []), true));
+ok('catchup: a recorded intent reaches the chooser — the trail says "leaned by intent #1"',
+    $leaned !== [] && !str_contains(json_encode($cuC['events']), 'LEAN-SWEEP-NEEDLE'), json_encode(array_column($cuC['events'], 'kind')));
+
+// ---------------------------------------------------------------------------
+// More than one voice of weights — the per-character pin, in sweeps
+// ---------------------------------------------------------------------------
+
+/** A machine that writes events and logs which machine it is, per call. */
+function stub_machine(string $name, array &$log, array $tags = [], bool $dead = false, ?callable $mem = null): array
+{
+    $inner = stub_event($mem);
+    return ['base' => 'stub://' . $name, 'stub' => function (string $tag, array $msgs, array $opts) use ($name, &$log, $inner, $dead) {
+        $log[] = ['machine' => $name, 'handles' => stub_handles($msgs), 'opts' => $opts, 'msgs' => $msgs];
+        if ($dead) throw new RuntimeException('llm: cannot reach ' . $name . ' (Connection refused)');
+        return ($inner['stub'])($tag, $msgs, $opts);
+    }] + $tags;
+}
+
+/** stub_half()'s sentences from a counter of the caller's own, so two runs can match. */
+function stub_mem_from(int &$n): callable
+{
+    static $halves = null;
+    if ($halves === null) { $halves = []; for ($i = 0; $i < 18; $i++) $halves[] = stub_half(); }
+    return function (array $handles) use (&$n, $halves): array {
+        $out = [];
+        foreach ($handles as $h) $out[$h] = ucfirst(str_replace('_', ' ', $h)) . ' ' . $halves[$n++ % 18] . '.';
+        return $out;
+    };
+}
+
+// Dot first in the cast, so she is the centre of the hours she starts in.
+$TV = $T2;
+usort($TV['cast']['characters'], fn($a, $b) => ($b['handle'] === 'dot') <=> ($a['handle'] === 'dot'));
+$fromV = ep('2026-07-30 08:00');
+// Seeded once per stretch, not per window: a per-window seed draws the same
+// room every hour, and these checks need hours centred on different people.
+$vOpts = ['chance' => 1.0, 'max_events' => 8, 'max_windows' => 14];
+
+// NO RESOLVER: today's single endpoint, every call, nothing new in the trail.
+$logN = []; $nN = 0;
+mt_srand(61);
+$cuN = xeric_sweep_catchup($TV, fresh_db('voice-none'), stub_machine('A', $logN, [], false, stub_mem_from($nN)), $fromV, $fromV + 14 * 3600, $vOpts);
+ok('voice: with no resolver every call goes to the one endpoint',
+    $logN !== [] && array_unique(array_column($logN, 'machine')) === ['A'], json_encode(array_column($logN, 'machine')));
+ok('voice: and carries no slot, and the trail has no voice in it',
+    !in_array(true, array_map(fn($l) => array_key_exists('id_slot', $l['opts']), $logN), true)
+    && !str_contains(json_encode(array_column($cuN['events'], 'trail')), '"voice"'));
+
+// A resolver that pins nobody leaves the prompts byte-identical: the pin moves
+// WHERE the hour is written, never what it is asked.
+$logD = []; $nD = 0;
+$defA = stub_machine('A', $logD, [], false, stub_mem_from($nD));
+mt_srand(61);
+xeric_sweep_catchup($TV, fresh_db('voice-default'), $defA, $fromV, $fromV + 14 * 3600,
+    $vOpts + ['endpoint_for' => fn(string $h): array => $defA]);
+ok('voice: a resolver that pins nobody asks the same things, byte for byte',
+    json_encode(array_column($logN, 'msgs')) === json_encode(array_column($logD, 'msgs')),
+    (function () use ($logN, $logD) { foreach ($logN as $i => $l) { $a = json_encode($l['msgs']); $b = json_encode($logD[$i]['msgs'] ?? null);
+        if ($a !== $b) { $k = 0; while ($k < strlen($a) && $a[$k] === ($b[$k] ?? '')) $k++; return "call $i: " . substr($a, max(0, $k - 80), 200) . ' VS ' . substr($b, max(0, $k - 80), 200); } } return count($logN) . '/' . count($logD); })());
+
+// DOT PINNED TO B: Dot-centred hours go to B, every other hour to A.
+$logP = [];
+$mA = stub_machine('A', $logP, ['server' => 'Ollama 0.5', 'slots' => 4]);
+$mB = stub_machine('B', $logP, ['server' => 'llama.cpp', 'slots' => 4]);
+$pinB = fn(string $h): array => $h === 'dot' ? $mB + ['pin' => ['machine' => 'b.lan:8080', 'down' => false]] : $mA;
+mt_srand(61);
+$cuP = xeric_sweep_catchup($TV, fresh_db('voice-pin'), $mA, $fromV, $fromV + 14 * 3600, $vOpts + ['endpoint_for' => $pinB]);
+$right = true; $sawB = false; $sawA = false;
+foreach ($logP as $l) {
+    $centre = xeric_sweep_centre($TV, ['handles' => $l['handles']]);
+    $want = $centre === 'dot' ? 'B' : 'A';
+    if ($l['machine'] !== $want) $right = false;
+    $sawB = $sawB || $l['machine'] === 'B';
+    $sawA = $sawA || $l['machine'] === 'A';
+}
+ok('voice: a Dot-centred hour is written by her machine, every other by the default',
+    $right && $sawA && $sawB, json_encode(array_map(fn($l) => [$l['machine'], $l['handles']], $logP)));
+$trailOk = true;
+foreach ($cuP['events'] as $e) {
+    $v = (array)($e['trail']['voice'] ?? []);
+    $c = (string)($v['centre'] ?? '');
+    if ($c === '' || $c !== xeric_sweep_centre($TV, ['handles' => $e['participants']])
+        || ($v['machine'] ?? '') !== ($c === 'dot' ? 'b.lan:8080' : 'default')) $trailOk = false;
+}
+ok('voice: the trail says whose hour it was and which machine wrote it', $cuP['events'] !== [] && $trailOk,
+    json_encode(array_map(fn($e) => $e['trail']['voice'] ?? null, $cuP['events'])));
+ok('voice: the centre is the protagonist when they are in the room, else the first named',
+    xeric_sweep_centre(['cast' => ['protagonist' => ['handle' => 'dot']]], ['handles' => ['ruth', 'dot']]) === 'dot'
+    && xeric_sweep_centre($T2, ['handles' => ['ruth', 'dot']]) === 'ruth');
+
+// GROUPING. One event is one call, so a window's calls are one machine's; the
+// stretch keeps its own chronology rather than batching a machine's hours,
+// because each hour is chosen from the world the last one left.
+$epochs = array_column($cuP['events'], 'world_epoch');
+$sorted = $epochs; sort($sorted);
+ok('voice: one call per hour, each window on one machine, the hours in the order they happened',
+    count($logP) === count($cuP['events']) && $epochs === $sorted, count($logP) . ' calls, ' . count($cuP['events']) . ' events');
+
+// THE SLOT: sent to llama.cpp only, stable per handle.
+$slotsB = array_values(array_unique(array_map(fn($l) => $l['opts']['id_slot'] ?? 'none',
+    array_filter($logP, fn($l) => $l['machine'] === 'B'))));
+$slotsA = array_filter($logP, fn($l) => $l['machine'] === 'A' && array_key_exists('id_slot', $l['opts']));
+ok('voice: Dot keeps one slot on the llama.cpp machine, every hour', $slotsB === [crc32('dot') % 4], json_encode($slotsB));
+ok('voice: and the machine that is not llama.cpp never sees an id_slot', $slotsA === []);
+$logS = [];
+$mS = stub_machine('S', $logS, ['server' => 'llama.cpp', 'slots' => 1]);
+xeric_sweep_catchup($TV, fresh_db('voice-oneslot'), $mS, $fromV, $fromV + 6 * 3600,
+    ['chance' => 1.0, 'seed' => 62, 'max_events' => 3, 'endpoint_for' => fn(string $h): array => $mS]);
+ok('voice: a llama.cpp with one slot is sent none', $logS !== []
+    && !in_array(true, array_map(fn($l) => array_key_exists('id_slot', $l['opts']), $logS), true));
+
+// DOWN. A pin the resolver found not answering is written by the default and
+// says so; a pinned machine that dies mid-call falls back the same way; the
+// stretch never stalls on either.
+$logX = [];
+$mAx = stub_machine('A', $logX);
+$downPin = fn(string $h): array => $h === 'dot' ? $mAx + ['pin' => ['machine' => 'b.lan:8080', 'down' => true]] : $mAx;
+mt_srand(61);
+$cuX = xeric_sweep_catchup($TV, fresh_db('voice-down'), $mAx, $fromV, $fromV + 14 * 3600, $vOpts + ['endpoint_for' => $downPin]);
+$dotX = array_values(array_filter($cuX['events'], fn($e) => ($e['trail']['voice']['centre'] ?? '') === 'dot'));
+ok('voice: a pin whose machine is down is written by the default, and the trail says whose',
+    $dotX !== [] && ($dotX[0]['trail']['voice']['fell_back'] ?? '') === "written by the default, Dot Vance's machine was not answering"
+    && ($dotX[0]['trail']['voice']['machine'] ?? '') === 'default'
+    && array_unique(array_column($logX, 'machine')) === ['A'],
+    json_encode(array_map(fn($e) => $e['trail']['voice'] ?? null, $cuX['events'])));
+
+$logY = [];
+$mAy = stub_machine('A', $logY);
+$mBy = stub_machine('B', $logY, ['server' => 'llama.cpp', 'slots' => 4], true);
+$deadPin = fn(string $h): array => $h === 'dot' ? $mBy + ['pin' => ['machine' => 'b.lan:8080', 'down' => false]] : $mAy;
+mt_srand(61);
+$cuY = xeric_sweep_catchup($TV, fresh_db('voice-dies'), $mAy, $fromV, $fromV + 14 * 3600, $vOpts + ['endpoint_for' => $deadPin]);
+$dotY = array_values(array_filter($cuY['events'], fn($e) => ($e['trail']['voice']['centre'] ?? '') === 'dot'));
+$retry = false;
+foreach ($logY as $i => $l) {
+    if ($l['machine'] === 'B' && isset($logY[$i + 1]) && $logY[$i + 1]['machine'] === 'A'
+        && !array_key_exists('id_slot', $logY[$i + 1]['opts'])) $retry = true;
+}
+ok('voice: a pinned machine that stops answering mid-stretch falls back that hour, and the hour lands',
+    $dotY !== [] && $retry && str_contains((string)($dotY[0]['trail']['voice']['fell_back'] ?? ''), 'was not answering')
+    && array_key_exists('slot', $dotY[0]['trail']['voice']) && $dotY[0]['trail']['voice']['slot'] === null,
+    json_encode(array_map(fn($l) => $l['machine'], $logY)));
+ok('voice: and never stalls the stretch — as many hours as with nobody pinned',
+    count($cuY['events']) === count($cuP['events']) && !str_contains(json_encode($cuY['notes']), 'gave up'),
+    count($cuY['events']) . ' vs ' . count($cuP['events']));
 
 gc_collect_cycles();
 foreach ($DBFILES as $p2) foreach ([$p2, $p2 . '-wal', $p2 . '-shm'] as $f) @unlink($f);

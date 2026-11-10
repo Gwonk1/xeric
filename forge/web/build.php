@@ -70,17 +70,8 @@ try {
     // screen advisory, and its private-network boundary along with it. The worst
     // a tampered request can do here is name a different machine its own owner
     // already stored.
-    if (isset($posted['i'])) {
-        $rows = xeric_model_list();
-        $i = (int)$posted['i'];
-        if (isset($rows[$i])) {
-            $base = (string)$rows[$i]['base'];
-            $kind = xeric_model_kind($base);
-            $chosen = $kind === 'local'
-                ? ['kind' => 'local', 'base' => '', 'local' => $base, 'model' => '']
-                : ['kind' => $kind, 'base' => $base, 'local' => '', 'model' => ''];
-        }
-    }
+    $picked = xeric_model_choice($posted);
+    if ($picked !== null) $chosen = $picked;
     $endpoint = xeric_web_endpoint($chosen + ['key' => (string)($posted['key'] ?? '')]);
 } catch (Throwable $e) {
     xeric_web_json(['error' => $e->getMessage()], 400);

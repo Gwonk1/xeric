@@ -282,10 +282,15 @@ $autoInc = [];
 foreach ($db->query("SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE '%AUTOINCREMENT%' ORDER BY name")->fetchAll() as $r) {
     $autoInc[] = (string)$r['name'];
 }
-$listed = xeric_rewind_tables();
+// A table a rewind leaves alone on purpose (a render cache — scene_jobs) is
+// named on the exempt list with its reason; the census is the two together,
+// and a table on both is a table nobody decided about.
+$listed = array_merge(xeric_rewind_tables(), xeric_rewind_exempt_tables());
 sort($listed);
 ok('manifest: the shared table list IS the schema\'s own AUTOINCREMENT census',
     $autoInc === $listed, json_encode([$autoInc, $listed]));
+ok('manifest: no table is both rewound and exempt',
+    array_intersect(xeric_rewind_tables(), xeric_rewind_exempt_tables()) === []);
 ok('rewind: world_state is byte-for-byte the pre-skip world — guards gone, watermark back, trails gone, manifest gone',
     $POST['world_state'] == $PRE['world_state'],
     json_encode([array_diff_assoc($POST['world_state'], $PRE['world_state']),

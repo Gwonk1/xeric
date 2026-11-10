@@ -46,7 +46,8 @@ function xeric_render_economy(array $template, array $viewer, array $state, stri
             if (!xeric_rating_allows($eff, $eco)) continue;
             if (xeric_hidden($walls, 'economies.' . $key)) continue;
             $visible[$key] = $eco;
-            $blocks[] = xeric_economy_block($eco, $v, (array)($state['counters'][$key] ?? []), $eff);
+            $blocks[] = xeric_economy_block($eco, $v, (array)($state['counters'][$key] ?? []), $eff,
+                                             trim((string)($template['user']['name'] ?? '')));
         }
     }
 
@@ -59,7 +60,7 @@ function xeric_render_economy(array $template, array $viewer, array $state, stri
 
 // ---------------------------------------------------------------------------
 
-function xeric_economy_block(array $eco, array $v, array $counter, string $eff): array
+function xeric_economy_block(array $eco, array $v, array $counter, string $eff, string $userName = ''): array
 {
     $key   = (string)$eco['key'];
     $label = trim((string)($eco['label'] ?? '')) ?: str_replace('_', ' ', $key);
@@ -86,7 +87,7 @@ function xeric_economy_block(array $eco, array $v, array $counter, string $eff):
         $t = xeric_text($r);
         if ($t !== '') $rules[] = '- ' . xeric_sentence($t);
     }
-    foreach (xeric_economy_earn_lines($eco) as $line) $rules[] = '- ' . $line;
+    foreach (xeric_economy_earn_lines($eco, $userName) as $line) $rules[] = '- ' . $line;
     if (!empty($eco['daily_system'])) {
         // WHICH WAY it moves, because the flat sentence was true of a tab that
         // grows and a tab that gets paid down at the same time, and those are
@@ -127,8 +128,15 @@ function xeric_economy_subconscious(array $eco): bool
     return str_contains(strtolower((string)($eco['framing'] ?? '')), 'subconscious');
 }
 
-/** Machine earn tokens → one prose line each. Prose `rules` are preferred. */
-function xeric_economy_earn_lines(array $eco): array
+/**
+ * Machine earn tokens → one prose line each. Prose `rules` are preferred.
+ *
+ * `user_grant` is the user handing the thing over, and it is said with the
+ * user's NAME. It used to be "He can simply hand it over" — a gender decided
+ * by the engine for a person the template describes, in a renderer that never
+ * looked at the template's user at all.
+ */
+function xeric_economy_earn_lines(array $eco, string $userName = ''): array
 {
     $tokens = $eco['earned_by'] ?? [];
     if (is_string($tokens)) $tokens = [$tokens];
@@ -144,7 +152,8 @@ function xeric_economy_earn_lines(array $eco): array
         switch ($kind) {
             case 'user_event': $events[] = $arg; break;
             case 'boon':       $lines[] = 'Paid out by the boon "' . $arg . '".'; break;
-            case 'user_grant': $lines[] = 'He can simply hand it over, and sometimes does.'; break;
+            case 'user_grant': $lines[] = ($userName !== '' ? $userName : 'The person this world is for')
+                                        . ' can simply hand it over, and sometimes does.'; break;
             default:           $lines[] = xeric_sentence(str_replace('_', ' ', $t)); break;
         }
     }

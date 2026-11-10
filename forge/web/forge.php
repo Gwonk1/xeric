@@ -63,10 +63,13 @@ if ($action === 'save') {
     // reached for the record's own lock while this one holds it would hang the
     // save rather than slow it — nothing in here needs the lock to do its work.
     $clean = xeric_web_clean_answers((array)($in['answers'] ?? []), $interview);
-    xeric_web_session_edit(function (array &$s) use ($clean, $m): void {
+    $picked = xeric_model_choice($m);
+    xeric_web_session_edit(function (array &$s) use ($clean, $picked): void {
         $s['answers'] = $clean;
-        $s['model'] = ['kind' => (string)($m['kind'] ?? 'local'), 'base' => (string)($m['base'] ?? ''),
-                       'model' => (string)($m['model'] ?? '')];   // never the key
+        // Only a payload that actually names a machine may replace the engine.
+        // The wizard used to write `{kind: local}` from `{i: N}` and wipe the
+        // address, so the next call hit 127.0.0.1:8080.
+        if ($picked !== null) $s['model'] = $picked;
     });
     xeric_web_json(['ok' => true]);
 }
@@ -240,7 +243,11 @@ if ($action === 'blank') {
 }
 
 if ($action === 'status') {
-    $e = xeric_web_endpoint(['kind' => 'local']);
+    try {
+        $e = xeric_web_endpoint(xeric_web_model());
+    } catch (Throwable $ex) {
+        $e = xeric_web_endpoint(['kind' => 'local']);
+    }
     $q = xeric_queue_status();
     xeric_web_json(['up' => xeric_llm_up($e, 4), 'base' => $e['base'],
                     'busy' => (bool)$q['busy'], 'queue' => $q, 'left' => xeric_limit_left()]);

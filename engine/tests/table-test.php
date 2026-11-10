@@ -285,6 +285,9 @@ $debtor = array_key_first($owe['owed']);
 ok('owed: and what they could not cover is a row that knows what it was for',
     xeric_debts_for($dbOwe, (string)$debtor) !== []
     && str_contains((string)xeric_debts_for($dbOwe, (string)$debtor)[0]['what'], 'Thursday game'));
+ok('owed: and the row says what it was for without deciding who the loser was',
+    !preg_match('/\\b(he|him|his|she|her|hers)\\b/i', (string)xeric_debts_for($dbOwe, (string)$debtor)[0]['what']),
+    (string)xeric_debts_for($dbOwe, (string)$debtor)[0]['what']);
 ok('owed: it is owed to the person who actually took it',
     (string)xeric_debts_for($dbOwe, (string)$debtor)[0]['to']
         === (string)array_key_first(array_filter($owe['net'], fn($n) => $n === max($owe['net']))));
@@ -487,6 +490,12 @@ ok('talk: the invariant spec rides the system message and the night rides the us
     str_contains($tSys, 'WRITE ONE JSON OBJECT')
     && !str_contains($tSaw, 'WRITE ONE JSON OBJECT')
     && str_starts_with($tSaw, 'THE GAME:'));
+// The tell is template prose and keeps its own pronouns ("counts his change
+// twice" is Harlan's, written that way). The engine's frame around it used to
+// add "when he is not thinking about it, he …" for every player at the table.
+ok('talk: the frame around a tell is the engine\'s and carries no pronoun',
+    str_contains($tSaw, 'tell, when not thinking about it: ')
+    && !str_contains($tSaw, 'when he is not thinking about it'), $tSaw);
 
 // THE TELL IS A WALL PATH, AND THIS PROMPT IS EVERY SEAT'S AT ONCE. A seat
 // walled off from `tells` (own_bible's deny-by-default floor carries it) must

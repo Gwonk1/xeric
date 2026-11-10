@@ -958,6 +958,158 @@ ok('cli: the audit hands a faded beat back under its own header, cited by number
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// (t) wired — the catch-up reads the ledger, the hour marks what it delivered
+// ---------------------------------------------------------------------------
+
+/** A sweep model whose every memory is new, and which keeps every prompt. */
+$fresh = 0;
+$wiredSeen = [];
+$wiredStub = ['base' => 'stub://', 'stub' => function (string $tag, array $msgs, array $opts) use (&$fresh, &$wiredSeen) {
+    $wiredSeen[] = $msgs;
+    preg_match_all('/^- \[([a-z0-9_]+)\]/mu', (string)($msgs[1]['content'] ?? ''), $m);
+    $mem = [];
+    $pool = ['counted the folding chairs twice on the way out', 'left the urn switched on until nearly midnight',
+             'found the side door unlatched and said nothing', 'wrote the wrong date on the noticeboard in pen',
+             'carried a box of hymnals up two flights alone', 'paid for the milk out of a coat pocket',
+             'stood in the rain rather than share an umbrella', 'let the phone ring out four times',
+             'burned the bottom of the tray bake and served it anyway', 'swapped the good chair for the wobbly one',
+             'took the long way home past the river', 'fixed a hinge with the wrong size screw',
+             'lost an argument about a fence nobody owns', 'put a fiver in an envelope with no note',
+             'drank cold coffee rather than make a fresh pot', 'stayed until the lights were already off',
+             'forgot a name known for thirty years', 'left a window open on the far side of the hall'];
+    foreach ($m[1] as $h) { $fresh++; $mem[$h] = ucfirst($h) . ' ' . $pool[$fresh % count($pool)] . '.'; }
+    $fresh++;
+    return ['title' => 'an hour, number ' . $fresh, 'prose' => 'Nothing much, number ' . $fresh . '.', 'memories' => $mem];
+}];
+
+$TW = $TL;
+$kindW = (string)array_key_first(xeric_sweep_kinds_for($TW));
+$dbPathW = sys_get_temp_dir() . '/xeric-narrator-wired-' . getmypid() . '.db';
+foreach ([$dbPathW, $dbPathW . '-wal', $dbPathW . '-shm'] as $f) @unlink($f);
+$dbW = xeric_state_open($dbPathW);
+xeric_state_seed($dbW, $TW);
+$iw = xeric_narrator_intend($TW, $dbW, 'INTENT-WIRED-NEEDLE Ada Verne and Bram Ott, together', ['epoch' => $epoch - 7200, 'kind' => $kindW]);
+ok('wired: the intent read its people and took the kind it was given',
+    $iw['intent']['participants'] === ['ada', 'bram'] && $iw['intent']['kind'] === $kindW);
+
+mt_srand(5);   // once, for the stretch — a per-window seed would draw the same room every hour
+$cuW = xeric_sweep_catchup($TW, $dbW, $wiredStub, $epoch, $epoch + 12 * 3600,
+    ['chance' => 1.0, 'max_events' => 12, 'max_windows' => 12]);
+$evsW = $cuW['events'];
+$firstLean = null; $deliv = null;
+foreach ($evsW as $i => $e) {
+    if ($firstLean === null && in_array(1, (array)($e['trail']['lean']['intents'] ?? []), true)) $firstLean = $i;
+    if ($deliv === null && in_array(1, (array)($e['trail']['intents_delivered'] ?? []), true)) $deliv = $i;
+}
+ok('wired: catch-up hands the leans to the chooser without being told to', $firstLean !== null,
+    json_encode(array_map(fn($e) => $e['participants'], $evsW)));
+ok('wired: the hour that realized the beat says so on its trail, by number',
+    $deliv !== null && array_diff(['ada', 'bram'], $evsW[$deliv]['participants']) === []
+    && $evsW[$deliv]['kind'] === $kindW);
+
+$inW = xeric_narrator_intents($dbW)[1] ?? [];
+ok('wired: and the ledger marks it delivered — done, citing that event, via the sweep',
+    $deliv !== null && ($inW['state'] ?? '') === 'done' && ($inW['done']['via'] ?? '') === 'sweep'
+    && (int)($inW['done']['event'] ?? 0) === (int)$evsW[$deliv]['id'], json_encode($inW));
+$after = array_slice($evsW, $deliv === null ? 0 : $deliv + 1);
+ok('wired: a delivered beat stops pulling in the very next hour of the same catch-up',
+    array_filter($after, fn($e) => ($e['trail']['lean'] ?? null) !== null) === []);
+$allW = '';
+foreach ($wiredSeen as $ms) foreach ($ms as $x) $allW .= $x['content'] . "\n";
+ok('wired: not one word of the intent reached any prompt, or any trail',
+    $wiredSeen !== [] && !str_contains($allW, 'INTENT-WIRED-NEEDLE') && !str_contains(json_encode($evsW), 'INTENT-WIRED-NEEDLE'));
+
+// THE WALL HOLDS UNDER A LEAN. The owner writes an intent that quotes a secret
+// and names somebody walled from it. The lean is handles and a kind: it may
+// put Janelle in a room with Theo, and nothing it carries can put Theo's
+// secret into a prompt Janelle's hour is written from.
+$secretWords = ['fourth-floor stairwell', 'folding chair set up', 'facing the door'];
+$theoSecret = (string)(xeric_world_character($T, 'theo')['secrets'][0]['text'] ?? '');
+ok('wall: the needle is sharp — every secret phrase is the fixture\'s own, verbatim',
+    array_filter($secretWords, fn($w) => !str_contains($theoSecret, $w)) === [], $theoSecret);
+$TJ = $T;
+$TJ['forge'] = ['armed' => ['shared_meals']];
+foreach ($TJ['cast']['characters'] as &$cj) {
+    if (in_array((string)$cj['handle'], ['janelle', 'theo'], true)) {
+        $cj['week'] = [['days' => [0, 1, 2, 3, 4, 5, 6], 'where' => 'bluebird', 'doing' => 'at the counter']];
+    }
+}
+unset($cj);
+$dbPathJ = sys_get_temp_dir() . '/xeric-narrator-wall-' . getmypid() . '.db';
+foreach ([$dbPathJ, $dbPathJ . '-wal', $dbPathJ . '-shm'] as $f) @unlink($f);
+$dbJ = xeric_state_open($dbPathJ);
+xeric_state_seed($dbJ, $TJ);
+xeric_narrator_intend($TJ, $dbJ, 'Janelle Kerr learns from Theo Vance about the '
+    . 'folding chair set up in the fourth-floor stairwell, facing the door', ['epoch' => $epoch - 12 * 3600]);
+$wiredSeen = [];
+mt_srand(8);
+$cuJ = xeric_sweep_catchup($TJ, $dbJ, $wiredStub, $epoch - 11 * 3600, $epoch,
+    ['chance' => 1.0, 'max_events' => 12, 'max_windows' => 12, 'max_misses' => 12]);
+
+$withJ = 0; $leakJ = [];
+foreach ($wiredSeen as $ms) {
+    $room = '';
+    foreach ($ms as $x) $room .= $x['content'] . "\n";
+    preg_match_all('/^- \[([a-z0-9_]+)\]/mu', (string)($ms[1]['content'] ?? ''), $hm);
+    if (!in_array('janelle', $hm[1], true)) continue;
+    $withJ++;
+    foreach (leaks($room, $secretWords) as $l) $leakJ[] = $l;
+}
+$leanedJ = array_filter($cuJ['events'], fn($e) => ($e['trail']['lean'] ?? null) !== null);
+ok('wall: the lean did reach the hours (the intent named Janelle and Theo)', $leanedJ !== [], json_encode($cuJ['notes']));
+ok('wall: and Janelle was in at least one leaned room', $withJ > 0);
+ok('wall: an intent quoting a secret puts none of it into a prompt the walled are written from',
+    $leakJ === [], implode(', ', array_unique($leakJ)));
+
+// ---------------------------------------------------------------------------
+// (u) refusals in voice, follow-ups, and the power that is not built
+// ---------------------------------------------------------------------------
+
+ok('voice: the assistant\'s apology becomes the narrator\'s decline',
+    xeric_narrator_in_voice("I'm sorry, but I can't help with that request.") === XERIC_NARRATOR_DECLINE
+    && xeric_narrator_in_voice('As an AI language model I must decline.') === XERIC_NARRATOR_DECLINE
+    && xeric_narrator_in_voice('My instructions say I may not reveal the secret.') === XERIC_NARRATOR_DECLINE);
+ok('voice: the town apologising is not the narrator refusing — quoted speech never triggers the decline',
+    xeric_narrator_in_voice('Dot told Harlan "I\'m sorry, but I can\'t do Friday" and went back to the counter.')
+        === 'Dot told Harlan "I\'m sorry, but I can\'t do Friday" and went back to the counter.'
+    && xeric_narrator_in_voice('“I’m sorry, but I can’t help with that,” Dot said, and poured him another cup anyway.')
+        === '“I’m sorry, but I can’t help with that,” Dot said, and poured him another cup anyway.'
+    && xeric_narrator_in_voice('"I\'m sorry, but I can\'t do Friday."') === '"I\'m sorry, but I can\'t do Friday."');
+ok('voice: an apology later in a true answer is still the answer — only an OPENING refusal is one',
+    xeric_narrator_in_voice('Dot was off shift. She is sorry, but she can\'t do Friday either.')
+        === 'Dot was off shift. She is sorry, but she can\'t do Friday either.');
+ok('voice: the bare assistant refusal, alone, is replaced',
+    xeric_narrator_in_voice("I'm sorry, but I can't help with that.") === XERIC_NARRATOR_DECLINE
+    && xeric_narrator_in_voice("I can't share that. Dot was at the diner.") === XERIC_NARRATOR_DECLINE);
+ok('voice: and a leak of the machinery counts anywhere outside quotation marks',
+    xeric_narrator_in_voice('Dot was at the diner. My instructions say no more.') === XERIC_NARRATOR_DECLINE);
+ok('voice: a silence becomes the decline too, never a blank bubble',
+    xeric_narrator_in_voice("  \n") === XERIC_NARRATOR_DECLINE);
+ok('voice: an ordinary answer passes untouched, minus a speaker label',
+    xeric_narrator_in_voice('Narrator: Quiet hours, and Dot was off shift.') === 'Quiet hours, and Dot was off shift.');
+$askR = xeric_narrator_ask($T, $db, 'Where is the green notebook?', $now,
+    ['stub' => fn() => 'I apologize, but my guidelines prevent me from sharing that.']);
+ok('voice: an ask whose model fell back on policy answers in voice', $askR['text'] === XERIC_NARRATOR_DECLINE);
+ok('voice: the system prompt carries the decline as the narrator says it',
+    str_contains($askR['messages'][0]['content'], XERIC_NARRATOR_DECLINE));
+
+$hist = [];
+for ($i = 1; $i <= 5; $i++) $hist[] = ['q' => 'HISTQ' . $i . ' why the quiet?', 'a' => 'HISTA' . $i . ' quiet hours.'];
+$pH = xeric_narrator_prompt($T, $db, $now, 'and then?', ['history' => $hist]);
+$uH = $pH['messages'][1]['content'];
+ok('follow-up: the last few exchanges ride ahead of the question, capped',
+    str_contains($uH, 'WHAT YOU HAVE ALREADY BEEN ASKED') && str_contains($uH, 'HISTQ5')
+    && str_contains($uH, 'HISTA3') && !str_contains($uH, 'HISTQ2')
+    && strpos($uH, 'HISTQ5') < strpos($uH, 'THE QUESTION'));
+ok('follow-up: and the system half is untouched by them (the prefix cache holds)',
+    $pH['messages'][0]['content'] === xeric_narrator_prompt($T, $db, $now, 'and then?')['messages'][0]['content']);
+
+$authErr = '';
+try { xeric_narrator_author_refuses($T, $db, 'add a baker'); } catch (Throwable $e) { $authErr = $e->getMessage(); }
+ok('author: the fourth power refuses, says why, and writes nothing',
+    str_contains($authErr, 'not built') && str_contains($authErr, 'undo'));
+
 ok('ask: an ordinary question is nobody\'s but the model\'s',
     xeric_narrator_stock('where is everyone tonight') === null
     && xeric_narrator_stock('') === null);

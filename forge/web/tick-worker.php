@@ -216,6 +216,8 @@ try {
         // beat fire without being rolled for; $T is what puts the walls and the
         // voices in. Both, or the story is half live.
         'stories'     => (array)($w['stories'] ?? []),
+        // The skipped hours in the pinned voices too, as the heart lives them.
+        'endpoint_for' => xeric_play_sweep_endpoints($w + ['endpoint' => $endpoint]),
     ];
     if (!$walked) $opts['chance'] = 1.0;
 

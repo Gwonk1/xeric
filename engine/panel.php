@@ -352,10 +352,16 @@ function xeric_panel_say(array $t, PDO $db): string
     $out = 'The room did not get there, and that is the answer. On "' . $q . '", the closest '
          . 'anybody came was ' . $v['cleared'] . ' of ' . $v['of'] . ': '
          . (string)$v['proposal']['text'];
+    // NAMES, NEVER PRONOUNS. This line used to read "She will not have it
+    // that …; he will not have it that …" for every pair the room produced,
+    // whoever they were — a panel of two men read as a woman and a man, and the
+    // player saw it. The engine does not know an expert's gender and has no
+    // business guessing one; the names it already has say who held which line,
+    // and say it more plainly than a pronoun two clauses from its antecedent.
     foreach (array_slice($v['tensions'], 0, 3) as $tn) {
         $out .= "\n\nNothing satisfied " . $tn['between'][0] . ' and ' . $tn['between'][1]
-             . ' at the same time. She will not have it that ' . rtrim($tn['lines'][0], '.')
-             . '; he will not have it that ' . rtrim($tn['lines'][1], '.') . '.';
+             . ' at the same time. ' . $tn['between'][0] . ' will not have it that ' . rtrim($tn['lines'][0], '.')
+             . '; ' . $tn['between'][1] . ' will not have it that ' . rtrim($tn['lines'][1], '.') . '.';
     }
     return $out;
 }

@@ -199,8 +199,61 @@ function xeric_session_adult(?string $sid = null): bool
         $sid = xeric_session_use(null);             // a worker's forced identity, if it has one
         if ($sid === '') $sid = xeric_web_sid();    // otherwise the cookie, unwritten and untouched
     }
+    // A DEVICE THAT MAY NOT BE SHOWN IT IS NOT SHOWN IT, whatever its session
+    // affirmed (xeric_session_device). Lowered only, never raised.
+    $dev = xeric_session_device();
+    if ($dev !== null && $dev['sid'] === $sid && !$dev['adult']) return false;
     $s = xeric_web_session_read($sid);
     return ($s['adult'] ?? null) === true;      // strictly true; "1", 1 and "true" are not
+}
+
+/**
+ * THE DEVICE THIS REQUEST CAME FROM, when it came with a device token.
+ *
+ * The client API (api-lib.php) identifies a linked headset or phone by a
+ * Bearer token that names a session AND carries one bit of its own: may this
+ * device be shown adult material at all. A "kids' headset" is that bit. The
+ * verb scripts api.php `require`s open worlds and start workers by asking
+ * xeric_session_adult() with no argument, so this is where the bit has to be
+ * for every one of them to honour it without knowing a token exists — the
+ * same reason xeric_session_use() is how a worker says whose work it does.
+ *
+ * It can only LOWER the answer: a device bit of true over an unaffirmed
+ * session is still unaffirmed. Called with an array ['sid' => …, 'adult' =>
+ * bool]: sets it. Called with an explicit null: clears it. Called with
+ * nothing: hands back what is set. Nothing sets one but api-lib.php.
+ */
+function xeric_session_device(?array $dev = null): ?array
+{
+    static $cur = null;
+    if (func_num_args() > 0) {
+        $cur = ($dev !== null && preg_match('/^[a-f0-9]{32}$/', (string)($dev['sid'] ?? '')))
+            ? ['sid' => (string)$dev['sid'], 'adult' => ($dev['adult'] ?? false) === true] : null;
+    }
+    return $cur;
+}
+
+/**
+ * A device token was used: the session it names is in use, so it is not idle.
+ *
+ * WITHOUT A COOKIE, which is the whole point of not calling
+ * xeric_session_touch() here: that one re-sets the session cookie on every
+ * visit, and a cookie carrying the owner's raw sid handed to a linked device
+ * would turn a revocable token into a credential that cannot be revoked. The
+ * record's `seen` (and so its mtime, which the sweep reads) moves at most once
+ * a minute, so a pulse every few seconds is not a write every few seconds.
+ */
+function xeric_session_seen(string $sid, ?int $now = null): void
+{
+    if (!preg_match('/^[a-f0-9]{32}$/', $sid)) return;
+    $now = $now ?? time();
+    $path = xeric_web_session_path($sid);
+    if (!is_file($path) || (int)@filemtime($path) >= $now - 60) return;
+    try {
+        xeric_web_session_edit(function (array &$s) use ($now): void { $s['seen'] = $now; }, $sid);
+    } catch (Throwable $e) {
+        // A locked record is not a reason to refuse the request.
+    }
 }
 
 /**
@@ -556,6 +609,17 @@ function xeric_session_vacuum_missing(Throwable $e): bool
  *  • what a character remembers of those threads. `source='auto'` is exactly the
  *    memories chat.php harvested from somebody else's conversation; 'seed' and
  *    'event' are the world's own history and stay.
+ *  • and the scenes the owner set going. A duet's and a room's diaries
+ *    (`source='duet'`, `'room'`, and anything under `room.` — a room the
+ *    player stood in writes there) are what two or three people took away from
+ *    a conversation the OWNER asked for, watched, and in a room took part in.
+ *    This list said only 'auto' because it was written before duets and rooms
+ *    existed, so a stranger's Ruth went on remembering an afternoon with Dot
+ *    that nothing in the stranger's copy says ever happened — the transcript
+ *    that would explain it went with `messages` and `conversations` above. A
+ *    memory with no conversation behind it is exactly the kind a character
+ *    repeats with total confidence and nobody can trace. Read back too: a
+ *    diary that survived the delete is a reason to refuse the handover.
  *  • the per-player bookkeeping — how far each person has been read, harvested
  *    and learned from — which is meaningless about a player who has not arrived.
  *  • the behaviour crumbs and the lessons distilled out of them (learn.php).
@@ -572,12 +636,20 @@ function xeric_session_vacuum_missing(Throwable $e): bool
  *
  * @return bool  the copy is clear and safe to hand to a stranger
  */
+/**
+ * The memories that are a previous player's lived part, as one SQL predicate,
+ * shared by the clear and its read-back so the two cannot drift apart: what
+ * chat harvested ('auto'), duet and room diaries ('duet', 'room', 'room.*').
+ * (A dot is not a LIKE wildcard, so 'room.%' is exactly "room." and anything.)
+ */
+const XERIC_FORK_LIVED_MEMORIES = "source IN ('auto', 'duet', 'room') OR source LIKE 'room.%'";
+
 function xeric_session_fork_clear(string $path): bool
 {
     $sql = [
         'DELETE FROM messages',
         'DELETE FROM conversations',
-        "DELETE FROM memories WHERE source = 'auto'",
+        "DELETE FROM memories WHERE " . XERIC_FORK_LIVED_MEMORIES,
         "DELETE FROM arcs WHERE key LIKE 'proactive.%' OR key LIKE 'extract.%' OR key LIKE 'learn.%'",
         // skip:% goes too — skip:last is the OWNER'S rewind manifest, and a
         // visitor who never pressed skip was being offered "take back the 6h"
@@ -603,7 +675,14 @@ function xeric_session_fork_clear(string $path): bool
             // name. And the pairing codes are live credentials to the OWNER'S
             // world — short-lived, but no part of a stranger's copy.
             . " OR key = 'players' OR key = 'players.issued'"
-            . " OR key LIKE 'guest.%' OR key LIKE 'pair.%'",
+            . " OR key LIKE 'guest.%' OR key LIKE 'pair.%'"
+            // THE OWNER'S TABLE. room:live is a conversation the owner is
+            // having right now and room:seal:* the ones still waiting for
+            // their close — both about message rows this fork has just
+            // deleted, and a live one would seat a stranger in the owner's
+            // conversation mid-sentence. The diaries those rooms already
+            // wrote (source room / room.*) go with the lived memories above.
+            . " OR key LIKE 'room:%'",
         'DELETE FROM signals',
         // The owner's outstanding message-photos are jobs about their own private
         // thread — whose text this fork has just deleted. Left behind they are
@@ -612,6 +691,22 @@ function xeric_session_fork_clear(string $path): bool
         // owner's conversation. Portraits and places are re-offered idempotently
         // by the backfill, so only the message ones need clearing.
         "DELETE FROM photo_jobs WHERE kind = 'message'",
+        // Views of rooms are PLACE views, not the owner's private life, and
+        // could be kept — but their bytes live beside the OWNER'S db, and a
+        // fork's scenes dir is its own (scene.php serves only from there). A
+        // done row left behind would be a broken picture on the stranger's
+        // sidebar, and worse, the one row for that look: the queue is one row
+        // per (place, fingerprint), so it would answer every later press in
+        // the fork with a file that is not there. Only a viewer link, which
+        // has no file, survives; anything still in flight was the owner's ask
+        // on the owner's machine and goes too.
+        "DELETE FROM scene_jobs WHERE NOT (status = 'done' AND kind = 'viewer')",
+        // The owner's lines, read aloud: their messages went above, and their
+        // clips live beside the OWNER'S db. A row left behind would only ever
+        // miss (the fork's clips dir is its own), but it names a message the
+        // stranger never saw, and that is reason enough. Absent on a world no
+        // one has voiced yet, which the loop below shrugs off.
+        'DELETE FROM voice_clips',
     ];
 
     try {
@@ -650,6 +745,18 @@ function xeric_session_fork_is_clear(string $path): bool
                 xeric_web_log('fork: ' . basename($path) . " still holds $n rows in $t, not handing it over");
                 return false;
             }
+        }
+        // The lived memories, read back for the same reason as the transcript:
+        // a diary is a line the stranger's cast would SAY. Absent table on an
+        // ancient world is nothing to leak, as above.
+        try {
+            $n = (int)$db->query('SELECT COUNT(*) FROM memories WHERE ' . XERIC_FORK_LIVED_MEMORIES)->fetchColumn();
+            if ($n > 0) {
+                xeric_web_log('fork: ' . basename($path) . " still holds $n lived memory row(s), not handing it over");
+                return false;
+            }
+        } catch (Throwable $e) {
+            // no memories table: nothing there to leak
         }
         // AND THE OWNER'S OTHER PEOPLE, read back for the same reason the
         // transcript is: a guest row is the one piece of this that reaches a

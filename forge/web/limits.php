@@ -62,6 +62,15 @@ const XERIC_LIMIT_SKIPS_PER_HOUR = 10;
  */
 const XERIC_LIMIT_REROLLS_PER_HOUR = 24;
 
+/**
+ * Per session, per hour. A line said into push to talk (hear.php). The same
+ * budget as a message: a hearing is the step before a message, and a player
+ * who is talking instead of typing should run out at the same pace, not
+ * sooner. Its own bucket all the same, so the ears machine (often hosted,
+ * often billed by the second) can be tightened without touching chat.
+ */
+const XERIC_LIMIT_HEARS_PER_HOUR = 30;
+
 /** Per session, per day. A world is 2–3 minutes of model AND a directory that lives for a week. */
 const XERIC_LIMIT_FORGES_PER_DAY = 5;
 
@@ -313,6 +322,7 @@ function xeric_limit_buckets(string $action, string $sid, string $ip): array
     if ($action === 'message') return ['msg-' . $sid    => ['messages_per_hour', XERIC_LIMIT_HOUR]];
     if ($action === 'skip')    return ['skip-' . $sid   => ['skips_per_hour',    XERIC_LIMIT_HOUR]];
     if ($action === 'reroll')  return ['reroll-' . $sid => ['rerolls_per_hour',  XERIC_LIMIT_HOUR]];
+    if ($action === 'hear')    return ['hear-' . $sid   => ['hears_per_hour',    XERIC_LIMIT_HOUR]];
     if ($action === 'forge')   return ['forge-' . $sid  => ['forges_per_day',    XERIC_LIMIT_DAY],
                                        'ipforge-' . $ip => ['ip_forges_per_day', XERIC_LIMIT_DAY]];
     return [];
@@ -513,7 +523,7 @@ function xeric_limit_when(int $seconds): string
  * old split still holds from the visitor's side: a request that goes on to fail
  * validation has not spent anything.
  *
- * @param string $action  message · skip · reroll · forge
+ * @param string $action  message · skip · reroll · hear · forge
  * @param array  $o       sid, ip, now — all injectable, which is what makes the
  *                        windows testable without waiting an hour.
  * @return array{ok:bool,kind?:string,status?:int,message?:string,retry_after?:int}
@@ -606,6 +616,19 @@ function xeric_limit_check(string $action, array $o = []): array
             return xeric_limit_no(
                 "You have rerolled $n things this hour, which is a whole xeric over again and then some. "
                 . 'Everything you have kept is saved, the next reroll is yours ' . xeric_limit_when($wait) . '.',
+                $wait);
+        }
+        return ['ok' => true];
+    }
+
+    if ($action === 'hear') {
+        $n = xeric_limit_n('hears_per_hour');
+        $h = xeric_limit_reserve('hear-' . $sid, XERIC_LIMIT_HOUR, $n, $now);
+        if (!$h['ok']) {
+            $wait = $h['oldest'] + XERIC_LIMIT_HOUR - $now;
+            return xeric_limit_no(
+                "That is $n lines said aloud in an hour, which is as much listening as the demo can give one "
+                . 'visitor. The box still takes typing, and the button is yours again ' . xeric_limit_when($wait) . '.',
                 $wait);
         }
         return ['ok' => true];

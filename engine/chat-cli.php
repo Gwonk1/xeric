@@ -152,16 +152,7 @@ if (isset($args['memories'])) {
 }
 
 // -- endpoint ---------------------------------------------------------------
-$endpoint = [
-    'kind'  => (string)($args['kind'] ?? 'local'),
-    'base'  => (string)($args['base'] ?? ''),
-    'model' => (string)($args['model'] ?? ''),
-    'key'   => (string)($args['key'] ?? getenv('XERIC_API_KEY') ?: ''),
-];
-if ($endpoint['base'] === '') {
-    $endpoint['kind'] = 'local';
-    $endpoint['base'] = 'http://127.0.0.1:8080';
-}
+$endpoint = xeric_llm_cli_endpoint($args);
 
 // -- the turn ---------------------------------------------------------------
 if (isset($args['say'])) {
@@ -192,8 +183,9 @@ if (isset($args['say'])) {
     // Progress only. The piece itself was in what she just said, which is the
     // whole point — this says that she said it, never what it was.
     $st = (array)($out['story'] ?? []);
-    foreach ((array)($st['opened'] ?? []) as $k)  fwrite(STDOUT, "  ~ she is willing to talk about $k now\n");
-    foreach ((array)($st['spilled'] ?? []) as $k) fwrite(STDOUT, "  ~ she told you $k, and she knows she did\n");
+    // Named, not pronouned: whoever was speaking, this used to say "she".
+    foreach ((array)($st['opened'] ?? []) as $k)  fwrite(STDOUT, "  ~ $name is willing to talk about $k now\n");
+    foreach ((array)($st['spilled'] ?? []) as $k) fwrite(STDOUT, "  ~ $name told you $k, and knows it\n");
     // The wrong lead is dead and the world may say so out loud. Printed here
     // because a terminal has no scene to put it in; a play view has.
     foreach ((array)($st['said'] ?? []) as $line) fwrite(STDOUT, '  (' . $line . ")\n");
@@ -259,9 +251,10 @@ function xeric_chat_cli_usage(): string
       --temp=N             sampling temperature (default 0.85)
       --timeout=SECS       default 180
 
-      --base=URL           any OpenAI-compatible endpoint (default 127.0.0.1:8080)
+      --base=URL           any OpenAI-compatible endpoint
+                           default: $XERIC_LOCAL_BASE, else 127.0.0.1:8080
       --kind=local|openai|anthropic
-      --model=NAME  --key=SECRET   (or set XERIC_API_KEY)
+      --model=NAME  --key=SECRET   (or set XERIC_LOCAL_KEY / XERIC_API_KEY)
 
     TXT;
 }

@@ -12,7 +12,9 @@
  *     forever. A world is somebody's months of continuity; there is no schema
  *     change worth a DROP. Every ALTER checks PRAGMA table_info first rather
  *     than trusting a version number that a half-finished migration may have
- *     already bumped.
+ *     already bumped. The one table rebuild (scene_jobs' key, which SQLite
+ *     cannot alter) copies every row before the old table goes, in one
+ *     transaction: a DROP of a shape, never of a row.
  *  2. FETCH IT ALL, THEN LET GO. Every read here uses fetchAll(). A PDO+SQLite
  *     cursor left half-consumed pins the WAL snapshot and turns the next write
  *     into "database is locked" — which shows up an hour later, in a sweep, on
@@ -53,10 +55,91 @@ function xeric_state_open(string $dbPath): PDO
     return $db;
 }
 
-/** Wall clock, in one place, so tests and the demo can reason about it. */
-function xeric_state_time(): int
+/**
+ * Wall clock, in one place, so tests and the demo can reason about it.
+ *
+ * Passing an argument PINS it (the continuity benchmark's fake real clock:
+ * engine/continuity/harness.php); passing null lets go. Production never
+ * passes one, so production reads time() exactly as it always did.
+ */
+function xeric_state_time(?int $pin = null): int
 {
-    return time();
+    static $pinned = null;
+    if (func_num_args() > 0) $pinned = $pin;
+    return $pinned ?? time();
+}
+
+/**
+ * The effective rating THIS process writes and reads at.
+ *
+ * One value doing two jobs, because in this app they are the same number: the
+ * rating xeric_play_open() clamped the template to for the session that asked
+ * (affirmed adult, and the device's own bit, under the world's ceiling) is
+ * both what anything generated in this request was generated under — so it is
+ * the stamp every new message, event and render row carries — and what the
+ * person on the other end of this request may be shown — so it is the viewer
+ * every reader filters against. The heart opens each world as its owner's
+ * session and so stamps what that session runs at.
+ *
+ * Passing an argument sets it (xeric_play_open does, once per world opened);
+ * nothing set is '' — no stamp written and nothing hidden, which is exactly
+ * how every row and every reader behaved before rows carried one. That is
+ * what keeps a CLI, a test and the continuity harness byte-identical.
+ */
+function xeric_state_rating(?string $set = null): string
+{
+    static $cur = '';
+    if (func_num_args() > 0) $cur = strtolower(trim((string)$set));
+    return $cur;
+}
+
+/**
+ * May a viewer at $viewer (default: this process's) see a row stamped $stamp?
+ *
+ * An empty stamp is a row from before stamps, and an empty viewer is a process
+ * nobody clamped: both are today's behaviour, shown. Otherwise it is rank
+ * against rank, and an unknown word ranks as the floor (walls.php), so a
+ * garbled stamp hides from nobody it would not already have been shown to and
+ * a garbled viewer is shown only the floor.
+ */
+function xeric_state_shown(?string $stamp, ?string $viewer = null): bool
+{
+    $stamp  = strtolower(trim((string)$stamp));
+    $viewer = $viewer === null ? xeric_state_rating() : strtolower(trim($viewer));
+    if ($stamp === '' || $viewer === '') return true;
+    if (!function_exists('xeric_rating_rank')) require_once __DIR__ . '/walls.php';
+    return xeric_rating_rank($viewer) >= xeric_rating_rank($stamp);
+}
+
+/** What a message reads as to somebody it may not be shown to. */
+const XERIC_STATE_UNSHOWN = '(a line you are not shown)';
+
+/** What an hour reads as to somebody it may not be shown to. */
+const XERIC_STATE_UNSHOWN_HOUR = '(an hour you are not shown)';
+
+/**
+ * One message row as THIS viewer may read it: unchanged when shown, and
+ * otherwise the same row with nothing of what was said in it — the content
+ * replaced by the sentence above and `redacted` set, so a caller can draw the
+ * gap and a prompt can carry the turn without its words.
+ */
+function xeric_state_message_shown(array $m, ?string $viewer = null): array
+{
+    if (xeric_state_shown((string)($m['rating'] ?? ''), $viewer)) return $m;
+    $m['content']  = XERIC_STATE_UNSHOWN;
+    $m['redacted'] = true;
+    return $m;
+}
+
+/** The same for an event row: the hour happened; what happened in it is not shown. */
+function xeric_state_event_shown(array $e, ?string $viewer = null): array
+{
+    if (xeric_state_shown((string)($e['rating'] ?? ''), $viewer)) return $e;
+    $e['title'] = XERIC_STATE_UNSHOWN_HOUR;
+    $e['prose'] = '';
+    if (array_key_exists('overheard', $e)) $e['overheard'] = '';
+    $e['redacted'] = true;
+    return $e;
 }
 
 /**
@@ -217,6 +300,38 @@ function xeric_state_migrate(PDO $db): void
     // exactly one row each however many times they are offered.
     $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_photo_jobs_one ON photo_jobs(kind, subject)');
 
+    // scene_jobs: views of a room the world owes the player (engine/scene.php).
+    // Keyed by WHAT THE ROOM LOOKS LIKE, not by when it was asked: the
+    // fingerprint folds the place, its furniture, the light, the sky and who
+    // is standing in it, so a second visit in the same light to the same
+    // company is the same row and costs nothing. `prompt` is the composed
+    // paragraph as asked, kept for the inspector and rendered as stored. No
+    // `approved` column and no world_state gate: choosing the machine was the
+    // consent. done_at doubles as the claim stamp while a row is working,
+    // exactly as it does on photo_jobs — and, while a machine that answered
+    // "later" holds remote_job, as the time it was asked, which is what the
+    // reaper's patience is measured from.
+    $db->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS scene_jobs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            key         TEXT    NOT NULL,                  -- a place key
+            fingerprint TEXT    NOT NULL,                  -- sha1 of what the room looks like
+            status      TEXT    NOT NULL DEFAULT 'pending',-- pending | working | done | failed
+            tries       INTEGER NOT NULL DEFAULT 0,
+            kind        TEXT    NOT NULL DEFAULT '',       -- image | pano | splat | glb | viewer, once done
+            file        TEXT    NOT NULL DEFAULT '',       -- relative to the world's scenes dir; '' for a viewer
+            url         TEXT,                              -- a viewer scene's link; NULL for anything with bytes
+            mime        TEXT    NOT NULL DEFAULT '',       -- what the machine said it made
+            prompt      TEXT    NOT NULL DEFAULT '',       -- the paragraph as asked
+            meta        TEXT    NOT NULL DEFAULT '{}',     -- the machine's own meta, JSON, as it came
+            remote_job  TEXT,                              -- the machine's job id while it says "later"
+            created_at  INTEGER NOT NULL,
+            done_at     INTEGER,
+            UNIQUE(key, fingerprint)
+        )
+    SQL);
+    $db->exec('CREATE INDEX IF NOT EXISTS idx_scene_jobs_key ON scene_jobs(key, status)');
+
     // reminders: the one thing in this database that runs on REAL time. A world
     // keeps its own clock and everything else here is stamped with it — but
     // somebody who asked to be reminded on Thursday meant the Thursday they are
@@ -234,8 +349,71 @@ function xeric_state_migrate(PDO $db): void
     SQL);
     $db->exec('CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(fired_at, due)');
 
+    // spend: the world's ledger (engine/budget.php). One row per WORLD date,
+    // kind and costliness — not per call — so a year of a chatty world is a
+    // few thousand rows. `day` is the world's own local date, never the wall
+    // clock's: the heart lives world-days overnight, and a ceiling is per day
+    // of the world's life. `costly` splits a remote machine's spend from the
+    // owner's own electricity, which metered_only leaves unrationed.
+    $db->exec(<<<'SQL'
+        CREATE TABLE IF NOT EXISTS spend (
+            day     TEXT    NOT NULL,                  -- the world's date, YYYY-MM-DD
+            kind    TEXT    NOT NULL,                  -- tokens | renders | clips | hearings
+            costly  INTEGER NOT NULL DEFAULT 1,        -- 1: a machine that bills
+            count   INTEGER NOT NULL DEFAULT 0,
+            created INTEGER NOT NULL,                  -- real time, first spend of the row
+            updated INTEGER NOT NULL,                  -- real time, last spend of the row
+            PRIMARY KEY (day, kind, costly)
+        )
+    SQL);
+
     foreach (xeric_state_alters() as [$table, $column, $decl]) {
         xeric_state_add_column($db, $table, $column, $decl);
+    }
+    xeric_state_scene_jobs_want($db);
+}
+
+/**
+ * ONE LOOK PER KIND PER ROOM-MOMENT. scene_jobs shipped as UNIQUE(key,
+ * fingerprint), which kept a world from holding a panorama and a splat of
+ * the same moment side by side. SQLite cannot alter a constraint, so the
+ * table is rebuilt ONCE, under the same rows: the new CREATE is the old one
+ * as SQLite stored it (every ALTER since included, so no column is lost to a
+ * list kept by hand) with `want` added to the key; every row is copied by id;
+ * the old table goes only after its copy is in, inside one IMMEDIATE
+ * transaction, so a reader sees either the old table or the new one and a
+ * second process migrating at the same moment finds it already done. This is
+ * the one DROP in this file, and it drops nothing a world remembers: the rows
+ * are the same rows. Guarded by the stored SQL itself, never a version number.
+ */
+function xeric_state_scene_jobs_want(PDO $db): void
+{
+    $sqlOf = function () use ($db): string {
+        $q = $db->query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scene_jobs'");
+        $r = $q->fetchAll();
+        $q->closeCursor();
+        return $r ? (string)$r[0]['sql'] : '';
+    };
+    $old = 'UNIQUE(key, fingerprint)';
+    if (!str_contains($sqlOf(), $old) || !in_array('want', xeric_state_columns($db, 'scene_jobs'), true)) return;
+    if ($db->inTransaction()) return;   // never inside somebody else's; the next open does it
+    $db->exec('BEGIN IMMEDIATE');
+    try {
+        $sql = $sqlOf();
+        if (str_contains($sql, $old)) {
+            $next = (string)preg_replace('/^CREATE TABLE\s+"?scene_jobs"?/i', 'CREATE TABLE scene_jobs_next', $sql, 1);
+            $next = str_replace($old, 'UNIQUE(key, fingerprint, want)', $next);
+            $db->exec('DROP TABLE IF EXISTS scene_jobs_next');   // only ever a half-made copy of this very step
+            $db->exec($next);
+            $db->exec('INSERT INTO scene_jobs_next SELECT * FROM scene_jobs');
+            $db->exec('DROP TABLE scene_jobs');
+            $db->exec('ALTER TABLE scene_jobs_next RENAME TO scene_jobs');
+            $db->exec('CREATE INDEX IF NOT EXISTS idx_scene_jobs_key ON scene_jobs(key, status)');
+        }
+        $db->exec('COMMIT');
+    } catch (Throwable $e) {
+        $db->exec('ROLLBACK');
+        throw $e;
     }
 }
 
@@ -322,6 +500,42 @@ function xeric_state_alters(): array
         // backfill is needed. -1 is a deliberate third answer: a silence with
         // two people in the room that nobody in particular can be blamed for.
         ['signals', 'player', 'INTEGER'],
+        // A scene row's CHANNEL — 'look', a picture of the room, or 'sound',
+        // what you hear in it — and the light bucket a look was asked in,
+        // which is what lets a client show one room through its day. Every
+        // row from before either existed was a look of unrecorded light, and
+        // the defaults say exactly that, so nothing on disk changes meaning.
+        ['scene_jobs', 'channel', "TEXT NOT NULL DEFAULT 'look'"],
+        ['scene_jobs', 'light',   "TEXT NOT NULL DEFAULT ''"],
+        // What a render was conditioned on (portrait chaining's reference_of).
+        ['photo_jobs', 'meta', "TEXT NOT NULL DEFAULT '{}'"],
+        // WHICH person at the centre said a user line (M4, "threads that know
+        // who said what"). NULL on every row from before, and NULL reads as the
+        // first player — the signals column's rule, for the signals column's
+        // reason: nothing on disk changes meaning and nothing is backfilled.
+        ['messages', 'player', 'INTEGER'],
+        // THE RATING A ROW WAS MADE UNDER — the effective rating of the session
+        // whose request (or heart beat) wrote it, xeric_state_rating(). '' is
+        // every row from before, and it means what it always meant: the
+        // world's rating at the time, shown to whoever can open the world. A
+        // viewer whose own effective rating ranks below a row's stamp reads
+        // the row redacted (xeric_state_shown), which is the kids' headset.
+        ['messages',   'rating', "TEXT NOT NULL DEFAULT ''"],
+        ['events',     'rating', "TEXT NOT NULL DEFAULT ''"],
+        ['scene_jobs', 'rating', "TEXT NOT NULL DEFAULT ''"],
+        ['photo_jobs', 'rating', "TEXT NOT NULL DEFAULT ''"],
+        // THE ROOM AS A BOX, as it was when a look was asked for (engine/
+        // layout.php), JSON. The prompt is rendered as stored; so is this, or
+        // a room Mabel has left would be sent with her words and without her
+        // body. '' is every row from before, and reads as "no layout kept".
+        ['scene_jobs', 'layout', "TEXT NOT NULL DEFAULT ''"],
+        // THE KIND A LOOK WAS ASKED AS, when it was not the template's first:
+        // pano | image | splat | glb | viewer. '' is the template's preferred
+        // kind, whichever that is — every row from before, and every row asked
+        // without one — so nothing on disk changes meaning. Part of the key
+        // (xeric_state_scene_jobs_want): a panorama and a splat of one moment
+        // are two rows, not one.
+        ['scene_jobs', 'want', "TEXT NOT NULL DEFAULT ''"],
     ];
 }
 
@@ -429,11 +643,15 @@ function xeric_conversation_unread_total(PDO $db): int
  * @param int|null $worldEpoch the WORLD's clock, not the server's — a message
  *                 written during a fast-forward belongs to the fast-forwarded hour.
  */
-function xeric_message_append(PDO $db, int $conversationId, string $role, ?string $handle, string $content, ?int $worldEpoch = null, ?int $at = null): int
+function xeric_message_append(PDO $db, int $conversationId, string $role, ?string $handle, string $content, ?int $worldEpoch = null, ?int $at = null, ?int $player = null): int
 {
     $at = $at ?? xeric_state_time();
-    $st = $db->prepare('INSERT INTO messages (conversation_id, role, handle, content, created_at, world_epoch) VALUES (?, ?, ?, ?, ?, ?)');
-    $st->execute([$conversationId, $role, $handle, $content, $at, $worldEpoch]);
+    // WHO SAID IT, on a user line only — a character's line is its handle's,
+    // and a narrator's is nobody's. Null (every caller that does not say) is
+    // the first player, which is what an unmarked row has always meant.
+    $player = $role === 'user' && $player !== null && $player >= 1 ? $player : null;
+    $st = $db->prepare('INSERT INTO messages (conversation_id, role, handle, content, created_at, world_epoch, player, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    $st->execute([$conversationId, $role, $handle, $content, $at, $worldEpoch, $player, xeric_state_rating()]);
     $id = (int)$db->lastInsertId();
 
     // Unread is a property of the thread the character just spoke into.
@@ -472,9 +690,24 @@ function xeric_message_append(PDO $db, int $conversationId, string $role, ?strin
  *
  * $chunk = 0 keeps the old exact-N behaviour for callers that want a bounded
  * read rather than a prompt.
+ *
+ * ── $viewer: WHO THESE ROWS ARE READ FOR ─────────────────────────────────
+ *
+ * Redaction is a presentation concern and a prompt-for-a-viewer concern,
+ * never a side effect of reading storage. Null — the default — is every row
+ * as written: the harvest, a sleep, the narrator's audit read what was said,
+ * because they write memories and watermarks from it, and a kids' headset
+ * whose turn happened to run the harvest must never make it learn from
+ * placeholders or step its watermark past adult lines it was not shown. A
+ * caller that hands the rows to a person, or builds a prompt FOR one, names
+ * that person's rating (xeric_state_rating() for "the session asking", a
+ * room's ceiling for a room) and gets them as that person may read them.
+ * The process rating is never read in here.
  */
-function xeric_messages_recent(PDO $db, int $conversationId, int $limit = 20, int $chunk = 0): array
+function xeric_messages_recent(PDO $db, int $conversationId, int $limit = 20, int $chunk = 0, ?string $viewer = null): array
 {
+    $as = $viewer === null ? fn(array $rows): array => $rows
+        : fn(array $rows): array => array_map(fn($m) => xeric_state_message_shown($m, $viewer), $rows);
     if ($chunk > 1) {
         $st = $db->prepare('SELECT COUNT(*) c FROM messages WHERE conversation_id = ?');
         $st->execute([$conversationId]);
@@ -486,12 +719,15 @@ function xeric_messages_recent(PDO $db, int $conversationId, int $limit = 20, in
         $st->execute([$conversationId, $drop]);
         $rows = $st->fetchAll();
         $st->closeCursor();
-        return $rows ?: [];
+        // AS THE NAMED VIEWER MAY READ THEM, prompts included: a line stamped
+        // above the person a prompt is written for is not handed to a model
+        // writing for them either — that is the same leak by a longer road.
+        return $as($rows ?: []);
     }
 
     $st = $db->prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?');
     $st->execute([$conversationId, $limit]);
-    return array_reverse($st->fetchAll());
+    return $as(array_reverse($st->fetchAll()));
 }
 
 function xeric_messages_count(PDO $db, int $conversationId): int
@@ -649,13 +885,19 @@ function xeric_arcs_count(PDO $db): int
 function xeric_event_add(PDO $db, string $title, int $worldEpoch, ?string $place, array $participants, string $prose = '', ?int $at = null, bool $onSpine = false, string $overheard = ''): int
 {
     $at = $at ?? xeric_state_time();
-    $st = $db->prepare('INSERT INTO events (title, world_epoch, place, participants, prose, created_at, on_spine, overheard) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    $st->execute([$title, $worldEpoch, $place, json_encode(array_values($participants), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $prose, $at, $onSpine ? 1 : 0, $overheard]);
+    $st = $db->prepare('INSERT INTO events (title, world_epoch, place, participants, prose, created_at, on_spine, overheard, rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $st->execute([$title, $worldEpoch, $place, json_encode(array_values($participants), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $prose, $at, $onSpine ? 1 : 0, $overheard, xeric_state_rating()]);
     return (int)$db->lastInsertId();
 }
 
-/** Newest first — this is history being read backwards, not a prompt block. */
-function xeric_events_recent(PDO $db, int $limit = 10): array
+/**
+ * Newest first — this is history being read backwards, not a prompt block.
+ *
+ * $viewer as xeric_messages_recent(): null is every hour as written (the
+ * sweeps, the narrator, a room's landing); a rating is the hours as a person
+ * at that rating may read them (the book, why, a prompt written for them).
+ */
+function xeric_events_recent(PDO $db, int $limit = 10, ?string $viewer = null): array
 {
     $st = $db->prepare('SELECT * FROM events ORDER BY world_epoch DESC, id DESC LIMIT ?');
     $st->execute([$limit]);
@@ -665,6 +907,7 @@ function xeric_events_recent(PDO $db, int $limit = 10): array
         // A bool on the way out, the same shape a sweep hands its caller, so a
         // wall that reads it does not have to know it came from a column.
         $r['on_spine'] = (int)($r['on_spine'] ?? 0) === 1;
+        if ($viewer !== null) $r = xeric_state_event_shown($r, $viewer);
     }
     return $rows;
 }

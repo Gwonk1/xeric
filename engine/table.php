@@ -51,6 +51,7 @@ require_once __DIR__ . '/trust.php';
 require_once __DIR__ . '/constructs.php';  // what somebody could not cover is a debt
 require_once __DIR__ . '/chat.php';        // the model seam, for the table talk only
 require_once __DIR__ . '/players.php';     // whose purse, whose seat
+require_once __DIR__ . '/walls.php';       // who may not sit at a game they must not know of
 
 /** Fewest and most at a table. Two is heads-up; past six it is a tournament. */
 const XERIC_TABLE_MIN = 2;
@@ -123,6 +124,40 @@ function xeric_table_tonight(array $table, array $now): bool
         ? ($w[((int)$raw) % 7] ?? '')
         : strtolower(substr((string)$raw, 0, 3));
     return $dow !== '' && in_array($dow, $table['nights'], true);
+}
+
+/**
+ * May this person be seated at this place, at this moment, given its table?
+ *
+ * A TABLE ON ITS NIGHT IS AN ECONOMY HAPPENING IN A ROOM. The sweep turns any
+ * hour it casts at a table's place on the table's night into the game itself
+ * (sweeps.php, "IS THIS HOUR A GAME?"): cards dealt, the pot moved, the ledger
+ * the table pays into credited, and a prompt written about it for everybody in
+ * the room. So putting somebody in that room is telling them the economy
+ * exists — and when their walls hide that economy, no redaction afterwards can
+ * un-tell them, for the same reason `must_not_know` keeps the protected out of
+ * a spine hour (xeric_sweep_protected). Milldale shows the hole exactly: its
+ * child role hides `economies.thursday_pot` and declares no must_not_know, so
+ * nothing was protected, and [pastor_dale, janelle] was a legal drop-in at
+ * First Lutheran on Thursday — Janelle dealt into her father's game.
+ *
+ * The rule is read off the walls the template already has, through the same
+ * xeric_viewer_walls()/xeric_hidden() every prompt uses, and needs no
+ * `must_not_know` to be authored: a wall that hides the ledger IS the
+ * statement that this person must not sit at the game that pays it. A table
+ * with no economy names nothing to hide, and any other night the room is just
+ * a room. Template-only, no database, so the chooser stays testable.
+ */
+function xeric_table_barred(array $t, string $place, array $now, string $handle): bool
+{
+    if ($place === '' || $handle === '') return false;
+    $tables = xeric_tables($t);
+    $table  = $tables[$place] ?? null;
+    if ($table === null || !xeric_table_tonight($table, $now)) return false;
+    $eco = (string)($table['economy'] ?? '');
+    if ($eco === '') return false;
+    $walls = xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $handle]));
+    return xeric_hidden($walls, 'economies.' . $eco);
 }
 
 // ---------------------------------------------------------------------------
@@ -498,8 +533,11 @@ function xeric_table_write(array $t, PDO $db, array $table, array $played, ?int 
         foreach ($winners as $w) if ($net[$w] > $net[$top]) $top = $w;
         foreach ($short as $l => $owed) {
             if ((string)$l === (string)$top) continue;
+            // No pronoun: this row is read by both people in it and by
+            // whoever hears about it, and the loser is anybody at the table.
+            // It said "what he could not cover" for every loser there was.
             xeric_debt_form($t, $db, (string)$l, (string)$top,
-                'what he could not cover at ' . (string)($table['name'] ?? 'the game'),
+                'the stake left uncovered at ' . (string)($table['name'] ?? 'the game'),
                 ['epoch' => $epoch], null);
         }
     }
@@ -743,7 +781,10 @@ function xeric_table_talk(array $t, array $table, array $played, array $endpoint
         }
         $who[] = '- ' . (xeric_world_name($t, (string)$h) ?: (string)$h) . ': '
                . ($n > 0 ? "up $n" : ($n < 0 ? 'down ' . abs($n) : 'level'))
-               . ($tell !== '' ? ' — when he is not thinking about it, he ' . $tell : '');
+               // The tell is the template's own verb phrase, pronouns and
+               // all; the engine's frame around it carries none ("when he is
+               // not thinking about it, he …" made every player at the table a man).
+               . ($tell !== '' ? ' — tell, when not thinking about it: ' . $tell : '');
     }
 
     // THE SPEC RIDES THE SYSTEM MESSAGE; THE NIGHT RIDES THE USER TURN. Every

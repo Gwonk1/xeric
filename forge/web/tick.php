@@ -113,6 +113,17 @@ if (isset($spans[$want])) {
     }
 }
 
+// -- a room mid-sentence -------------------------------------------------------
+// The people at your table are answering you (engine/room.php): a skip now
+// would move the clock under a line that is being written for this minute.
+// Refused, plainly, until the turn is done. Between turns a skip is a skip,
+// and it ends the conversation — the world going on without you is the one
+// thing a conversation cannot survive — so the room seals and its close lands.
+if (xeric_play_room_midturn($w['db'])) {
+    xeric_web_json(['error' => 'Somebody at the table is in the middle of answering you. Let them finish, '
+        . 'then skip.', 'kind' => 'room'], 409);
+}
+
 // -- has this visitor an hour's worth of skips left? -------------------------
 // Checked before the model is even probed, and charged below when the worker is
 // actually away: a skip that could not start has not been spent.
@@ -148,6 +159,19 @@ if ($ticket === '') {
     xeric_web_json(['error' => (string)$r['message'], 'kind' => (string)$r['kind'], 'retry_after' => $retry],
                    ($r['kind'] ?? '') === 'yours' ? 429 : 503);
 }
+
+// The skip is going ahead: the conversation it interrupts is over, sealed
+// BEFORE the worker starts so its sweep never sees a live table. And then
+// LANDED, by a room worker of its own with no turn to carry (lease ''), the
+// way where.php and room.php's leave land theirs: a seal nothing is sent for
+// sits until the heart happens by, and a world with no heart never closes it.
+// The room worker waits in line behind the skip like anybody else.
+try {
+    if (xeric_room_seal($w['db'], 'skip', $now) !== null) {
+        xeric_web_spawn(xeric_web_job_new(), ['slug' => (string)$w['slug'], 'sid' => $sid,
+            'db' => (string)$w['db_path'], 'adult' => xeric_session_adult($sid), 'lease' => ''], 'room-worker.php');
+    }
+} catch (Throwable $e) { /* the heart will find it */ }
 
 // -- start it ----------------------------------------------------------------
 $job = xeric_web_job_new();

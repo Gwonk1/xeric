@@ -586,6 +586,43 @@ ok('contradictions: and the round ceiling says pressing again carries on',
 ok('contradictions: the clock is stopped when the lock comes off',
     preg_match('/stopClock\(\);\s*_ls\.textContent = _ls\.dataset\.was/s', $rv) === 1);
 
+// ---------------------------------------------------------------------------
+// A FORK FORGETS THE SCENES THE OWNER SET GOING.
+//
+// xeric_session_fork_clear() scrubbed only `source='auto'`, the memories chat
+// harvested, because it was written before duets and rooms existed. Their
+// diaries ('duet', 'room', and the 'room.*' a room the player stood in writes)
+// rode into a stranger's copy with the transcript that explains them deleted.
+// Here because demo-test, which drives the fork end to end, is somebody else's
+// file this week; this is the clear itself against a real seeded database.
+// ---------------------------------------------------------------------------
+
+echo "\n# a fork forgets the scenes the owner set going\n";
+
+$forkPath = $tmp . '/fork-memories.db';
+$forkDb = xeric_state_open($forkPath);
+xeric_state_seed($forkDb, $fixT);
+$seedN = (int)$forkDb->query("SELECT COUNT(*) FROM memories WHERE source = 'seed'")->fetchColumn();
+foreach (['auto' => 'Walt said he would come by.', 'duet' => 'Dot and I argued about the urn.',
+          'room' => 'The three of us stood in the narthex.', 'room.you' => 'Walt was there too.',
+          'event' => 'The mill whistle went at noon.'] as $src => $text) {
+    xeric_memory_add($forkDb, 'ruth', $text, $src, [], 1000);
+}
+$forkDb = null;
+ok('fork: the clear passes on a world with duet and room diaries in it', xeric_session_fork_clear($forkPath));
+$forkDb = new PDO('sqlite:' . $forkPath);
+$left = $forkDb->query('SELECT source, COUNT(*) n FROM memories GROUP BY source ORDER BY source')->fetchAll(PDO::FETCH_KEY_PAIR);
+ok('fork: duet, room and room.* diaries are gone with the chat harvest',
+    !isset($left['auto']) && !isset($left['duet']) && !isset($left['room']) && !isset($left['room.you']),
+    json_encode($left));
+ok('fork: and the world\'s own history stays — what happened in it, and any seeded past',
+    (int)($left['seed'] ?? 0) === $seedN && (int)($left['event'] ?? 0) === 1, json_encode($left));
+// The read-back refuses, rather than trusts, a diary that is still there.
+$forkDb->exec("INSERT INTO memories (handle, text, source, created_at) VALUES ('ruth', 'left over', 'duet', 1)");
+$forkDb = null;
+ok('fork: a diary that survived the clear is a reason to refuse the handover',
+    xeric_session_fork_is_clear($forkPath) === false);
+
 rmtree($tmp);
 
 echo "\n" . ($FAILED === 0 ? "all review tests passed\n" : "$FAILED review test(s) FAILED\n");

@@ -159,6 +159,23 @@ function xeric_rewind_tables(): array
             'photo_jobs', 'reminders'];
 }
 
+/**
+ * Row tables with ids that a rewind leaves alone ON PURPOSE, each with its
+ * reason — the other half of the census rewind-test holds, so a new table
+ * still has to be put on one list or the other by somebody who thought about
+ * it.
+ *
+ * scene_jobs: a view of a room is keyed by what the room LOOKS like (place,
+ * fingerprint — engine/scene.php), not by the hour it was drawn in. It is a
+ * render cache, not history: the same room in the same light after a rewind
+ * is the same fingerprint and the same picture, and deleting the row would
+ * orphan a file somebody's budget already paid for to buy nothing back.
+ */
+function xeric_rewind_exempt_tables(): array
+{
+    return ['scene_jobs'];
+}
+
 // ---------------------------------------------------------------------------
 // The mark: everything the diff will need, read before the clock moves
 // ---------------------------------------------------------------------------

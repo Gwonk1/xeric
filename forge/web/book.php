@@ -170,6 +170,21 @@ echo '<style>' . xeric_play_css() . xeric_book_css() . '</style>';
         <?= h($a === $b ? 'at ' . $a : $a . '–' . $b) ?> —
         <?= $lines === 1 ? 'a single line' : $lines . ' lines' ?> between them.</p>
 
+      <?php elseif ($it['kind'] === 'room'): $e = $it['event'];
+        // The room you stood in: who was at the table, where, when, and how
+        // much was said — the thread's own line, grown a table.
+        $who = [];
+        foreach ((array)$e['participants'] as $p) {
+            $n = xeric_world_name($T, (string)$p);
+            if ($n !== '') $who[] = $n;
+        }
+        $place = xeric_world_place_name($T, (string)($e['place'] ?? ''));
+        $n = (int)$it['lines'];
+      ?>
+      <p class="scene"><?= h(ucfirst($me)) ?>, <?= h(xeric_join_list($who)) ?> talked<?= $place !== '' ? ' at ' . h($place) : '' ?>,
+        <?= h(xeric_book_hour($T, (int)$e['world_epoch'])) ?> —
+        <?= $n === 1 ? 'a single line' : $n . ' lines' ?> around the table.</p>
+
       <?php elseif ($it['kind'] === 'miss'): $x = $it['expect'];
         // The three faces a miss can wear, in the ledger's own states: still
         // raw, mended with a reason, or hardened by the want of one.

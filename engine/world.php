@@ -890,6 +890,35 @@ function xeric_world_name(array $t, string $handle): string
     return $handle;
 }
 
+/** Honorifics a name may open with; matched lower-case, a trailing dot ignored. */
+const XERIC_WORLD_TITLES = ['pastor', 'father', 'mother', 'reverend', 'rev', 'mr', 'mrs', 'ms', 'miss', 'dr', 'doc',
+    'aunt', 'uncle', 'sister', 'brother', 'grandma', 'grandpa', 'coach', 'judge', 'sheriff', 'deacon', 'old'];
+
+/**
+ * The words a person is called by: the name as written, then the given name
+ * past any honorific — "Pastor Dale Ostrander" is Dale across a table, "Dr.
+ * Ruth" is Ruth. A name with no title and one word comes back as itself, alone.
+ * A name that is ALL title ("Pastor") keeps its last word rather than nothing.
+ *
+ * ONE COPY. Sleep (which names a memory is about), the cast-to-cast promise
+ * reader (who a quoted line is said by and to) and the confidence reader (who
+ * must not hear it) each had their own honorific list, and the three lists
+ * disagreed — "Reverend" was a title to two of them and a given name to the
+ * third — so the same sentence named Reverend Hale for one reader and nobody
+ * for the next. Who a sentence names is one question; it gets one answer.
+ *
+ * @return string[] [full] or [full, given]
+ */
+function xeric_world_name_forms(string $name): array
+{
+    $name = trim((string)preg_replace('/\s+/u', ' ', $name));
+    if ($name === '') return [];
+    $words = explode(' ', $name);
+    while (count($words) > 1 && in_array(rtrim(mb_strtolower($words[0]), '.'), XERIC_WORLD_TITLES, true)) array_shift($words);
+    $given = (string)$words[0];
+    return $given !== '' && $given !== $name ? [$name, $given] : [$name];
+}
+
 function xeric_world_place_name(array $t, ?string $key): string
 {
     if ($key === null || $key === '') return '';
@@ -984,6 +1013,11 @@ function xeric_world_minutes(?string $hhmm): ?int
  *         look up without converting. The dead are absent entirely rather than
  *         present with a null room: `where === null` already means off shift,
  *         and a caller cannot be asked to tell "at home" from "in the ground".
+ *         A row the Director staged also carries `staged: true` and its
+ *         `staging` id.
+ * @param PDO|null $db the world's database, so live stagings are honoured;
+ *                     null reads the schedule alone (and any stagings a
+ *                     dressed template carries).
  */
 /**
  * Where somebody lives, or null for a character the world gave no home.
@@ -1002,7 +1036,7 @@ function xeric_world_home_of(array $t, string $handle): ?string
     return null;
 }
 
-function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): array
+function xeric_world_who_is_where(array $t, array $now, ?array $dead = null, ?PDO $db = null): array
 {
     $dow  = (int)($now['dow'] ?? 0);
     $mins = xeric_world_minutes((string)($now['hhmm'] ?? '')) ?? 0;
@@ -1041,6 +1075,15 @@ function xeric_world_who_is_where(array $t, array $now, ?array $dead = null): ar
             }
         }
         $out[$handle] = $row;
+    }
+    // THE DIRECTOR (engine/director.php) changes the set, never the
+    // performance: a live staging puts its people at its place, `staged: true`,
+    // on top of the schedule above — read from $db when one is given, or from a
+    // template xeric_director_dress() carried them in (the sweeps pass none).
+    // Neither present, nothing is loaded and the schedule's answer stands.
+    if ($db !== null || !empty($t['_director']['stagings'])) {
+        require_once __DIR__ . '/director.php';
+        $out = xeric_director_apply($t, $now, $out, $db);
     }
     return $out;
 }

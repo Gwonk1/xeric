@@ -67,6 +67,7 @@ require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/chat.php';      // the model seam, and the deduper
 require_once __DIR__ . '/trust.php';    // what these same crumbs mean to the person in them
 require_once __DIR__ . '/players.php';  // and whose reply, whose silence it was
+require_once __DIR__ . '/renderers/bible.php'; // xeric_pronouns(): the user's own, never a guess
 
 /** How many lessons one bucket (the world, or one character) may hold. */
 const XERIC_LEARN_MAX_LESSONS = 6;
@@ -389,6 +390,69 @@ function xeric_learn_settle(PDO $db, ?int $epoch = null): array
         $out['ignored']++;
     }
 
+    return $out;
+}
+
+/**
+ * The whole learn pass for one stretch of lived hours, in the skip's order.
+ *
+ * tick-worker.php has always done three things around a skip: SETTLE what the
+ * last stretch left hanging, PEND what this one put on offer, and DISTIL when
+ * enough crumbs have piled up. heart.php — the world living when nobody is
+ * looking — did none of them. So a week lived only by the heart never judged
+ * a single hour, never counted a single reply, and never turned a friendly
+ * conversation into trust (trust.php: replies convert through the counting
+ * layer, which only the distil pass runs). The headline claim — come back
+ * after a week and a week has gone by — had a town that lived the week and
+ * learned nothing from it about the person it was for.
+ *
+ * This is that sequence as one function, so the heart and anything after it
+ * run the same steps in the same order rather than a second copy that drifts:
+ *
+ *   1. settle($before) — judge the previous stretch, in hindsight;
+ *   2. pend($events, $ping, $after) — write down what this stretch offered;
+ *   3. distil, if due — counting always, the model half only when the caller
+ *      says the model is theirs to use (`no_model` false). The heart calls this
+ *      while holding the queue slot it took for the hours, and passes
+ *      `no_model` when that hold has expired, which is the skip's courtesy.
+ *
+ * Settle runs here, after the hours rather than before them, and that is
+ * equivalent: settle reads the USER's messages since the last mark, and living
+ * hours writes none. What it must never do is judge the row it is about to
+ * write, so settle strictly precedes pend.
+ *
+ * IDEMPOTENT PER STRETCH. A pending row already stamped with this $after has
+ * been through here: a second call for the same moment returns without
+ * settling it (which would judge an offer nobody has had a chance to take up
+ * and file every hour of it as walked past) or re-pending it. Garnish
+ * throughout, like the calls it wraps: nothing here can throw at the caller.
+ *
+ * @param array $opts no_model, timeout — passed to xeric_lessons_distil
+ * @return array{ran:bool,settled:array,distilled:bool,learned:int}
+ */
+function xeric_learn_pass(PDO $db, array $t, array $endpoint, int $before, array $events, ?array $ping,
+                          int $after, array $opts = []): array
+{
+    $out = ['ran' => false, 'settled' => ['engaged' => 0, 'skipped' => 0, 'ignored' => 0],
+            'distilled' => false, 'learned' => 0];
+    try {
+        $p = json_decode((string)xeric_world_state_get($db, XERIC_LEARN_PENDING, ''), true);
+        if (is_array($p) && (int)($p['epoch'] ?? PHP_INT_MIN) === $after) return $out;
+
+        $out['ran'] = true;
+        try { $out['settled'] = xeric_learn_settle($db, $before); } catch (Throwable $e) { /* garnish */ }
+        try { xeric_learn_pend($db, $events, $ping, $after); } catch (Throwable $e) { /* garnish */ }
+        if (xeric_learn_due($db)) {
+            $lr = xeric_lessons_distil($db, $t, $endpoint, [
+                'no_model' => !empty($opts['no_model']),
+                'timeout'  => (int)($opts['timeout'] ?? 60),
+            ]);
+            $out['distilled'] = true;
+            foreach ((array)($lr['lessons'] ?? []) as $ls) $out['learned'] += count((array)$ls);
+        }
+    } catch (Throwable $e) {
+        // A world that could not work out what it thinks is still a world.
+    }
     return $out;
 }
 
@@ -934,6 +998,16 @@ function xeric_lessons_distil(PDO $db, array $t, array $endpoint, array $opts = 
 function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, array $opts, array &$notes): array
 {
     $userName = trim((string)($t['user']['name'] ?? '')) ?: 'the person this world is for';
+    // THE USER'S PRONOUNS ARE TEMPLATE DATA, AND THIS PROMPT IS ABOUT THE USER.
+    // It used to say "he" and "him" throughout — "what he walked past", "his
+    // character", "given what he is like" — so a she/her or they/them user had
+    // a model reading about somebody else and writing lessons about that
+    // somebody, filed permanently. `user.pronouns` resolves through the same
+    // xeric_pronouns() the bible uses (unknown text falls back to they/them,
+    // never to a gender); where a sentence can carry the NAME instead it does,
+    // because a name cannot be the wrong one. The characters in the counting
+    // lines are named, never pronouned: the engine does not know them that well.
+    $pn = xeric_pronouns($t);
 
     // WHAT THE MODEL IS SHOWN, AND WHAT IT IS NOT.
     //
@@ -1003,10 +1077,13 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
         if ($tal['replies'] + $tal['ignored'] + $tal['reads'] === 0) continue;
         $name = xeric_world_name($t, $h);
         $bits = [$userName . ' has answered ' . $name . ' ' . $tal['replies'] . ' time(s) and left '
-                 . $tal['ignored'] . ' of her messages sitting'];
-        if ($tal['avg_reply_chars'] !== null) $bits[] = 'his replies to her average ' . $tal['avg_reply_chars'] . ' characters';
+                 . $tal['ignored'] . ' message(s) from ' . $name . ' sitting'];
+        if ($tal['avg_reply_chars'] !== null) {
+            $bits[] = $userName . '\'s replies to ' . $name . ' average ' . $tal['avg_reply_chars'] . ' characters';
+        }
         if ($tal['avg_reply_lag'] !== null && $tal['avg_reply_lag'] > 0) {
-            $bits[] = 'he usually answers her within ' . max(1, (int)round($tal['avg_reply_lag'] / 60)) . ' minutes';
+            $bits[] = $userName . ' usually answers ' . $name . ' within '
+                    . max(1, (int)round($tal['avg_reply_lag'] / 60)) . ' minutes';
         }
         $counted[] = '- ' . implode('; ', $bits);
     }
@@ -1032,21 +1109,21 @@ function xeric_lessons_model(PDO $db, array $t, array $endpoint, array $rows, ar
     $lines[] = '- "about": "" when it is true of everybody in this world, or ONE HANDLE, the name in square';
     $lines[] = '  brackets, not the display name, when it is only about that person.';
     $lines[] = '- "lesson": ONE line, under ' . XERIC_LEARN_MAX_CHARS . ' characters, written as an instruction to';
-    $lines[] = '  the people in this world about how to be with ' . $userName . '. "Keep her answers under three';
-    $lines[] = '  lines, he replies to short ones and lets long ones sit."';
+    $lines[] = '  the people in this world about how to be with ' . $userName . '. "Keep answers under three';
+    $lines[] = '  lines: ' . $userName . ' replies to short ones and lets long ones sit."';
     // Every evidence line is something the USER did. Left to itself a model
     // turns each line into an instruction aimed at whoever it mentions —
     // "answer his messages", "follow up on that" — which is advice to the
     // wrong party, filed permanently. Seen against the real model, 2026-07-30.
     $lines[] = '- Every line under WHAT ' . strtoupper($userName) . ' DID is something ' . $userName . ' did or did not do. A lesson NEVER tells anybody';
-    $lines[] = '  to do more of what he walked past, and never tells him anything: it says how the people here';
-    $lines[] = '  should behave, given what he is like.';
+    $lines[] = '  to do more of what ' . $pn['subj'] . ' walked past, and never tells ' . $pn['obj'] . ' anything: it says how the people here';
+    $lines[] = '  should behave, given what ' . $pn['subj'] . ' ' . $pn['is'] . ' like.';
     // Without this a model writes flattery — "he is a thoughtful person who
     // values authenticity" — which is unfalsifiable, unusable, and permanent.
     $lines[] = '- About BEHAVIOUR only: length, timing, how often to reach out, what to bring up, what to leave';
-    $lines[] = '  alone. Never about his character, never praise, never a compliment.';
+    $lines[] = '  alone. Never about ' . $pn['poss'] . ' character, never praise, never a compliment.';
     $lines[] = '- Only what the evidence below actually shows. If it shows nothing, return an empty list.';
-    $lines[] = '- A hand-retyped line is the strongest evidence here: he was shown what this world thought and';
+    $lines[] = '- A hand-retyped line is the strongest evidence here: ' . $userName . ' was shown what this world thought and';
     $lines[] = '  went and changed it in writing. Take it literally.';
     if ($knownMap !== []) {
         $lines[] = '- "strike": AT MOST ONE, and usually none. Only when what ' . $userName . ' just did says a numbered';

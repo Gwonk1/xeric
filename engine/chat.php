@@ -54,7 +54,7 @@ require_once __DIR__ . '/learn.php';     // where a turn is written down as a si
 require_once __DIR__ . '/death.php';     // the dead do not answer
 require_once __DIR__ . '/notify.php';    // "remind me" — the one clock that is not the world's
 require_once __DIR__ . '/constructs.php'; // promises heard, kept, missed, explained
-require_once __DIR__ . '/confide.php';    // a thing told in a thread is a confidence formed
+require_once __DIR__ . '/confide.php';    // what she asked you to keep, and whether you did
 require_once __DIR__ . '/llm.php';
 
 /** A text message, not an essay. Anything past this is collapsed at a full stop. */
@@ -106,7 +106,7 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     // nothing; see xeric_chat_canary() for what it is and why it must stay.
     $canary = xeric_chat_canary($userText);
     if ($canary !== null) {
-        return ['text' => $canary, 'conversation_id' => null, 'remind' => null,
+        return ['text' => $canary, 'conversation_id' => null, 'message_id' => null, 'remind' => null,
                 'usage' => ['ms' => 0, 'reply_chars' => mb_strlen($canary), 'raw_chars' => 0],
                 'story' => [], 'canary' => true];
     }
@@ -145,13 +145,10 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
         'tail'             => (string)($opts['tail'] ?? ''),
         'history_limit'    => (int)($opts['history_limit'] ?? 20),
         'memory_limit'     => (int)($opts['memory_limit'] ?? 12),
-    ] + array_intersect_key($opts, [
-        'effective_rating' => 1, 'model_rating' => 1, 'photos' => 1,
-        // WHOSE TURN, again — prompt.php reads it for the guest-naming rules
-        // and for THIS person's player_where. Off this list, every guest in
-        // every multiplayer world was prompted as the owner.
-        'player' => 1,
-    ]));
+        // WHO IS TYPING, for the name the character is texting and — once a
+        // second person has spoken in this thread — the label on each line.
+        'player'           => $player,
+    ] + array_intersect_key($opts, ['effective_rating' => 1, 'model_rating' => 1, 'photos' => 1]));
 
     $usage = [];
     $t0    = microtime(true);
@@ -212,8 +209,8 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     $db->beginTransaction();
     try {
         if ($convId === null) $convId = xeric_conversation_create($db, $speaker, 'chat', null, $at);
-        xeric_message_append($db, $convId, 'user', null, $userText, $epoch, $at);
-        xeric_message_append($db, $convId, 'character', $speaker, $text, $epoch, $at);
+        xeric_message_append($db, $convId, 'user', null, $userText, $epoch, $at, $player);
+        $replyId = xeric_message_append($db, $convId, 'character', $speaker, $text, $epoch, $at);
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
@@ -251,6 +248,9 @@ function xeric_chat_turn(array $template, PDO $db, string $speaker, string $user
     return [
         'text'            => $text,
         'conversation_id' => $convId,
+        // The row the reply was written as: what a client asks after the line
+        // by (the speaker beside a bubble), rather than finding it again.
+        'message_id'      => $replyId,
         'photo_ask'       => $photoAsk,
         'remind'          => $remind,
         'usage'           => $usage + ['ms' => $ms, 'reply_chars' => mb_strlen($text), 'raw_chars' => mb_strlen($raw)],
@@ -468,7 +468,12 @@ function xeric_age_minors(array $t): array
 function xeric_age_mentions(string $text, string $handle, string $name): bool
 {
     $skip = ['the' => 1, 'and' => 1, 'old' => 1, 'young' => 1, 'kid' => 1, 'boy' => 1, 'girl' => 1,
-             'son' => 1, 'daughter' => 1, 'mrs' => 1, 'mr' => 1, 'ms' => 1, 'little' => 1];
+             'son' => 1, 'daughter' => 1, 'mrs' => 1, 'mr' => 1, 'ms' => 1, 'little' => 1]
+          // A PRONOUN IS NOT A NAME. A nameless player was once seated as
+          // 'you', and the bare word matched nearly every line in a room; no
+          // form of any pronoun xeric_pronouns() knows, nor "you", is ever a
+          // needle. Read from its one table, so this file spells none of them.
+          + xeric_pronoun_words();
 
     $needles = [$handle, str_replace('_', ' ', $handle), $name];
     foreach (preg_split('/\s+/u', $name) ?: [] as $part) $needles[] = $part;
@@ -476,6 +481,7 @@ function xeric_age_mentions(string $text, string $handle, string $name): bool
     foreach (array_unique($needles) as $n) {
         $n = trim((string)$n);
         if (mb_strlen($n) < 3 || isset($skip[mb_strtolower($n)])) continue;
+        if (!preg_match('/\p{L}/u', $n)) continue;          // a sentinel, never a word (XERIC_ROOM_NAMELESS)
         if (preg_match('/\b' . preg_quote($n, '/') . '\b/iu', $text)) return true;
     }
     return false;
@@ -1000,13 +1006,34 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     $turns = xeric_messages_recent($db, $convId, XERIC_CHAT_EXTRACT_WINDOW);
     if (count($turns) < 2) return 0;                     // nothing has happened yet
 
+    // Where the last harvest stopped reading — so the confidence watch below
+    // reads each line once, the way the memory harvest does.
+    $readTo = xeric_arc_int($db, $speaker, 'extract.last_message_id', 0);
+
     $existing = xeric_memories_for($db, $speaker, 40);
     $known    = array_map(fn($m) => (string)$m['text'], $existing);
+
+    // WHO SAID WHAT. One person at the centre in this window and every user
+    // line is the template's name, as it always was — the prompt below stays
+    // byte for byte the same. More than one, and each line is its own speaker's
+    // roster name, the watch asks about any of them, and the promise is put on
+    // whoever's line carries its words (xeric_chat_promiser).
+    $voices = [];
+    foreach ($turns as $t) {
+        if ((string)($t['role'] ?? '') === 'user') $voices[max(XERIC_PLAYER_FIRST, (int)($t['player'] ?? 0))] = true;
+    }
+    $many = count($voices) > 1;
+    $nameOf = static fn(int $p): string => xeric_player_name($db, max(XERIC_PLAYER_FIRST, $p), $template);
+    if ($many) {
+        $names = array_map($nameOf, array_keys($voices));
+        $userName = implode(' or ', $names);
+    }
 
     $lines = [];
     foreach ($turns as $t) {
         $role = (string)($t['role'] ?? 'user');
-        $who  = $role === 'character' ? $name : ($role === 'narrator' ? '(what happened)' : $userName);
+        $who  = $role === 'character' ? $name : ($role === 'narrator' ? '(what happened)'
+              : ($many ? $nameOf((int)($t['player'] ?? 0)) : $userName));
         $lines[] = $who . ': ' . trim((string)$t['content']);
     }
 
@@ -1019,7 +1046,7 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             . 'and write down what THEY would still know about it in a week. '
             . 'Reply with ONE JSON object and nothing else.'],
         ['role' => 'user', 'content' =>
-            $who . "\nThey were texting {$userName}.\n\n"
+            $who . "\nThey were texting " . ($many ? implode(' and ', $names) : $userName) . ".\n\n"
             . ($known ? "Already in their memory, do not write any of these again:\n- " . implode("\n- ", $known) . "\n\n" : '')
             . "The conversation:\n" . implode("\n", $lines) . "\n\n"
             . "Write 0-3 things {$name} would still know in a week.\n"
@@ -1043,17 +1070,32 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
             . "return {\"quote\": their exact words, \"what\": it in 5 words, \"when\": their words for when}. "
             . "Else null. Report their words exactly; do not judge whether it was firm.\n"
             . "- \"explained\": true only if {$userName} gave a reason or apology for having missed "
-            . "something they were expected at. Else false.\n"
-            // THE CONFIDENCE WATCH, same split as the promise above: the model
-            // SPOTS the telling, and whether a row forms is decided in code
-            // (engine/confide.php — armed worlds only, adults only, one row
-            // per thing). The bar is in the prompt because the failure mode is
-            // over-reporting: a model told to watch for confidences finds one
-            // in every weather report.
-            . "- \"confided\": if {$userName} told {$name} something private about themselves — a thing "
+            . "something they were expected at. Else false."
+            . ($many ? ' With more than one of them in this conversation, give the name of whoever it was instead of true.' : '') . "\n"
+            // The third watch, and the only good ending a promise had been
+            // missing (constructs.php, KEEPING IT). Same split: the model says
+            // it happened, code decides whether there was anything to keep.
+            . "- \"kept\": true only if, in this conversation, {$userName} actually DID something they had "
+            . "earlier promised {$name} (brought the thing, turned up, called). Not a new promise. Else false."
+            . ($many ? ' With more than one of them in this conversation, give the name of whoever it was instead of true.' : '') . "\n"
+            // The fourth watch, and the one with the most riding on it: a
+            // confidence (confide.php). Same split again — the model reports
+            // her exact words, code checks they carry an explicit ask and are
+            // really in what she said.
+            . "- \"confided\": if {$name} told {$userName} something and explicitly asked them to keep it "
+            . "(\"don't tell\", \"between us\", \"keep this to yourself\"), return {\"quote\": {$name}'s exact words, "
+            . "\"what\": the thing itself in under 10 words, \"not\": [names of anyone who must not hear it]}. Else null.\n"
+            // THE SAME WATCH FACING THE OTHER WAY: what the person at the
+            // centre told HER. The model SPOTS the telling, and whether a row
+            // forms is decided in code (engine/confide.php — armed worlds
+            // only, adults only, one row per thing). The bar is in the prompt
+            // because the failure mode is over-reporting: a model told to
+            // watch for confidences finds one in every weather report. Its
+            // own key, so neither direction can be mistaken for the other.
+            . "- \"entrusted\": if {$userName} told {$name} something private about themselves — a thing "
             . "held back, plainly not for anybody else — return {\"what\": it in eight words or fewer}. "
             . "Else null. The ordinary business of a conversation is not a confidence.\n"
-            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false, \"confided\": null }\nNo prose outside the JSON."],
+            . "{ \"memories\": [\"…\"], \"promise\": null, \"explained\": false, \"kept\": false, \"confided\": null, \"entrusted\": null }\nNo prose outside the JSON."],
     ];
 
     try {
@@ -1103,21 +1145,180 @@ function xeric_chat_extract(array $template, PDO $db, string $speaker, int $conv
     // soft — a malformed proposal forms nothing, and an explanation with no
     // repairable miss repairs nothing — so the memory path above never pays
     // for their problems.
-    xeric_expect_form($template, $db, $speaker, is_array($raw['promise'] ?? null) ? $raw['promise'] : null,
-                      $now, null, null, $player);
-    if (!empty($raw['explained'])) xeric_expect_repair($template, $db, $speaker, $now, null, $player);
+    // Kept BEFORE formed: a harvest that both keeps an old promise and makes a
+    // new one must not let the new row be the one it closes (and keep refuses a
+    // row formed this very moment anyway).
+    // WHOSE KEEPING, WHOSE APOLOGY. With one person at the centre in this
+    // window it is theirs, as it always was. With two, it is whoever's line it
+    // was — the name the model gave, else the newest line this harvest is the
+    // first to read — and never simply whoever's turn ran the harvest: Ann
+    // bringing the dish must not credit Walt.
+    // A NAME IS A WHOLE NAME. The model's answer is matched against each
+    // voice's full and first name, word-bounded, longest first — "Ann" is
+    // not inside "Hannah" — and an answer that names nobody here, or more
+    // than one of them, credits nobody (null): a guess must never pay a
+    // stranger's trust.
+    $actor = static function ($v) use ($many, $voices, $nameOf, $turns, $readTo, $player): ?int {
+        if (!$many) return $player;
+        if (is_string($v) && trim($v) !== '') {
+            $names = [];
+            foreach (array_keys($voices) as $p) $names[(int)$p] = $nameOf((int)$p);
+            return xeric_chat_name_player($v, $names);
+        }
+        foreach ([true, false] as $fresh) {
+            foreach (array_reverse($turns) as $tn) {
+                if ((string)($tn['role'] ?? '') !== 'user') continue;
+                if ($fresh && (int)($tn['id'] ?? 0) <= $readTo) continue;
+                return max(XERIC_PLAYER_FIRST, (int)($tn['player'] ?? 0));
+            }
+        }
+        return $player;
+    };
+    if (!empty($raw['kept']) && ($by = $actor($raw['kept'])) !== null) {
+        xeric_expect_keep($template, $db, $speaker, $now, null, $by, 'said');
+    }
+    // THE PROMISE IS WHOEVER SAID IT'S, not whoever's turn happened to pay for
+    // the harvest: the words are matched back to the line that carries them.
+    $promise = is_array($raw['promise'] ?? null) ? $raw['promise'] : null;
+    xeric_expect_form($template, $db, $speaker, $promise,
+                      $now, null, null, xeric_chat_promiser($turns, $promise, $player));
+    // An explanation repairs the freshest miss; with none to repair it owns up
+    // to a confidence let out; with neither, it thaws a grudge that hardened
+    // past both windows. One explanation, one thing mended.
+    if (!empty($raw['explained']) && ($by = $actor($raw['explained'])) !== null) {
+        if (xeric_expect_repair($template, $db, $speaker, $now, null, $by) === null
+            && xeric_confide_mend($template, $db, $speaker, $now, $by) === null) {
+            xeric_grudge_thaw($template, $db, $speaker, '', $by, $now);
+        }
+    }
 
-    // And the confidence, on the same harvest and the same terms: the row
-    // lands on the character CARRYING it, told by this player — the one
-    // asymmetry the arc knows (confide.php). Fail-soft like its siblings: a
-    // malformed report, a walled-off world or a party the floor refuses all
-    // form nothing, and none of it costs the harvest.
-    if (is_array($raw['confided'] ?? null)) {
+    // THE CONFIDENCE, both directions, on the lines this harvest is the first
+    // to read: what she asked the person at the centre to keep (her words,
+    // checked against what she actually said), and whether they just repeated
+    // somebody else's to her. Code-only; neither can fail the harvest.
+    // EACH LINE IS ITS OWN PLAYER'S, as a promise is: what Ann repeated is
+    // Ann's breach even when Walt's turn ran the harvest, and a confidence is
+    // put on whoever she was answering when she said it — or, when that
+    // cannot be told, on nobody.
+    try {
+        $herLines = [];
+        $theirLines = [];
+        foreach ($turns as $tn) {
+            if ((int)($tn['id'] ?? 0) <= $readTo) continue;
+            $role = (string)($tn['role'] ?? '');
+            if ($role === 'character') $herLines[] = (string)$tn['content'];
+            elseif ($role === 'user') $theirLines[max(XERIC_PLAYER_FIRST, (int)($tn['player'] ?? 0))][] = (string)$tn['content'];
+        }
+        foreach ($theirLines as $p => $ls) xeric_confide_repeat($template, $db, $speaker, $ls, $now, (int)$p);
+        $confided = is_array($raw['confided'] ?? null) ? $raw['confided'] : null;
+        $to = $many ? xeric_chat_confidant($turns, $confided, $readTo) : $player;
+        if ($to !== null) {
+            xeric_confide_to_player($template, $db, $speaker, $confided, $now, $to, implode("\n", $herLines));
+        }
+    } catch (Throwable $e) { /* a confidence lost is re-proposed next harvest */ }
+
+    // And the confidence facing the other way, on the same harvest and the
+    // same terms: what the person at the centre told HER lands on the
+    // character CARRYING it, told by this player — the one asymmetry the arc
+    // knows (confide.php). Fail-soft like its siblings: a malformed report, a
+    // walled-off world or a party the floor refuses all form nothing, and
+    // none of it costs the harvest. With two people in the window and no way
+    // to say whose telling it was, it is nobody's: a guess must never hang one
+    // person's secret on another.
+    if (!$many && is_array($raw['entrusted'] ?? null)) {
         xeric_confide_form($template, $db, $speaker,
-            (string)($raw['confided']['what'] ?? ''), $now, '', $player, $at);
+            (string)($raw['entrusted']['what'] ?? ''), $now, '', $player, $at);
     }
 
     return count($keep);
+}
+
+/**
+ * Which player a model's answer names, of $names (player id => roster name).
+ *
+ * Whole names only: each player's full name and first name, case-insensitive,
+ * bounded by anything that is not a letter or digit, tried longest first so
+ * "Ann Marie" is found before "Ann" can be found inside it (and at one length
+ * a whole name before a first name), and every span matched is taken out
+ * before a shorter name is tried. Exactly one player named is that player;
+ * none, or two different ones, is null — nobody.
+ *
+ * @param array<int,string> $names
+ */
+function xeric_chat_name_player(string $answer, array $names): ?int
+{
+    $text = ' ' . mb_strtolower(trim($answer)) . ' ';
+    // Each spelling once, with who owns it whole and whose first name it is.
+    $by = [];
+    foreach ($names as $p => $n) {
+        $n = mb_strtolower(trim((string)$n));
+        if ($n === '') continue;
+        $by[$n]['whole'][] = (int)$p;
+        $first = (string)((preg_split('/\s+/u', $n) ?: [$n])[0]);
+        if ($first !== '' && $first !== $n) $by[$first]['first'][] = (int)$p;
+    }
+    uksort($by, fn($a, $b) => mb_strlen($b) <=> mb_strlen($a) ?: strcmp($a, $b));
+    $found = [];
+    foreach ($by as $n => $own) {
+        $re = '/(?<![\p{L}\p{N}])' . preg_quote((string)$n, '/') . '(?![\p{L}\p{N}])/u';
+        if (!preg_match($re, $text)) continue;
+        // Somebody's whole name beats somebody else's first name; two people
+        // answering to one spelling are both found, and so nobody is.
+        foreach ($own['whole'] ?? $own['first'] ?? [] as $p) $found[$p] = true;
+        $text = (string)preg_replace($re, ' ', $text);
+    }
+    return count($found) === 1 ? (int)array_key_first($found) : null;
+}
+
+/**
+ * Whom a character confided in, with more than one person in the thread: the
+ * player whose line she was answering when she said the quoted words — the
+ * newest user line before hers, else the first after it. Her line has to be
+ * found (letters and digits, as xeric_chat_promiser matches), and so does the
+ * person; otherwise nobody, because a confidence put on the wrong person is a
+ * secret they can be punished for breaking.
+ */
+function xeric_chat_confidant(array $turns, ?array $confided, int $readTo = 0): ?int
+{
+    $norm = static fn(string $s): string => (string)preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s));
+    $quote = trim($norm((string)($confided['quote'] ?? '')));
+    if ($quote === '') return null;
+    $turns = array_values($turns);
+    foreach (array_reverse(array_keys($turns)) as $i) {
+        $t = $turns[$i];
+        if ((string)($t['role'] ?? '') !== 'character' || (int)($t['id'] ?? 0) <= $readTo) continue;
+        if (!str_contains(' ' . $norm((string)($t['content'] ?? '')) . ' ', ' ' . $quote . ' ')) continue;
+        for ($j = $i - 1; $j >= 0; $j--) {
+            if ((string)($turns[$j]['role'] ?? '') === 'user') return max(XERIC_PLAYER_FIRST, (int)($turns[$j]['player'] ?? 0));
+        }
+        for ($j = $i + 1; $j < count($turns); $j++) {
+            if ((string)($turns[$j]['role'] ?? '') === 'user') return max(XERIC_PLAYER_FIRST, (int)($turns[$j]['player'] ?? 0));
+        }
+        return null;
+    }
+    return null;
+}
+
+/**
+ * Which person at the centre made a reported promise: the player on the user
+ * line its quoted words came from, newest line first. A quote that matches no
+ * line (a model paraphrasing) falls back to $fallback — the person whose turn
+ * ran the harvest, which is who every promise was put on before rows carried
+ * a player. Matching is on letters and digits only, so punctuation and case a
+ * model tidied do not lose the speaker.
+ */
+function xeric_chat_promiser(array $turns, ?array $promise, int $fallback = XERIC_PLAYER_FIRST): int
+{
+    $norm = static fn(string $s): string => (string)preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($s));
+    $quote = trim($norm((string)($promise['quote'] ?? '')));
+    if ($quote === '') return $fallback;
+    foreach (array_reverse($turns) as $t) {
+        if ((string)($t['role'] ?? '') !== 'user') continue;
+        if (str_contains(' ' . $norm((string)($t['content'] ?? '')) . ' ', ' ' . $quote . ' ')) {
+            return max(XERIC_PLAYER_FIRST, (int)($t['player'] ?? 0));
+        }
+    }
+    return $fallback;
 }
 
 /**
@@ -1260,7 +1461,8 @@ function xeric_chat_pace_gate(array $t, string $speaker, ?array $presenceRow,
     $since = $realNow - $lastCharAt;
     if ($since >= $cool) return ['wait' => 0, 'why' => ''];
 
-    $name = xeric_chat_speaker_name($t, $speaker) ?? 'She';
+    // A speaker with no name on record is not thereby a woman.
+    $name = xeric_chat_speaker_name($t, $speaker) ?? 'This person';
     $busy = $presenceRow !== null && ($presenceRow['where'] ?? null) !== null
             && empty($presenceRow['at_home']);
     return [

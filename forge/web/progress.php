@@ -77,6 +77,8 @@ echo "retry: 750\n\n";                       // how soon EventSource should come
 @flush();
 
 $send = function (string $event, array $data, ?int $id = null): void {
+    // The client API's envelope, when api.php delegated here; a no-op otherwise.
+    if (($shape = xeric_web_json_shaper()) !== null) $data = $shape($data, $event === 'failed' ? 500 : 200, $event);
     if ($id !== null) echo 'id: ' . $id . "\n";
     echo 'event: ' . $event . "\n";
     echo 'data: ' . json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n\n";

@@ -49,6 +49,9 @@ require_once __DIR__ . '/trust.php';
 /** How long a confidence stays fresh enough to be worth mentioning. */
 const XERIC_CONFIDE_FRESH = 21 * 24 * 3600;
 
+/** How long a confidence the person at the centre let out stays mendable, world seconds. */
+const XERIC_CONFIDE_REPAIR = 7 * 24 * 3600;
+
 /** What keeping one is worth, and what breaking one costs. */
 const XERIC_CONFIDE_KEPT   = 1;
 const XERIC_CONFIDE_BROKEN = 3;
@@ -63,7 +66,7 @@ function xeric_confide_armed(array $t): bool
     // that cannot record what its own generator produces never fires. The
     // floor above does not move an inch — armed through whichever door, both
     // parties are adults or there is no row.
-    foreach (['attraction', 'private_history', 'arcs', 'secrets'] as $s) {
+    foreach (['attraction', 'private_history', 'arcs', 'confidences', 'secrets'] as $s) {
         if (in_array($s, $armed, true)) return true;
     }
     return false;
@@ -100,7 +103,8 @@ function xeric_confides_for(PDO $db, string $handle): array
  * somebody at the centre, which is the one asymmetry this file needs.
  */
 function xeric_confide_form(array $t, PDO $db, string $told, string $what, array $now,
-                            string $byHandle = '', int $byPlayer = 0, ?int $at = null): ?string
+                            string $byHandle = '', int $byPlayer = 0, ?int $at = null,
+                            array $not = [], string $quote = ''): ?string
 {
     if (!xeric_confide_armed($t)) return null;
     $what = trim(preg_replace('/\s+/u', ' ', $what) ?? '');
@@ -131,7 +135,12 @@ function xeric_confide_form(array $t, PDO $db, string $told, string $what, array
     $key = 'told.' . (1 + count(xeric_confides_for($db, $told)));
     xeric_arc_set($db, $told, $key, json_encode(
         ['what' => mb_substr($what, 0, 120), 'by' => $byHandle, 'p' => $byPlayer,
-         'at' => (int)($now['epoch'] ?? 0), 'state' => 'kept'] , JSON_UNESCAPED_UNICODE), $at);
+         'at' => (int)($now['epoch'] ?? 0), 'state' => 'kept']
+        // Who must not hear it, and the words it was asked in, when the reader
+        // that formed it had them (xeric_confide_from_line). Absent on every
+        // row written before, which is what "nobody named" always meant.
+        + ($not !== [] ? ['not' => array_values(array_map('strval', $not))] : [])
+        + (trim($quote) !== '' ? ['quote' => mb_substr(trim($quote), 0, 200)] : []), JSON_UNESCAPED_UNICODE), $at);
 
     // Being told something is itself the closeness moving. Warmth, not trust:
     // one confidence is not a friendship, and four of them are a point.
@@ -280,9 +289,292 @@ function xeric_confide_block(array $t, PDO $db, string $handle,
         }
     }
 
+    // AND WHAT THEY ASKED THE PERSON AT THE CENTRE TO KEEP. Stored on the
+    // teller, because the player has no head this engine keeps; rendered here
+    // and nowhere else, so the thing itself reaches exactly one prompt.
+    foreach (xeric_confide_told_player($db, $handle) as $c) {
+        if ((int)($c['p'] ?? XERIC_PLAYER_FIRST) !== $player) continue;
+        $user = xeric_player_name($db, $player, $t);
+        $head = '- You told ' . $user . ' ' . (string)$c['what'] . ' and asked them to keep it';
+        $hearer = xeric_world_name($t, (string)($c['heard_by'] ?? '')) ?: 'somebody';
+        switch ((string)$c['state']) {
+            case 'kept':     $mine[] = $head . '. As far as you know, they have.'; break;
+            case 'broken':   $mine[] = $head . '. It got back to you that ' . $user . ' told ' . $hearer
+                                     . '. You have not said anything to ' . $user . ' about it.'; break;
+            case 'mended':   $mine[] = $head . '. It got out, and ' . $user . ' owned up to it. Where that leaves you is yours.'; break;
+            case 'hardened': $mine[] = $head . '. It got out, and ' . $user . ' never said a word about it.'; break;
+        }
+    }
+
     $blocks = [];
     if ($keep !== [] || $out !== []) $blocks[] = "WHAT YOU ARE KEEPING FOR SOMEBODY\n"
         . implode("\n", array_merge($keep, $out));
     if ($mine !== []) $blocks[] = "WHAT YOU TOLD SOMEBODY\n" . implode("\n", $mine);
     return implode("\n\n", $blocks);
+}
+
+
+// ---------------------------------------------------------------------------
+// THE PERSON AT THE CENTRE IS TOLD SOMETHING — a user-created wall
+// ---------------------------------------------------------------------------
+//
+// The highest-stakes thing this engine can offer: somebody tells you a thing
+// and asks you to keep it, and you can. Or not. The row is a wall the PLAYER
+// made by listening: the fact, who told it, and who must not hear it (named,
+// or — when nobody was named — anybody at all). Formed from the chat
+// extractor's proposal and code-checked twice: the character's own words must
+// carry an explicit ask ("don't tell", "between us", "keep this to
+// yourself"), and those words must actually be in what they said. Broken when
+// the player repeats it, in their own words, to somebody who must not hear it;
+// mended by owning up inside the window; hardened into a grudge when not.
+
+/** Does this line ask for it to be kept? Explicit asks only — a hint is not an ask. */
+function xeric_confide_marked(string $quote): bool
+{
+    $q = ' ' . mb_strtolower(str_replace(['’', '‘'], "'", $quote)) . ' ';
+    foreach ([
+        "don't tell", 'do not tell', "don't say anything", "don't repeat", 'do not repeat',
+        'between us', 'between you and me', 'between ourselves',
+        'keep this to yourself', 'keep it to yourself', 'keep that to yourself', 'keep this quiet',
+        'keep it quiet', "you didn't hear it from me", "you didn't hear this from me",
+        'not a word to', "promise you won't tell", 'just between',
+    ] as $w) {
+        if (str_contains($q, $w)) return true;
+    }
+    return false;
+}
+
+/** What a teller asked the person at the centre to keep, oldest first. */
+function xeric_confide_told_player(PDO $db, string $teller): array
+{
+    $out = [];
+    foreach (xeric_arcs_prefixed($db, $teller, 'confided.') as $k => $v) {
+        $row = json_decode((string)$v, true);
+        if (!is_array($row) || !isset($row['what'], $row['state'])) continue;
+        $row['key'] = (string)$k;
+        $out[] = $row;
+    }
+    usort($out, fn($a, $b) => (int)($a['at'] ?? 0) <=> (int)($b['at'] ?? 0));
+    return $out;
+}
+
+/**
+ * A confidence one townsperson asked another to keep, out of a line one of
+ * them actually said (the cast-to-cast reader in constructs.php hands it the
+ * quoted words of a sweep's hour). The arc key, or null.
+ *
+ * THE SAME TWO CHECKS AS THE PLAYER'S, ON THE WORDS. The line must carry an
+ * explicit ask (xeric_confide_marked: "don't tell", "between us", "keep this
+ * to yourself") — a hint is not an ask — and both of them must be adults,
+ * which xeric_confide_form checks. Nothing is asked of a model.
+ *
+ * WHAT IT IS is the line with the ask taken out: "Between us, don't tell
+ * Harlan, the bank wrote about the house" is a confidence about the bank
+ * writing about the house, and those are the words the gossip sweep has to
+ * hear again to break it. Fewer than three words left is an ask about nothing
+ * said here, and forms nothing.
+ *
+ * WHO MUST NOT HEAR IT is only what the words say: a third person named in
+ * the same line, else nobody. No inference past the sentence — a guess about
+ * who she meant is a wall the town never built.
+ */
+function xeric_confide_from_line(array $t, PDO $db, string $teller, string $listener, string $line, array $now,
+                                 ?int $at = null): ?string
+{
+    $line = trim(preg_replace('/\s+/u', ' ', str_replace(['’', '‘'], "'", $line)) ?? '');
+    if ($line === '' || $teller === '' || $listener === '' || $teller === $listener) return null;
+    if (!xeric_confide_armed($t) || !xeric_confide_marked($line)) return null;
+
+    $named = array_values(array_diff(xeric_confide_named($t, $line, $teller), [$listener]));
+    $what = $line;
+    foreach (['between you and me', 'between ourselves', 'between us', 'just between', 'keep this to yourself',
+              'keep it to yourself', 'keep that to yourself', 'keep this quiet', 'keep it quiet',
+              "you didn't hear it from me", "you didn't hear this from me", "promise you won't tell"] as $ask) {
+        $what = (string)preg_replace('/\b' . preg_quote($ask, '/') . '\b/iu', ' ', $what);
+    }
+    // "don't tell Harlan", "not a word to Harlan": the ask, and the name it is about.
+    $who = ['anyone', 'anybody', 'nobody', 'a soul'];
+    foreach ($named as $h) foreach (xeric_world_name_forms(xeric_world_name($t, $h)) as $f) $who[] = $f;
+    $whoRe = implode('|', array_map(fn($w) => preg_quote($w, '/'), array_merge($who, $named)));
+    $what = (string)preg_replace('/\b(?:but\s+)?(?:please\s+)?(?:don\'t|do not|not a word)\s+(?:tell|say anything to|repeat (?:this|it|that) to|to)'
+        . '(?:\s+(?:' . $whoRe . '))?\b/iu', ' ', $what);
+    $what = (string)preg_replace('/^[\s,;:.!?—–-]*(?:(?:but|and|so|that|okay|ok|now)\b[\s,]*)*/iu', '', $what);
+    $what = trim((string)preg_replace('/\s*[,;:—–-]\s*(?=[,;:.!?]|$)/u', '', (string)preg_replace('/\s+/u', ' ', $what)), " \t,;:.!?—–-");
+    $what = trim((string)preg_replace('/\s*,\s*,+/u', ',', $what), ' ,');
+    if (count(xeric_wall_words($what)) < 3) return null;
+
+    return xeric_confide_form($t, $db, $listener, $what, $now, $teller, 0, $at, $named, $line);
+}
+
+/** Cast handles named in these words (first name, full name or handle). */
+function xeric_confide_named(array $t, string $text, string $except = ''): array
+{
+    $out = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || $h === $except) continue;
+        $forms = xeric_world_name_forms(xeric_world_name($t, $h));   // the one honorific list (world.php)
+        $first = (string)($forms[1] ?? $forms[0] ?? '');
+        foreach (array_filter([$first, $h]) as $n) {
+            if (preg_match('/(?<![\p{L}])' . preg_quote($n, '/') . '(?![\p{L}])/ui', $text)) { $out[] = $h; break; }
+        }
+    }
+    return $out;
+}
+
+/**
+ * The teller asked the person at the centre to keep something. Returns the
+ * arc key, or null.
+ *
+ * $p is the extractor's proposal: ['quote' => the CHARACTER's exact words,
+ * 'what' => the thing itself, short, 'not' => [names who must not hear]].
+ * $said is everything the teller actually said in the window: the quote has
+ * to be in it. Who must not hear is read off the quote first ("don't tell
+ * Harlan") and then off the proposal, and only names that are people here
+ * count; nobody named means nobody.
+ */
+function xeric_confide_to_player(array $t, PDO $db, string $teller, ?array $p, array $now,
+                                 int $player = XERIC_PLAYER_FIRST, string $said = ''): ?string
+{
+    if (!is_array($p) || !xeric_confide_armed($t)) return null;
+    $quote = trim((string)($p['quote'] ?? ''));
+    $what  = trim(preg_replace('/\s+/u', ' ', (string)($p['what'] ?? '')) ?? '');
+    if ($quote === '' || $what === '') return null;
+    if (!xeric_confide_marked($quote)) return null;                    // no ask, no confidence
+    $norm = fn(string $s): string => mb_strtolower(trim((string)preg_replace('/[^\p{L}\p{N}]+/u', ' ', $s)));
+    // HER WORDS OR NOTHING. The quote has to be in what she actually said this
+    // harvest, and a harvest with no line of hers in it has nothing a quote
+    // could be in — so it forms nothing. An empty $said used to skip the check,
+    // which turned "no evidence" into "no need for evidence": the extractor's
+    // proposal alone, about words nobody spoke, became a secret the player was
+    // trusted with and could be punished for breaking.
+    if ($norm($said) === '' || $norm($quote) === '') return null;
+    if (!str_contains(' ' . $norm($said) . ' ', ' ' . $norm($quote) . ' ')) return null;
+    if (!xeric_confide_adult($t, $teller)) return null;                // the same floor, the same reason
+
+    $not = [];
+    if (preg_match_all('/(?:tell|to|from|word to)\s+([\p{Lu}][\p{L}]+)/u', $quote, $mm)) {
+        $not = xeric_confide_named($t, implode(' ', $mm[1]), $teller);
+    }
+    foreach ((array)($p['not'] ?? []) as $n) $not = array_merge($not, xeric_confide_named($t, (string)$n, $teller));
+    $not = array_values(array_unique($not));
+
+    // ONE ASK, ONE ROW. The same confidence comes back in the next harvest's
+    // proposal in the extractor's fresh paraphrase ("the bank letter", then
+    // "the bank wrote about the house"), so `what` alone is not who it is —
+    // the words she said are. Either the same quote or the same thing is the
+    // row already held.
+    foreach (xeric_confide_told_player($db, $teller) as $c) {
+        if ((int)($c['p'] ?? 0) !== $player) continue;
+        if (mb_strtolower((string)$c['what']) === mb_strtolower($what)
+            || $norm((string)($c['quote'] ?? '')) === $norm($quote)) {
+            return (string)$c['key'];
+        }
+    }
+    $key = 'confided.' . (1 + count(xeric_confide_told_player($db, $teller)));
+    xeric_arc_set($db, $teller, $key, json_encode([
+        'what' => mb_substr($what, 0, 120), 'quote' => mb_substr($quote, 0, 200), 'p' => $player,
+        'not' => $not, 'at' => (int)($now['epoch'] ?? 0), 'state' => 'kept',
+    ], JSON_UNESCAPED_UNICODE));
+    // Being trusted with something is itself the closeness moving.
+    xeric_trust_contact($db, $teller, XERIC_CONFIDE_KEPT, null, $player);
+    return $key;
+}
+
+/**
+ * The person at the centre said it to somebody. Every kept confidence whose
+ * distinctive words ALL turn up in what they said to $hearer — and $hearer is
+ * somebody who must not hear it (named, or anybody but the teller when
+ * nobody was) — is broken. The teller's trust in them takes the hit through
+ * the earned path, which is the right row this time: trust.p<N> ON THE TELLER
+ * is what the teller has decided about you.
+ *
+ * @param string[] $userLines what the person at the centre said to $hearer
+ * @return int how many broke
+ */
+function xeric_confide_repeat(array $t, PDO $db, string $hearer, array $userLines, array $now,
+                              int $player = XERIC_PLAYER_FIRST): int
+{
+    if (!xeric_confide_armed($t) || $userLines === []) return 0;
+    require_once __DIR__ . '/ledger.php';
+    $said = [];
+    foreach ($userLines as $l) foreach (array_keys(xeric_ledger_words((string)$l)) as $w) $said[$w] = true;
+    if ($said === []) return 0;
+
+    $n = 0;
+    $epoch = (int)($now['epoch'] ?? 0);
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $teller = (string)($c['handle'] ?? '');
+        if ($teller === '' || $teller === $hearer) continue;
+        foreach (xeric_confide_told_player($db, $teller) as $row) {
+            if ((string)$row['state'] !== 'kept' || (int)($row['p'] ?? 0) !== $player) continue;
+            $not = array_map('strval', (array)($row['not'] ?? []));
+            if ($not !== [] && !in_array($hearer, $not, true)) continue;
+            $mine = array_keys(xeric_ledger_words((string)$row['what']));
+            if ($mine === []) continue;
+            $hit = true;
+            foreach ($mine as $w) if (!isset($said[$w])) { $hit = false; break; }
+            if (!$hit) continue;
+
+            $key = (string)$row['key'];
+            unset($row['key']);
+            $row['state'] = 'broken'; $row['heard_by'] = $hearer; $row['out_at'] = $epoch;
+            xeric_arc_set($db, $teller, $key, json_encode($row, JSON_UNESCAPED_UNICODE));
+            xeric_trust_earn($db, $teller, -XERIC_CONFIDE_BROKEN, null, null, $player);
+            $user = xeric_player_name($db, $player, $t);
+            xeric_memory_add($db, $teller, $user . ' told ' . xeric_world_name($t, $hearer) . ' what '
+                . xeric_world_name($t, $teller) . ' had asked ' . $user . ' to keep.', 'construct',
+                ['confided' => $key, 'heard_by' => $hearer], $epoch);
+            // The inspector's answer for the highest-stakes event there is.
+            xeric_world_state_set($db, 'why:confided:' . $teller . ':' . $key, json_encode([
+                'kind' => 'broken_confidence',
+                'why'  => xeric_world_name($t, $teller) . ' told ' . $user . ' ' . (string)$row['what']
+                        . ' and asked them to keep it. ' . $user . ' repeated it to ' . xeric_world_name($t, $hearer) . '.',
+            ], JSON_UNESCAPED_UNICODE));
+            $n++;
+        }
+    }
+    return $n;
+}
+
+/** Owning up, inside the window: the breach is mended and one notch comes back. */
+function xeric_confide_mend(array $t, PDO $db, string $teller, array $now, int $player = XERIC_PLAYER_FIRST): ?string
+{
+    $epoch = (int)($now['epoch'] ?? 0);
+    foreach (array_reverse(xeric_confide_told_player($db, $teller)) as $row) {
+        if ((string)$row['state'] !== 'broken' || (int)($row['p'] ?? 0) !== $player) continue;
+        if ($epoch > (int)($row['out_at'] ?? 0) + XERIC_CONFIDE_REPAIR) continue;
+        $key = (string)$row['key'];
+        unset($row['key']);
+        $row['state'] = 'mended'; $row['mended_at'] = $epoch;
+        xeric_arc_set($db, $teller, $key, json_encode($row, JSON_UNESCAPED_UNICODE));
+        xeric_trust_earn($db, $teller, +1, null, null, $player);
+        xeric_memory_add($db, $teller, xeric_player_name($db, $player, $t) . ' owned up to letting out what '
+            . xeric_world_name($t, $teller) . ' had asked them to keep.', 'construct', ['confided' => $key], $epoch);
+        return $key;
+    }
+    return null;
+}
+
+/**
+ * The player's side, for a voice that speaks to the player and has full
+ * canon (the Narrator, the book): "Ruth told you X and asked you to keep it."
+ * Never for a character's prompt — that is what the teller's block is for.
+ *
+ * @return string[]
+ */
+function xeric_confide_player_lines(array $t, PDO $db, int $player = XERIC_PLAYER_FIRST): array
+{
+    $out = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        foreach (xeric_confide_told_player($db, $h) as $row) {
+            if ((int)($row['p'] ?? 0) !== $player) continue;
+            $line = xeric_world_name($t, $h) . ' told you ' . (string)$row['what'] . ' and asked you to keep it';
+            if ((string)$row['state'] === 'kept') $out[] = $line . '.';
+            elseif ((string)$row['state'] === 'broken') $out[] = $line . '. You told ' . xeric_world_name($t, (string)($row['heard_by'] ?? '')) . '.';
+        }
+    }
+    return $out;
 }

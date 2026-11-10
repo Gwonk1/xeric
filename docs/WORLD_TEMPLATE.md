@@ -264,6 +264,11 @@ Design principles, learned the hard way:
                                             // can see the place sees this, so
                                             // nothing a wall protects goes here
       "residents": ["dot"],                 // character or fixture keys usually here
+      // "layout": { "width": 6, "depth": 4, "height": 3 },  // optional: the
+                                            // room's size in metres, each 2–50,
+                                            // for the box a scene machine is
+                                            // shown (docs/VIEWPORT.md, Layout).
+                                            // Missing or bad is these defaults
       "special": null                       // or "mystery" — a label for the
                                             // reader and the forge; `mystery`
                                             // below is what the engine reads
@@ -349,6 +354,18 @@ Design principles, learned the hard way:
         "surface": "the woman who runs the church kitchen; she brings the good rolls",
         "appearance": "Small, square, white hair set once a week.",  // photo #SUBJECT
         "voice": "Short sentences, warm ones, and a long pause before the sentence that actually matters.",
+                                            // `voice` is PROSE for the model to
+                                            // write to. It is never read by the
+                                            // speech layer (docs/VOICE.md).
+        "speech": { "voice": "nova", "speed": 1.0 },
+                                            // optional, the SPOKEN voice: a voice
+                                            // id on the voice machine, by its name
+                                            // THERE ("af_bella", a Kokoro blend
+                                            // "af_bella+af_sky"). Unset, one is
+                                            // dealt from the handle's seed — never
+                                            // from pronouns. speed defaults to 1.0,
+                                            // clamped 0.7–1.3. A fixture may carry
+                                            // one too; same_as speaks as its person
         "temperature": 0.9,                 // baseline sampler heat
         "week": [ { "days": [0], "from": "08:00", "to": "12:00",
                     "where": "first_lutheran", "doing": "coffee urn, counting dishes" } ],
@@ -431,7 +448,18 @@ Design principles, learned the hard way:
                                             // declared wall has to remember
         "suspicion_dial": { "enabled": true, "max": 6 }   // optional subsystem
       }
-    ]
+    ],
+
+    // the room: talking to two to five of them at once (engine/room.php,
+    // the play view's "talk to the room"). Optional; these are the defaults.
+    // A watched room may take a beat on its own when you have gone quiet —
+    // at most 2 in a row and 6 a session, only on an idle queue, and only on
+    // a LOCAL machine unless carry_remote says a hosted key may be spent on
+    // it. A room nobody is watching never talks.
+    "room": {
+      "carry": true,                        // false: the room only ever answers you
+      "carry_remote": false                 // true: talking without you may run on a hosted endpoint
+    }
   },
 
   // ── knowledge walls: who may know what ─────────────────────────────────
@@ -656,6 +684,27 @@ Design principles, learned the hard way:
     "duets": { "enabled": true, "offscreen_per_night": 1 }
   },
 
+  // ── the director: the set, never the performance (docs/DIRECTOR.md) ───
+  // Puts two or three people in the same room for an hour; never decides what
+  // they say there. OPT-IN: a missing block, or one whose `rules` is empty, is
+  // a world the Director never touches — no rows, presence is the schedule.
+  "director": {
+    "rules": [],                            // any of "narrator" | "apart" |
+                                            // "player"; unknown names ignored
+    "per_day": 2,                           // stagings per world-day, at most
+    "apart_days": 7,                        // `apart`: days one orbit's pair
+                                            // may go without an hour together
+    "player_gap": 2,                        // `player`: how far apart two
+                                            // people's trust in you must be
+    "minutes": 60,                          // how long a staging holds (≤ 120)
+    "lookahead_hours": 24                   // how far ahead a rule looks for
+                                            // an hour everybody is free
+  },
+  // A week[] block may carry `"unmissable": true` (never staged away from) or
+  // `false` (always may be). Unmarked, a block at a place of kind `work`, or at
+  // a non-home place that lists the person (or their same_as fixture) as a
+  // resident, is their job and is unmissable.
+
   // ── media: identity-preserving image pipeline ──────────────────────────
   "media": {
     "images": {
@@ -665,7 +714,58 @@ Design principles, learned the hard way:
       "two_pass_refine": 0.40,
       "rating_gate": "model"                // an sfw image model simply is one
     },
-    "video": { "enabled": false }           // overnight queue, optional
+    "video": { "enabled": false },          // overnight queue, optional
+    "scene": {                              // the viewport: the room from where
+                                            // you stand (docs/VIEWPORT.md). A
+                                            // missing block is these defaults
+      "enabled": true,                      // false: nothing is ever queued
+      "vantage": "first_person",            // | "establishing" — anything else
+                                            // is first_person, never an error
+      "style": "",                          // a clause before the rating
+      "kinds": ["pano", "image"],           // asked for in this order, from
+                                            // pano | image | splat | glb | viewer
+      "quality": "full",                    // | "draft" — anything else is full
+      "negative": "",                       // sent only when set
+      "layout_images": false,               // true: the layout's depth and
+                                            // segmentation PNGs ride in every
+                                            // generic request (bandwidth)
+      "sound": { "enabled": true,           // what you hear: off with the rooms
+                 "style": "" }              // too, when "enabled" above is false
+      // "prerender": off | here | occupied | all — what the heart draws
+      //   before anybody looks. Deliberately UNSET by default, and unset is
+      //   decided by cost: "here" on a loopback machine, "off" on one that
+      //   bills. Writing a word is how a world asks the heart to spend.
+      "stream": {                           // the live view (docs/VIEWPORT.md,
+                                            // Streams): a world model drawing
+                                            // the room as video. OFF unless said
+        "enabled": false,                   // true: the owner gets "go live" on
+                                            // a still or a pano, when the machine
+                                            // streams (it is asked, once)
+        "remote": false,                    // true: allowed on a machine that
+                                            // bills — about $72 an hour; without
+                                            // it a costly machine never streams
+        "max_seconds": 300                  // one session's ceiling, 30..3600;
+                                            // the machine's own is the other cap
+      }
+    }
+  },
+
+  // ── budget: what this world may spend in a day (docs/BUDGET.md) ────────
+  "budget": {                               // a missing block is these defaults,
+                                            // and every 0 means NO ceiling
+    "tokens_per_day": 0,                    // prompt + completion, as the meter counts
+    "renders_per_day": 0,                   // rooms and photographs drawn
+    "clips_per_day": 0,                     // lines read aloud
+    "hearings_per_day": 0,                  // lines heard through push to talk
+    "stream_seconds_per_day": 0,            // seconds of live view (media.scene.stream)
+    "metered_only": true                    // count only machines that bill (a
+                                            // remote model, scene, voice or ears
+                                            // machine); false rations the owner's
+                                            // own electricity too
+    // A "day" is the WORLD's date (its own clock), not the wall's: the heart
+    // lives world-days overnight. Out of tokens, the heart stops living hours
+    // where it ran out; out of renders, rooms wait pending; out of clips or
+    // hearings, the press is refused in a sentence naming the ceiling.
   },
 
   // ── machine config lives NEXT TO this, and is not a file ───────────────
@@ -677,6 +777,11 @@ Design principles, learned the hard way:
   // not a config key. A model's rating is the model's own property (an sfw
   // image model simply is one). A template never names a machine, which is
   // what keeps it shareable.
+  //   the scene machine: XERIC_SCENE_BASE / _KIND (generic | image) / _AUTH
+  //   for its address, kind and auth header — never the key, which is
+  //   XERIC_SCENE_KEY in the environment and nowhere else
+  //   the voice machine likewise: XERIC_VOICE_BASE / _MODEL (tts-1) /
+  //   _FORMAT (mp3 | opus | wav), and XERIC_VOICE_KEY in the environment only
 }
 ```
 
@@ -709,6 +814,30 @@ mapping and what each system does.
 
 Milldale's own template says `"motivation": "companionship"` — free text, one
 keyword hit away from `company`, which is exactly the path most worlds take.
+
+### The constructs, and `forge.armed`
+
+What the resolver arms lands in `forge.armed` (and `forge.disarmed`). The
+constructs ([CONSTRUCTS.md](CONSTRUCTS.md)) read it: each is armed by **its own
+name** or by one of the systems a preset already arms. A world with no
+`forge.armed` at all predates arming and gets every construct; an armed list
+that names none of a construct's words switches it off.
+
+| Construct | Its own name | Also armed by |
+|---|---|---|
+| expectations | `expectations` | — |
+| gossip ripple | `rumors` | — |
+| debts | `favors` | `a_debt`, `alliances_that_cost` |
+| confidences | `confidences` | `private_history`, `attraction`, `arcs`, `secrets` |
+| anticipation | `anticipation` | `expectations`, `visits` |
+| news | `news` | `gentle_proactive_contact`, `remembering` |
+| worry | `worry` | `gentle_proactive_contact` |
+| grudges | `grudges` (or `grudge`) | `expectations`, `people_who_remember`, `private_history` |
+| rituals | `rituals` (or `ritual`) | `daily_rhythms`, `faith` |
+| milestones | `milestones` (or `milestone`) | `arcs`, `remembering` |
+
+The six sibling names are not in `XERIC_SYSTEMS`, so the forge's resolver never
+proposes them; a hand-edited `forge.armed` may carry them.
 
 ---
 

@@ -45,6 +45,16 @@ require_once __DIR__ . '/world.php';
 require_once __DIR__ . '/weather.php';
 require_once __DIR__ . '/state.php';    // the queue is rows; clock.php rides in with it
 require_once __DIR__ . '/clock.php';    // render-time prompts read the world's own now
+require_once __DIR__ . '/llm.php';      // xeric_llm_header_safe: a key is a header value, never a header
+require_once __DIR__ . '/budget.php';   // the world's daily ceiling, read before every render
+
+/**
+ * The floor's framing, in words. One constant because two composers say it —
+ * a photograph here and a whole room in scene.php — and the structural rule
+ * is only structural if both of them say exactly the same thing.
+ */
+const XERIC_PHOTO_FLOOR_FRAMING = 'a wholesome everyday photograph, fully clothed, ordinary daylight, '
+                                . 'suitable for a family album';
 
 /**
  * The image machine, if this install has one. Null is dormant, and dormant
@@ -67,7 +77,10 @@ function xeric_image_endpoint(): ?array
     }
     $base = trim((string)(getenv('XERIC_IMAGE_BASE') ?: ''));
     if ($base === '') return null;
-    return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: '')];
+    // XERIC_IMAGE_EDITS=1 says this machine answers /v1/images/edits, so a
+    // headless install can chain portraits without the machines screen's probe.
+    return ['base' => $base, 'key' => (string)(getenv('XERIC_IMAGE_KEY') ?: ''),
+            'edits' => (string)(getenv('XERIC_IMAGE_EDITS') ?: '') === '1'];
 }
 
 /** The resolver seam, meter-discipline shaped: set once by the web layer. */
@@ -96,7 +109,7 @@ function xeric_image_up(?array $endpoint = null, int $timeout = 3): bool
     if ($base === '') return false;
     $headers = ['Accept: application/json'];
     if ((string)($endpoint['key'] ?? '') !== '') {
-        $headers[] = 'Authorization: Bearer ' . (string)$endpoint['key'];
+        $headers[] = 'Authorization: Bearer ' . xeric_llm_header_safe((string)$endpoint['key']);
     }
     $ctx = stream_context_create(['http' => [
         'method' => 'GET', 'header' => implode("\r\n", $headers),
@@ -303,8 +316,7 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
     // ladder's own language.
     if ($who !== null && $who['minor']) {
         $eff = 'sfw';
-        $bits[] = 'a wholesome everyday photograph, fully clothed, ordinary daylight, '
-                . 'suitable for a family album';
+        $bits[] = XERIC_PHOTO_FLOOR_FRAMING;
     } else {
         $bits[] = match ($eff) {
             'sfw', 'pg' => 'a wholesome everyday photograph, nothing suggestive',
@@ -318,6 +330,9 @@ function xeric_photo_prompt(array $t, string $kind, array $opts = []): array
             // its dialect, not the prompt's), and whether a minor is in frame
             // — the rating alone cannot say, since sfw is also a world tier.
             'loras' => $lorasUsed, 'minor' => $who !== null && $who['minor'],
+            // WHO is in frame, by handle: the reaper's key for the likeness
+            // this frame is conditioned on (xeric_photo_reference).
+            'handle' => $who !== null ? $who['handle'] : '',
             // The structured parts ride along for the caption: deriving six
             // words from prose would mean parsing our own sentence back.
             'parts' => ['who' => $who !== null ? $who['name'] : '', 'ask' => $ask, 'place' => $placeName]];
@@ -382,22 +397,22 @@ function xeric_photo_caption(array $composed): string
 function xeric_photo_backfill(array $t, PDO $db, ?int $at = null): array
 {
     $at  = $at ?? xeric_state_time();
-    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, created_at)
-                         VALUES (?, ?, ?, ?)');
+    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, created_at, rating)
+                         VALUES (?, ?, ?, ?, ?)');
     $n   = ['portraits' => 0, 'places' => 0];
 
     foreach ((array)($t['cast']['characters'] ?? []) as $c) {
         $h = (string)($c['handle'] ?? '');
         if ($h === '') continue;
         $cap = xeric_photo_caption(xeric_photo_prompt($t, 'portrait', ['handle' => $h, 'ask' => 'a portrait']));
-        $ins->execute(['portrait', $h, $cap, $at]);
+        $ins->execute(['portrait', $h, $cap, $at, xeric_state_rating()]);
         $n['portraits'] += $ins->rowCount();
     }
     foreach ((array)($t['places'] ?? []) as $p) {
         $k = (string)($p['key'] ?? '');
         if ($k === '') continue;
         $cap = xeric_photo_caption(xeric_photo_prompt($t, 'place', ['place' => $k]));
-        $ins->execute(['place', $k, $cap, $at]);
+        $ins->execute(['place', $k, $cap, $at, xeric_state_rating()]);
         $n['places'] += $ins->rowCount();
     }
     return $n;
@@ -425,6 +440,140 @@ function xeric_photo_of(PDO $db, string $kind, string $subject): ?array
     return $rows ? $rows[0] : null;
 }
 
+// ---------------------------------------------------------------------------
+// Portrait chaining: the first portrait is the likeness
+// ---------------------------------------------------------------------------
+
+/** The most a likeness may weigh and still ride along — the scene reference's cap. */
+const XERIC_PHOTO_REFERENCE_CAP = 8 * 1024 * 1024;
+
+/**
+ * May this machine be shown a likeness? Only one that answers the images-edits
+ * route (`edits`, probed by the machines screen on connect, or
+ * XERIC_IMAGE_EDITS=1). sd-server and OpenAI-shaped servers do; a1111's own
+ * API has img2img instead, which this adapter does not speak — an a1111
+ * without an OpenAI shim in front of it renders every photo unchained, from
+ * seeds and words alone, exactly as before. A stub is asked the same question.
+ */
+function xeric_image_takes_reference(?array $endpoint): bool
+{
+    return $endpoint !== null && !empty($endpoint['edits']);
+}
+
+/**
+ * One picture file read as a likeness, or null: missing, empty, too heavy, or
+ * not a whole png, jpeg or webp.
+ *
+ * NOT AN IMAGE IS NOT A PNG. This used to label anything getimagesize could
+ * not read as image/png and hand it over anyway — a half-written file from a
+ * reroll racing the worker, an error page saved as a picture — and the edits
+ * route then conditioned a likeness on garbage, or refused the whole render.
+ * Null instead, so the walk-back tries the one before and, failing that, the
+ * photo renders unchained from seeds and words, which is what it did before a
+ * likeness existed. Whole means the format's own end is in the bytes (png's
+ * IEND chunk, jpeg's EOI marker, webp's RIFF length): getimagesize reads only
+ * the header, and a truncated file has a perfect header.
+ */
+function xeric_photo_reference_read(string $path, int $cap = XERIC_PHOTO_REFERENCE_CAP): ?array
+{
+    // A worker lives for minutes and a reroll rewrites the file under it.
+    clearstatcache(true, $path);
+    $size = is_file($path) ? @filesize($path) : false;
+    if ($size === false || $size === 0 || $size > $cap) return null;
+    $bytes = @file_get_contents($path);
+    if (!is_string($bytes) || $bytes === '') return null;
+    $mime = xeric_photo_sniff($bytes);
+    if ($mime === null) return null;
+    return ['bytes' => $bytes, 'mime' => $mime, 'fingerprint' => substr(sha1($bytes), 0, 16)];
+}
+
+/**
+ * The rating a photo render runs at, for the likeness walk: the lower of the
+ * row's stamp (whose request it was) and this process's (what the prompt is
+ * composed under). '' when neither is set.
+ */
+function xeric_photo_render_rating(string $stamp): string
+{
+    $low = '';
+    foreach ([$stamp, xeric_state_rating()] as $r) {
+        $r = strtolower(trim($r));
+        if ($r === '') continue;
+        if (!function_exists('xeric_rating_rank')) require_once __DIR__ . '/walls.php';
+        if ($low === '' || xeric_rating_rank($r) < xeric_rating_rank($low)) $low = $r;
+    }
+    return $low;
+}
+
+/** image/png, image/jpeg or image/webp when these bytes are a whole one of those, else null. */
+function xeric_photo_sniff(string $bytes): ?string
+{
+    $mime = null;
+    if (str_starts_with($bytes, "\x89PNG\r\n\x1a\n")) {
+        if (substr($bytes, 12, 4) === 'IHDR' && str_contains(substr($bytes, 33), "IEND\xae\x42\x60\x82")) $mime = 'image/png';
+    } elseif (str_starts_with($bytes, "\xff\xd8\xff")) {
+        if (str_contains(substr($bytes, 3), "\xff\xd9")) $mime = 'image/jpeg';
+    } elseif (str_starts_with($bytes, 'RIFF') && substr($bytes, 8, 4) === 'WEBP') {
+        $len = unpack('V', substr($bytes, 4, 4))[1] ?? 0;
+        if ($len >= 4 && strlen($bytes) >= $len + 8) $mime = 'image/webp';
+    }
+    if ($mime === null) return null;
+    // And the header must read as the same thing to the library that will describe it.
+    $seen = (string)(@getimagesizefromstring($bytes)['mime'] ?? '');
+    return $seen === $mime ? $mime : null;
+}
+
+/**
+ * The likeness every later photo of this person is conditioned on: their most
+ * recent DONE portrait with its file on this disk. Walked back the way
+ * xeric_scene_reference walks a room's looks — newest first, a file too heavy
+ * or gone passed over for the one before, five deep — though today the
+ * unique (kind, subject) index keeps one portrait row per person, and a
+ * reroll re-renders that row in place. Null when nobody has been
+ * photographed yet: the first portrait is the first picture and takes none.
+ *
+ * @return ?array{bytes:string,mime:string,fingerprint:string,id:int}
+ */
+function xeric_photo_reference(PDO $db, string $handle, string $photosDir, int $cap = XERIC_PHOTO_REFERENCE_CAP,
+                               ?string $rating = null): ?array
+{
+    if ($handle === '') return null;
+    $st = $db->prepare("SELECT id, file, rating FROM photo_jobs
+                        WHERE kind = 'portrait' AND subject = ? AND status = 'done' AND file != ''
+                        ORDER BY done_at DESC, id DESC LIMIT 50");
+    $st->execute([$handle]);
+    $rows = $st->fetchAll();
+    $st->closeCursor();
+    // A likeness stamped above the rating this render runs at is no likeness
+    // for it (xeric_scene_reference's rule): a kids' headset's photo is never
+    // conditioned on an adult portrait. No rating filters nothing.
+    if ($rating !== null && $rating !== '') {
+        $rows = array_values(array_filter($rows, fn($r) => xeric_state_shown((string)($r['rating'] ?? ''), $rating)));
+    }
+    foreach (array_slice($rows, 0, 5) as $row) {
+        $ref = xeric_photo_reference_read(rtrim($photosDir, '/') . '/' . basename((string)$row['file']), $cap);
+        if ($ref !== null) return $ref + ['id' => (int)$row['id']];
+    }
+    return null;
+}
+
+/**
+ * A multipart/form-data body, built by hand (streams have no CURLFile).
+ * Text fields first, then the one file part.
+ *
+ * @return array{0:string,1:string} [content-type header value, body]
+ */
+function xeric_image_multipart(array $fields, string $fileField, string $fileName, string $mime, string $bytes): array
+{
+    $b    = '----xeric' . bin2hex(random_bytes(12));
+    $body = '';
+    foreach ($fields as $k => $v) {
+        $body .= "--$b\r\nContent-Disposition: form-data; name=\"" . $k . "\"\r\n\r\n" . $v . "\r\n";
+    }
+    $body .= "--$b\r\nContent-Disposition: form-data; name=\"" . $fileField . '"; filename="' . $fileName . "\"\r\n"
+           . 'Content-Type: ' . $mime . "\r\n\r\n" . $bytes . "\r\n--$b--\r\n";
+    return ['multipart/form-data; boundary=' . $b, $body];
+}
+
 /**
  * Render one image. The ADAPTER — the one function that will ever speak to an
  * image provider, llm.php's discipline applied to pictures. A stub endpoint
@@ -432,6 +581,13 @@ function xeric_photo_of(PDO $db, string $kind, string $subject): ?array
  * real machine exists); the live path speaks the common images-API shape and
  * takes the first base64 answer it is given. Throws on nothing usable — the
  * reaper counts that as a try, not a catastrophe.
+ *
+ * WITH A LIKENESS ($opts['reference'], {bytes, mime}) and a machine that
+ * takes one (xeric_image_takes_reference), the same prompt and seed go as
+ * multipart to {base}/v1/images/edits with image=<the likeness>; otherwise —
+ * no reference, or a machine without the route — the generations call,
+ * byte for byte what it always was. The likeness widens nothing: the prompt,
+ * the rating cap and the minor's floor are composed before this is reached.
  *
  * @return array{bytes:string,usage:array}
  */
@@ -459,19 +615,32 @@ function xeric_image_render(array $endpoint, array $composed, array $opts = []):
         $tags = array_map(fn($n) => '<lora:' . $n . ':0.8>', (array)$composed['loras']);
         $prompt = implode(' ', $tags) . ' ' . $prompt;
     }
-    $body = json_encode([
-        'prompt' => $prompt,
-        'seed'   => (int)($composed['seeds']['face'] ?? $composed['seeds']['place']['exterior'] ?? 0),
-        'n'      => 1,
-        'response_format' => 'b64_json',
-    ], JSON_UNESCAPED_UNICODE);
-    $headers = ['Content-Type: application/json'];
-    if ((string)($endpoint['key'] ?? '') !== '') $headers[] = 'Authorization: Bearer ' . $endpoint['key'];
+    $seed = (int)($composed['seeds']['face'] ?? $composed['seeds']['place']['exterior'] ?? 0);
+    $ref  = $opts['reference'] ?? null;
+    if (is_array($ref) && (string)($ref['bytes'] ?? '') !== '' && xeric_image_takes_reference($endpoint)) {
+        $mime = (string)($ref['mime'] ?? 'image/png');
+        $ext  = $mime === 'image/jpeg' ? 'jpg' : ($mime === 'image/webp' ? 'webp' : 'png');
+        [$ctype, $body] = xeric_image_multipart(
+            ['prompt' => $prompt, 'seed' => (string)$seed, 'n' => '1', 'response_format' => 'b64_json'],
+            'image', 'reference.' . $ext, $mime, (string)$ref['bytes']);
+        $route = '/v1/images/edits';
+    } else {
+        $ctype = 'application/json';
+        $body  = json_encode([
+            'prompt' => $prompt,
+            'seed'   => $seed,
+            'n'      => 1,
+            'response_format' => 'b64_json',
+        ], JSON_UNESCAPED_UNICODE);
+        $route = '/v1/images/generations';
+    }
+    $headers = ['Content-Type: ' . $ctype];
+    if ((string)($endpoint['key'] ?? '') !== '') $headers[] = 'Authorization: Bearer ' . xeric_llm_header_safe((string)$endpoint['key']);
     $ctx = stream_context_create(['http' => [
         'method' => 'POST', 'header' => implode("\r\n", $headers), 'content' => $body,
         'timeout' => (int)($opts['timeout'] ?? 120), 'ignore_errors' => true,
     ]]);
-    $raw = @file_get_contents($base . '/v1/images/generations', false, $ctx);
+    $raw = @file_get_contents($base . $route, false, $ctx);
     $j   = is_string($raw) ? json_decode($raw, true) : null;
     $b64 = (string)($j['data'][0]['b64_json'] ?? '');
     if ($b64 === '') throw new RuntimeException('photo: the image machine answered with no image');
@@ -622,6 +791,12 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
     if ($pending === []) return $out;
 
     $endpoint ??= xeric_image_endpoint();
+    // THE WORLD'S CEILING, before the machine is even asked: out of renders
+    // for today is a row that waits for tomorrow, never one that fails.
+    $now     = xeric_clock_now($db, $t);
+    $costly  = $endpoint !== null && xeric_image_costly($endpoint);
+    $verdict = xeric_budget_allows($t, $db, $now, 'renders', 1, $costly);
+    if (!$verdict['ok']) { $out['notes'][] = $verdict['reason']; return $out; }
     if (!xeric_image_up($endpoint)) { $out['notes'][] = 'no image machine is answering'; return $out; }
 
     if (!is_dir($photosDir) && !@mkdir($photosDir, 0775, true) && !is_dir($photosDir)) {
@@ -629,10 +804,12 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
         return $out;
     }
 
-    $now   = xeric_clock_now($db, $t);
     $claim = $db->prepare("UPDATE photo_jobs SET status = 'working', done_at = ?
                            WHERE id = ? AND status = 'pending'");
     foreach (array_slice($pending, 0, max(1, $limit)) as $job) {
+        // Asked again per job: the render before this one may have been the last.
+        $verdict = xeric_budget_allows($t, $db, $now, 'renders', 1, $costly);
+        if (!$verdict['ok']) { $out['notes'][] = $verdict['reason']; break; }
         $kind = (string)$job['kind'];
         $subj = (string)$job['subject'];
         // THE CLAIM IS THE UPDATE: two reapers behind one conversation both
@@ -641,6 +818,14 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
         $claim->execute([xeric_state_time(), (int)$job['id']]);
         if ($claim->rowCount() !== 1) continue;
         try {
+            // COMPOSED AT THE LOWER of the row's stamp (whose request queued
+            // it — a kids' headset's photo is that headset's) and this
+            // process's rating, capped by the world's. The reaper is whoever's
+            // request happened to run it; an adult worker reaping a kids'
+            // headset's photo must not compose it at the adult's rating.
+            $renderR = xeric_photo_render_rating((string)($job['rating'] ?? ''));
+            $worldR  = xeric_world_rating($t);
+            $compose = $renderR !== '' && xeric_rating_rank($renderR) < xeric_rating_rank($worldR) ? $renderR : $worldR;
             if ($kind === 'message') {
                 // A photo sent in a thread: subject is handle#messageId, the
                 // ask is the model's own proposal, and the frame is wherever
@@ -653,22 +838,61 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
                     'handle' => $mh, 'ask' => (string)($job['ask'] ?? ''),
                     'place' => $at !== null ? (string)$at : '', 'now' => $now,
                     'with_carries' => true, 'loras' => (array)($endpoint['loras'] ?? []),
+                    'effective_rating' => $compose,
                 ]);
             } else {
                 $composed = $kind === 'place'
                     ? xeric_photo_prompt($t, 'place', ['place' => $subj, 'now' => $now,
-                                                       'loras' => (array)($endpoint['loras'] ?? [])])
+                                                       'loras' => (array)($endpoint['loras'] ?? []),
+                                                       'effective_rating' => $compose])
                     : xeric_photo_prompt($t, 'portrait', ['handle' => $subj, 'ask' => 'a portrait',
-                                                          'loras' => (array)($endpoint['loras'] ?? [])]);
+                                                          'loras' => (array)($endpoint['loras'] ?? []),
+                                                          'effective_rating' => $compose]);
             }
-            $img  = xeric_image_render($endpoint, $composed);
+            // PORTRAIT CHAINING. Every later photo of a person is conditioned
+            // on their portrait, on a machine that takes a likeness. A first
+            // portrait has nothing to take; a portrait row that already has
+            // its file on disk is a REROLL, and takes the picture it replaces.
+            // A message, or any frame with a person in it, takes that
+            // person's portrait. The minor's floor is already in the prompt,
+            // and a likeness widens nothing.
+            $rOpts = [];
+            $ref   = null;
+            if (xeric_image_takes_reference($endpoint)) {
+                if ($kind === 'portrait') {
+                    $own = (string)($job['file'] ?? '');
+                    $ref = $own !== '' ? xeric_photo_reference_read($photosDir . '/' . basename($own)) : null;
+                    if ($ref !== null) $ref['id'] = (int)$job['id'];
+                } else {
+                    $ref = xeric_photo_reference($db, (string)($composed['handle'] ?? ''), $photosDir,
+                        XERIC_PHOTO_REFERENCE_CAP, $renderR);
+                }
+                if ($ref !== null) $rOpts['reference'] = $ref;
+            }
+            $img  = xeric_image_render($endpoint, $composed, $rOpts);
             $file = $kind . '-' . preg_replace('/[^a-z0-9_-]+/i', '_', $subj) . '.png';
             if (@file_put_contents($photosDir . '/' . $file, $img['bytes']) === false) {
                 throw new RuntimeException('the photo could not be written to disk');
             }
-            $st = $db->prepare('UPDATE photo_jobs SET status = ?, file = ?, tries = tries + 1, done_at = ?
-                                WHERE id = ?');
-            $st->execute(['done', $file, xeric_state_time(), (int)$job['id']]);
+            // The row remembers what it was conditioned on, and forgets a
+            // reference an earlier render of it took and this one did not.
+            $meta = json_decode((string)($job['meta'] ?? '{}'), true);
+            if (!is_array($meta)) $meta = [];
+            unset($meta['reference_of'], $meta['reference_fingerprint']);
+            if ($ref !== null) {
+                $meta['reference_of']          = (int)$ref['id'];
+                $meta['reference_fingerprint'] = (string)$ref['fingerprint'];
+            }
+            // THE QUEUED STAMP STANDS. It was composed at or below it (above),
+            // so re-stamping at whoever reaped it could only ever raise it — a
+            // kids' headset's photo, reaped by an adult worker, locked out of
+            // the very headset that asked for it. A row from before stamps
+            // ('') takes the rating it was composed under; '' stays ''.
+            $st = $db->prepare("UPDATE photo_jobs SET status = ?, file = ?, tries = tries + 1, done_at = ?, meta = ?,
+                                rating = CASE WHEN rating = '' THEN ? ELSE rating END WHERE id = ?");
+            $st->execute(['done', $file, xeric_state_time(),
+                          json_encode((object)$meta, JSON_UNESCAPED_SLASHES),
+                          $renderR, (int)$job['id']]);
             $out['done']++;
             if (($fn = xeric_photo_meter()) !== null) {
                 $fn(['images' => 1] + $img['usage'], (string)($endpoint['base'] ?? 'stub'));
@@ -696,9 +920,10 @@ function xeric_photo_reap(array $t, PDO $db, string $photosDir, ?array $endpoint
 function xeric_photo_enqueue_message(PDO $db, string $handle, int $messageId, int $convId,
                                      string $ask, string $caption, ?int $at = null): int
 {
-    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, ask, conv, created_at)
-                         VALUES (?, ?, ?, ?, ?, ?)');
-    $ins->execute(['message', $handle . '#' . $messageId, $caption, $ask, $convId, $at ?? xeric_state_time()]);
+    $ins = $db->prepare('INSERT OR IGNORE INTO photo_jobs (kind, subject, caption, ask, conv, created_at, rating)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $ins->execute(['message', $handle . '#' . $messageId, $caption, $ask, $convId, $at ?? xeric_state_time(),
+                   xeric_state_rating()]);
     return (int)$db->lastInsertId();
 }
 
@@ -727,8 +952,8 @@ function xeric_image_costly(?array $endpoint = null): bool
     $endpoint ??= xeric_image_endpoint();
     if ($endpoint === null) return false;
     if (isset($endpoint['stub'])) return false;
-    $host = (string)parse_url((string)($endpoint['base'] ?? ''), PHP_URL_HOST);
-    return !in_array($host, ['127.0.0.1', 'localhost', '::1'], true);
+    // The one host test, the same one the budget's ledger asks.
+    return !xeric_llm_host_local((string)($endpoint['base'] ?? ''));
 }
 
 /**

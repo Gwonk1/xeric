@@ -15,6 +15,7 @@ require_once dirname(__DIR__) . '/players.php';
 require_once dirname(__DIR__) . '/trust.php';
 require_once dirname(__DIR__) . '/work.php';
 require_once dirname(__DIR__) . '/table.php';
+require_once dirname(__DIR__) . '/scene.php';     // travel.php, the bodies, and the look brief
 
 $FAILED = 0;
 function ok(string $what, bool $cond, string $extra = ''): void
@@ -444,6 +445,213 @@ ok('trip: the first person\'s feet never moved',
 ok('trip: the clock it burned is everybody\'s',
     (int)$trip['now']['epoch'] >= $before + (int)$trip['minutes'] * 60,
     ($trip['now']['epoch'] - $before) . 's');
+
+// ---------------------------------------------------------------------------
+// A BODY EACH (FUTURE.md M4). Position per player; the read model's `you` is
+// the current player; the others stand in `who` with a flag. And the load-
+// bearing half again: a world of one reads EXACTLY what the one-body engine
+// read, to the byte.
+// ---------------------------------------------------------------------------
+
+echo "\n# a body each\n";
+
+$M   = xeric_template_load(dirname(__DIR__) . '/fixtures/milldale.json');
+$MTZ = new DateTimeZone((string)$M['user']['timezone']);
+$mAt = fn(string $local) => xeric_world_now($M, (new DateTimeImmutable($local, $MTZ))->getTimestamp());
+$m0710 = $mAt('2026-11-02 07:10');     // a Monday: Dot alone at the Bluebird
+$enc   = fn($v): string => json_encode($v, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+// The one-body engine at 7278df7, same fixture, same moment, the player at the
+// Bluebird since ten minutes before: the map's JSON and the look's fingerprint
+// it produced. A world of one must still produce exactly these.
+const ONE_BODY_MAP_SHA1   = '0861118171de854be0f155230ef957b4f0f3ffac';
+const ONE_BODY_FPRINT     = '7aa64a6a5a0ef21442b8506caa554147a7606a9e';
+const ONE_BODY_BRIEF_SHA1 = 'dce4432a5564df7714c294488e7a25181ebebbe6';
+
+$solo = fresh('body-solo');
+xeric_player_move($solo, 'bluebird', (int)$m0710['epoch'] - 600);
+$soloMap = xeric_travel_map($M, $solo, $m0710);
+ok('solo: the map is byte-identical to the one-body engine\'s',
+    sha1($enc($soloMap)) === ONE_BODY_MAP_SHA1, sha1($enc($soloMap)));
+ok('solo: no `players` key, no flagged rows, the template\'s name',
+    !array_key_exists('players', $soloMap) && $soloMap['you']['name'] === 'Walt'
+    && array_filter(array_merge(...array_column($soloMap['places'], 'who')), fn($w) => isset($w['player'])) === []);
+$soloBrief = xeric_scene_brief($M, $solo, null, $m0710);
+ok('solo: the look brief and its fingerprint are unchanged — no view on disk goes stale',
+    // (less `layout`, which M5 added beside everything and is derived from it)
+    $soloBrief['fingerprint'] === ONE_BODY_FPRINT
+    && sha1($enc(array_diff_key($soloBrief, ['layout' => true]))) === ONE_BODY_BRIEF_SHA1,
+    $soloBrief['fingerprint']);
+ok('solo: and no new row is written to say where anybody came from',
+    xeric_world_state_get($solo, 'player.where_from') === null
+    && xeric_world_state_get($solo, 'players') === null);
+
+// -- two of them --------------------------------------------------------------
+$two = fresh('body-two');
+xeric_player_move($two, 'bluebird', (int)$m0710['epoch'] - 600);
+$ann = xeric_player_add($two, $M, 'Ann Price', 'she/her');
+ok('two: the second person is player two', $ann === 2);
+ok('two: and starts nowhere, while the first stays where they stood',
+    xeric_player_where($M, $two, 2) === null && xeric_player_where($M, $two, 1) === 'bluebird');
+
+xeric_player_move($two, 'beck_hardware', (int)$m0710['epoch'] - 300, 2);
+ok('two: each body is its own row — the bare key is the first person\'s, `.p2` the second\'s',
+    xeric_world_state_get($two, 'player.where') === 'bluebird'
+    && xeric_world_state_get($two, 'player.where.p2') === 'beck_hardware'
+    && xeric_player_since($two, 1) === (int)$m0710['epoch'] - 600
+    && xeric_player_since($two, 2) === (int)$m0710['epoch'] - 300);
+xeric_player_move($two, 'first_lutheran', null, 1);
+ok('two: moving one moves only that one',
+    xeric_player_where($M, $two, 1) === 'first_lutheran' && xeric_player_where($M, $two, 2) === 'beck_hardware');
+xeric_player_move($two, 'bluebird', (int)$m0710['epoch'] - 600, 1);
+
+ok('seam: with nobody installed the current player is the first',
+    xeric_player_current(null, $two) === 1 && xeric_player_where($M, $two) === 'bluebird');
+xeric_player_current(fn(?PDO $d) => 2);
+ok('seam: install one and every default read is that person\'s body',
+    xeric_player_current(null, $two) === 2 && xeric_player_where($M, $two) === 'beck_hardware'
+    && xeric_player_since($two) === (int)$m0710['epoch'] - 300);
+xeric_player_current(fn() => 0);
+ok('seam: anything below the first person is the first person', xeric_player_current(null, $two) === 1);
+xeric_player_current(fn() => throw new RuntimeException('no session'));
+ok('seam: and so is a resolver that throws', xeric_player_current(null, $two) === 1);
+xeric_player_current(fn() => 1);
+
+// -- the read model -------------------------------------------------------------
+xeric_player_move($two, 'bluebird', (int)$m0710['epoch'] - 300, 2);   // Ann walks over to the diner
+$byKey = fn(array $map): array => array_column($map['places'], null, 'key');
+$m1 = xeric_travel_map($M, $two, $m0710);
+$blue1 = $byKey($m1)['bluebird']['who'];
+ok('map: the other player stands in `who` with the flag and nothing else',
+    in_array(['handle' => 'p2', 'name' => 'Ann Price', 'player' => true], $blue1, true)
+    && in_array('dot', array_column($blue1, 'handle'), true));
+ok('map: you are never in your own `who`',
+    !in_array('p1', array_column($blue1, 'handle'), true));
+ok('map: `players` lists every body, you marked',
+    array_column($m1['players'], 'handle') === ['p1', 'p2']
+    && $m1['players'][0]['you'] === true && $m1['players'][1]['where'] === 'bluebird');
+ok('presence: and never in the cast\'s presence — a person is not a part',
+    !array_key_exists('p2', xeric_world_who_is_where($M, $m0710, [], $two))
+    && !in_array('p2', xeric_world_who_is_at(xeric_world_who_is_where($M, $m0710, [], $two), 'bluebird'), true));
+
+xeric_player_current(fn() => 2);
+$m2 = xeric_travel_map($M, $two, $m0710);
+ok('map: as Ann, `you` is Ann — her name off the roster, not the template\'s',
+    $m2['you']['name'] === 'Ann Price' && $m2['you']['where'] === 'bluebird'
+    && $m2['you']['since'] === (int)$m0710['epoch'] - 300);
+ok('map: and Walt is the other player in her diner',
+    in_array(['handle' => 'p1', 'name' => 'Walt', 'player' => true], $byKey($m2)['bluebird']['who'], true));
+xeric_player_current(fn() => 1);
+
+// -- the look -------------------------------------------------------------------
+$b2 = xeric_scene_brief($M, $two, null, $m0710);
+$pRows = array_values(array_filter($b2['who'], fn($w) => !empty($w['player'])));
+ok('look: the other player is in the brief\'s `who`, a name and where they stand, nothing invented',
+    count($pRows) === 1 && $pRows[0]['handle'] === 'p2' && $pRows[0]['name'] === 'Ann Price'
+    && array_keys($pRows[0]) === ['handle', 'name', 'player', 'bearing']);
+ok('look: the cast in the room is untouched by her being there',
+    array_values(array_filter($b2['who'], fn($w) => empty($w['player']))) === $soloBrief['who']);
+ok('look: a second human in the room is a different room',
+    $b2['fingerprint'] !== ONE_BODY_FPRINT && str_contains($b2['prompt'], 'Ann Price'));
+xeric_player_move($two, 'beck_hardware', (int)$m0710['epoch'] - 300, 2);
+ok('look: and when she goes it is the room it was',
+    xeric_scene_brief($M, $two, null, $m0710)['fingerprint'] === ONE_BODY_FPRINT);
+
+// -- the sound: another person standing in it is somebody a doorway hears ------
+// The one-body engine's sound of the Bluebird at 07:10 (Dot alone at the
+// counter), brief and fingerprint, pinned: a world of one still makes it.
+const ONE_BODY_SOUND_FPRINT = 'sound:2794a047d77b9924bfdc352bee5b8c8ab131bc87';
+const ONE_BODY_SOUND_SHA1   = '03fc502517dccfcf3e25e44ded0fb58e7a3bd731';
+$soloSound = xeric_sound_brief($M, $solo, null, $m0710);
+ok('sound: a world of one sounds exactly as it did — the same headcount, the same fingerprint',
+    $soloSound['fingerprint'] === ONE_BODY_SOUND_FPRINT && sha1($enc($soloSound)) === ONE_BODY_SOUND_SHA1
+    && $soloSound['heard'] === 1, $soloSound['fingerprint']);
+ok('sound: with Ann across town, Walt\'s diner is the sound it was', xeric_sound_brief($M, $two, null, $m0710)['fingerprint'] === ONE_BODY_SOUND_FPRINT);
+xeric_player_move($two, 'bluebird', (int)$m0710['epoch'] - 300, 2);
+$s2 = xeric_sound_brief($M, $two, null, $m0710);
+ok('sound: Ann walking in counts in the headcount bucket — one at the counter becomes several, and voiced',
+    $s2['heard'] === 2 && $s2['voiced'] === true && $s2['fingerprint'] !== ONE_BODY_SOUND_FPRINT, json_encode([$s2['heard'], $s2['voiced']]));
+xeric_player_move($two, 'beck_hardware', (int)$m0710['epoch'] - 300, 2);
+ok('sound: and she is never counted in her own hearing — from the hardware store, the cast there is all there is',
+    (function () use ($M, $two, $m0710): bool {
+        xeric_player_current(fn() => 2);
+        $b = xeric_sound_brief($M, $two, null, $m0710);
+        xeric_player_current(fn() => 1);
+        $solo2 = fresh('sound-solo-hw');
+        xeric_player_move($solo2, 'beck_hardware', (int)$m0710['epoch'] - 300);
+        return $b['heard'] === xeric_sound_brief($M, $solo2, null, $m0710)['heard'];
+    })());
+
+// -- comings and goings ----------------------------------------------------------
+// Walt at the diner since 06:00; Ann arrives at 07:05; at 07:10 the doorway
+// says so, and when she leaves at 07:12 it says that too.
+$cw = fresh('body-comings');
+xeric_player_add($cw, $M, 'Ann Price');
+xeric_player_move($cw, 'bluebird', $mAt('2026-11-02 06:00')['epoch'], 1);
+xeric_player_move($cw, 'bluebird', $mAt('2026-11-02 07:05')['epoch'], 2);
+$cm = xeric_travel_comings($M, $cw, $m0710, 'bluebird');
+ok('comings: another player walking in is a beat, named off the roster',
+    in_array('p2', $cm['arrived'], true) && str_contains($cm['line'], 'Ann Price comes in'), $cm['line']);
+xeric_player_move($cw, 'beck_hardware', $mAt('2026-11-02 07:12')['epoch'], 2);
+$cm2 = xeric_travel_comings($M, $cw, $mAt('2026-11-02 07:15'), 'bluebird');
+ok('comings: and walking out is one too',
+    in_array('p2', $cm2['left'], true) && str_contains($cm2['line'], 'Ann Price gets up and goes'), $cm2['line']);
+xeric_player_current(fn() => 2);
+ok('comings: you are never news to yourself',
+    !in_array('p2', xeric_travel_comings($M, $cw, $mAt('2026-11-02 07:15'), 'beck_hardware')['arrived'], true));
+xeric_player_current(fn() => 1);
+
+// Two moves inside one stretch: Ann at the diner since 06:00; Walt there too,
+// then off to the mill at 07:03 and on to Beck's at 07:07. At 07:10 her doorway
+// must say he went — where he was at 07:00 is the diner, not his last stop.
+$cw2 = fresh('body-comings-twice');
+xeric_player_add($cw2, $M, 'Ann Price');
+xeric_player_move($cw2, 'bluebird', $mAt('2026-11-02 06:00')['epoch'], 2);
+xeric_player_move($cw2, 'bluebird', $mAt('2026-11-02 06:00')['epoch'], 1);
+xeric_player_move($cw2, 'the_mill', $mAt('2026-11-02 07:03')['epoch'], 1);
+xeric_player_move($cw2, 'beck_hardware', $mAt('2026-11-02 07:07')['epoch'], 1);
+xeric_player_current(fn() => 2);
+$cm3 = xeric_travel_comings($M, $cw2, $m0710, 'bluebird');
+$cm3b = xeric_travel_comings($M, $cw2, $m0710, 'the_mill');
+xeric_player_current(fn() => 1);
+ok('comings: a friend who moved twice inside the stretch is read off their move log — Walt left the diner',
+    in_array('p1', $cm3['left'], true) && str_contains($cm3['line'], 'Walt gets up and goes'), json_encode($cm3));
+ok('comings: and the mill he passed through saw nothing come or go of him at the stretch\'s ends',
+    !in_array('p1', $cm3b['arrived'], true) && !in_array('p1', $cm3b['left'], true), json_encode($cm3b));
+$mv = json_decode((string)xeric_world_state_get($cw2, 'player.moves'), true);
+ok('comings: the log is short, epoch-stamped, and a world of one never writes it',
+    is_array($mv) && count($mv) === 3 && $mv[2] === [$mAt('2026-11-02 07:07')['epoch'], 'the_mill', 'beck_hardware']
+    && xeric_world_state_get($solo, 'player.moves') === null);
+for ($i = 0; $i < 12; $i++) xeric_player_move($cw2, $i % 2 ? 'bluebird' : 'the_mill', $mAt('2026-11-02 08:00')['epoch'] + $i * 60, 1);
+ok('comings: trimmed to the last ' . XERIC_PLAYER_MOVES . ' moves',
+    count(json_decode((string)xeric_world_state_get($cw2, 'player.moves'), true)) === XERIC_PLAYER_MOVES);
+
+// -- the trip: one body, one clock ------------------------------------------------
+$tr = fresh('body-trip');
+xeric_clock_begin($tr, $M);
+xeric_player_add($tr, $M, 'Ann Price');
+xeric_player_move($tr, 'bluebird', null, 1);
+xeric_player_move($tr, 'beck_hardware', null, 2);
+xeric_player_current(fn() => 2);
+$off  = xeric_clock_offset($tr);
+$trip = xeric_travel_go($M, $tr, 'the_mill');
+xeric_player_current(fn() => 1);
+ok('trip: Ann\'s walk moves Ann',
+    $trip['ok'] && xeric_player_where($M, $tr, 2) === 'the_mill' && $trip['from'] === 'beck_hardware');
+ok('trip: and only Ann — Walt stands where he stood',
+    xeric_player_where($M, $tr, 1) === 'bluebird');
+ok('trip: but the minutes burn on the one clock everybody lives on',
+    $trip['minutes'] > 0 && xeric_clock_offset($tr) - $off === $trip['minutes'] * 60);
+xeric_player_current(fn() => 1);
+$back = xeric_travel_go($M, $tr, 'the_mill');
+ok('trip: walking in on another player names them in the doorway',
+    $back['ok'] && ($back['players'][0]['name'] ?? '') === 'Ann Price'
+    && str_contains((string)$back['scene'], 'Ann Price'), (string)$back['scene']);
+xeric_world_state_set($tr, 'skip:underway', (string)time());
+xeric_player_current(fn() => 2);
+$mid = xeric_travel_go($M, $tr, 'bluebird');
+xeric_player_current(fn() => 1);
+ok('trip: a skip in flight stops everybody\'s walk alike', !$mid['ok'] && xeric_player_where($M, $tr, 2) === 'the_mill');
 
 foreach ($DBS as $p) foreach ([$p, $p . '-wal', $p . '-shm'] as $f) @unlink($f);
 

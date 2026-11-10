@@ -178,7 +178,19 @@ function xeric_bible_setting(array $template, array $walls, string $eff): array
 function xeric_pronouns(array $template): array
 {
     $raw = strtolower(trim((string)($template['user']['pronouns'] ?? '')));
-    $known = [
+    $known = xeric_pronoun_table();
+    $first = trim(explode('/', $raw)[0] ?? '');
+    $set = $known[$first] ?? $known['they'];
+    return ['subj' => $set[0], 'obj' => $set[1], 'poss' => $set[2],
+            'refl' => $set[3], 'plural' => $set[4],
+            // "they are" vs "he is" — a verb helper so callers can't get it wrong
+            'is' => $set[4] ? 'are' : 'is', 'has' => $set[4] ? 'have' : 'has'];
+}
+
+/** The vocabulary: subject => [subject, object, possessive, reflexive, plural]. */
+function xeric_pronoun_table(): array
+{
+    return [
         'he'   => ['he', 'him', 'his', 'himself', false],
         'she'  => ['she', 'her', 'her', 'herself', false],
         'they' => ['they', 'them', 'their', 'themselves', true],
@@ -186,12 +198,17 @@ function xeric_pronouns(array $template): array
         'xe'   => ['xe', 'xem', 'xyr', 'xemself', false],
         'it'   => ['it', 'it', 'its', 'itself', false],
     ];
-    $first = trim(explode('/', $raw)[0] ?? '');
-    $set = $known[$first] ?? $known['they'];
-    return ['subj' => $set[0], 'obj' => $set[1], 'poss' => $set[2],
-            'refl' => $set[3], 'plural' => $set[4],
-            // "they are" vs "he is" — a verb helper so callers can't get it wrong
-            'is' => $set[4] ? 'are' : 'is', 'has' => $set[4] ? 'have' : 'has'];
+}
+
+/** Every form of every pronoun the table knows, plus you, as a set — none of them is ever a name. */
+function xeric_pronoun_words(): array
+{
+    $out = ['you' => 1, 'your' => 1, 'yours' => 1, 'yourself' => 1, 'theirs' => 1];
+    foreach (xeric_pronoun_table() as $set) {
+        foreach (array_slice($set, 0, 4) as $w) $out[$w] = 1;
+        $out[$set[2] . (str_ends_with($set[2], 's') ? '' : 's')] = 1;   // the standalone possessive
+    }
+    return $out;
 }
 
 /** Sentence-case a pronoun for the start of a sentence. */

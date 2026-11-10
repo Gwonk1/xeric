@@ -437,6 +437,35 @@ ok('distil: and what the counting already knows, so it is not asked to infer a n
     && str_contains($asked[1]['content'] ?? '', 'Walt has answered Ruth Amberg'),
     (string)strstr((string)($asked[1]['content'] ?? ''), 'WHAT THE COUNTING KNOWS'));
 
+// THE USER'S PRONOUNS ARE THE TEMPLATE'S, NOT THE ENGINE'S. This prompt used to
+// say "he" and "him" about whoever the user was, and "her messages" about
+// whichever character the counting line named. Walt is he/him in the fixture,
+// so the same batch is run again for a she/her Walt and a Walt with no pronouns
+// on record: the words about the user follow the template, a character in the
+// counting is named rather than pronouned, and nothing falls back to a gender.
+$askedPn = function (string $pronouns) use ($T): string {
+    $Tp = $T; $Tp['user']['pronouns'] = $pronouns;
+    $db = fresh_db('distil-pn-' . md5($pronouns));
+    for ($i = 0; $i < 3; $i++) xeric_signal_add($db, 'reply', ['handle' => 'ruth', 'n' => 40, 'lag' => 120]);
+    xeric_signal_add($db, 'edit', ['handle' => 'ruth', 'subject' => 'a character (cast.characters.0.voice)',
+        'note' => 'was “long” — now “short”']);
+    $seenPn = null;
+    xeric_lessons_distil($db, $Tp, stub_says(function (string $tag, array $m) use (&$seenPn) {
+        $seenPn = $m; return ['lessons' => []];
+    }, $seenPn));
+    return (string)($seenPn[1]['content'] ?? '');
+};
+$pnHe = $askedPn('he/him'); $pnShe = $askedPn('she/her'); $pnNone = $askedPn('');
+ok('distil: a he/him user is written about as he/him',
+    str_contains($pnHe, 'given what he is like') && str_contains($pnHe, 'never tells him anything'), $pnHe);
+ok('distil: a she/her user is written about as she/her, from the template, not as "he"',
+    str_contains($pnShe, 'given what she is like') && str_contains($pnShe, 'Never about her character')
+    && !preg_match('/\b(he|him|his)\b/', $pnShe), $pnShe);
+ok('distil: no pronouns on record falls back to they/them, never to a gender',
+    str_contains($pnNone, 'given what they are like') && !preg_match('/\b(he|him|his|she|her|hers)\b/i', $pnNone), $pnNone);
+ok('distil: a character in the counting is named, not pronouned',
+    str_contains($pnShe, "Walt's replies to Ruth Amberg average") && !str_contains($pnHe, 'her messages'), $pnShe);
+
 // The division of labour, which is what stops the two layers arguing: a crumb
 // whose whole meaning is a counter never reaches the model, because the English
 // version of it would outlive the number and go on being true after it stopped.
@@ -911,6 +940,57 @@ ok('standing: and a kind that is about nobody in particular moves nothing',
 ok('standing: nobody rubs against themselves',
     xeric_trust_hour_apply($rmDb, 'friction', ['harlan']) === 0
     && xeric_trust_of($rmDb, 'harlan', 'harlan') === 0);
+
+// ---------------------------------------------------------------------------
+// 11. The learn pass, as the heart runs it.
+//
+// heart.php lived the hours and never learned from them: no settle, no pend,
+// no distil, so a week lived unattended never turned friendly replies into
+// trust. xeric_learn_pass() is the skip's sequence as one function, and the
+// heart now calls it under its hold. The heart itself has no harness, so the
+// function is tested here and the wiring by source.
+// ---------------------------------------------------------------------------
+
+echo "\n# the learn pass the heart runs\n";
+
+$lpDb = fresh_db('learn-pass');
+$lpEv = [['id' => 1, 'kind' => 'friction', 'participants' => ['dot', 'harlan']]];
+$lp1  = xeric_learn_pass($lpDb, $T, stub_dead(), 1000, $lpEv, null, 4600, ['no_model' => true]);
+ok('pass: the first stretch has nothing to settle, and writes down what it offered',
+    $lp1['ran'] && array_sum($lp1['settled']) === 0
+    && (int)(json_decode((string)xeric_world_state_get($lpDb, XERIC_LEARN_PENDING, ''), true)['epoch'] ?? 0) === 4600);
+ok('pass: a second run for the same landed moment does nothing at all — idempotent per stretch',
+    xeric_learn_pass($lpDb, $T, stub_dead(), 1000, $lpEv, null, 4600, ['no_model' => true])['ran'] === false
+    && xeric_signals_count($lpDb) === 0);
+
+// Between stretches the person answers Ruth, warmly and often — the week a
+// heart lives while somebody keeps up a conversation.
+for ($i = 0; $i < 8; $i++) {
+    xeric_signal_add($lpDb, 'reply', ['handle' => 'ruth', 'subject' => 'chat', 'n' => 40, 'lag' => 30]);
+}
+$lp2 = xeric_learn_pass($lpDb, $T, stub_dead(), 4600, [], null, 8200, ['no_model' => true]);
+ok('pass: the next stretch judges the last one in hindsight — nobody asked Dot or Harlan',
+    $lp2['ran'] && $lp2['settled']['skipped'] === 1, json_encode($lp2['settled']));
+ok('pass: and distils when due, with no model, so the counting still runs',
+    $lp2['distilled'] && xeric_learn_tally($lpDb, 'ruth')['replies'] === 8);
+ok('pass: which is what turns friendly replies into trust',
+    xeric_trust_of($lpDb, 'ruth') > 0, (string)xeric_trust_of($lpDb, 'ruth'));
+ok('pass: a world with learning switched off is left alone by it',
+    (function () use ($T) {
+        $off = fresh_db('learn-pass-off');
+        xeric_world_state_set($off, XERIC_LEARN_OFF, '1');
+        for ($i = 0; $i < 5; $i++) xeric_signal_add($off, 'reply', ['handle' => 'ruth', 'n' => 10]);
+        $r = xeric_learn_pass($off, $T, stub_dead(), 0, [], null, 3600, ['no_model' => true]);
+        return !$r['distilled'] && xeric_signals_count($off, null, true) === 5;
+    })());
+
+$heartSrc = (string)file_get_contents(dirname(__DIR__, 2) . '/forge/web/heart.php');
+ok('pass: the heart runs it, under the hold it took for the hours, before releasing it',
+    ($a = strpos($heartSrc, 'xeric_learn_pass($db')) !== false
+    && ($b = strpos($heartSrc, 'xeric_queue_release($hold')) !== false && $a < $b
+    && $a > (int)strpos($heartSrc, 'xeric_proactive_check('));
+ok('pass: with the skip\'s courtesy — no model once the hold has expired',
+    str_contains($heartSrc, "'no_model' => xeric_queue_expired("));
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";
 exit($FAILED === 0 ? 0 : 1);

@@ -68,6 +68,55 @@ function xeric_player_key(string $base, int $player = XERIC_PLAYER_FIRST): strin
 }
 
 /**
+ * WHICH OF THEM THIS REQUEST IS FOR — the seam, and the only one.
+ *
+ * Every reader of "the player" in the engine (where they stand, since when,
+ * what their map prices from) takes an optional player id, and null means
+ * this: the current player. The engine never reads a session, a cookie or a
+ * token to find out who that is; the web layer installs a resolver here
+ * (forge/web/play-map.php, from xeric_session_player) and everything else —
+ * the CLI, the tests, the heartbeat walking a shelf with nobody's cookie —
+ * gets the first player, which is every world that existed before there was
+ * a second one.
+ *
+ *     xeric_player_current(fn(?PDO $db) => 2);   install a resolver
+ *     xeric_player_current(null, $db);           who is it, for this database
+ *     xeric_player_current(fn() => 1);           and back to the default
+ *
+ * The resolver is handed the database being read, because one process may
+ * hold several worlds (a worker walking a shelf) and "who is this?" is a
+ * question about one of them. Anything it answers below the first player —
+ * null, zero, a throw — is the first player: fail toward the owner's body,
+ * never toward a stranger's.
+ */
+function xeric_player_current(?callable $fn = null, ?PDO $db = null): int
+{
+    static $seam = null;
+    if ($fn !== null) $seam = $fn;
+    if ($seam === null) return XERIC_PLAYER_FIRST;
+    try {
+        $id = (int)($seam($db) ?? 0);
+    } catch (Throwable $e) {
+        return XERIC_PLAYER_FIRST;
+    }
+    return $id > XERIC_PLAYER_FIRST ? $id : XERIC_PLAYER_FIRST;
+}
+
+/**
+ * Is anybody but the first person written down? One raw read, no template —
+ * the cheap question writers ask before they spend a row on company (travel's
+ * `where_from`), so a world of one never grows a key it does not need.
+ */
+function xeric_players_many(PDO $db): bool
+{
+    $rows = json_decode((string)(xeric_world_state_get($db, 'players') ?? ''), true);
+    if (!is_array($rows)) return false;
+    $n = 0;
+    foreach ($rows as $r) if (is_array($r) && (int)($r['id'] ?? 0) >= XERIC_PLAYER_FIRST) $n++;
+    return $n > 1;
+}
+
+/**
  * Everybody at the centre of this world, in the order they arrived.
  *
  * A world that has never heard of this returns the one implicit player the

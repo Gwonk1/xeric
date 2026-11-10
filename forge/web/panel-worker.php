@@ -124,6 +124,8 @@ try {
         $r = xeric_room($T, $db, $handles, $now, $endpoint, [
             'beats'   => max(3, min(12, (int)($payload['beats'] ?? 6))),
             'timeout' => 90,
+            // Each expert in their own pinned machine and slot.
+            'endpoint_for' => xeric_play_sweep_endpoints($w + ['db' => $db, 'endpoint' => $endpoint]),
             'on_line' => function (string $h, string $name, string $text, string $kind) use ($job): void {
                 if ($kind !== 'line') return;
                 xeric_web_job_append($job, ['k' => 'note', 'message' => $name . ': ' . $text]);

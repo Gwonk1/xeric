@@ -233,6 +233,151 @@ ok('block: a world with no private history says nothing at all',
     xeric_confide_block($OFF, $g, 'ruth') === ''
     && xeric_confide_block($T, fresh('quiet'), 'ruth') === '');
 
+// ---------------------------------------------------------------------------
+// 7. THE PERSON AT THE CENTRE IS TOLD SOMETHING. A user-created wall: the fact,
+// who told it, who must not hear it. Formed from the extractor, code-checked,
+// rendered into exactly one prompt, broken by repeating it.
+// ---------------------------------------------------------------------------
+
+echo "\n# what you were asked to keep\n";
+
+require_once dirname(__DIR__) . '/chat.php';
+
+ok('ask: an explicit ask is an ask',
+    xeric_confide_marked("Don't tell Harlan, but the bank wrote about the house")
+    && xeric_confide_marked('This stays between us.') && xeric_confide_marked('Keep this to yourself, Neil.'));
+ok('ask: a hint is not', !xeric_confide_marked('The bank wrote about the house.')
+    && !xeric_confide_marked('I told Harlan everything.'));
+
+$c = fresh('told-you');
+$said = "Something I have not told anyone. The bank wrote about the house. Don't tell Harlan.";
+$prop = ['quote' => "Don't tell Harlan.", 'what' => 'the bank wrote about the house', 'not' => []];
+ok('form: no ask in her words, no confidence',
+    xeric_confide_to_player($T, $c, 'ruth', ['quote' => 'The bank wrote about the house.', 'what' => 'the bank letter'], $NOW,
+                            XERIC_PLAYER_FIRST, $said) === null);
+ok('form: words she never said are not her words',
+    xeric_confide_to_player($T, $c, 'ruth', ['quote' => "Don't tell Dot.", 'what' => 'the bank letter'], $NOW,
+                            XERIC_PLAYER_FIRST, $said) === null);
+ok('form: a minor cannot be the teller', xeric_confide_to_player($T, $c, 'theo',
+    ['quote' => 'Keep this to yourself.', 'what' => 'the shed'], $NOW, XERIC_PLAYER_FIRST, 'Keep this to yourself.') === null);
+$ck = xeric_confide_to_player($T, $c, 'ruth', $prop, $NOW, XERIC_PLAYER_FIRST, $said);
+$crow = xeric_confide_told_player($c, 'ruth')[0] ?? [];
+ok('form: the ask in her own words forms one, naming who must not hear',
+    $ck !== null && ($crow['not'] ?? null) === ['harlan'] && ($crow['state'] ?? '') === 'kept', json_encode($crow));
+ok('form: told twice is one confidence', xeric_confide_to_player($T, $c, 'ruth', $prop, $NOW, XERIC_PLAYER_FIRST, $said) === $ck);
+ok('form: re-reported in other words, it is still the one confidence — matched on what she said',
+    xeric_confide_to_player($T, $c, 'ruth', ['quote' => "Don't tell Harlan.", 'what' => 'the letter from the bank', 'not' => []],
+                            $NOW, XERIC_PLAYER_FIRST, $said) === $ck
+    && count(xeric_confide_told_player($c, 'ruth')) === 1);
+$c0 = fresh('told-nothing');
+ok('form: fail closed — a harvest with no line of hers in it forms no confidence',
+    xeric_confide_to_player($T, $c0, 'ruth', $prop, $NOW, XERIC_PLAYER_FIRST, '') === null
+    && xeric_confide_to_player($T, $c0, 'ruth', $prop, $NOW) === null
+    && xeric_confide_to_player($T, $c0, 'ruth', $prop, $NOW, XERIC_PLAYER_FIRST, " \n ") === null
+    && xeric_confide_told_player($c0, 'ruth') === []);
+
+$rb = xeric_expect_block($T, $c, 'ruth', $NOW);
+ok('block: the teller carries it — "you told Neil … and asked them to keep it"',
+    str_contains($rb, 'You told Neil the bank wrote about the house and asked them to keep it'), $rb);
+ok('block: and nobody else\'s prompt is built from it',
+    !str_contains(xeric_expect_block($T, $c, 'harlan', $NOW), 'bank') && !str_contains(xeric_expect_block($T, $c, 'dot', $NOW), 'bank'));
+ok('player side: the narrator-facing line says it from the player\'s side',
+    (xeric_confide_player_lines($T, $c)[0] ?? '') === 'Ruth Amberg told you the bank wrote about the house and asked you to keep it.');
+
+ok('break: saying it to somebody who was not named breaks nothing',
+    xeric_confide_repeat($T, $c, 'dot', ['The bank wrote to Ruth about her house.'], $NOW) === 0);
+ok('break: a sentence that only brushes it breaks nothing',
+    xeric_confide_repeat($T, $c, 'harlan', ['Ruth was at the bank today.'], $NOW) === 0);
+$tr0 = xeric_trust_of($c, 'ruth', null, XERIC_PLAYER_FIRST);
+ok('break: telling Harlan breaks it — off the formed row',
+    xeric_confide_repeat($T, $c, 'harlan', ['Did you know the bank wrote to Ruth about the house?'], $NOW) === 1
+    && (xeric_confide_told_player($c, 'ruth')[0]['heard_by'] ?? '') === 'harlan');
+ok('break: and her trust in the player takes the hard notch, on the right row',
+    xeric_trust_of($c, 'ruth', null, XERIC_PLAYER_FIRST) === $tr0 - XERIC_CONFIDE_BROKEN);
+ok('break: her prompt knows it got back to her', str_contains(xeric_confide_block($T, $c, 'ruth'), 'It got back to you that Neil told Harlan Beck'));
+ok('break: and it breaks once', xeric_confide_repeat($T, $c, 'harlan', ['the bank wrote about the house'], $NOW) === 0);
+
+// Never owned up to inside the window: it hardens into a grudge.
+$later = ['epoch' => $NOW['epoch'] + XERIC_CONFIDE_REPAIR + 3600];
+xeric_constructs_tick($T, $c, $later);
+ok('grudge: an unrepaired breach hardens, and Ruth is cold with the player',
+    (xeric_confide_told_player($c, 'ruth')[0]['state'] ?? '') === 'hardened'
+    && str_contains(xeric_siblings_block($T, $c, 'ruth'), 'You have not forgiven Neil for telling Harlan Beck'));
+ok('inspector: the confidence lists, with who it was kept from and where it went',
+    str_contains(implode("\n", xeric_constructs_why($T, $c, 'ruth')), 'confidence (hardened): Ruth Amberg told Neil the bank wrote about the house and asked them to keep it from Harlan Beck; it reached Harlan Beck'));
+
+$m = fresh('mend');
+xeric_confide_to_player($T, $m, 'ruth', $prop, $NOW, XERIC_PLAYER_FIRST, $said);
+xeric_confide_repeat($T, $m, 'harlan', ['the bank wrote about the house'], $NOW);
+ok('mend: owning up inside the window mends it', xeric_confide_mend($T, $m, 'ruth', $NOW) !== null
+    && str_contains(xeric_confide_block($T, $m, 'ruth'), 'owned up to it'));
+
+// END TO END, through the extraction hook: the model reports her words, code
+// checks them, a later harvest reads what the player said to Harlan.
+$e = fresh('extract');
+$cr = xeric_conversation_for($e, 'ruth', 'chat');
+xeric_message_append($e, $cr, 'user', null, 'You look tired.', $NOW['epoch']);
+xeric_message_append($e, $cr, 'character', 'ruth', $said, $NOW['epoch'] + 30);
+$stubX = fn(array $out) => ['stub' => fn(string $tag, array $msgs, array $o = []) => $out, 'model' => 'stub'];
+xeric_chat_extract($T, $e, 'ruth', $cr, $stubX(['memories' => [], 'confided' => $prop]), $NOW);
+ok('extract: the harvest forms the confidence', count(xeric_confide_told_player($e, 'ruth')) === 1);
+$ch = xeric_conversation_for($e, 'harlan', 'chat');
+xeric_message_append($e, $ch, 'user', null, 'Between you and me, the bank wrote about the house. Ruth told me.', $NOW['epoch'] + 600);
+xeric_message_append($e, $ch, 'character', 'harlan', 'Did they now.', $NOW['epoch'] + 630);
+xeric_chat_extract($T, $e, 'harlan', $ch, $stubX(['memories' => []]), $NOW);
+ok('extract: and repeating it to Harlan, read by his harvest, breaks it',
+    (xeric_confide_told_player($e, 'ruth')[0]['state'] ?? '') === 'broken');
+ok('extract: a confidence the model invented about the PLAYER\'s words forms nothing',
+    (function () use ($T, $NOW, $stubX) {
+        $d = fresh('extract2');
+        $k = xeric_conversation_for($d, 'dot', 'chat');
+        xeric_message_append($d, $k, 'user', null, "Don't tell anyone, but I'm thinking of leaving.", $NOW['epoch']);
+        xeric_message_append($d, $k, 'character', 'dot', 'Oh, honey.', $NOW['epoch'] + 30);
+        xeric_chat_extract($T, $d, 'dot', $k, $stubX(['memories' => [], 'confided' => ['quote' => "Don't tell anyone", 'what' => 'leaving']]), $NOW);
+        return xeric_confide_told_player($d, 'dot') === [];
+    })());
+
+// ---------------------------------------------------------------------------
+// THE TOWN TELLS ITSELF THINGS, out of the hours the sweep wrote. The cast
+// tick reads a quoted line with an explicit ask and forms the told.* row the
+// gossip sweep breaks — which until now only these tests ever wrote.
+// ---------------------------------------------------------------------------
+
+echo "\n# confidences out of the town's own hours\n";
+
+require_once dirname(__DIR__) . '/constructs.php';
+$k = fresh('cast-confide');
+// History first: hours lived before the reader existed are never owed to it.
+for ($i = 0; $i < 30; $i++) {
+    xeric_event_add($k, 'At the counter ' . $i, $NOW['epoch'] - 86400 * (40 - $i), 'bluebird', ['ruth', 'dot'],
+        '"Between us, don\'t tell Harlan, the mill is selling the north lot ' . $i . '," Ruth said.');
+}
+$kt = xeric_constructs_cast_tick($T, $k, $NOW);
+ok('cast: on its first run the reader forms no confidence out of history', $kt['confided'] === 0 && xeric_confides_for($k, 'dot') === [],
+    json_encode($kt));
+xeric_event_add($k, 'Coffee after close', $NOW['epoch'] + 600, 'bluebird', ['ruth', 'dot'],
+    'Dot wiped the counter. "Between us, don\'t tell Harlan, the bank wrote about the house," Ruth said, and looked at the door.');
+xeric_event_add($k, 'The pharmacy line', $NOW['epoch'] + 1200, 'bluebird', ['ruth', 'dot'],
+    '"The bank wrote about the house," Ruth said.');                       // no ask, no confidence
+xeric_event_add($k, 'Three at the counter', $NOW['epoch'] + 1800, 'bluebird', ['ruth', 'dot', 'harlan'],
+    '"Keep this to yourself, I am leaving the choir in spring," Ruth said.');  // said in front of three
+xeric_event_add($k, 'The boy at the counter', $NOW['epoch'] + 2400, 'bluebird', ['theo', 'dot'],
+    '"Don\'t tell anybody, I broke the shed window on Sunday," Theo said.');  // a minor is neither party
+$kt = xeric_constructs_cast_tick($T, $k, ['epoch' => $NOW['epoch'] + 3600]);
+$rows = xeric_confides_for($k, 'dot');
+ok('cast: a quoted "between us, don\'t tell Harlan" forms one told.* row, on the one it was said to',
+    $kt['confided'] === 1 && count($rows) === 1 && ($rows[0]['by'] ?? '') === 'ruth'
+    && ($rows[0]['what'] ?? '') === 'the bank wrote about the house' && ($rows[0]['not'] ?? []) === ['harlan']
+    && ($rows[0]['state'] ?? '') === 'kept', json_encode([$kt, $rows]));
+ok('cast: no ask, three in the room, or a minor — none of those forms one',
+    xeric_confides_for($k, 'harlan') === [] && xeric_confides_for($k, 'theo') === [] && count(xeric_confides_for($k, 'ruth')) === 0);
+ok('cast: and it is read once', xeric_constructs_cast_tick($T, $k, ['epoch' => $NOW['epoch'] + 3700])['confided'] === 0
+    && count(xeric_confides_for($k, 'dot')) === 1);
+ok('cast: the gossip sweep can then break it',
+    xeric_confide_sweep($T, $k, ['Dot let it slip that the bank wrote to Ruth about the house.'], $NOW) === 1
+    && (xeric_confides_for($k, 'dot')[0]['state'] ?? '') === 'broken');
+ok('cast: and Ruth\'s prompt knows it is going round', str_contains(xeric_confide_block($T, $k, 'ruth'), 'You told Dot Feeney the bank wrote about the house, and it is going round'));
+
 foreach ($DBS as $p3) foreach ([$p3, $p3 . '-wal', $p3 . '-shm'] as $f) @unlink($f);
 
 echo "\n" . ($FAILED === 0 ? "PASS" : "FAIL ($FAILED)") . "\n";

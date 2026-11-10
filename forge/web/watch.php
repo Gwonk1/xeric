@@ -168,7 +168,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             // The NEXT speaker's pinned voice machine, else the engine — the
             // watch is per-speaker calls by law, which is exactly what makes
             // per-character models possible here at all.
-            $endpoint = xeric_voice_endpoint($w['template'], $w['db'], (string)($s['next'] ?? ''), $sid);
+            $endpoint = xeric_play_speaker_endpoint($w['template'], $w['db'], (string)($s['next'] ?? ''), $sid);
         } catch (Throwable $e) {
             $done(['error' => $e->getMessage(), 'kind' => 'detached'], 409);
             return;

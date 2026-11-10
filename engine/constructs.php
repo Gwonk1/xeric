@@ -45,6 +45,36 @@
  * same explanation should not work on everybody. No explanation at all lets
  * the window close and the residue harden into an ordinary memory.
  *
+ * ── KEEPING IT ───────────────────────────────────────────────────────────
+ * An expectation used to have only bad endings: open could become missed (and
+ * then repaired or hardened) or, for the dead, released. Nothing ever closed
+ * one because the promised thing HAPPENED, so the user could walk into the
+ * Bluebird on Friday morning with Ruth's casserole dish in hand, and four
+ * hours later the fuse burned anyway: Ruth "waited", lost a notch of trust,
+ * and said nothing about it in small ways. A ledger that can only record
+ * failure is not a relationship, it is a grievance generator.
+ *
+ * So `kept` is a fourth terminal state, reached two ways, both gated in code:
+ *   1. THE BODY WAS THERE. On the day the promise was for (from that local
+ *      midnight to the miss), the person who promised stands where the
+ *      listener is: the player's body (`player.where`, arrived AFTER the
+ *      promise was made, so a promise said across the counter is not kept by
+ *      the act of saying it) or, for a promise between two townspeople, their
+ *      own week putting them in the same room. This is read off position and
+ *      schedule — a fact, no model.
+ *   2. THE EXTRACTOR HEARD IT DONE. The same harvest that reports `explained`
+ *      reports `kept`: the user did, in this conversation, the thing they had
+ *      promised. The model spots it; this file decides whether there is an
+ *      open expectation of THAT player, formed before this turn, whose miss has
+ *      not fired, and closes the soonest one. Symmetric with repair.
+ * Keeping it is the mirror of missing it, by the same path: one notch of trust
+ * through xeric_trust_earn (bounded at the far ends — trust.php: past the
+ * contact band "only the things that cost something move it: a promise kept"),
+ * against whoever actually promised, and one ordinary memory. No event: a
+ * person turning up as they said is not something the town retells, and
+ * gossip feeds on what was charged. The block says so in one coarse line, so
+ * the listener's prompt and the inspector read "kept", never "expecting".
+ *
  * ── TIME ─────────────────────────────────────────────────────────────────
  * Fuses burn in WORLD time and burn during skips — a skip is real time
  * passing (docs/CONSTRUCTS.md: "time travel is real"). Detection may happen
@@ -235,6 +265,12 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
 
     $due = xeric_promise_when($whenS, $t, $now);
     if ($due === null) { $note('expectations: could not place "' . $whenS . '" on the calendar — nothing formed'); return null; }
+    // BORN MISSED IS NOT A PROMISE. A due already behind the moment it forms —
+    // the hour it was said, or the later moment a caller is reading it at
+    // (`not_before`) — would be fired as a miss by the next fuse tick for a
+    // wait nobody did. Refused, not clamped: nobody was let down.
+    $floor = max((int)($now['epoch'] ?? 0), (int)($p['not_before'] ?? 0));
+    if ($due <= $floor) { $note('expectations: "' . $whenS . '" is already past — nothing formed'); return null; }
 
     // One expectation per person per day: a second promise about the same
     // stretch replaces nothing and forms nothing — the first one is the date.
@@ -263,6 +299,13 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
         // on disk is already correct (engine/players.php).
         + ($player > XERIC_PLAYER_FIRST ? ['p' => $player] : []), JSON_UNESCAPED_UNICODE));
     $note('expectations: ' . xeric_world_name($t, $listener) . ' now expects — ' . $what);
+    // AND SHE LOOKS FORWARD TO IT. The first sibling rides the same row: a plan
+    // the person at the centre made is something to anticipate as well as
+    // something to wait on. The town's own promises do not — anticipation is
+    // the warm half of being expected, and it is the player who is expected.
+    if (($of === null || $of === '') && xeric_sibling_armed($t, 'anticipation')) {
+        xeric_anticipate_form($t, $db, $listener, $key, $now);
+    }
     return $key;
 }
 
@@ -286,9 +329,12 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
  * produced a promise is a better scene, and a scene that did not is a scene.
  *
  * @param array $lines [{handle, name, text}, …] as the duet and the room emit
+ * @param int $notBefore a due at or before this epoch forms nothing (the cast
+ *                       tick passes its own now; 0 means the scene's hour only)
  * @return string[] the arc keys formed
  */
-function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?callable $onNote = null): array
+function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?callable $onNote = null,
+                                 int $notBefore = 0): array
 {
     if (!xeric_expect_armed($t)) return [];
 
@@ -312,7 +358,15 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
 
         // Who it was said TO. Named in the sentence outranks; with two people
         // in the room the other one is the answer and no test is needed.
-        $others = array_values(array_diff(array_keys($present), [$speaker]));
+        //
+        // THE PLAYER IS NEVER THE LISTENER. Expectations are rows a CHARACTER
+        // holds; '__you' (the room's and the watch's handle for the person at
+        // the table) holds nothing. A promise the player made, on the other
+        // hand, is exactly the v1 row — of nobody, which means the user.
+        // Every person at the centre wears a '__you' handle ('__you' for the
+        // first, '__you.p<n>' after — room.php); none of them is a listener.
+        $isYou  = static fn(string $h): bool => $h === '__you' || str_starts_with($h, '__you.p');
+        $others = array_values(array_filter(array_keys($present), fn($h) => $h !== $speaker && !$isYou((string)$h)));
         if ($others === []) continue;
         $listener = '';
         if (count($others) === 1) {
@@ -328,7 +382,7 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
                 foreach ($names as $n) {
                     $n = trim((string)$n);
                     if ($n === '') continue;
-                    $first = (string)(preg_split('/\s+/u', $n)[0] ?? '');
+                    $first = xeric_constructs_first_name($n);
                     if ($first !== '' && preg_match('/(?<![\p{L}])' . preg_quote($first, '/') . '(?![\p{L}])/ui', $text)) {
                         $listener = $o; break 2;
                     }
@@ -337,14 +391,32 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
         }
         if ($listener === '') continue;   // said to the room is said to nobody in particular
 
+        // THROUGH THE WALLS. A promise is a quote, and a quote renders verbatim
+        // into the listener's prompt for as long as the row lives. A line that
+        // carries something the listener's walls remove forms nothing for them —
+        // the same needle and quotation test the ripple uses, failing closed.
+        if (xeric_gossip_wall_blocked($t, ['line' => $text], $listener)) continue;
+
         $key = xeric_expect_form($t, $db, $listener, [
             'quote' => $text,
             'what'  => mb_substr($text, 0, 60),
             'when'  => xeric_promise_when_phrase($text),
-        ], $now, $onNote, $speaker);
+        ] + ($notBefore > 0 ? ['not_before' => $notBefore] : []), $now, $onNote, $isYou($speaker) ? null : $speaker,
+            // WHICH person at the centre promised: the line's own player.
+            $isYou($speaker) ? max(XERIC_PLAYER_FIRST, (int)($l['player'] ?? XERIC_PLAYER_FIRST)) : XERIC_PLAYER_FIRST);
         if ($key !== null) $formed[] = $key;
     }
     return $formed;
+}
+
+/**
+ * The name a person is called by in a sentence: the first word of their name,
+ * past an honorific — "Pastor Dale Ostrander" is Dale across a table.
+ */
+function xeric_constructs_first_name(string $name): string
+{
+    $forms = xeric_world_name_forms($name);     // the one honorific list (world.php)
+    return (string)($forms[1] ?? $forms[0] ?? '');
 }
 
 /**
@@ -360,7 +432,14 @@ function xeric_promise_when_phrase(string $text): string
     $t = mb_strtolower($text);
     foreach (['tomorrow', 'tonight', 'this evening', 'in the morning', 'later today',
               'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as $w) {
-        if (preg_match('/(?<![a-z])' . preg_quote($w, '/') . '(?![a-z])/u', $t)) return $w;
+        if (!preg_match('/(?<![a-z])' . preg_quote($w, '/') . '(?![a-z])/u', $t)) continue;
+        // A day with a time of day said beside it carries the hour, so a
+        // town's "Wednesday morning" is due at nine, not at midnight.
+        if (str_ends_with($w, 'day') && $w !== 'today'
+            && preg_match('/(?<![a-z])' . $w . '\s+(?:in the\s+|at\s+)?(morning|noon|afternoon|evening|night)(?![a-z])/u', $t, $m)) {
+            return $w . ' ' . $m[1];
+        }
+        return $w;
     }
     return '';
 }
@@ -561,6 +640,14 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now,
     $owed   = xeric_expect_owed($t, $db, $handle);
     if ($owed !== '') $blocks[] = $owed;
 
+    // What this person is keeping for somebody, and what they asked somebody
+    // to keep. Their own rows, so no wall applies to the reader — and a
+    // confidence renders ONLY here, in the prompts of the two people it is
+    // between: nobody else's prompt is built from these rows.
+    require_once __DIR__ . '/confide.php';
+    $kept = xeric_confide_block($t, $db, $handle, $player);
+    if ($kept !== '') $blocks[] = $kept;
+
     // The debts fade on the same read the fuses burn on, for the same reason:
     // there is no clock in this engine, only somebody looking. A favour carried
     // long enough stops being an account and becomes history, which is the
@@ -593,6 +680,11 @@ function xeric_expect_block(array $t, PDO $db, string $handle, array $now,
     // they are talking to.
     $else = xeric_guest_block($db, $t, $player);
     if ($else !== '') $blocks[] = $else;
+
+    // The siblings: what is on their mind — a plan ahead, news not yet told,
+    // a worry, a grudge, a habit of yours, a count crossed. Coarse state only.
+    $mind = xeric_siblings_block($t, $db, $handle, $player);
+    if ($mind !== '') $blocks[] = $mind;
 
     $talk = xeric_gossip_block($t, $db, $handle);
     if ($talk !== '') $blocks[] = $talk;
@@ -631,6 +723,13 @@ function xeric_expect_owed(array $t, PDO $db, string $handle): string
                     . ', and has not said why. It stung more than you let on. You never narrate this; '
                     . 'it shows in small ways — what your hands do, what you leave unsaid, how long you take to answer.';
                 break;
+            case 'kept':
+                // Said once and plainly. Not gratitude on cue — a person who
+                // turned up as they said is just a person who turned up, and the
+                // weight is that nothing here is owed any more.
+                $lines[] = '- ' . $who($e) . ' said "' . $e['quote'] . '" and did, ' . $day($e['due'])
+                    . ' (' . $e['what'] . '). Nothing is owed on it.';
+                break;
             case 'repaired':
                 $lines[] = '- ' . $who($e) . ' missed ' . $e['what'] . ' ' . $day($e['due'])
                     . ' but told you why. How settled that is between you is yours to carry, in your own way.';
@@ -665,6 +764,7 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
     $out   = ['missed' => 0, 'hardened' => 0, 'gossip_born' => 0, 'gossip_spread' => 0, 'gossip_faded' => 0];
     $user  = trim((string)($t['user']['name'] ?? '')) ?: 'they';
     $gone  = xeric_deaths($db);
+    $presence = $body = null;                         // resolved once, on first need (below)
 
     foreach ((array)($t['cast']['characters'] ?? []) as $c) {
         $h = (string)($c['handle'] ?? '');
@@ -690,7 +790,25 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
             }
             continue;
         }
-        foreach (xeric_expects_for($db, $h) as $e) {
+        // KEPT BEFORE MISSED, in the same tick: the body being where it said
+        // it would be is checked first, so a tick that finds the user standing
+        // at the diner closes the promise rather than burning it.
+        //
+        // ONE READ OF THE TOWN PER TICK. Who is where (the whole cast against
+        // the deaths) and where the body is are the same for every holder at
+        // one instant, so they are resolved once, the first time a holder has
+        // anything open, and handed down with the rows already read — the
+        // keep used to recompute both, and re-read the rows, once per handle.
+        $rows = xeric_expects_for($db, $h);
+        $open = array_values(array_filter($rows, fn($e) => $e['state'] === 'open'));
+        $kept = [];
+        if ($open !== []) {
+            $presence ??= xeric_constructs_presence($t, $now, $gone);
+            $body     ??= xeric_constructs_body($t, $db);
+            $kept = xeric_expect_keep_present($t, $db, $h, $now, $note, $open, $presence, $body);
+        }
+        // A keep changed a row's state; only then is there anything to re-read.
+        foreach ($kept === [] ? $rows : xeric_expects_for($db, $h) as $e) {
             if ($e['state'] === 'open' && $epoch > $e['due'] + XERIC_EXPECT_GRACE) {
                 $name  = xeric_world_name($t, $h);
                 // WHO DID NOT COME. Absent means the person at the centre;
@@ -746,12 +864,22 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
                 $note('expectations: ' . $name . ' waited, and ' . $whoName . ' did not come');
             } elseif ($e['state'] === 'missed' && $epoch > ($e['missed_at'] ?? $e['due']) + XERIC_EXPECT_REPAIR_WINDOW) {
                 $name = xeric_world_name($t, $h);
+                // Whoever actually missed it: this said the player's name about
+                // Harlan's promise once cast-to-cast rows could harden.
+                $of2  = trim((string)($e['of'] ?? ''));
+                $who2 = $of2 === '' ? $user : (xeric_world_name($t, $of2) ?: $of2);
                 xeric_memory_add($db, $h,
-                    'It sat with ' . $name . ' that ' . $user . ' never said anything about ' . $e['what'] . '.',
+                    'It sat with ' . $name . ' that ' . $who2 . ' never said anything about ' . $e['what'] . '.',
                     'construct', ['expect' => $e['key']], $epoch);
                 $e['state'] = 'hardened';
                 $row = $e; unset($row['key']);
                 xeric_arc_set($db, $h, $e['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
+                // THE GRUDGE. What a hardened miss becomes, as a construct with a
+                // temperature rather than a line that never changes.
+                if (xeric_sibling_armed($t, 'grudge')) {
+                    xeric_grudge_form($t, $db, $h, $of2, (int)($e['p'] ?? XERIC_PLAYER_FIRST),
+                        'missing ' . $e['what'], $e['key'], $now);
+                }
                 $out['hardened']++;
                 $note('expectations: the window closed on ' . $e['what'] . ' — it hardened');
             }
@@ -768,7 +896,189 @@ function xeric_constructs_tick(array $t, PDO $db, array $now, ?callable $onNote 
         $out['gossip_spread'] = $g['spread'];
         $out['gossip_faded']  = $g['faded'];
     }
+
+    // THE SIBLINGS, after the fuses (an anticipation reads its expectation's
+    // fate) and on the same read of the body.
+    $out['siblings'] = xeric_siblings_tick($t, $db, $now, $gone, $note, $body);
     return $out;
+}
+
+// ---------------------------------------------------------------------------
+// Keeping it
+// ---------------------------------------------------------------------------
+
+/**
+ * Close the soonest open expectation of this promiser as KEPT, or decline.
+ *
+ * $of null is the person at the centre (player $player); a cast handle is one
+ * townsperson's promise to another. $how is 'there' (the body or the week put
+ * them in the room — the window opens at local midnight of the due day) or
+ * 'said' (the extractor heard it done — the window opens the moment after the
+ * promise was formed, since bringing the dish back early is still bringing it
+ * back). Either way the window CLOSES where the miss fires, due + grace: a
+ * promise that has already been missed is repaired by explaining, not kept by
+ * turning up late, and this function never touches a row that is not `open`.
+ *
+ * Fail closed throughout: no open row, the wrong promiser, the wrong player, a
+ * row formed this very moment (the promise and its keeping cannot be the same
+ * sentence), or a window not yet open — nothing changes and null comes back.
+ * $formedBefore narrows it further: only a promise made before that moment is
+ * eligible (the body's arrival, for 'there').
+ *
+ * @return string|null the arc key kept
+ */
+function xeric_expect_keep(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null,
+                           int $player = XERIC_PLAYER_FIRST, string $how = 'said', ?string $of = null,
+                           ?int $formedBefore = null): ?string
+{
+    $note  = $onNote ?? static function (string $s): void {};
+    $epoch = (int)($now['epoch'] ?? 0);
+    if (!in_array($how, ['there', 'said'], true)) return null;
+    $of = ($of === null || trim($of) === '') ? '' : trim($of);
+
+    $tz = null;
+    try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); } catch (Throwable $e) {}
+    $dayStart = static function (int $due) use ($tz): int {
+        try {
+            return (new DateTimeImmutable('@' . $due))->setTimezone($tz ?? new DateTimeZone('UTC'))
+                ->setTime(0, 0)->getTimestamp();
+        } catch (Throwable $e) { return $due; }
+    };
+
+    $best = null;
+    foreach (xeric_expects_for($db, $handle) as $e) {
+        if ($e['state'] !== 'open') continue;
+        if (trim((string)($e['of'] ?? '')) !== $of) continue;
+        if ($of === '' && (int)($e['p'] ?? XERIC_PLAYER_FIRST) !== $player) continue;
+        if ((int)($e['formed'] ?? 0) >= min($formedBefore ?? $epoch, $epoch)) continue;
+        if ($epoch > $e['due'] + XERIC_EXPECT_GRACE) continue;
+        if ($how === 'there' && $epoch < $dayStart($e['due'])) continue;
+        if ($best === null || $e['due'] < $best['due']) $best = $e;
+    }
+    if ($best === null) return null;
+
+    $name    = xeric_world_name($t, $handle);
+    $whoName = $of !== '' ? (xeric_world_name($t, $of) ?: $of)
+             : ($player > XERIC_PLAYER_FIRST ? xeric_player_name($db, $player, $t)
+                                              : (trim((string)($t['user']['name'] ?? '')) ?: 'they'));
+    $key = $best['key'];
+    $row = $best; unset($row['key']);
+    $row['state'] = 'kept'; $row['kept_at'] = $epoch; $row['kept_how'] = $how;
+
+    $db->beginTransaction();
+    try {
+        xeric_arc_set($db, $handle, $key, json_encode($row, JSON_UNESCAPED_UNICODE));
+        // The mirror of the miss, by the same path and against the same row.
+        xeric_trust_earn($db, $handle, +1, null, $of !== '' ? $of : null,
+                         $of !== '' ? XERIC_PLAYER_FIRST : (int)($best['p'] ?? XERIC_PLAYER_FIRST));
+        xeric_memory_add($db, $handle, $whoName . ' said "' . $best['quote'] . '" and did.',
+            'construct', ['expect' => $key, 'kept' => $how] + ($of !== '' ? ['of' => $of] : []), $epoch);
+        $db->commit();
+    } catch (Throwable $ex) {
+        if ($db->inTransaction()) $db->rollBack();
+        throw $ex;
+    }
+    $note('expectations: ' . $whoName . ' kept ' . $best['what'] . ' with ' . $name);
+    // A promise kept is the repair path a grudge has: it thaws.
+    xeric_grudge_thaw($t, $db, $handle, $of, $of !== '' ? XERIC_PLAYER_FIRST : (int)($best['p'] ?? XERIC_PLAYER_FIRST), $now);
+    return $key;
+}
+
+/**
+ * Who is where, for the keep: the whole cast against the deaths, at $now.
+ * Once per tick (xeric_constructs_tick); the count is for the test that says so.
+ */
+function xeric_constructs_presence(array $t, array $now, array $gone): array
+{
+    xeric_constructs_presence_reads(1);
+    return xeric_world_who_is_where($t, $now, array_keys($gone));
+}
+
+/** How many times presence has been resolved in this process. A seam for the suite; +$n to count. */
+function xeric_constructs_presence_reads(int $n = 0): int
+{
+    static $reads = 0;
+    return $reads += $n;
+}
+
+/**
+ * The bodies, for the keep: where the current player stands and since when
+ * (the ritual pass's one body), and — under `by` — every person at the
+ * centre's own, keyed by player id, so a promise is kept by the body of the
+ * person who made it rather than whoever's request ran the tick.
+ */
+function xeric_constructs_body(array $t, PDO $db): array
+{
+    // Read lazily: travel.php sits above this file in the require graph (it
+    // pulls the sweeps, which pull chat, which pulls this).
+    require_once __DIR__ . '/travel.php';
+    $by = [];
+    foreach (array_keys(xeric_players($db, $t)) as $id) {
+        $by[(int)$id] = ['where' => xeric_player_where($t, $db, (int)$id), 'since' => xeric_player_since($db, (int)$id)];
+    }
+    return ['where' => xeric_player_where($t, $db), 'since' => xeric_player_since($db), 'by' => $by];
+}
+
+/**
+ * The 'there' half: is whoever promised this listener something standing in
+ * the listener's room right now? Read off position and the week, no model.
+ *
+ * A person at the centre's promise is kept by THEIR OWN body (`player.where`,
+ * `player.where.p<n>` — a body each since M4), and only if it ARRIVED after
+ * the promise was formed (`player.where_since[.p<n>]`): a promise made in
+ * person is otherwise kept by the act of making it. A townsperson's promise is kept when
+ * their own week seats them where the listener is. A listener at no place, a
+ * position that names no place, nothing to keep: nothing happens.
+ *
+ * $open, $where and $body are what the tick already read (the open rows, the
+ * town's presence, ['where' => …, 'since' => …]); a caller without them gets
+ * them read here, the same reads.
+ *
+ * @return string[] the arc keys kept
+ */
+function xeric_expect_keep_present(array $t, PDO $db, string $handle, array $now, ?callable $onNote = null,
+                                   ?array $open = null, ?array $where = null, ?array $body = null): array
+{
+    $open ??= array_filter(xeric_expects_for($db, $handle), fn($e) => $e['state'] === 'open');
+    if ($open === []) return [];
+
+    $where ??= xeric_constructs_presence($t, $now, xeric_deaths($db));
+    $here  = $where[$handle]['where'] ?? null;
+    if ($here === null || $here === '') return [];
+
+    $kept = [];
+    // THE BODY OF WHOEVER PROMISED. A promise from a person at the centre names
+    // them in `p` (absent: the first); it is kept by THEIR body arriving, read
+    // off their own position — never the position of whoever's request ran
+    // this tick, which in a world with company is somebody else's.
+    $body ??= xeric_constructs_body($t, $db);
+    $owers = [];
+    foreach ($open as $e) {
+        if (trim((string)($e['of'] ?? '')) === '') $owers[max(XERIC_PLAYER_FIRST, (int)($e['p'] ?? XERIC_PLAYER_FIRST))] = true;
+    }
+    ksort($owers);
+    foreach (array_keys($owers) as $pid) {
+        $b = $body['by'][$pid] ?? ($pid === XERIC_PLAYER_FIRST && !isset($body['by'])
+            ? ['where' => $body['where'] ?? null, 'since' => $body['since'] ?? 0]
+            : ['where' => xeric_player_where($t, $db, $pid), 'since' => xeric_player_since($db, $pid)]);
+        $since = (int)($b['since'] ?? 0);
+        $at    = $b['where'] ?? null;
+        if ($at === null || $at !== (string)$here || $since <= 0) continue;
+        // One arrival keeps one promise, the soonest made before it.
+        $k = xeric_expect_keep($t, $db, $handle, $now, $onNote, $pid, 'there', null, $since);
+        if ($k !== null) $kept[] = $k;
+    }
+    // The town's own promises, kept by the week.
+    $seen = [];
+    foreach ($open as $e) {
+        $of = trim((string)($e['of'] ?? ''));
+        if ($of === '' || isset($seen[$of])) continue;
+        $seen[$of] = true;
+        if (($where[$of]['where'] ?? null) !== $here) continue;
+        $k = xeric_expect_keep($t, $db, $handle, $now, $onNote, XERIC_PLAYER_FIRST, 'there', $of);
+        if ($k !== null) $kept[] = $k;
+    }
+    return $kept;
 }
 
 // ---------------------------------------------------------------------------
@@ -1294,4 +1604,937 @@ function xeric_gossip_why(array $t, array $item): string
     if ($path !== []) $s .= '; ' . implode('; ', $path);
     return $s . '. What travels is the hour\'s own commons words — "' . (string)($item['line'] ?? '')
         . '" — never what anybody felt.';
+}
+
+// ---------------------------------------------------------------------------
+// THE SIBLINGS, by fuse length
+// ---------------------------------------------------------------------------
+//
+// The roadmap's reusable shape, six more times: trigger → a small arc with
+// epochs → COARSE rendered state (never a timer) → a licensed line → residue
+// that becomes an ordinary memory. Each has a name `forge.armed` can carry
+// and an inspector line (xeric_constructs_why). Sorted by how long the fuse is:
+//
+//   anticipation  a plan the player made          fuse: until the day     licence: the day before
+//   news          an hour they were in, untold    fuse: 24–72 hours       licence: a text-first
+//   worry         no word for longer than usual   fuse: their usual gap   licence: a text-first
+//   grudge        a miss or a breach unrepaired   fuse: the repair window licence: none, it renders
+//   ritual        three visits, same place/hour   fuse: the missed hour   licence: a line when missed
+//   milestone     a count crossed                 fuse: a few days        licence: a line, once
+//
+// Every row is an arc on the character who holds it, so rewind's arc diff
+// un-happens a sibling with everything else, and the dead are skipped by the
+// tick like they are for every other fuse. Everything here is code and the
+// week: no model is asked anything.
+//
+// News, worry, ritual and milestone read the thread and the body, which
+// belong to the first person at the centre (one body, and messages carry no
+// player id yet), so they point at player one. Anticipation and grudge carry
+// the `p` of the promise they came from.
+
+/** How long news stays worth a text, and when it stops being news, world seconds. */
+const XERIC_NEWS_LICENCE = 24 * 3600;
+const XERIC_NEWS_STALE   = 72 * 3600;
+
+/** Worry: the gaps a usual gap is measured from, the floor on it, and when worry goes sore. */
+const XERIC_WORRY_GAPS     = 3;
+const XERIC_WORRY_SESSION  = 3 * 3600;      // a gap shorter than this is the same conversation
+const XERIC_WORRY_FLOOR    = 24 * 3600;
+const XERIC_WORRY_SORE     = 4;             // × the usual gap
+
+/** A grudge is cold, then cool; thawing settles. */
+const XERIC_GRUDGE_COOL   = 14 * 24 * 3600;
+const XERIC_GRUDGE_SETTLE = 7 * 24 * 3600;
+
+/** Ritual: visits, the window they fall in, and the grace past the hour before a miss. */
+const XERIC_RITUAL_VISITS = 3;
+const XERIC_RITUAL_WINDOW = 14 * 24 * 3600;
+const XERIC_RITUAL_GRACE  = 2 * 3600;
+
+/** Milestone: the counts worth noticing, a month of knowing, and how long it stays on the mind. */
+const XERIC_MILESTONE_COUNTS = [10 => 'tenth', 25 => 'twenty-fifth', 50 => 'fiftieth', 100 => 'hundredth'];
+const XERIC_MILESTONE_MONTH  = 30 * 24 * 3600;
+const XERIC_MILESTONE_FADE   = 3 * 24 * 3600;
+
+/**
+ * Is this sibling armed? By its own name in `forge.armed` (singular or plural)
+ * or by the motivation presets' existing systems, the way debts arm with
+ * `favors` and confidences with `private_history`. A world with no systems
+ * record predates arming and gets it, the rule every construct here keeps.
+ */
+function xeric_sibling_armed(array $t, string $name): bool
+{
+    $armed = $t['forge']['armed'] ?? null;
+    if (!is_array($armed)) return true;
+    $armed = array_map('strval', $armed);
+    $by = [
+        'anticipation' => ['anticipation', 'expectations', 'visits'],
+        'news'         => ['news', 'gentle_proactive_contact', 'remembering'],
+        'worry'        => ['worry', 'gentle_proactive_contact'],
+        'grudge'       => ['grudge', 'grudges', 'expectations', 'people_who_remember', 'private_history'],
+        'ritual'       => ['ritual', 'rituals', 'daily_rhythms', 'faith'],
+        'milestone'    => ['milestone', 'milestones', 'arcs', 'remembering'],
+    ][$name] ?? [$name];
+    return array_intersect($by, $armed) !== [];
+}
+
+/** A moment in the world's own timezone. */
+function xeric_sibling_local(array $t, int $epoch): DateTimeImmutable
+{
+    try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); }
+    catch (Throwable $e) { $tz = new DateTimeZone('UTC'); }
+    return (new DateTimeImmutable('@' . $epoch))->setTimezone($tz);
+}
+
+/** Local midnight of the day $epoch falls on. */
+function xeric_sibling_midnight(array $t, int $epoch): int
+{
+    return xeric_sibling_local($t, $epoch)->setTime(0, 0)->getTimestamp();
+}
+
+/** One sibling row, parsed, or null. */
+function xeric_sibling_get(PDO $db, string $handle, string $key): ?array
+{
+    $raw = xeric_arc_get($db, $handle, $key);
+    $row = $raw === null ? null : json_decode($raw, true);
+    return is_array($row) ? $row : null;
+}
+
+/** Write one sibling row. */
+function xeric_sibling_put(PDO $db, string $handle, string $key, array $row): void
+{
+    unset($row['key']);
+    xeric_arc_set($db, $handle, $key, json_encode($row, JSON_UNESCAPED_UNICODE));
+}
+
+/** Every row this person holds under a prefix, keyed. */
+function xeric_sibling_rows(PDO $db, string $handle, string $prefix): array
+{
+    $out = [];
+    foreach (xeric_arcs_prefixed($db, $handle, $prefix) as $k => $v) {
+        $row = json_decode((string)$v, true);
+        if (!is_array($row) || !isset($row['state'])) continue;
+        $row['key'] = (string)$k;
+        $out[(string)$k] = $row;
+    }
+    return $out;
+}
+
+/** The person at the centre, by name. */
+function xeric_sibling_user(array $t, PDO $db, int $player = XERIC_PLAYER_FIRST): string
+{
+    if ($player > XERIC_PLAYER_FIRST) return xeric_player_name($db, $player, $t);
+    return trim((string)($t['user']['name'] ?? '')) ?: 'they';
+}
+
+/**
+ * The thread with the person at the centre, as world epochs: every line with
+ * its role, oldest first. Lines with no world time are not on the calendar
+ * and are skipped. The one raw SELECT, for the reason the gossip scan gives.
+ */
+function xeric_sibling_thread(PDO $db, string $handle): array
+{
+    $conv = xeric_conversation_find($db, $handle, 'chat');
+    if ($conv === null) return [];
+    $st = $db->prepare('SELECT role, world_epoch FROM messages WHERE conversation_id = ? AND world_epoch IS NOT NULL ORDER BY id');
+    $st->execute([(int)$conv['id']]);
+    $out = [];
+    foreach ($st->fetchAll() as $r) $out[] = ['role' => (string)$r['role'], 'at' => (int)$r['world_epoch']];
+    return $out;
+}
+
+/** A thread in which BOTH of them have said something — the dream rung's test for knowing somebody. */
+function xeric_sibling_knows(array $thread): bool
+{
+    $u = $c = false;
+    foreach ($thread as $m) {
+        if ($m['role'] === 'user') $u = true;
+        elseif ($m['role'] === 'character') $c = true;
+    }
+    return $u && $c;
+}
+
+// -- anticipation ------------------------------------------------------------
+
+/**
+ * She looks forward to it. Formed beside the expectation, keyed to it, and
+ * resolved by its fate: kept is "it happened", missed is "she had been looking
+ * forward to it". Epochs are DAYS — ahead, the eve, the day — so the line
+ * changes three times at most and never per turn.
+ */
+function xeric_anticipate_form(array $t, PDO $db, string $handle, string $expectKey, array $now): ?string
+{
+    $e = xeric_sibling_get($db, $handle, $expectKey);
+    if ($e === null || ($e['state'] ?? '') !== 'open') return null;
+    $key = 'anticipate.' . $expectKey;
+    if (xeric_sibling_get($db, $handle, $key) !== null) return null;
+    xeric_sibling_put($db, $handle, $key, [
+        'expect' => $expectKey, 'what' => (string)$e['what'], 'due' => (int)$e['due'],
+        'formed' => (int)($now['epoch'] ?? 0), 'state' => 'ahead',
+    ] + (isset($e['p']) ? ['p' => (int)$e['p']] : []));
+    return $key;
+}
+
+/** One step of every anticipation this person holds. @return int transitions */
+function xeric_anticipate_step(array $t, PDO $db, string $handle, int $epoch): int
+{
+    $n = 0;
+    $name = xeric_world_name($t, $handle);
+    foreach (xeric_sibling_rows($db, $handle, 'anticipate.') as $key => $a) {
+        if (!in_array($a['state'], ['ahead', 'eve', 'today'], true)) continue;
+        $e = xeric_sibling_get($db, $handle, (string)$a['expect']);
+        $fate = (string)($e['state'] ?? 'released');
+        $user = xeric_sibling_user($t, $db, (int)($a['p'] ?? XERIC_PLAYER_FIRST));
+        if ($fate !== 'open') {
+            // The residue, either way — for a plan she had a day ahead to look
+            // forward to (one that reached the eve with a licence). A plan made
+            // on the eve is only the expectation, whose own memory is enough.
+            if (!isset($a['licence'])) {
+                $a['state'] = $fate === 'kept' ? 'happened' : (in_array($fate, ['missed', 'repaired', 'hardened'], true) ? 'let_down' : 'gone');
+                xeric_sibling_put($db, $handle, $key, $a);
+                $n++;
+                continue;
+            }
+            if ($fate === 'kept') {
+                $a['state'] = 'happened';
+                xeric_memory_add($db, $handle, $name . ' had been looking forward to ' . $a['what']
+                    . ' with ' . $user . ', and it happened.', 'construct', ['anticipate' => $key], $epoch);
+            } elseif (in_array($fate, ['missed', 'repaired', 'hardened'], true)) {
+                $a['state'] = 'let_down';
+                xeric_memory_add($db, $handle, $name . ' had been looking forward to ' . $a['what']
+                    . ' with ' . $user . '.', 'construct', ['anticipate' => $key], $epoch);
+            } else {
+                $a['state'] = 'gone';
+            }
+            if (($a['licence'] ?? '') === 'pending') $a['licence'] = 'lapsed';
+            xeric_sibling_put($db, $handle, $key, $a);
+            $n++;
+            continue;
+        }
+        $day = xeric_sibling_midnight($t, (int)$a['due']);
+        $eve = xeric_sibling_local($t, $day)->modify('-1 day')->getTimestamp();
+        $want = $epoch >= $day ? 'today' : ($epoch >= $eve ? 'eve' : 'ahead');
+        if ($want === $a['state']) continue;
+        // The licence: the day before, once, and only for a plan made before
+        // that day began — a promise made on the eve needs no reminder of itself.
+        if ($want === 'eve' && (int)$a['formed'] < $eve) $a['licence'] = 'pending';
+        if ($want === 'today' && ($a['licence'] ?? '') === 'pending') $a['licence'] = 'lapsed';
+        $a['state'] = $want;
+        xeric_sibling_put($db, $handle, $key, $a);
+        $n++;
+    }
+    return $n;
+}
+
+// -- news --------------------------------------------------------------------
+
+/** The hours that are not news: the spine, a dream, a construct's own record. */
+function xeric_news_unfit(PDO $db, array $ev): bool
+{
+    if (!empty($ev['on_spine'])) return true;
+    $why = json_decode((string)(xeric_world_state_get($db, 'why:event:' . (int)$ev['id']) ?? ''), true);
+    return is_array($why) && in_array((string)($why['kind'] ?? ''), ['dream', 'missed_promise'], true);
+}
+
+/** One step of this person's news. @return int transitions */
+function xeric_news_step(array $t, PDO $db, string $handle, int $epoch, array $thread): int
+{
+    if (!xeric_sibling_knows($thread)) return 0;      // a stranger has nothing to tell you
+    $last = (int)end($thread)['at'];
+    $row  = xeric_sibling_get($db, $handle, 'news');
+    $name = xeric_world_name($t, $handle);
+    $user = xeric_sibling_user($t, $db);
+
+    if ($row !== null && $row['state'] === 'fresh') {
+        $told = $last > (int)$row['at']
+             || xeric_world_state_get($db, 'proactive:event:' . (int)$row['event']) === $handle;
+        if ($told) {
+            // The conversation that told it is its own record (the harvest
+            // reads it); a memory here would only crowd the window.
+            $row['state'] = 'told'; unset($row['licence']);
+            xeric_sibling_put($db, $handle, 'news', $row);
+            return 1;
+        }
+        if ($epoch > (int)$row['at'] + XERIC_NEWS_STALE) {
+            $row['state'] = 'stale'; unset($row['licence']);
+            xeric_sibling_put($db, $handle, 'news', $row);
+            return 1;
+        }
+        if ($epoch > (int)$row['at'] + XERIC_NEWS_LICENCE && !isset($row['licence'])) {
+            $row['licence'] = 'pending';
+            xeric_sibling_put($db, $handle, 'news', $row);
+            return 1;
+        }
+        return 0;
+    }
+
+    // Something new to tell: the newest hour they were in, since the thread
+    // last moved, with somebody else in it, still young enough to be news.
+    foreach (xeric_events_recent($db, 12) as $ev) {
+        $at = (int)$ev['world_epoch'];
+        if ($at <= $last || $at > $epoch || $epoch - $at > XERIC_NEWS_STALE) continue;
+        $who = array_map('strval', (array)$ev['participants']);
+        if (!in_array($handle, $who, true) || count($who) < 2) continue;
+        if ($row !== null && (int)$row['event'] === (int)$ev['id']) return 0;
+        if (xeric_news_unfit($db, $ev)) continue;
+        if (xeric_world_state_get($db, 'proactive:event:' . (int)$ev['id']) === $handle) continue;
+        xeric_sibling_put($db, $handle, 'news', [
+            'event' => (int)$ev['id'], 'title' => xeric_gossip_line((string)$ev['title']),
+            'at' => $at, 'state' => 'fresh',
+        ]);
+        return 1;
+    }
+    return 0;
+}
+
+// -- worry -------------------------------------------------------------------
+
+/**
+ * The usual gap between the person at the centre's visits to this thread:
+ * the median of the gaps between their lines, counting only gaps long enough
+ * to be a new conversation. Null until there are enough to call usual.
+ */
+function xeric_worry_usual(array $thread): ?int
+{
+    $at = [];
+    foreach ($thread as $m) if ($m['role'] === 'user') $at[] = (int)$m['at'];
+    $gaps = [];
+    for ($i = 1; $i < count($at); $i++) {
+        $g = $at[$i] - $at[$i - 1];
+        if ($g >= XERIC_WORRY_SESSION) $gaps[] = $g;
+    }
+    if (count($gaps) < XERIC_WORRY_GAPS) return null;
+    sort($gaps);
+    return $gaps[intdiv(count($gaps), 2)];
+}
+
+/** One step of this person's worry. @return int transitions */
+function xeric_worry_step(array $t, PDO $db, string $handle, int $epoch, array $thread): int
+{
+    $usual = xeric_worry_usual($thread);
+    $lastU = 0;
+    foreach ($thread as $m) if ($m['role'] === 'user') $lastU = (int)$m['at'];
+    $row  = xeric_sibling_get($db, $handle, 'worry');
+    $name = xeric_world_name($t, $handle);
+    $user = xeric_sibling_user($t, $db);
+
+    if ($row !== null && in_array($row['state'], ['worried', 'sore'], true)) {
+        if ($lastU > (int)$row['since']) {
+            // Relief, which is its own residue: you came back.
+            $was = $row['state'];
+            $row['state'] = 'relieved'; $row['back'] = $lastU; unset($row['licence']);
+            xeric_memory_add($db, $handle, $was === 'sore'
+                ? $user . ' got back in touch with ' . $name . ' after going quiet for a long while.'
+                : $name . ' had started to wonder about ' . $user . ', and then heard from them.',
+                'construct', ['worry' => $was], $epoch);
+            xeric_sibling_put($db, $handle, 'worry', $row);
+            return 1;
+        }
+        if ($row['state'] === 'worried' && $epoch - (int)$row['since'] > XERIC_WORRY_SORE * (int)$row['usual']) {
+            // The grudge seed: not a grudge, the thing a grudge could grow from.
+            $row['state'] = 'sore'; unset($row['licence']);
+            xeric_memory_add($db, $handle, $user . ' went quiet on ' . $name . ' for a long while and never said why.',
+                'construct', ['worry' => 'sore'], $epoch);
+            xeric_sibling_put($db, $handle, 'worry', $row);
+            return 1;
+        }
+        return 0;
+    }
+    if ($usual === null || $lastU === 0) return 0;
+    if ($row !== null && (int)($row['since'] ?? 0) >= $lastU) return 0;   // this silence was already worried over
+    $fuse = max(XERIC_WORRY_FLOOR, 2 * $usual);
+    if ($epoch - $lastU <= $fuse) return 0;
+    xeric_sibling_put($db, $handle, 'worry', [
+        'state' => 'worried', 'since' => $lastU, 'usual' => max(XERIC_WORRY_FLOOR / 2, $usual),
+        'at' => $epoch, 'licence' => 'pending',
+    ]);
+    return 1;
+}
+
+// -- grudge ------------------------------------------------------------------
+
+/**
+ * A miss or a breach that was never repaired, hardened into a temperature.
+ * $of '' is the person at the centre (player $player); a handle is somebody
+ * in the town. One grudge per source row.
+ */
+function xeric_grudge_form(array $t, PDO $db, string $handle, string $of, int $player, string $what,
+                           string $from, array $now): ?string
+{
+    foreach (xeric_sibling_rows($db, $handle, 'grudge.') as $g) {
+        if ((string)($g['from'] ?? '') === $from) return null;
+    }
+    $key = 'grudge.' . (1 + count(xeric_sibling_rows($db, $handle, 'grudge.')));
+    xeric_sibling_put($db, $handle, $key, [
+        'of' => $of, 'what' => mb_substr($what, 0, 120), 'from' => $from,
+        'at' => (int)($now['epoch'] ?? 0), 'state' => 'cold',
+    ] + ($of === '' && $player > XERIC_PLAYER_FIRST ? ['p' => $player] : []));
+    return $key;
+}
+
+/**
+ * The repair path: an explanation that came too late for the window, or a
+ * promise kept since. Cold and cool both thaw; thawing settles on its own.
+ */
+function xeric_grudge_thaw(array $t, PDO $db, string $handle, string $of, int $player, array $now): int
+{
+    $n = 0;
+    foreach (xeric_sibling_rows($db, $handle, 'grudge.') as $key => $g) {
+        if (!in_array($g['state'], ['cold', 'cool'], true)) continue;
+        if ((string)($g['of'] ?? '') !== $of) continue;
+        if ($of === '' && (int)($g['p'] ?? XERIC_PLAYER_FIRST) !== $player) continue;
+        $g['state'] = 'thawing'; $g['thaw_at'] = (int)($now['epoch'] ?? 0);
+        xeric_sibling_put($db, $handle, $key, $g);
+        $n++;
+    }
+    return $n;
+}
+
+/** One step of every grudge this person holds, and the breaches that become one. @return int transitions */
+function xeric_grudge_step(array $t, PDO $db, string $handle, int $epoch, array $now): int
+{
+    $n = 0;
+    // A confidence the person at the centre let out, never owned up to inside
+    // the window, hardens on the teller.
+    require_once __DIR__ . '/confide.php';
+    foreach (xeric_confide_told_player($db, $handle) as $c) {
+        if ((string)$c['state'] !== 'broken' || $epoch <= (int)($c['out_at'] ?? 0) + XERIC_CONFIDE_REPAIR) continue;
+        $c['state'] = 'hardened';
+        xeric_sibling_put($db, $handle, (string)$c['key'], $c);
+        $hearer = xeric_world_name($t, (string)($c['heard_by'] ?? '')) ?: 'somebody';
+        xeric_memory_add($db, $handle, xeric_sibling_user($t, $db, (int)($c['p'] ?? XERIC_PLAYER_FIRST))
+            . ' never said a word about telling ' . $hearer . ' what ' . xeric_world_name($t, $handle) . ' had asked them to keep.',
+            'construct', ['confided' => (string)$c['key']], $epoch);
+        if (xeric_sibling_armed($t, 'grudge')) {
+            xeric_grudge_form($t, $db, $handle, '', (int)($c['p'] ?? XERIC_PLAYER_FIRST),
+                'telling ' . $hearer . ' what you asked them to keep', (string)$c['key'], $now);
+        }
+        $n++;
+    }
+    foreach (xeric_sibling_rows($db, $handle, 'grudge.') as $key => $g) {
+        if ($g['state'] === 'cold' && $epoch > (int)$g['at'] + XERIC_GRUDGE_COOL) {
+            $g['state'] = 'cool';
+        } elseif ($g['state'] === 'thawing' && $epoch > (int)($g['thaw_at'] ?? 0) + XERIC_GRUDGE_SETTLE) {
+            $g['state'] = 'settled';
+            $who = (string)($g['of'] ?? '') === '' ? xeric_sibling_user($t, $db, (int)($g['p'] ?? XERIC_PLAYER_FIRST))
+                 : (xeric_world_name($t, (string)$g['of']) ?: (string)$g['of']);
+            xeric_memory_add($db, $handle, xeric_world_name($t, $handle) . ' let it go with ' . $who
+                . ' over ' . $g['what'] . '.', 'construct', ['grudge' => $key], $epoch);
+        } else {
+            continue;
+        }
+        xeric_sibling_put($db, $handle, $key, $g);
+        $n++;
+    }
+    return $n;
+}
+
+// -- ritual ------------------------------------------------------------------
+
+/**
+ * Note where the body arrived, once per arrival. A world arc rather than a
+ * table, capped, so rewind's arc diff un-happens a visit with the rest of the
+ * undone hours. $logKey is the player's own log ('ritual.visits[.p<n>]').
+ * @return bool whether this arrival was new
+ */
+function xeric_ritual_visit(PDO $db, string $place, int $since, string $logKey = 'ritual.visits'): bool
+{
+    if ($place === '' || $since <= 0) return false;
+    $log = json_decode((string)(xeric_arc_get($db, xeric_arc_world(), $logKey) ?? '[]'), true);
+    if (!is_array($log)) $log = [];
+    foreach ($log as $v) if ((string)$v[0] === $place && (int)$v[1] === $since) return false;
+    $log[] = [$place, $since];
+    $log = array_slice($log, -60);
+    xeric_arc_set($db, xeric_arc_world(), $logKey, json_encode($log, JSON_UNESCAPED_UNICODE));
+    return true;
+}
+
+/** Morning, afternoon or evening — the coarsest true thing about an hour. */
+function xeric_ritual_part(int $hour): string
+{
+    return $hour < 12 ? 'mornings' : ($hour < 17 ? 'afternoons' : 'evenings');
+}
+
+/**
+ * Whose ritual row, whose visit log: the first player keeps the bare keys
+ * every world on disk already has, player n gets `.p<n>` (the suffix rule).
+ */
+function xeric_ritual_key(string $place, int $player = XERIC_PLAYER_FIRST): string
+{
+    return 'ritual.' . $place . ($player > XERIC_PLAYER_FIRST ? '.p' . $player : '');
+}
+
+/**
+ * The ritual pass, world-wide: log each body's arrival; a third arrival at the
+ * same place in the same hour on a different day forms a ritual on whoever
+ * the week put there for at least two of them; and a day whose hour passed
+ * with no arrival is noticed by whoever was there to notice.
+ *
+ * A BODY EACH. Every person at the centre's own position is read (`by`),
+ * never just the body of whoever's request ran this tick — in a world with
+ * company that was somebody else's, so a guest's requests running two of the
+ * owner's three mornings logged the guest standing elsewhere and the owner's
+ * ritual never formed. Each player keeps their own visit log and their own
+ * rows; a world of one reads, writes and keys exactly what it always did.
+ * @return int transitions
+ */
+function xeric_ritual_step(array $t, PDO $db, int $epoch, array $gone, ?array $body): int
+{
+    $n = 0;
+    $body ??= xeric_constructs_body($t, $db);
+    $bodies = (array)($body['by'] ?? []);
+    if ($bodies === []) {
+        $bodies = [XERIC_PLAYER_FIRST => ['where' => $body['where'] ?? null, 'since' => $body['since'] ?? 0]];
+    }
+    ksort($bodies);
+    foreach ($bodies as $pid => $b) {
+        $n += xeric_ritual_arrive($t, $db, $epoch, $gone, (int)$pid, (string)($b['where'] ?? ''), (int)($b['since'] ?? 0));
+    }
+
+    // The miss: a day after the last one whose hour, plus grace, has passed
+    // with no arrival — noticed only by a holder the week had there then.
+    // Each row is one player's (`p`, absent: the first), and so is its miss.
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || isset($gone[$h])) continue;
+        foreach (xeric_sibling_rows($db, $h, 'ritual.') as $key => $r) {
+            if ($r['state'] !== 'kept') continue;
+            $local = xeric_sibling_local($t, $epoch);
+            $dueAt = $local->setTime((int)$r['hour'], 0)->getTimestamp();
+            $day   = $local->format('Y-m-d');
+            if ($day <= (string)$r['last'] || $epoch < $dueAt + XERIC_RITUAL_GRACE) continue;
+            if ((string)($r['checked'] ?? '') === $day) continue;
+            $r['checked'] = $day;
+            $there = xeric_world_who_is_where($t, xeric_world_now($t, $dueAt), array_keys($gone))[$h]['where'] ?? null;
+            if ($there === (string)$r['place']) {
+                $r['state'] = 'missed'; $r['missed'] = $dueAt; $r['licence'] = 'pending';
+                $user = xeric_sibling_user($t, $db, (int)($r['p'] ?? XERIC_PLAYER_FIRST));
+                xeric_memory_add($db, $h, $user . ' did not come into '
+                    . xeric_world_place_name($t, (string)$r['place']) . ' on ' . $local->format('l')
+                    . ', the way ' . $user . ' usually does.', 'construct', ['ritual' => $key], $dueAt);
+                $n++;
+            }
+            xeric_sibling_put($db, $h, $key, $r);
+        }
+    }
+    return $n;
+}
+
+/** One player's arrival, for the ritual pass: logged, kept, formed. @return int transitions */
+function xeric_ritual_arrive(array $t, PDO $db, int $epoch, array $gone, int $pid, string $where, int $since): int
+{
+    $n = 0;
+    $logKey = 'ritual.visits' . ($pid > XERIC_PLAYER_FIRST ? '.p' . $pid : '');
+    $log   = json_decode((string)(xeric_arc_get($db, xeric_arc_world(), $logKey) ?? '[]'), true) ?: [];
+    if ($where !== '' && $since > 0 && $since <= $epoch && xeric_ritual_visit($db, $where, $since, $logKey)) {
+        $key   = xeric_ritual_key($where, $pid);
+        $log[] = [$where, $since];
+        $hour  = (int)xeric_sibling_local($t, $since)->format('G');
+        $days  = [];
+        foreach ($log as $v) {
+            if ((string)$v[0] !== $where || $since - (int)$v[1] > XERIC_RITUAL_WINDOW) continue;
+            if (abs((int)xeric_sibling_local($t, (int)$v[1])->format('G') - $hour) > 1) continue;
+            $days[xeric_sibling_local($t, (int)$v[1])->format('Y-m-d')] = (int)$v[1];
+        }
+        $today = xeric_sibling_local($t, $since)->format('Y-m-d');
+        // Every holder of an existing ritual here: kept again.
+        foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+            $h = (string)($c['handle'] ?? '');
+            $r = $h === '' ? null : xeric_sibling_get($db, $h, $key);
+            if ($r === null || abs((int)$r['hour'] - $hour) > 1) continue;
+            $r['state'] = 'kept'; $r['last'] = $today; unset($r['licence'], $r['missed']);
+            xeric_sibling_put($db, $h, $key, $r);
+            $n++;
+        }
+        if (count($days) >= XERIC_RITUAL_VISITS) {
+            $seen = [];
+            foreach ($days as $at) {
+                foreach (xeric_world_who_is_where($t, xeric_world_now($t, $at), array_keys($gone)) as $h => $p) {
+                    if (($p['where'] ?? null) === $where) $seen[(string)$h] = ($seen[(string)$h] ?? 0) + 1;
+                }
+            }
+            foreach ($seen as $h => $count) {
+                if ($count < 2 || xeric_world_character($t, $h) === null) continue;
+                if (xeric_sibling_get($db, $h, $key) !== null) continue;
+                xeric_sibling_put($db, $h, $key, [
+                    'place' => $where, 'hour' => $hour, 'state' => 'kept', 'last' => $today, 'formed' => $since,
+                ] + ($pid > XERIC_PLAYER_FIRST ? ['p' => $pid] : []));
+                $n++;
+            }
+        }
+    }
+    return $n;
+}
+
+// -- milestone ---------------------------------------------------------------
+
+/** One step of this person's milestones. @return int transitions */
+function xeric_milestone_step(array $t, PDO $db, string $handle, int $epoch, array $thread): int
+{
+    $n = 0;
+    $name = xeric_world_name($t, $handle);
+    // On the mind for a few days, then simply history.
+    foreach (xeric_sibling_rows($db, $handle, 'milestone.') as $key => $m) {
+        if ($m['state'] !== 'due' || $epoch <= (int)$m['at'] + XERIC_MILESTONE_FADE) continue;
+        xeric_milestone_mark($t, $db, $handle, $key, $epoch);
+        $n++;
+    }
+    // A month of knowing the person at the centre.
+    if (xeric_sibling_knows($thread) && $epoch - (int)$thread[0]['at'] >= XERIC_MILESTONE_MONTH
+        && xeric_sibling_get($db, $handle, 'milestone.month') === null) {
+        xeric_sibling_put($db, $handle, 'milestone.month', [
+            'what' => 'a month since you and ' . xeric_sibling_user($t, $db) . ' first got talking',
+            'at' => $epoch, 'state' => 'due', 'licence' => 'pending',
+        ]);
+        $n++;
+    }
+    // A ledger crossing a round number — only ledgers this person may see.
+    $walls = xeric_viewer_walls($t, xeric_viewer($t, ['handle' => $handle]));
+    foreach ((array)($t['economies'] ?? []) as $eco) {
+        $k = (string)($eco['key'] ?? '');
+        if ($k === '' || xeric_hidden($walls, 'economies.' . $k)) continue;
+        $have = xeric_arc_int($db, $handle, 'economy.' . $k, 0);
+        $top  = null;
+        foreach (XERIC_MILESTONE_COUNTS as $count => $word) if ($have >= $count) $top = [$count, $word];
+        if ($top === null) continue;
+        $mk = 'milestone.' . $k . '.' . $top[0];
+        if (xeric_sibling_get($db, $handle, $mk) !== null) continue;
+        $label = trim((string)($eco['label'] ?? $k));
+        xeric_sibling_put($db, $handle, $mk, [
+            'what' => 'your ' . $top[1] . ' on ' . $label, 'at' => $epoch, 'state' => 'due', 'licence' => 'pending',
+        ]);
+        $n++;
+    }
+    return $n;
+}
+
+/** The line was said, or the days passed: noted once, and it becomes a memory. */
+function xeric_milestone_mark(array $t, PDO $db, string $handle, string $key, int $epoch): void
+{
+    $m = xeric_sibling_get($db, $handle, $key);
+    if ($m === null || $m['state'] !== 'due') return;
+    $m['state'] = 'marked'; unset($m['licence']);
+    xeric_sibling_put($db, $handle, $key, $m);
+    xeric_memory_add($db, $handle, xeric_world_name($t, $handle) . ' noticed it: '
+        . str_replace(['your ', 'you and '], ['their ', xeric_world_name($t, $handle) . ' and '], (string)$m['what']) . '.',
+        'construct', ['milestone' => $key], $epoch);
+}
+
+// -- the tick, the block, the licences, the inspector -------------------------
+
+/**
+ * Every sibling one step, for every living character. Called from the end of
+ * xeric_constructs_tick, after the fuses, so an anticipation reads the fate
+ * its expectation met this same tick. Idempotent: a second call at the same
+ * moment changes nothing.
+ *
+ * @return array<string,int> transitions per sibling
+ */
+function xeric_siblings_tick(array $t, PDO $db, array $now, array $gone, ?callable $onNote = null, ?array $body = null): array
+{
+    $note  = $onNote ?? static function (string $s): void {};
+    $epoch = (int)($now['epoch'] ?? 0);
+    $out   = ['anticipation' => 0, 'news' => 0, 'worry' => 0, 'grudge' => 0, 'ritual' => 0, 'milestone' => 0];
+    $on    = [];
+    foreach (array_keys($out) as $s) $on[$s] = xeric_sibling_armed($t, $s);
+
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || !empty($c['out']) || isset($gone[$h])) continue;
+        $thread = ($on['news'] || $on['worry'] || $on['milestone']) ? xeric_sibling_thread($db, $h) : [];
+        if ($on['anticipation']) $out['anticipation'] += xeric_anticipate_step($t, $db, $h, $epoch);
+        if ($on['news'] && $thread !== []) $out['news'] += xeric_news_step($t, $db, $h, $epoch, $thread);
+        if ($on['worry'] && $thread !== []) $out['worry'] += xeric_worry_step($t, $db, $h, $epoch, $thread);
+        $out['grudge'] += xeric_grudge_step($t, $db, $h, $epoch, $now);
+        if ($on['milestone']) $out['milestone'] += xeric_milestone_step($t, $db, $h, $epoch, $thread);
+    }
+    if ($on['ritual']) $out['ritual'] = xeric_ritual_step($t, $db, $epoch, $gone, $body);
+    foreach ($out as $s => $k) if ($k > 0) $note('siblings: ' . $s . ' moved ' . $k);
+    return $out;
+}
+
+/**
+ * ON YOUR MIND — the siblings in this person's own prompt. Reads stored
+ * state only and never the clock, so it is byte-stable between ticks and
+ * changes only when a state does. No digits, no hours, no countdowns.
+ */
+function xeric_siblings_block(array $t, PDO $db, string $handle, int $player = XERIC_PLAYER_FIRST): string
+{
+    $lines = [];
+    $user  = xeric_sibling_user($t, $db, $player);
+    $first = $player === XERIC_PLAYER_FIRST;
+
+    foreach (xeric_sibling_rows($db, $handle, 'anticipate.') as $a) {
+        if ((int)($a['p'] ?? XERIC_PLAYER_FIRST) !== $player) continue;
+        $day = xeric_sibling_local($t, (int)$a['due'])->format('l');
+        if ($a['state'] === 'ahead') $lines[] = '- You are looking forward to ' . $a['what'] . ' with ' . $user . ', ' . $day . '. You would not make a fuss about it.';
+        if ($a['state'] === 'eve')   $lines[] = '- Tomorrow is ' . $a['what'] . ' with ' . $user . ', and you are looking forward to it.';
+        if ($a['state'] === 'today') $lines[] = '- Today is ' . $a['what'] . ' with ' . $user . '. You have been looking forward to it.';
+    }
+    if ($first) {
+        $news = xeric_sibling_get($db, $handle, 'news');
+        // Only once it has waited a day: inside that, the aftermath rung is the
+        // one that texts about an hour, and the line would ride every prompt.
+        if ($news !== null && $news['state'] === 'fresh' && isset($news['licence'])) {
+            $lines[] = '- Something happened that ' . $user . ' has not heard from you yet: ' . $news['title'] . '. It is on your mind to mention.';
+        }
+        $w = xeric_sibling_get($db, $handle, 'worry');
+        if ($w !== null && $w['state'] === 'worried') $lines[] = '- You have not heard from ' . $user . ' in longer than usual. You would not call it worry.';
+        if ($w !== null && $w['state'] === 'sore')    $lines[] = '- ' . $user . ' went quiet on you for a long while. You noticed, and you have not decided what you think of it.';
+        foreach (xeric_sibling_rows($db, $handle, 'ritual.') as $r) {
+            $place = xeric_world_place_name($t, (string)$r['place']);
+            $ru    = isset($r['p']) ? xeric_sibling_user($t, $db, (int)$r['p']) : $user;   // whose ritual
+            if ($r['state'] === 'kept')   $lines[] = '- ' . $ru . ' comes into ' . $place . ' most ' . xeric_ritual_part((int)$r['hour']) . '. It is part of how your day goes.';
+            if ($r['state'] === 'missed') $lines[] = '- ' . $ru . ' did not come into ' . $place . ' ' . xeric_sibling_local($t, (int)$r['missed'])->format('l') . ', the way ' . $ru . ' usually does. You noticed.';
+        }
+        foreach (xeric_sibling_rows($db, $handle, 'milestone.') as $m) {
+            if ($m['state'] === 'due') $lines[] = '- It is ' . $m['what'] . '. You noticed, and you might say so once.';
+        }
+    }
+    foreach (xeric_sibling_rows($db, $handle, 'grudge.') as $g) {
+        $of = (string)($g['of'] ?? '');
+        if ($of === '' && (int)($g['p'] ?? XERIC_PLAYER_FIRST) !== $player) continue;
+        $who = $of === '' ? $user : (xeric_world_name($t, $of) ?: $of);
+        if ($g['state'] === 'cold')    $lines[] = '- You have not forgiven ' . $who . ' for ' . $g['what'] . '. You are cold with them, and you would deny it.';
+        if ($g['state'] === 'cool')    $lines[] = '- ' . $who . ' and ' . $g['what'] . ': it still sits with you, though less than it did.';
+        if ($g['state'] === 'thawing') $lines[] = '- Things with ' . $who . ' over ' . $g['what'] . ' are thawing. Not mended. Thawing.';
+    }
+    if ($lines === []) return '';
+    return "ON YOUR MIND\n" . implode("\n", $lines) . "\nYou never narrate any of this; it shows, if it shows, in what you say and what you leave out.";
+}
+
+/**
+ * What the siblings license right now: one text-first each, by fuse length.
+ * proactive.php reads this, decides whether anybody may actually text, and
+ * spends the one it used.
+ *
+ * @return array<int,array{handle:string,kind:string,key:string,hint:string}>
+ */
+function xeric_constructs_licences(array $t, PDO $db): array
+{
+    $gone = xeric_deaths($db);
+    $user = xeric_sibling_user($t, $db);
+    $out  = [];
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '' || !empty($c['out']) || isset($gone[$h])) continue;
+        foreach (xeric_sibling_rows($db, $h, 'anticipate.') as $k => $a) {
+            if (($a['licence'] ?? '') === 'pending' && (int)($a['p'] ?? XERIC_PLAYER_FIRST) === XERIC_PLAYER_FIRST) {
+                $out[] = ['handle' => $h, 'kind' => 'anticipation', 'key' => $k, 'rank' => 1,
+                          'hint' => 'Tomorrow is ' . $a['what'] . ' with ' . $user . '. You are looking forward to it; you might make sure it is still on, sideways.'];
+            }
+        }
+        $n = xeric_sibling_get($db, $h, 'news');
+        if ($n !== null && ($n['licence'] ?? '') === 'pending' && $n['state'] === 'fresh') {
+            $out[] = ['handle' => $h, 'kind' => 'news', 'key' => 'news', 'rank' => 2,
+                      'hint' => 'Something happened that ' . $user . ' has not heard from you: ' . $n['title'] . '. Your half of it, not a report.'];
+        }
+        $w = xeric_sibling_get($db, $h, 'worry');
+        if ($w !== null && ($w['licence'] ?? '') === 'pending' && $w['state'] === 'worried') {
+            $out[] = ['handle' => $h, 'kind' => 'worry', 'key' => 'worry', 'rank' => 3,
+                      'hint' => 'You have not heard from ' . $user . ' in longer than usual. You are not going to make a thing of it.'];
+        }
+        foreach (xeric_sibling_rows($db, $h, 'ritual.') as $k => $r) {
+            if (($r['licence'] ?? '') !== 'pending' || $r['state'] !== 'missed') continue;
+            $ru = isset($r['p']) ? xeric_sibling_user($t, $db, (int)$r['p']) : $user;
+            $out[] = ['handle' => $h, 'kind' => 'ritual', 'key' => $k, 'rank' => 4,
+                      'hint' => $ru . ' did not come into ' . xeric_world_place_name($t, (string)$r['place'])
+                              . ' the way ' . $ru . ' usually does. You noticed.'];
+        }
+        foreach (xeric_sibling_rows($db, $h, 'milestone.') as $k => $m) {
+            if (($m['licence'] ?? '') !== 'pending' || $m['state'] !== 'due') continue;
+            $out[] = ['handle' => $h, 'kind' => 'milestone', 'key' => $k, 'rank' => 5,
+                      'hint' => 'It is ' . $m['what'] . '. You noticed. Say so once, lightly, or not quite.'];
+        }
+    }
+    usort($out, fn($a, $b) => $a['rank'] <=> $b['rank']);
+    return $out;
+}
+
+/** The licence was used. A milestone said is a milestone marked. */
+function xeric_constructs_licence_spend(array $t, PDO $db, string $handle, string $key, int $epoch): void
+{
+    $row = xeric_sibling_get($db, $handle, $key);
+    if ($row === null) return;
+    if (str_starts_with($key, 'milestone.')) { xeric_milestone_mark($t, $db, $handle, $key, $epoch); return; }
+    $row['licence'] = 'spent';
+    if ($key === 'news') {
+        // A text about it IS telling it.
+        $row['state'] = 'told';
+        xeric_memory_add($db, $handle, xeric_world_name($t, $handle) . ' told ' . xeric_sibling_user($t, $db)
+            . ' about ' . lcfirst((string)$row['title']) . '.', 'construct', ['news' => (int)$row['event']], $epoch);
+    }
+    xeric_sibling_put($db, $handle, $key, $row);
+}
+
+/**
+ * The inspector's one line per construct this person holds: why she is the
+ * way she is with you, in words, with the row it came from — so a grudge
+ * explains itself instead of reading as the model being moody.
+ *
+ * @return string[]
+ */
+function xeric_constructs_why(array $t, PDO $db, string $handle): array
+{
+    $name = xeric_world_name($t, $handle);
+    $user = xeric_sibling_user($t, $db);
+    $out  = [];
+    foreach (xeric_sibling_rows($db, $handle, 'anticipate.') as $a) {
+        $out[] = 'anticipation (' . $a['state'] . '): ' . $name . ' is looking forward to ' . $a['what']
+               . ', from the promise in ' . $a['expect'] . '; licenses one text the day before.';
+    }
+    if ($n = xeric_sibling_get($db, $handle, 'news')) {
+        $out[] = 'news (' . $n['state'] . '): ' . $name . ' was in "' . $n['title'] . '" (event ' . (int)$n['event']
+               . ') and has not talked to ' . $user . ' since; licenses a text after a day, stale after three.';
+    }
+    if ($w = xeric_sibling_get($db, $handle, 'worry')) {
+        $out[] = 'worry (' . $w['state'] . '): no word from ' . $user . ' for longer than twice the usual gap ('
+               . (int)round((int)$w['usual'] / 3600) . 'h, the median between visits to the thread).';
+    }
+    foreach (xeric_sibling_rows($db, $handle, 'grudge.') as $g) {
+        $who = (string)($g['of'] ?? '') === '' ? $user : (xeric_world_name($t, (string)$g['of']) ?: (string)$g['of']);
+        $out[] = 'grudge (' . $g['state'] . '): ' . $name . ' is ' . ($g['state'] === 'cold' ? 'cold' : $g['state'])
+               . ' with ' . $who . ' over ' . $g['what'] . ' (' . $g['from'] . ', never repaired inside the window). '
+               . 'Thaws on an explanation or a promise kept.';
+    }
+    foreach (xeric_sibling_rows($db, $handle, 'ritual.') as $r) {
+        $ru = isset($r['p']) ? xeric_sibling_user($t, $db, (int)$r['p']) : $user;
+        $out[] = 'ritual (' . $r['state'] . '): ' . $ru . ' came into ' . xeric_world_place_name($t, (string)$r['place'])
+               . ' around ' . (int)$r['hour'] . ':00 on three different days; ' . $name . ' was there for it, and notices a miss.';
+    }
+    foreach (xeric_sibling_rows($db, $handle, 'milestone.') as $m) {
+        $out[] = 'milestone (' . $m['state'] . '): ' . $m['what'] . '; licenses one line, once.';
+    }
+    require_once __DIR__ . '/confide.php';
+    foreach (xeric_confide_told_player($db, $handle) as $c) {
+        $out[] = 'confidence (' . $c['state'] . '): ' . $name . ' told ' . xeric_sibling_user($t, $db, (int)($c['p'] ?? XERIC_PLAYER_FIRST))
+               . ' ' . $c['what'] . ' and asked them to keep it'
+               . (($c['not'] ?? []) !== [] ? ' from ' . xeric_join_list(array_map(fn($h) => xeric_world_name($t, (string)$h), (array)$c['not'])) : '')
+               . ((string)($c['heard_by'] ?? '') !== '' ? '; it reached ' . xeric_world_name($t, (string)$c['heard_by']) : '') . '.';
+    }
+    return $out;
+}
+
+// ---------------------------------------------------------------------------
+// CAST TO CAST — the town owing itself things, out of its own hours
+// ---------------------------------------------------------------------------
+
+/**
+ * The town's promises, out of the hours the sweep wrote, and the residue on
+ * the side of whoever made one. Called by the heart beside
+ * xeric_constructs_tick, which already keeps and misses these rows (the
+ * week seating both in a room keeps one; otherwise the fuse burns).
+ *
+ * A duet and a room already hand their lines to xeric_expect_from_scene. A
+ * sweep writes prose, so its quoted speech is read here: a quotation whose
+ * sentence names exactly one of the hour's people is that person's line, and
+ * everybody else in the hour is in the room for it. The same gates follow —
+ * a hedge is not a promise, no when is a sentiment, and a line the
+ * listener's walls remove forms nothing for them.
+ *
+ * AND WHAT THEY ASK EACH OTHER TO KEEP. The same quoted line, read the same
+ * way, is also where a confidence between two townspeople is said out loud —
+ * "between us, don't tell Harlan" — and xeric_confide_from_line forms it on
+ * the one it was said to, code-checked against the words. Only an hour of
+ * exactly two people: a thing said in front of a third is not a confidence to
+ * either of them. The gossip sweep can then break it, which until now it could
+ * only do to rows its own tests wrote.
+ *
+ * @return array{formed:int,residue:int,confided:int}
+ */
+function xeric_constructs_cast_tick(array $t, PDO $db, array $now, ?callable $onNote = null): array
+{
+    require_once __DIR__ . '/confide.php';
+    $out = ['formed' => 0, 'residue' => 0, 'confided' => 0];
+    $expect = xeric_expect_armed($t);
+    $confide = xeric_confide_armed($t);
+    if (!$expect && !$confide) return $out;
+    // THE FIRST TICK READS NOTHING. A watermark that starts at 0 on a world
+    // that already has months of hours replays all of them: every quoted
+    // "Thursday morning" in its history forms an expectation dated to a
+    // Thursday long gone, and the very next fuse tick fires the lot as one
+    // mass of misses — a town that suddenly remembers being let down by
+    // everybody at once. History lived before this reader existed was never
+    // owed to it. So a world with no watermark gets one at its newest event,
+    // and only hours lived after that are read.
+    $mark = xeric_arc_get($db, xeric_arc_world(), 'constructs.cast.seen');
+    if ($mark === null) {
+        $max = (int)$db->query('SELECT COALESCE(MAX(id), 0) FROM events')->fetchColumn();
+        xeric_arc_set($db, xeric_arc_world(), 'constructs.cast.seen', (string)$max);
+        $mark = (string)$max;
+    }
+    $seen = (int)$mark;
+    $st = $db->prepare('SELECT * FROM events WHERE id > ? ORDER BY id LIMIT 200');
+    $st->execute([$seen]);
+    $rows = $st->fetchAll();
+    $last = $seen;
+    foreach ($rows as $ev) {
+        $last = max($last, (int)$ev['id']);
+        $who = array_values(array_filter(array_map('strval', json_decode((string)($ev['participants'] ?? '[]'), true) ?: []),
+                                         fn($h) => xeric_world_character($t, $h) !== null));
+        if (count($who) < 2 || (int)($ev['on_spine'] ?? 0) === 1) continue;
+        if (xeric_news_unfit($db, ['id' => (int)$ev['id'], 'on_spine' => 0])) continue;
+        $lines = xeric_cast_lines($t, (string)($ev['prose'] ?? ''), $who);
+        if ($lines === []) continue;
+        if ($confide && count(array_unique($who)) === 2) {
+            foreach ($lines as $l) {
+                $listener = (string)(array_values(array_diff($who, [$l['handle']]))[0] ?? '');
+                // Through the listener's walls, like a promise: a line that carries
+                // what they are walled from forms nothing for them.
+                if ($listener === '' || xeric_gossip_wall_blocked($t, ['line' => $l['text']], $listener)) continue;
+                if (xeric_confide_from_line($t, $db, $l['handle'], $listener, $l['text'], xeric_world_now($t, (int)$ev['world_epoch'])) !== null) {
+                    $out['confided']++;
+                }
+            }
+        }
+        if (!$expect) continue;
+        foreach ($who as $h) $lines[] = ['handle' => $h, 'text' => ''];   // in the room, saying nothing more
+        // Formed at the hour it was said, but never with a due already behind
+        // the tick reading it: a backlog of hours read late (a long gap, a
+        // capped batch) must not hand the fuse a promise that is born missed.
+        $out['formed'] += count(xeric_expect_from_scene($t, $db, $lines, xeric_world_now($t, (int)$ev['world_epoch']), $onNote,
+                                                        (int)($now['epoch'] ?? 0)));
+    }
+    if ($last !== $seen) xeric_arc_set($db, xeric_arc_world(), 'constructs.cast.seen', (string)$last);
+    if (!$expect) return $out;
+
+    // A memory EACH: the one who was owed already keeps theirs (the miss and
+    // the keep write it); the one who promised keeps the other half.
+    foreach ((array)($t['cast']['characters'] ?? []) as $c) {
+        $h = (string)($c['handle'] ?? '');
+        if ($h === '') continue;
+        foreach (xeric_expects_for($db, $h) as $e) {
+            $of = trim((string)($e['of'] ?? ''));
+            if ($of === '' || !empty($e['residue']) || !in_array($e['state'], ['kept', 'missed'], true)) continue;
+            xeric_memory_add($db, $of, xeric_world_name($t, $of) . ' told ' . xeric_world_name($t, $h) . ' "' . $e['quote'] . '" and '
+                . ($e['state'] === 'kept' ? 'did.' : 'did not make it.'), 'construct',
+                ['expect' => $e['key'], 'to' => $h], (int)($e['kept_at'] ?? $e['due']));
+            $e['residue'] = 1;
+            $row = $e; unset($row['key']);
+            xeric_arc_set($db, $h, $e['key'], json_encode($row, JSON_UNESCAPED_UNICODE));
+            $out['residue']++;
+        }
+    }
+    return $out;
+}
+
+/**
+ * The quoted lines in a sweep's prose, attributed: [{handle, text}].
+ * A quotation is somebody's only when the rest of its sentence names exactly
+ * one of the hour's people. Anything less certain is nobody's line.
+ */
+function xeric_cast_lines(array $t, string $prose, array $who): array
+{
+    $out = [];
+    if (!preg_match_all('/[^.!?"]*"([^"]{4,240})"[^.!?"]*[.!?]?/u', $prose, $m, PREG_SET_ORDER)) return [];
+    foreach ($m as $hit) {
+        $around = str_replace('"' . $hit[1] . '"', ' ', $hit[0]);
+        $named = [];
+        foreach ($who as $h) {
+            $first = xeric_constructs_first_name(xeric_world_name($t, $h));
+            if ($first !== '' && preg_match('/(?<![\p{L}])' . preg_quote($first, '/') . '(?![\p{L}])/u', $around)) $named[] = $h;
+        }
+        if (count($named) === 1) $out[] = ['handle' => $named[0], 'text' => trim($hit[1])];
+    }
+    return $out;
 }
