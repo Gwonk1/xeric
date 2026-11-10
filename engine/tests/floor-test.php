@@ -248,6 +248,9 @@ ok('pass: bare',            xeric_floor_passed('(stays quiet)'));
 ok('pass: cased + period',  xeric_floor_passed('  (Stays Quiet). '));
 ok('pass: quoted',          xeric_floor_passed('"stays quiet"'));
 ok('pass: stage-wrapped',   xeric_floor_passed('*stays quiet*'));
+ok('pass: curly-quoted',    xeric_floor_passed('“(stays quiet)”') && xeric_floor_passed('‘stays quiet’'));
+ok('pass: trailing ellipsis', xeric_floor_passed('(stays quiet…)') && xeric_floor_passed('*stays quiet*…'));
+ok('curly speech is not a pass', !xeric_floor_passed('“He stays quiet about the mill.”'));
 ok('speech is not a pass',  !xeric_floor_passed('He stays quiet about the mill, always has.'));
 ok('empty is not a pass',   !xeric_floor_passed(''));
 
@@ -542,6 +545,22 @@ $r = xeric_floor_answer($T, $db, 'bluebird', 'I\'ll come back at nine tomorrow.'
 $exD = array_values(array_filter(xeric_expects_for($db, 'dot'), fn($e) => ($e['state'] ?? '') === 'open'));
 ok('promise: the only one in the room is the listener, even through her silence',
     $r['silence'] && count($exD) === 1, json_encode($exD));
+
+// A promise between two of the cast, made in a landed reply, goes into the
+// trail under the same shape the player's does: "<listener>:<key>". The key
+// alone (expect.N, numbered per listener) does not say whose arc it is, and
+// the inspector used to try it against everyone who was present.
+$db = fresh_db('promise-cast');
+say_into($T, $db, 'first_lutheran', 'Ruth, how is the roof fund?', $SUN);
+$r = xeric_floor_answer($T, $db, 'first_lutheran', 'Ruth, how is the roof fund?',
+    stub_script(['Dale, I\'ll bring the hymnals by tomorrow.', 'Good of you.', 'Mm.', 'Mm.'], $calls),
+    ['now' => $SUN, 'seed' => 9, 'interject' => 1.0]);
+$exC = array_values(array_filter(xeric_expects_for($db, 'pastor_dale'), fn($e) => ($e['state'] ?? '') === 'open'));
+ok('promise: one of the cast promising another in a reply forms the arc',
+    count($exC) === 1 && (string)($exC[0]['of'] ?? '') === 'ruth', json_encode([$exC, $r['trail']['spoke'] ?? null]));
+ok('promise: the trail names whose arc it is, for a promise among the cast too',
+    ($r['trail']['expects'] ?? []) === ['pastor_dale:' . (string)($exC[0]['key'] ?? '?')],
+    json_encode($r['trail']['expects'] ?? null));
 
 // ---------------------------------------------------------------------------
 // 13. The pinned-voice resolver: the floor speaks off the SPEAKER's machine

@@ -330,7 +330,8 @@ function xeric_watch_line(array $w, array &$s, array $endpoint, string $sid = ''
     $pw = !empty($s['player']['present']) ? (string)($s['player']['where'] ?? '') : null;
     $messages = xeric_duet_messages($t, $speaker, $partner, $system, $lines, $tail, $now,
         $walls, xeric_deaths($db), (int)$s['spoken'] === 0, (int)$s['spoken'] === (int)$s['turns'] - 1,
-        $pw !== '' ? $pw : null, $db);
+        $pw !== '' ? $pw : null, $db,
+        $pw !== null && trim((string)($s['player']['name'] ?? '')) !== '' ? (string)$s['player']['name'] : null);
 
     if ($sid !== '') xeric_limit_note('message', ['sid' => $sid]);
 

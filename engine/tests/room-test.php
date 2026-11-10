@@ -1147,6 +1147,25 @@ ok('close: with no model at the close the diaries are forfeit with a note, and t
     xeric_events_count($dbE) === 1 && xeric_memories_count($dbE) === 0
     && array_filter($landE['notes'], fn($n) => str_contains($n, 'no model was attached')) !== []);
 
+// A promise made to somebody who sat there and said nothing is still made to
+// them. The close used to read who was in the room off who had spoken, so
+// with one voice it formed nothing and with two it was owed to the other voice.
+$dbE2 = fresh_db('live-promise-silent'); $cE2 = [];
+live_open($TE, $dbE2, $SUN, 'first_lutheran');
+live_say($TE, $dbE2, $SUN, 'Ruth, what does the church still need?');
+live_turn($TE, $dbE2, $SUN, stub_room($cE2, [], null, fn(int $n) => 'Dale, I\'ll bring the hymnals by tomorrow.'), 1);
+$convE2 = xeric_room_seal($dbE2, 'stepped back', $SUN);
+$sealE2 = xeric_room_seals($dbE2)[$convE2];
+xeric_room_land_live($TE, $dbE2, $sealE2, null);
+$saidE2 = array_values(array_filter(xeric_room_rows($dbE2, $convE2), fn($r) => str_contains((string)($r['content'] ?? ''), 'hymnals')));
+$byE2 = (string)($saidE2[0]['handle'] ?? '');
+$heldE2 = [];
+foreach (['ruth', 'pastor_dale', 'janelle'] as $hE2) {
+    foreach (xeric_expects_for($dbE2, $hE2) as $e) if (str_contains((string)$e['quote'], 'hymnals')) $heldE2[] = $hE2 . '<' . (string)($e['of'] ?? '');
+}
+ok('close: a promise said by name to somebody who sat silent is theirs to expect',
+    $byE2 === 'ruth' && $heldE2 === ['pastor_dale<ruth'], json_encode([$byE2, $heldE2]));
+
 // -- the narrator's sky reaches the room, and comes in through the door ------
 $dbR = fresh_db('live-weather'); $cR = [];
 xeric_weather_set($dbR, $SUN, 'Rain since before light, and it has not let up.');

@@ -672,6 +672,35 @@ ok('together: two voices: each player line carries its speaker\'s name and numbe
     $two['messages'][0]['who'] === $ownName && $two['messages'][0]['player'] === 1
     && $two['messages'][2]['who'] === 'Corey' && $two['messages'][2]['player'] === $tid
     && !array_key_exists('player', $two['messages'][1]), json_encode($two['messages']));
+// One voice is not always the owner's. A thread only the guest has written in
+// used to carry the owner's name on the guest's words.
+$tcG = xeric_conversation_for($odb, 'pastor_dale');
+xeric_message_append($odb, $tcG, 'user', null, 'Pastor, do you have a minute?', null, null, $tid);
+$only = xeric_play_thread($oT, $odb, 'pastor_dale');
+ok('together: a thread only the guest wrote in names the guest, not the owner',
+    $only['messages'][0]['who'] === 'Corey' && !array_key_exists('player', $only['messages'][0]),
+    json_encode($only['messages']));
+// THE INSPECTOR, FROM A GUEST'S SEAT. "What she is handed the next time you
+// say something to her" is the guest's prompt — it names the guest — and the
+// page's own section-by-section rebuild has to agree with it.
+$gWhy = page('why.php', $TG, ['w' => $tslug, 'h' => 'pastor_dale'], [], 'GET');
+$oWhy = page('why.php', $O, ['w' => $tslug, 'h' => 'pastor_dale'], [], 'GET');
+$gSys = xeric_prompt_system_of(xeric_prompt_build($oT, $odb, 'pastor_dale', xeric_clock_now($odb, $oT),
+    ['memory_limit' => 12, 'history_limit' => 20, 'player' => $tid]));
+$oSys = xeric_prompt_system_of(xeric_prompt_build($oT, $odb, 'pastor_dale', xeric_clock_now($odb, $oT),
+    ['memory_limit' => 12, 'history_limit' => 20]));
+ok('together: the two seats really are handed different prompts', $gSys !== $oSys && str_contains($gSys, 'Corey'));
+$gOnly = '';                                   // a line only the guest's prompt carries
+foreach (explode("\n", $gSys) as $ln) {
+    if (str_contains($ln, 'Corey') && !str_contains($oSys, $ln)) { $gOnly = $ln; break; }
+}
+$esc  = fn(string $x): string => htmlspecialchars($x, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+$drift = 'do not reconstruct the real system message';
+ok('together: the inspector shows a guest the prompt THEIR words are answered with',
+    $gOnly !== '' && str_contains($gWhy['raw'], $esc($gOnly)) && !str_contains($gWhy['raw'], $drift), $gOnly);
+ok('together: and the owner is still shown the owner\'s, rebuilt byte for byte',
+    !str_contains($oWhy['raw'], $esc($gOnly)) && !str_contains($oWhy['raw'], $drift)
+    && str_contains($oWhy['raw'], 'from the inside'));
 
 // RATING PER VIEWER, through the thread reader. The owner's request stamps its
 // lines at the world's rating; the guest reads them as gaps; the owner reads them.

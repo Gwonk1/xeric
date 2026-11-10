@@ -18,13 +18,15 @@ Filed by the commits since the plan landed, not yet fixed.
   bars by walls only, and Theo is not walled from the pot (e5a73b4).
 - **The casserole-ledger board re-ranks inside two static prompts** — a cache break the
   benchmark's soft probe `cost.cache` reports (`engine/continuity/probes.php`; 4dd1c46).
-- **One narrator-audit contradiction in the leaky run** — soft probe `presence.audit`
-  (`engine/continuity/probes.php`; 4dd1c46).
 - **The room's idle-beat offer is covered by source checks only** — `forge/web/play.php`
   `roomIdleArm()`; `room-web-test.php` greps the page, nothing runs the JS (0b75ac0).
 - **room-web-test needs `XERIC_SOLO=0` and a machine per session** —
   `forge/web/tests/room-web-test.php` sets it itself; a solo run makes owner and guest one
   person (0b75ac0).
+- **No suite has been run round the clock** — the web suites open their worlds on the wall
+  clock, so what they find depends on the hour they are started. `splat-test.php` and
+  `stream-test.php` failed in the afternoon and are pinned; the others have only ever passed
+  at the hours somebody happened to run them, and nothing replays them under a faked clock.
 - **Apache + PHP-FPM drops `Authorization`** unless the vhost says `CGIPassAuth On`, so a
   Bearer token never arrives — `docs/API.md`, "Behind Apache with PHP-FPM" (c74f580).
 - **The vendor fields in `tools/proxies/` are unverified** — each mapping says *verify*;
@@ -162,6 +164,35 @@ the follow-up that closed the plan, not yet fixed.
 
 ## Closed
 
+- **A promise to somebody who said nothing was pinned on whoever else spoke** — the floor
+  and a live room's close handed `xeric_expect_from_scene()` only the lines spoken, and it
+  read who was present off who spoke: "Dale, I'll bring the hymnals by tomorrow", with Dale
+  silent and Janelle answering, became Janelle's expectation. Both now pass everyone in the
+  room, and the scene reports what it filed (`$held`, `"<listener>:<key>"`), so the floor's
+  trail carries one shape.
+- **A watched scene told the cast the owner had walked in when a guest had** —
+  `xeric_duet_messages()` takes the walker's name and `xeric_watch_line()` passes it, so
+  "is here, in the room with you" names whoever is standing there.
+- **The inspector showed a guest the owner's prompt** — `forge/web/why.php`'s character
+  lane built with no seat; it now builds and rebuilds for the session's player.
+- **The inspector's real-time stamps were in the host's zone** — `date()` on the room
+  trail, the learn crumbs and the struck lessons; `xeric_play_real_stamp()` prints them in
+  the zone the world's clock is read in.
+- **The MCP's `read_thread` put a dash where every speaker's name should be** — it read
+  `name`, and a thread's rows carry `who` (`tools/mcp.php`). A line kept from the seat now
+  says so instead of printing empty.
+- **The MCP's `seat` tool advertised `"properties": []`** — an empty PHP array, which is
+  not a JSON Schema object; it is `{}` now.
+- **A thread only a guest had written in carried the owner's name** —
+  `xeric_play_thread()` named a lone voice from the template; a lone guest is named from
+  the roster.
+- **A pass in curly quotes was spoken aloud** — `xeric_floor_passed()` took straight quotes
+  only, so `“(stays quiet)”` or a trailing `…` landed in the room as a line.
+- **splat-test and stream-test failed at hours the Bluebird stands empty** — both opened a
+  world on the wall clock and then expected somebody in the diner to tag. Each pins its
+  world to a Tuesday morning now (the rest of that weakness is filed above).
+- **The narrator-audit contradiction in the leaky run** no longer reproduces — the baseline
+  accepted with b8f13d9 shows `presence.audit` clean in both runs.
 - **A bare-day promise missed at 04:00** — `xeric_promise_when("Thursday")` resolved to that
   day's midnight, so the four-hour grace ran out before the day began. A bare day is due at
   20:00 (`XERIC_EXPECT_BARE_HOUR`): missed when the day is over, kept by being there at any

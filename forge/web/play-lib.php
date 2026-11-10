@@ -880,6 +880,19 @@ function xeric_play_stamp(array $t, int $epoch): string
     return (new DateTimeImmutable('@' . $epoch))->setTimezone($tz)->format('D H:i');
 }
 
+/**
+ * A REAL instant — when a beat ran, when a lesson was struck — in the same zone
+ * the world's clock is read in. PHP's date() answers in whatever zone the HOST
+ * happens to be set to, so an inspector on a box in another zone told its owner
+ * a beat ran at an hour they were asleep.
+ */
+function xeric_play_real_stamp(array $t, int $epoch, string $format = 'M j, H:i'): string
+{
+    try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); }
+    catch (Throwable $e) { $tz = new DateTimeZone('UTC'); }
+    return (new DateTimeImmutable('@' . $epoch))->setTimezone($tz)->format($format);
+}
+
 // ---------------------------------------------------------------------------
 // The world, shaped for a screen
 // ---------------------------------------------------------------------------
@@ -2117,8 +2130,11 @@ function xeric_play_thread(array $t, PDO $db, string $handle, int $limit = 60, b
             // which asks after a line by id and by nothing else.
             'id'   => (int)$m['id'],
             'role' => (string)$m['role'],
+            // One voice is not always the owner's: a thread only a guest has
+            // written in is the guest's, and the template's name on it would be
+            // somebody else's name on their words.
             'who'  => (string)$m['role'] === 'user'
-                        ? ($many ? xeric_player_name($db, $p, $t)
+                        ? ($many || $p > XERIC_PLAYER_FIRST ? xeric_player_name($db, $p, $t)
                                  : (trim((string)($t['user']['name'] ?? '')) ?: 'you'))
                         : xeric_world_name($t, (string)($m['handle'] ?? $handle)),
             'text' => (string)$m['content'],

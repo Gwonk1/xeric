@@ -95,6 +95,10 @@ ok('tools: nothing here tunes a world — no forge, no review, no inspector, no 
     !isset($tools['forge'], $tools['review'], $tools['why'], $tools['skip'], $tools['tick']));
 ok('tools: join names its required fields',
     ($tools['join']['inputSchema']['required'] ?? []) === ['world', 'code', 'name']);
+// An empty PHP array is `[]` on the wire, and `"properties": []` is not a
+// JSON Schema object — a strict client refuses the whole tool list for it.
+ok('tools: a tool that takes nothing says so with an empty OBJECT, not an empty list',
+    str_contains($outRaw, '"properties":{}') && !str_contains($outRaw, '"properties":[]'));
 ok('tools: every tool carries a schema and a description',
     array_reduce(array_values($tools), fn($c, $t) => $c
         && ($t['description'] ?? '') !== '' && isset($t['inputSchema']['type']), true));
@@ -138,6 +142,14 @@ $stubDir = sys_get_temp_dir() . '/xeric-mcp-stub-' . getmypid();
 file_put_contents($stubDir . '/join.php',
     "<?php header('Content-Type: application/json');\n"
     . "echo json_encode(['ok' => true, 'player' => 2, 'world' => 'stub-town']);\n");
+// The thread, in the exact shape play.php?a=thread ships: speakers under `who`.
+file_put_contents($stubDir . '/play.php',
+    "<?php header('Content-Type: application/json');\n"
+    . "echo json_encode(['conversation_id' => 3, 'messages' => [\n"
+    . "  ['id' => 1, 'role' => 'user', 'who' => 'Scout', 'text' => 'Morning, Ruth.', 'when' => 'Tue 09:58'],\n"
+    . "  ['id' => 2, 'role' => 'character', 'who' => 'Ruth Amberg', 'text' => 'You are up early.', 'when' => 'Tue 09:59'],\n"
+    . "  ['id' => 3, 'role' => 'character', 'who' => 'Ruth Amberg', 'text' => '', 'when' => 'Tue 10:00', 'redacted' => true],\n"
+    . "]]);\n");
 file_put_contents($stubDir . '/model.php',
     "<?php\n"
     . "if (str_contains((string)(\$_POST['base'] ?? ''), 'refuse')) {\n"
@@ -184,9 +196,20 @@ if ($stubUp) {
                                'machine' => 'http://127.0.0.1:8080']);
     ok('join: a plain 302 is the attachment made, no warning',
         !str_contains($said, 'did not attach'), $said);
+
+    // Who said what. The reader looked for a `name` no row carries, so an
+    // agent was handed a thread with a dash where every speaker should be.
+    $thread = xmcp_call('read_thread', ['world' => 'stub-town', 'handle' => 'ruth']);
+    ok('read_thread: every line carries who said it',
+        str_contains($thread, 'Scout: Morning, Ruth.')
+        && str_contains($thread, 'Ruth Amberg: You are up early.')
+        && !str_contains($thread, '— '), $thread);
+    ok('read_thread: a line kept from this seat is a gap that says so, not an empty line',
+        str_contains($thread, 'Ruth Amberg: (a line you are not shown)'), $thread);
 }
 if ($stubPid > 0) @shell_exec('kill ' . $stubPid . ' 2>/dev/null');
 @unlink($stubDir . '/join.php');
+@unlink($stubDir . '/play.php');
 @unlink($stubDir . '/model.php');
 @rmdir($stubDir);
 

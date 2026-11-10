@@ -2441,7 +2441,14 @@ function xeric_room_land(array $t, PDO $db, array $c): array
         // expectation — which is the same "named in the sentence outranks"
         // rule this file already uses to decide who answers a beat. The
         // `of` notch in the draw weight above is fed from here.
-        xeric_expect_from_scene($t, $db, $lines, (array)$c['now']);
+        //
+        // The seated who never said a word are handed over too, with nothing
+        // said: the scene reads who was there off its lines, and with only
+        // two voices in a room of three it took the other voice for the
+        // listener whoever the sentence named.
+        $heard = $lines;
+        foreach ($handles as $h) $heard[] = ['handle' => $h, 'text' => ''];
+        xeric_expect_from_scene($t, $db, $heard, (array)$c['now']);
 
         // AND IN A DISCUSSION ROOM, THE OPEN RECORD. Silent in every ordinary
         // world — xeric_panel() returns null and this costs one array lookup.

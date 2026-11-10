@@ -209,7 +209,7 @@ function xmcp_tools(): array
          ], 'required' => ['world', 'code', 'name']]],
         ['name' => 'seat',
          'description' => 'Which seats this agent holds on this instance — world, name, player number.',
-         'inputSchema' => ['type' => 'object', 'properties' => []]],
+         'inputSchema' => ['type' => 'object', 'properties' => new stdClass()]],
         ['name' => 'look',
          'description' => 'The town as it stands: the clock, where you are, every place with who is '
              . 'standing in it, open or shut, and what it costs to walk there.',
@@ -412,8 +412,12 @@ function xmcp_call(string $tool, array $a): string
         if ($msgs === []) return 'Nothing between you two yet.';
         $out = [];
         foreach (array_slice($msgs, -25) as $m) {
-            $out[] = ((string)($m['name'] ?? '') !== '' ? (string)$m['name'] . ': ' : '— ')
-                . (string)($m['text'] ?? '');
+            // The thread names its speakers under `who` (xeric_play_thread).
+            // This read `name`, which no row carries, so every line came back
+            // with a dash in front of it and nobody's name on it.
+            $who = trim((string)($m['who'] ?? ($m['name'] ?? '')));
+            $out[] = ($who !== '' ? $who . ': ' : '— ')
+                . (!empty($m['redacted']) ? '(a line you are not shown)' : (string)($m['text'] ?? ''));
         }
         return implode("\n", $out);
     }

@@ -636,7 +636,7 @@ function xeric_duet_scene(array $t, string $me, string $other, array $room, arra
 function xeric_duet_messages(array $t, string $me, string $other, string $system, array $lines,
                              array $scene, array $now, array $walls, array $deaths,
                              bool $opening, bool $closing, ?string $playerWhere = null,
-                             ?PDO $db = null): array
+                             ?PDO $db = null, ?string $playerName = null): array
 {
     // $db IS FOR THE WEATHER, and it was being read out of thin air. The call
     // below has always passed `$db` as xeric_prompt_now_block()'s last argument,
@@ -687,7 +687,11 @@ function xeric_duet_messages(array $t, string $me, string $other, string $system
         $coach[] = 'A third voice in the transcript is the person standing here with you both — '
                  . 'answer whoever the moment calls for.';
     }
-    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, $playerWhere, $deaths, 0, $db);
+    // WHO walked in, by name: the now-block's "is here, in the room with you"
+    // falls back to the template's own person, and on a scene a guest is
+    // watching that is the owner — who is not in the room.
+    $volatile = xeric_prompt_now_block($t, $me, $now, implode("\n", $coach), $walls, $playerWhere, $deaths, 0, $db,
+                                       $playerName);
 
     $messages = [['role' => 'system', 'content' => $system]];
     foreach ($lines as $l) {

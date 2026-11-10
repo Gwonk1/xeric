@@ -3558,6 +3558,26 @@ foreach ((array)$wlastChat['msgs'] as $m) {
 ok('alternation carries on, and the next speaker answers having seen the player\'s words as a user turn',
     $wl3['handle'] === $wl1['handle'] && $wsaw);
 
+// A GUEST who walks in is the one standing there. The speaker's "is here, in
+// the room with you" used to read the template's own person — the owner, who
+// on a guest's watch is not in the room at all.
+$ws9 = xeric_watch_start($ww, 'ruth', 'dot', $TUEW);
+xeric_watch_line($ww, $ws9, $wstub, $WK);
+$corey9 = xeric_player_add($wdb, $ww['template'], 'Corey');
+xeric_player_move($wdb, 'bluebird', (int)$TUEW['epoch'], $corey9);
+xeric_watch_say($ww, $ws9, 'Room for one more?', $corey9);
+xeric_watch_line($ww, $ws9, $wstub, $WK);
+$wchat9 = null;
+foreach ($wcalls as $c) if ($c['tag'] === 'chat') $wchat9 = $c;
+$wall9 = implode("\n", array_map(fn($m) => (string)$m['content'], (array)$wchat9['msgs']));
+$own9  = trim((string)($ww['template']['user']['name'] ?? ''));
+ok('a guest who walked in is the one named as standing there, not the owner',
+    str_contains($wall9, 'Corey is here, in the room with you')
+    && ($own9 === '' || !str_contains($wall9, $own9 . ' is here, in the room with you')),
+    substr($wall9, (int)max(0, (int)strpos($wall9, 'is here, in the room') - 60), 140));
+unset($ws9);
+xeric_player_drop($wdb, $ww['template'], $corey9);   // and out again: the house below is one person's
+
 // Nothing has landed, so walking away costs the world nothing.
 ok('a scene in flight has written nothing — abandoning it leaves the world exactly as found',
     [xeric_events_count($wdb), xeric_memories_count($wdb), xeric_conversations_count($wdb)] === $wbase);

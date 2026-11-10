@@ -519,7 +519,7 @@ ok('weather: the duet loop hands its own database down',
         '$i === 0, $i === $turns - 1, null, $db);'));
 ok('weather: and so does the watch surface',
     str_contains((string)file_get_contents(dirname(__DIR__, 2) . '/forge/web/play-watch.php'),
-        "\$pw !== '' ? \$pw : null, \$db);"));
+        "\$pw !== '' ? \$pw : null, \$db,"));      // the walker's name follows it now
 
 // ---------------------------------------------------------------------------
 // THE OPENER TIC AT THE BUILDER — strict alternation means every turn past the

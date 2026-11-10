@@ -244,6 +244,21 @@ ok('the inspector\'s index offers it to the owner', str_contains($wi['raw'], 'au
 $wg = page('why.php', $G, ['w' => $slug, 'audit' => '1'], [], 'GET');
 ok('a guest reading the inspector is not handed the audit', !str_contains($wg['raw'], 'contradictions in the record'));
 
+// WHEN A BEAT RAN is a real instant, and the inspector prints it in the zone
+// the world's own clock is read in — not whatever zone the host is set to.
+$tzW   = (string)($T['user']['timezone'] ?? 'UTC');
+$beat  = 1767258000;                                   // 2026-01-01 09:00 UTC
+$wantW = (new DateTimeImmutable('@' . $beat))->setTimezone(new DateTimeZone($tzW))->format('M j, H:i');
+xeric_world_state_set($db, 'why:floor:bluebird', json_encode([
+    'place' => 'bluebird', 'present' => ['dot'], 'asked' => ['dot'], 'spoke' => ['dot'],
+    'passed' => [], 'ms' => 1200, 'at' => $beat]), $beat);
+$wr = page('why.php', $A, ['w' => $slug, 'room' => 'bluebird'], [], 'GET');
+ok('the room\'s last beat is stamped in the world\'s zone, not the host\'s',
+    str_contains($wr['raw'], $wantW) && xeric_play_real_stamp($T, $beat) === $wantW
+    && xeric_play_real_stamp(['user' => ['timezone' => 'Pacific/Kiritimati']], $beat) === 'Jan 1, 23:00'
+    && xeric_play_real_stamp(['user' => ['timezone' => 'not/a-zone']], $beat) === 'Jan 1, 09:00',
+    $tzW . ' wants ' . $wantW);
+
 // THE AUDIT IS NAMED FOR A PATH, AND A PATH IS REUSED. It goes when its
 // database goes, and a database made just now starts without one.
 $auditOwn = xeric_play_narrator_audit_path($w);

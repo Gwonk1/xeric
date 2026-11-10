@@ -374,7 +374,9 @@ curl -s -o room.png $X/worlds/milldale/look/bluebird/0a1b…   # the scene.src a
 xeric_play_thread(): the newest 60 messages, or with `since` only those with a
 larger id (up to 500). `epoch` is the world time it was said at; `when` stays
 for display. A message may carry `photo` {k, s, caption}. `last` is the
-highest id in the answer (or `since`): pass it as the next `since`.
+highest id in the answer (or `since`): pass it as the next `since`. `who` on a
+`user` row is whoever typed it: the owner's name (or `you`), or a guest's name
+from the roster — also when the guest is the only one who has written there.
 
 A GET **changes nothing**: the unread dot stays lit, so a poll or a retry is
 safe. Putting the dot out, and the learn signal ("this person, not that

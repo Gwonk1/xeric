@@ -113,9 +113,17 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     $eff = xeric_world_rating($T, null);
     $limit = 12;
 
-    $messages = xeric_prompt_build($T, $db, $handle, $now, ['memory_limit' => $limit, 'history_limit' => 20]);
+    // WHOSE "NEXT TIME YOU SAY SOMETHING" THIS IS. Somebody who came in on a
+    // pairing code passes the door above, and the prompt their words are
+    // answered with is not the owner's: the rules name them, the promises owed
+    // are the ones made to them, the confidences are theirs. Built without a
+    // seat, this lane showed a guest the owner's prompt and called it theirs.
+    $seat = xeric_session_player((string)$w['slug']) ?? XERIC_PLAYER_FIRST;
+
+    $messages = xeric_prompt_build($T, $db, $handle, $now,
+        ['memory_limit' => $limit, 'history_limit' => 20, 'player' => $seat]);
     $system = xeric_prompt_system_of($messages);
-    $built = xeric_why_system_sections($T, $db, $handle, $eff, $limit, (int)($now['epoch'] ?? 0) ?: null);
+    $built = xeric_why_system_sections($T, $db, $handle, $eff, $limit, (int)($now['epoch'] ?? 0) ?: null, $seat);
     $exact = $built['rebuilt'] === $system;
 
     $total = 0;
@@ -473,7 +481,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
         ?>
   <h1><?= h($pn) ?></h1>
   <p class="sub">the last time somebody spoke into this room
-    · <?= h(date('M j, H:i', (int)($tr['at'] ?? 0))) ?>
+    · <?= h(xeric_play_real_stamp($T, (int)($tr['at'] ?? 0))) ?>
     · <?= h(number_format(((int)($tr['ms'] ?? 0)) / 1000, 1)) ?>s
     · ran at <code><?= h((string)($tr['rating'] ?? '')) ?></code></p>
 
@@ -499,12 +507,12 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
     // The floor has always written `expects` into this trail (floor.php: the
     // arc keys a promise formed) and this page never printed them — so "why
     // does Dot expect me Thursday?" had a recorded answer nobody could reach.
-    // Two shapes ride the list and both are honoured: "<listener>:<key>" for
-    // the player's own promise, and a bare "<key>" for a promise between two
-    // of the cast (xeric_expect_from_scene returns the key alone, so the
-    // bare shape is resolved against everyone the trail says was present —
-    // over-showing a receipt beats hiding one, and the row itself names who
-    // promised). Names and states only, the way the trail's own lists are.
+    // The floor writes one shape, "<listener>:<key>". A trail written before
+    // it did carries a bare "<key>" for a promise between two of the cast,
+    // and that one is still honoured: it is resolved against everyone the
+    // trail says was present — over-showing a receipt beats hiding one, and
+    // the row itself names who promised. Names and states only, the way the
+    // trail's own lists are.
     require_once dirname(__DIR__, 2) . '/engine/constructs.php';
     $userNameW = trim((string)($T['user']['name'] ?? '')) ?: 'the person at the centre';
     $expRows = [];
@@ -727,7 +735,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
       <li class="<?= (int)$r['processed'] === 1 ? 'off' : '' ?>"><span class="v"><?= h($line) ?>
         <span class="quiet">· <?= (int)($r['world_epoch'] ?? 0) > 0
             ? h(xeric_play_stamp($T, (int)$r['world_epoch']))
-            : h(date('M j, H:i', (int)$r['created_at'])) ?>
+            : h(xeric_play_real_stamp($T, (int)$r['created_at'])) ?>
           · <?= (int)$r['processed'] === 1 ? 'read' : 'not yet read' ?></span></span></li>
       <?php endforeach; ?>
     </ul>
@@ -752,7 +760,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
       <?php foreach ($ls as $l): $e = $earned[$l] ?? null; ?>
       <div class="tt">“<?= h((string)$l) ?>”</div>
       <?php if (is_array($e)): ?>
-        <p class="quiet blknote">distilled <?= h(date('M j', (int)($e['at'] ?? 0))) ?>, the pass that wrote
+        <p class="quiet blknote">distilled <?= h(xeric_play_real_stamp($T, (int)($e['at'] ?? 0), 'M j')) ?>, the pass that wrote
           it was reading:<?php foreach ((array)($e['evidence'] ?? []) as $ln): ?><br>· <?= h((string)$ln) ?><?php endforeach; ?></p>
       <?php else: ?>
         <p class="quiet blknote">no trace — written before provenance was kept, or added by hand</p>
@@ -778,7 +786,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
       <?php foreach ($struck as $s): ?>
       <li><span class="k"><?= h((string)$s['handle'] === '' ? 'everybody' : xeric_world_name($T, (string)$s['handle'])) ?></span>
         <span class="v">“<?= h((string)$s['lesson']) ?>”<br>
-          <span class="quiet">struck <?= h(date('M j, H:i', (int)$s['created_at'])) ?> —
+          <span class="quiet">struck <?= h(xeric_play_real_stamp($T, (int)$s['created_at'])) ?> —
             <?= h((string)$s['why']) ?></span></span></li>
       <?php endforeach; ?>
     </ul>
@@ -866,7 +874,7 @@ if ($handle !== '' && xeric_world_character($T, $handle) !== null) {
         <span><span class="pn"><?= h($fn) ?></span>
         <span class="po"><?= !empty($ft['silence']) ? 'the room let it sit'
             : ($fs !== [] ? h(implode(' and ', $fs)) . ' answered' : 'a beat was run') ?></span>
-        <span class="pw"><?= h(date('M j, H:i', (int)($ft['at'] ?? 0))) ?> · who answered, who passed, and why →</span></span>
+        <span class="pw"><?= h(xeric_play_real_stamp($T, (int)($ft['at'] ?? 0))) ?> · who answered, who passed, and why →</span></span>
         <span class="pgo">›</span></a></li>
       <?php endforeach; ?>
     </ul>

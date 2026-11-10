@@ -420,7 +420,19 @@ function xeric_floor_answer(array $t, PDO $db, string $place, string $userText,
         ], $now, null, null, $player);
         if ($k !== null) $expects[] = $ear . ':' . $k;
     }
-    foreach (xeric_expect_from_scene($t, $db, $out['lines'], $now) as $k) $expects[] = $k;
+    // One shape in the trail, "<listener>:<key>", for both: a bare key does not
+    // say whose arc it is, and the inspector had to guess among everyone present.
+    //
+    // EVERYBODY IN THE ROOM IS IN THE ROOM, spoken or not. The scene reads who
+    // was there off the lines it is handed, so the ones who stood by are added
+    // with nothing said: without them "Dale, I'll bring the hymnals tomorrow",
+    // answered by somebody else while Dale kept quiet, was owed to whoever
+    // spoke next — two speakers, so the other one "must" be the listener.
+    $heard = $out['lines'];
+    foreach ($present as $h) $heard[] = ['handle' => (string)$h, 'text' => ''];
+    $held = [];
+    xeric_expect_from_scene($t, $db, $heard, $now, null, 0, $held);
+    foreach ($held as $k) $expects[] = $k;
 
     // The channel was just answered; the idle beat should not pile on in the
     // same minute. Same watermark the chatter stamps, same reason.
@@ -510,7 +522,10 @@ function xeric_floor_order(array $present, string $userText, string $userName,
 function xeric_floor_passed(string $raw): bool
 {
     $s = trim(xeric_chat_strip_fence($raw));
-    return (bool)preg_match('/^[\s"\'()\[\]*_]*stays?\s+quiet[\s"\'()\[\]*_.!]*$/iu', $s);
+    // Typographic wrapping counts as wrapping. A model that sets the marker in
+    // curly quotes, or trails it with a real ellipsis, has still handed the
+    // floor back — read as speech, the room heard somebody say "stays quiet".
+    return (bool)preg_match('/^[\s"\'“”‘’«»()\[\]*_]*stays?\s+quiet[\s"\'“”‘’«»()\[\]*_.!…]*$/iu', $s);
 }
 
 /**

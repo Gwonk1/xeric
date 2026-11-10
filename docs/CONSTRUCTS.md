@@ -213,7 +213,10 @@ half too. **Through the walls:** a promise whose words a listener's walls
 remove forms nothing for that listener (the ripple's own needle and quotation
 test), so a promise about the Thursday pot made in front of Janelle never
 reaches her prompt; the miss event stays observables-only. A day said with a
-time of day ("Wednesday morning") now carries the hour in scenes too.
+time of day ("Wednesday morning") now carries the hour in scenes too. **Who
+heard it** is who was in the room, not who answered: the floor and a live
+room's close pass everybody present, so a promise to somebody who said nothing
+back is still theirs.
 
 ## Still open
 

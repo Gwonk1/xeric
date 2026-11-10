@@ -59,6 +59,27 @@ $sid = xeric_web_sid();                               // solo: the server keys t
 xeric_session_use($sid);
 $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
 
+/**
+ * Put the world at next Tuesday, ten in the morning, its own time. The world
+ * runs on the wall clock, and the diner is not staffed round it — so a run
+ * started at an hour the Bluebird stands empty found nobody to tag and failed,
+ * for a reason that had nothing to do with what is tested here.
+ */
+function pin_tuesday_morning(PDO $db, array $t): void
+{
+    try { $tz = new DateTimeZone((string)($t['user']['timezone'] ?? 'UTC')); }
+    catch (Throwable $e) { $tz = new DateTimeZone('UTC'); }
+    $now  = (new DateTimeImmutable('@' . xeric_clock_epoch($db)))->setTimezone($tz);
+    $then = $now->setTime(10, 0);
+    while ($then <= $now || $then->format('N') !== '2') $then = $then->modify('+1 day');
+    // A world opened with no machine attached is stopped, and a stopped world
+    // refuses to be moved: start it for the jump and leave it as it was found.
+    $stopped = xeric_clock_is_paused($db);
+    if ($stopped) xeric_clock_resume($db);
+    xeric_clock_advance($db, $then->getTimestamp() - $now->getTimestamp(), $t);
+    if ($stopped) xeric_clock_pause($db);
+}
+
 /** A world in the bluebird with a stored panorama; $live turns the live view on. */
 $world = function (string $slug, bool $live) use ($fixT, $J, $sid, $png): array {
     $t = $fixT;
@@ -69,6 +90,7 @@ $world = function (string $slug, bool $live) use ($fixT, $J, $sid, $png): array 
     file_put_contents($d . '/seed.json', json_encode(xeric_forge_default_seed($t), $J));
     xeric_session_claim($slug, $sid);
     $w = xeric_play_open($slug, null, true);
+    pin_tuesday_morning($w['db'], $w['template']);
     xeric_player_move($w['db'], 'bluebird', xeric_clock_epoch($w['db']));
     $b = xeric_scene_brief($w['template'], $w['db']);
     $dir = dirname((string)$w['db_path']) . '/scenes';

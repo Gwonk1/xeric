@@ -353,11 +353,16 @@ function xeric_expect_form(array $t, PDO $db, string $listener, ?array $p, array
  * @param array $lines [{handle, name, text}, …] as the duet and the room emit
  * @param int $notBefore a due at or before this epoch forms nothing (the cast
  *                       tick passes its own now; 0 means the scene's hour only)
+ * @param array|null $held filled with "<listener>:<key>" for each arc formed —
+ *                         a key alone does not say whose it is (expect.N counts
+ *                         per listener), and a trail that records the promise
+ *                         has to be able to find it again
  * @return string[] the arc keys formed
  */
 function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?callable $onNote = null,
-                                 int $notBefore = 0): array
+                                 int $notBefore = 0, ?array &$held = null): array
 {
+    $held = [];
     if (!xeric_expect_armed($t)) return [];
 
     $present = [];
@@ -426,7 +431,7 @@ function xeric_expect_from_scene(array $t, PDO $db, array $lines, array $now, ?c
         ] + ($notBefore > 0 ? ['not_before' => $notBefore] : []), $now, $onNote, $isYou($speaker) ? null : $speaker,
             // WHICH person at the centre promised: the line's own player.
             $isYou($speaker) ? max(XERIC_PLAYER_FIRST, (int)($l['player'] ?? XERIC_PLAYER_FIRST)) : XERIC_PLAYER_FIRST);
-        if ($key !== null) $formed[] = $key;
+        if ($key !== null) { $formed[] = $key; $held[] = $listener . ':' . $key; }
     }
     return $formed;
 }
